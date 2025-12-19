@@ -1,4 +1,4 @@
-use crate::tui::Event;
+use crate::tui::{Event, TokenUsage};
 use anyhow::{Context, Result};
 use chrono;
 use serde::Deserialize;
@@ -260,6 +260,9 @@ impl ClaudeInvocation {
                                 let _ = writeln!(f, "[stdout] {}", line);
                             }
 
+                            // Send bytes received stat
+                            let _ = output_tx.send(Event::BytesReceived(line.len()));
+
                             all_output.push_str(&line);
                             all_output.push('\n');
 
@@ -271,6 +274,16 @@ impl ClaudeInvocation {
                                         "assistant" | "user" => {
                                             // Extract message content for display
                                             if let Some(message) = json.get("message") {
+                                                // Parse token usage
+                                                if let Some(usage) = message.get("usage") {
+                                                    let token_usage = TokenUsage {
+                                                        input_tokens: usage.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
+                                                        output_tokens: usage.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
+                                                        cache_creation_tokens: usage.get("cache_creation_input_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
+                                                        cache_read_tokens: usage.get("cache_read_input_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
+                                                    };
+                                                    let _ = output_tx.send(Event::TokenUsage(token_usage));
+                                                }
                                                 if let Some(content) = message.get("content") {
                                                     if let Some(arr) = content.as_array() {
                                                         for item in arr {

@@ -6,6 +6,15 @@ use tokio::sync::mpsc;
 
 use crate::state::State;
 
+/// Token usage statistics from Claude API
+#[derive(Debug, Clone, Default)]
+pub struct TokenUsage {
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cache_creation_tokens: u64,
+    pub cache_read_tokens: u64,
+}
+
 #[derive(Debug, Clone)]
 pub enum Event {
     Key(KeyEvent),
@@ -17,6 +26,14 @@ pub enum Event {
     StateUpdate(State),
     /// Request user approval with a plan summary
     RequestUserApproval(String),
+    /// Stats update: bytes received from Claude
+    BytesReceived(usize),
+    /// Token usage update from a Claude message
+    TokenUsage(TokenUsage),
+    /// Phase timing: phase started
+    PhaseStarted(String),
+    /// Tool output line count
+    ToolOutput { tool_name: String, lines: usize },
 }
 
 /// User's response to approval request

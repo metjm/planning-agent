@@ -1,4 +1,6 @@
 use crate::state::{Phase, State};
+use crate::tui::event::TokenUsage;
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 /// Mode for user approval interaction
@@ -29,6 +31,27 @@ pub struct App {
     pub plan_summary: String,
     pub user_feedback: String,
     pub cursor_position: usize,
+
+    // Stats
+    pub bytes_received: usize,
+
+    // Token stats
+    pub total_input_tokens: u64,
+    pub total_output_tokens: u64,
+    pub total_cache_creation_tokens: u64,
+    pub total_cache_read_tokens: u64,
+
+    // Phase timing
+    pub phase_times: HashMap<String, Duration>,
+    pub current_phase_start: Option<(String, Instant)>,
+
+    // Tool stats
+    pub tool_call_count: usize,
+    pub tool_output_lines: HashMap<String, usize>,
+
+    // Streaming rate
+    pub last_bytes_sample: (Instant, usize),
+    pub bytes_per_second: f64,
 }
 
 impl App {
@@ -48,7 +71,57 @@ impl App {
             plan_summary: String::new(),
             user_feedback: String::new(),
             cursor_position: 0,
+            bytes_received: 0,
+            // Token stats
+            total_input_tokens: 0,
+            total_output_tokens: 0,
+            total_cache_creation_tokens: 0,
+            total_cache_read_tokens: 0,
+            // Phase timing
+            phase_times: HashMap::new(),
+            current_phase_start: None,
+            // Tool stats
+            tool_call_count: 0,
+            tool_output_lines: HashMap::new(),
+            // Streaming rate
+            last_bytes_sample: (Instant::now(), 0),
+            bytes_per_second: 0.0,
         }
+    }
+
+    pub fn add_bytes(&mut self, bytes: usize) {
+        self.bytes_received += bytes;
+        self.update_bytes_rate();
+    }
+
+    fn update_bytes_rate(&mut self) {
+        let now = Instant::now();
+        let elapsed = now.duration_since(self.last_bytes_sample.0);
+        if elapsed.as_millis() >= 500 {
+            let bytes_delta = self.bytes_received.saturating_sub(self.last_bytes_sample.1);
+            self.bytes_per_second = bytes_delta as f64 / elapsed.as_secs_f64();
+            self.last_bytes_sample = (now, self.bytes_received);
+        }
+    }
+
+    pub fn add_token_usage(&mut self, usage: &TokenUsage) {
+        self.total_input_tokens += usage.input_tokens;
+        self.total_output_tokens += usage.output_tokens;
+        self.total_cache_creation_tokens += usage.cache_creation_tokens;
+        self.total_cache_read_tokens += usage.cache_read_tokens;
+    }
+
+    pub fn start_phase(&mut self, phase: String) {
+        // End previous phase if any
+        if let Some((prev_phase, start)) = self.current_phase_start.take() {
+            let duration = start.elapsed();
+            *self.phase_times.entry(prev_phase).or_default() += duration;
+        }
+        self.current_phase_start = Some((phase, Instant::now()));
+    }
+
+    pub fn add_tool_output_lines(&mut self, tool_name: String, lines: usize) {
+        *self.tool_output_lines.entry(tool_name).or_default() += lines;
     }
 
     pub fn start_approval(&mut self, summary: String) {

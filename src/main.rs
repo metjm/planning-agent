@@ -377,6 +377,7 @@ async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
             }
             Event::ToolStarted(name) => {
                 app.tool_started(name);
+                app.tool_call_count += 1;
             }
             Event::ToolFinished(_id) => {
                 // Remove the oldest tool (FIFO) since we don't track IDs
@@ -389,6 +390,18 @@ async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
             }
             Event::RequestUserApproval(summary) => {
                 app.start_approval(summary);
+            }
+            Event::BytesReceived(bytes) => {
+                app.add_bytes(bytes);
+            }
+            Event::TokenUsage(usage) => {
+                app.add_token_usage(&usage);
+            }
+            Event::PhaseStarted(phase) => {
+                app.start_phase(phase);
+            }
+            Event::ToolOutput { tool_name, lines } => {
+                app.add_tool_output_lines(tool_name, lines);
             }
         }
 
@@ -537,6 +550,7 @@ async fn run_workflow(
         match state.phase {
             Phase::Planning => {
                 log_workflow(&working_dir, ">>> ENTERING Planning phase");
+                let _ = output_tx.send(Event::PhaseStarted("Planning".to_string()));
                 let _ = output_tx.send(Event::Output("".to_string()));
                 let _ = output_tx.send(Event::Output("=== PLANNING PHASE ===".to_string()));
                 let _ = output_tx.send(Event::Output(format!("Feature: {}", state.feature_name)));
@@ -562,6 +576,7 @@ async fn run_workflow(
 
             Phase::Reviewing => {
                 log_workflow(&working_dir, &format!(">>> ENTERING Reviewing phase (iteration {})", state.iteration));
+                let _ = output_tx.send(Event::PhaseStarted("Reviewing".to_string()));
                 let _ = output_tx.send(Event::Output("".to_string()));
                 let _ = output_tx.send(Event::Output(format!("=== REVIEW PHASE (Iteration {}) ===", state.iteration)));
 
@@ -603,6 +618,7 @@ async fn run_workflow(
 
             Phase::Revising => {
                 log_workflow(&working_dir, &format!(">>> ENTERING Revising phase (iteration {})", state.iteration));
+                let _ = output_tx.send(Event::PhaseStarted("Revising".to_string()));
                 let _ = output_tx.send(Event::Output("".to_string()));
                 let _ = output_tx.send(Event::Output(format!("=== REVISION PHASE (Iteration {}) ===", state.iteration)));
 
@@ -629,56 +645,61 @@ async fn run_workflow(
             }
 
             Phase::Complete => {
-                log_workflow(&working_dir, ">>> Phase is Complete - requesting user approval");
-
-                // Generate plan summary
-                let plan_path = working_dir.join(&state.plan_file);
-                let summary = match summarize_plan(&plan_path, &output_tx).await {
-                    Ok(s) => s,
-                    Err(e) => {
-                        log_workflow(&working_dir, &format!("Failed to summarize plan: {}", e));
-                        format!("(Could not generate summary: {})\n\nThe plan has been approved by AI review.", e)
-                    }
-                };
-
-                let _ = output_tx.send(Event::Output("".to_string()));
-                let _ = output_tx.send(Event::Output("=== PLAN APPROVED BY AI ===".to_string()));
-                let _ = output_tx.send(Event::Output(format!("Completed after {} iteration(s)", state.iteration)));
-                let _ = output_tx.send(Event::Output("Waiting for your approval...".to_string()));
-
-                // Request user approval
-                let _ = output_tx.send(Event::RequestUserApproval(summary));
-
-                // Wait for user response
-                log_workflow(&working_dir, "Waiting for user approval response...");
-                match approval_rx.recv().await {
-                    Some(UserApprovalResponse::Accept) => {
-                        log_workflow(&working_dir, "User ACCEPTED the plan");
-                        let _ = output_tx.send(Event::Output("[planning] User accepted the plan!".to_string()));
-                        return Ok(WorkflowResult::Accepted);
-                    }
-                    Some(UserApprovalResponse::Decline(feedback)) => {
-                        log_workflow(&working_dir, &format!("User DECLINED with feedback: {}", feedback));
-                        let _ = output_tx.send(Event::Output(format!("[planning] User requested changes: {}", feedback)));
-                        return Ok(WorkflowResult::NeedsRestart { user_feedback: feedback });
-                    }
-                    None => {
-                        log_workflow(&working_dir, "Approval channel closed - treating as accept");
-                        return Ok(WorkflowResult::Accepted);
-                    }
-                }
+                // This shouldn't be reached since should_continue() returns false for Complete
+                // User approval logic is handled after the loop
+                break;
             }
         }
     }
 
     log_workflow(&working_dir, &format!("=== WORKFLOW END: phase={:?}, iteration={} ===", state.phase, state.iteration));
+
+    // If plan was approved, request user approval before finishing
+    if state.phase == Phase::Complete {
+        log_workflow(&working_dir, ">>> Plan complete - requesting user approval");
+
+        // Generate plan summary
+        let plan_path = working_dir.join(&state.plan_file);
+        let summary = match summarize_plan(&plan_path, &output_tx).await {
+            Ok(s) => s,
+            Err(e) => {
+                log_workflow(&working_dir, &format!("Failed to summarize plan: {}", e));
+                format!("(Could not generate summary: {})\n\nThe plan has been approved by AI review.", e)
+            }
+        };
+
+        let _ = output_tx.send(Event::Output("".to_string()));
+        let _ = output_tx.send(Event::Output("=== PLAN APPROVED BY AI ===".to_string()));
+        let _ = output_tx.send(Event::Output(format!("Completed after {} iteration(s)", state.iteration)));
+        let _ = output_tx.send(Event::Output("Waiting for your approval...".to_string()));
+
+        // Request user approval
+        let _ = output_tx.send(Event::RequestUserApproval(summary));
+
+        // Wait for user response
+        log_workflow(&working_dir, "Waiting for user approval response...");
+        match approval_rx.recv().await {
+            Some(UserApprovalResponse::Accept) => {
+                log_workflow(&working_dir, "User ACCEPTED the plan");
+                let _ = output_tx.send(Event::Output("[planning] User accepted the plan!".to_string()));
+                return Ok(WorkflowResult::Accepted);
+            }
+            Some(UserApprovalResponse::Decline(feedback)) => {
+                log_workflow(&working_dir, &format!("User DECLINED with feedback: {}", feedback));
+                let _ = output_tx.send(Event::Output(format!("[planning] User requested changes: {}", feedback)));
+                return Ok(WorkflowResult::NeedsRestart { user_feedback: feedback });
+            }
+            None => {
+                log_workflow(&working_dir, "Approval channel closed - treating as accept");
+                return Ok(WorkflowResult::Accepted);
+            }
+        }
+    }
+
+    // Max iterations reached without approval
     let _ = output_tx.send(Event::Output("".to_string()));
     let _ = output_tx.send(Event::Output("=== WORKFLOW COMPLETE ===".to_string()));
-    if state.phase == Phase::Complete {
-        let _ = output_tx.send(Event::Output(format!("Plan APPROVED after {} iteration(s)", state.iteration)));
-    } else {
-        let _ = output_tx.send(Event::Output("Max iterations reached. Manual review recommended.".to_string()));
-    }
+    let _ = output_tx.send(Event::Output("Max iterations reached. Manual review recommended.".to_string()));
 
     Ok(WorkflowResult::Accepted)
 }

@@ -8,6 +8,16 @@ use ratatui::{
     Frame,
 };
 
+fn format_bytes(bytes: usize) -> String {
+    if bytes < 1024 {
+        format!("{} B", bytes)
+    } else if bytes < 1024 * 1024 {
+        format!("{:.1} KB", bytes as f64 / 1024.0)
+    } else {
+        format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
+    }
+}
+
 pub fn draw(frame: &mut Frame, app: &App) {
     // Main layout: header, content, footer
     let chunks = Layout::default()
@@ -120,6 +130,7 @@ fn draw_streaming(frame: &mut Frame, app: &App, area: Rect) {
 
     let inner_area = streaming_block.inner(area);
     let visible_height = inner_area.height as usize;
+    let inner_width = inner_area.width;
 
     let lines: Vec<Line> = if app.streaming_lines.is_empty() {
         vec![Line::from(Span::styled(
@@ -148,7 +159,7 @@ fn draw_streaming(frame: &mut Frame, app: &App, area: Rect) {
 
     // Calculate wrapped line count WITHOUT block (line_count adds block padding which we don't want)
     let paragraph_for_count = Paragraph::new(lines.clone()).wrap(Wrap { trim: false });
-    let wrapped_line_count = paragraph_for_count.line_count(inner_area.width);
+    let wrapped_line_count = paragraph_for_count.line_count(inner_width);
 
     // Scroll to show the latest content at the bottom
     let scroll_offset = if wrapped_line_count > visible_height {
@@ -156,6 +167,16 @@ fn draw_streaming(frame: &mut Frame, app: &App, area: Rect) {
     } else {
         0
     };
+
+    // Debug: show scroll info in title
+    let debug_title = format!(
+        " Claude Streaming [lines:{} wrap:{} vis:{} scroll:{}] ",
+        app.streaming_lines.len(),
+        wrapped_line_count,
+        visible_height,
+        scroll_offset
+    );
+    let streaming_block = streaming_block.title(debug_title);
 
     let paragraph = Paragraph::new(lines)
         .block(streaming_block)
@@ -176,6 +197,25 @@ fn draw_streaming(frame: &mut Frame, app: &App, area: Rect) {
     }
 }
 
+fn format_tokens(tokens: u64) -> String {
+    if tokens < 1000 {
+        format!("{}", tokens)
+    } else if tokens < 1_000_000 {
+        format!("{:.1}K", tokens as f64 / 1000.0)
+    } else {
+        format!("{:.1}M", tokens as f64 / 1_000_000.0)
+    }
+}
+
+fn format_duration(d: std::time::Duration) -> String {
+    let secs = d.as_secs();
+    if secs < 60 {
+        format!("{}s", secs)
+    } else {
+        format!("{}m {:02}s", secs / 60, secs % 60)
+    }
+}
+
 fn draw_stats(frame: &mut Frame, app: &App, area: Rect) {
     let elapsed = app.elapsed();
     let minutes = elapsed.as_secs() / 60;
@@ -192,7 +232,6 @@ fn draw_stats(frame: &mut Frame, app: &App, area: Rect) {
     };
 
     let mut stats_text = vec![
-        Line::from(""),
         Line::from(vec![
             Span::styled(" Status", Style::default().add_modifier(Modifier::BOLD)),
         ]),
@@ -200,50 +239,105 @@ fn draw_stats(frame: &mut Frame, app: &App, area: Rect) {
             Span::raw(" Phase: "),
             Span::styled(app.phase_name(), Style::default().fg(phase_color).bold()),
         ]),
-        Line::from(format!(" Iteration: {}/{}", iter, max_iter)),
-        Line::from(""),
-        Line::from(vec![
-            Span::styled(" Stats", Style::default().add_modifier(Modifier::BOLD)),
-        ]),
-        Line::from(format!(" Elapsed: {}m {:02}s", minutes, seconds)),
-        Line::from(format!(" Cost: ${:.4}", app.total_cost)),
+        Line::from(format!(" Iter: {}/{}", iter, max_iter)),
+        Line::from(format!(" Time: {}m {:02}s", minutes, seconds)),
         Line::from(""),
     ];
 
-    // Add active tools section
+    // Token stats
     stats_text.push(Line::from(vec![
-        Span::styled(" Active Tools", Style::default().add_modifier(Modifier::BOLD)),
+        Span::styled(" Tokens", Style::default().add_modifier(Modifier::BOLD)),
+    ]));
+    stats_text.push(Line::from(vec![
+        Span::styled(" In: ", Style::default().fg(Color::DarkGray)),
+        Span::styled(format_tokens(app.total_input_tokens), Style::default().fg(Color::Cyan)),
+        Span::styled("  Out: ", Style::default().fg(Color::DarkGray)),
+        Span::styled(format_tokens(app.total_output_tokens), Style::default().fg(Color::Green)),
+    ]));
+    if app.total_cache_read_tokens > 0 || app.total_cache_creation_tokens > 0 {
+        stats_text.push(Line::from(vec![
+            Span::styled(" Cache: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(format!("{}r/{}w", format_tokens(app.total_cache_read_tokens), format_tokens(app.total_cache_creation_tokens)), Style::default().fg(Color::Blue)),
+        ]));
+    }
+    stats_text.push(Line::from(""));
+
+    // Streaming stats
+    stats_text.push(Line::from(vec![
+        Span::styled(" Stream", Style::default().add_modifier(Modifier::BOLD)),
+    ]));
+    stats_text.push(Line::from(vec![
+        Span::styled(" Recv: ", Style::default().fg(Color::DarkGray)),
+        Span::styled(format_bytes(app.bytes_received), Style::default().fg(Color::White)),
+    ]));
+    stats_text.push(Line::from(vec![
+        Span::styled(" Rate: ", Style::default().fg(Color::DarkGray)),
+        Span::styled(format!("{}/s", format_bytes(app.bytes_per_second as usize)), Style::default().fg(if app.bytes_per_second > 100.0 { Color::Green } else { Color::Yellow })),
+    ]));
+    stats_text.push(Line::from(format!(" Cost: ${:.4}", app.total_cost)));
+    stats_text.push(Line::from(""));
+
+    // Tool stats
+    stats_text.push(Line::from(vec![
+        Span::styled(" Tools", Style::default().add_modifier(Modifier::BOLD)),
+    ]));
+    stats_text.push(Line::from(vec![
+        Span::styled(" Calls: ", Style::default().fg(Color::DarkGray)),
+        Span::styled(format!("{}", app.tool_call_count), Style::default().fg(Color::White)),
     ]));
 
-    if app.active_tools.is_empty() {
-        stats_text.push(Line::from(Span::styled(
-            " (none)",
-            Style::default().fg(Color::DarkGray),
-        )));
-    } else {
-        for (name, start_time) in &app.active_tools {
+    // Active tools (compact)
+    if !app.active_tools.is_empty() {
+        for (name, start_time) in app.active_tools.iter().take(3) {
             let elapsed = start_time.elapsed().as_secs();
-            let tool_line = format!(" {} ({}s)", name, elapsed);
+            stats_text.push(Line::from(vec![
+                Span::styled(" ▶ ", Style::default().fg(Color::Yellow)),
+                Span::styled(format!("{} ({}s)", name, elapsed), Style::default().fg(Color::Yellow)),
+            ]));
+        }
+        if app.active_tools.len() > 3 {
             stats_text.push(Line::from(Span::styled(
-                tool_line,
-                Style::default().fg(Color::Yellow),
+                format!("   +{} more", app.active_tools.len() - 3),
+                Style::default().fg(Color::DarkGray),
             )));
         }
     }
-
     stats_text.push(Line::from(""));
+
+    // Phase timing (if any recorded)
+    if !app.phase_times.is_empty() || app.current_phase_start.is_some() {
+        stats_text.push(Line::from(vec![
+            Span::styled(" Timing", Style::default().add_modifier(Modifier::BOLD)),
+        ]));
+        for (phase, duration) in &app.phase_times {
+            stats_text.push(Line::from(vec![
+                Span::styled(format!(" {}: ", phase), Style::default().fg(Color::DarkGray)),
+                Span::styled(format_duration(*duration), Style::default().fg(Color::White)),
+            ]));
+        }
+        // Show current phase timing
+        if let Some((phase, start)) = &app.current_phase_start {
+            stats_text.push(Line::from(vec![
+                Span::styled(format!(" {}: ", phase), Style::default().fg(Color::Yellow)),
+                Span::styled(format_duration(start.elapsed()), Style::default().fg(Color::Yellow)),
+            ]));
+        }
+        stats_text.push(Line::from(""));
+    }
+
+    // Keys (compact)
     stats_text.push(Line::from(vec![
-        Span::styled(" Keys", Style::default().add_modifier(Modifier::BOLD)),
+        Span::styled(" Keys: ", Style::default().fg(Color::DarkGray)),
+        Span::styled("j/k", Style::default().fg(Color::White)),
+        Span::styled(" scroll ", Style::default().fg(Color::DarkGray)),
+        Span::styled("q", Style::default().fg(Color::White)),
+        Span::styled(" quit", Style::default().fg(Color::DarkGray)),
     ]));
-    stats_text.push(Line::from(" j/↓: scroll down"));
-    stats_text.push(Line::from(" k/↑: scroll up"));
-    stats_text.push(Line::from(" g: top  G: bottom"));
-    stats_text.push(Line::from(" q: quit"));
 
     let stats = Paragraph::new(stats_text).block(
         Block::default()
             .borders(Borders::ALL)
-            .title(" Info ")
+            .title(" Stats ")
             .border_style(Style::default().fg(Color::Magenta)),
     );
 
