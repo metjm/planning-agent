@@ -1,7 +1,6 @@
 use anyhow::Result;
 use crossterm::event::{Event as CrosstermEvent, KeyEvent, KeyEventKind};
 use futures::StreamExt;
-use std::path::PathBuf;
 use std::time::Duration;
 use tokio::sync::mpsc;
 
@@ -54,18 +53,13 @@ pub enum Event {
     SessionStopReason { session_id: usize, reason: String },
     SessionWorkflowComplete { session_id: usize },
     SessionWorkflowError { session_id: usize, error: String },
-
-    // Implementation subprocess events
-    SessionImplOutput { session_id: usize, line: String },
-    SessionImplComplete { session_id: usize, success: bool },
 }
 
 /// User's response to approval request
 #[derive(Debug, Clone)]
 pub enum UserApprovalResponse {
     Accept,
-    AcceptAndImplement(PathBuf), // Accept and launch Claude to implement
-    Decline(String),             // Contains user's feedback for changes
+    Decline(String), // Contains user's feedback for changes
 }
 
 pub struct EventHandler {
@@ -250,20 +244,6 @@ impl SessionEventSender {
         let _ = self.inner.send(Event::SessionWorkflowError {
             session_id: self.session_id,
             error,
-        });
-    }
-
-    pub fn send_impl_output(&self, line: String) {
-        let _ = self.inner.send(Event::SessionImplOutput {
-            session_id: self.session_id,
-            line,
-        });
-    }
-
-    pub fn send_impl_complete(&self, success: bool) {
-        let _ = self.inner.send(Event::SessionImplComplete {
-            session_id: self.session_id,
-            success,
         });
     }
 

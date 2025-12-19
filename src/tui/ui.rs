@@ -61,7 +61,6 @@ fn draw_tab_bar(frame: &mut Frame, tab_manager: &TabManager, area: Rect) {
             SessionStatus::InputPending => "...",
             SessionStatus::Planning => "",
             SessionStatus::AwaitingApproval => "?",
-            SessionStatus::Implementing => "*",
             SessionStatus::Complete => "+",
             SessionStatus::Error => "!",
         };
@@ -886,9 +885,9 @@ fn draw_feedback_popup(frame: &mut Frame, session: &Session, area: Rect) {
 fn draw_tab_input_overlay(frame: &mut Frame, session: &Session) {
     let area = frame.area();
 
-    // Create a centered popup
+    // Create a centered popup - increased height for multiline input
     let popup_width = (area.width as f32 * 0.6).min(80.0) as u16;
-    let popup_height = 10;
+    let popup_height = 15;
     let popup_x = (area.width.saturating_sub(popup_width)) / 2;
     let popup_y = (area.height.saturating_sub(popup_height)) / 2;
 
@@ -901,7 +900,7 @@ fn draw_tab_input_overlay(frame: &mut Frame, session: &Session) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3), // Title
-            Constraint::Min(3),    // Input
+            Constraint::Min(5),    // Input - more space for multiline
             Constraint::Length(2), // Instructions
         ])
         .split(popup_area);
@@ -919,7 +918,7 @@ fn draw_tab_input_overlay(frame: &mut Frame, session: &Session) {
     );
     frame.render_widget(title, chunks[0]);
 
-    // Input with cursor
+    // Input with cursor - now supports multiline with wrapping
     let input_text = if session.tab_input.is_empty() {
         "What do you want to plan?".to_string()
     } else {
@@ -932,28 +931,73 @@ fn draw_tab_input_overlay(frame: &mut Frame, session: &Session) {
         Style::default().fg(Color::White)
     };
 
-    let input = Paragraph::new(input_text)
-        .style(input_style)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::Yellow)),
-        );
-    frame.render_widget(input, chunks[1]);
+    let input_block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Yellow));
 
-    // Show cursor
-    let inner = chunks[1].inner(ratatui::layout::Margin::new(1, 1));
-    if !session.tab_input.is_empty() {
-        let cursor_x = inner.x + session.tab_input_cursor as u16;
-        frame.set_cursor_position((cursor_x.min(inner.x + inner.width - 1), inner.y));
+    let inner = input_block.inner(chunks[1]);
+    let input_width = inner.width as usize;
+    let input_height = inner.height as usize;
+
+    // Calculate scroll position based on cursor position
+    let (cursor_line, cursor_col) = session.get_tab_input_cursor_position();
+
+    // Calculate visual cursor position considering line wrapping
+    let mut visual_row = 0;
+    let mut visual_col = cursor_col;
+
+    for (i, line) in session.tab_input.split('\n').enumerate() {
+        if i < cursor_line {
+            // Add wrapped rows for previous lines
+            let line_rows = if line.is_empty() {
+                1
+            } else {
+                line.len().div_ceil(input_width)
+            };
+            visual_row += line_rows;
+        } else if i == cursor_line {
+            // Calculate visual position within current line due to wrapping
+            visual_row += cursor_col / input_width;
+            visual_col = cursor_col % input_width;
+            break;
+        }
     }
 
-    // Instructions
+    // Adjust scroll to keep cursor visible
+    let scroll = if visual_row >= session.tab_input_scroll + input_height {
+        visual_row.saturating_sub(input_height - 1)
+    } else if visual_row < session.tab_input_scroll {
+        visual_row
+    } else {
+        session.tab_input_scroll
+    };
+
+    let input = Paragraph::new(input_text)
+        .style(input_style)
+        .block(input_block)
+        .wrap(Wrap { trim: false })
+        .scroll((scroll as u16, 0));
+    frame.render_widget(input, chunks[1]);
+
+    // Show cursor - now with proper 2D positioning
+    if !session.tab_input.is_empty() {
+        let cursor_x = inner.x + visual_col as u16;
+        let cursor_y = inner.y + (visual_row - scroll) as u16;
+        if cursor_y < inner.y + inner.height {
+            frame.set_cursor_position((cursor_x.min(inner.x + inner.width - 1), cursor_y));
+        }
+    }
+
+    // Instructions - updated with new keybindings
     let help = Paragraph::new(Line::from(vec![
         Span::styled("[Enter]", Style::default().fg(Color::Green)),
         Span::raw(" Start  "),
+        Span::styled("[Shift+Enter]", Style::default().fg(Color::Blue)),
+        Span::raw(" Newline  "),
         Span::styled("[Esc]", Style::default().fg(Color::Red)),
-        Span::raw(" Cancel"),
+        Span::raw(" Cancel  "),
+        Span::styled("[Ctrl+C/q]", Style::default().fg(Color::Red)),
+        Span::raw(" Quit"),
     ]))
     .style(Style::default().fg(Color::DarkGray));
     frame.render_widget(help, chunks[2]);

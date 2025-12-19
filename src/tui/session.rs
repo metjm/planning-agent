@@ -44,7 +44,6 @@ pub enum SessionStatus {
     InputPending,
     Planning,
     AwaitingApproval,
-    Implementing,
     Complete,
     Error,
 }
@@ -83,6 +82,7 @@ pub struct Session {
     pub input_mode: InputMode,
     pub tab_input: String,
     pub tab_input_cursor: usize,
+    pub tab_input_scroll: usize,
 
     // Error state
     pub error_state: Option<String>,
@@ -108,9 +108,6 @@ pub struct Session {
     // Session-specific workflow handles
     pub workflow_handle: Option<JoinHandle<Result<WorkflowResult>>>,
     pub approval_tx: Option<mpsc::Sender<UserApprovalResponse>>,
-
-    // Implementation handle (for subprocess)
-    pub impl_handle: Option<tokio::process::Child>,
 }
 
 #[allow(dead_code)]
@@ -144,6 +141,7 @@ impl Session {
             input_mode: InputMode::Normal,
             tab_input: String::new(),
             tab_input_cursor: 0,
+            tab_input_scroll: 0,
 
             error_state: None,
 
@@ -166,7 +164,6 @@ impl Session {
 
             workflow_handle: None,
             approval_tx: None,
-            impl_handle: None,
         }
     }
 
@@ -366,9 +363,6 @@ impl Session {
                 self.status = SessionStatus::Complete;
                 self.running = false;
             }
-            WorkflowResult::AcceptAndImplement { .. } => {
-                self.status = SessionStatus::Implementing;
-            }
             WorkflowResult::NeedsRestart { .. } => {
                 self.status = SessionStatus::Planning;
             }
@@ -399,6 +393,90 @@ impl Session {
         if self.tab_input_cursor < self.tab_input.len() {
             self.tab_input_cursor += 1;
         }
+    }
+
+    /// Insert a newline into the tab input buffer
+    pub fn insert_tab_input_newline(&mut self) {
+        self.tab_input.insert(self.tab_input_cursor, '\n');
+        self.tab_input_cursor += 1;
+    }
+
+    /// Move tab input cursor up to the previous line
+    pub fn move_tab_input_cursor_up(&mut self) {
+        let text_before = &self.tab_input[..self.tab_input_cursor];
+
+        // Find the start of the current line
+        let current_line_start = text_before.rfind('\n').map(|p| p + 1).unwrap_or(0);
+
+        // If we're on the first line, do nothing
+        if current_line_start == 0 {
+            return;
+        }
+
+        // Column position in current line
+        let col = self.tab_input_cursor - current_line_start;
+
+        // Find the start of the previous line
+        let prev_line_end = current_line_start - 1; // Position of the '\n' before current line
+        let prev_line_start = self.tab_input[..prev_line_end]
+            .rfind('\n')
+            .map(|p| p + 1)
+            .unwrap_or(0);
+
+        // Length of previous line
+        let prev_line_len = prev_line_end - prev_line_start;
+
+        // Move to the same column or end of previous line
+        self.tab_input_cursor = prev_line_start + col.min(prev_line_len);
+    }
+
+    /// Move tab input cursor down to the next line
+    pub fn move_tab_input_cursor_down(&mut self) {
+        let text_before = &self.tab_input[..self.tab_input_cursor];
+        let text_after = &self.tab_input[self.tab_input_cursor..];
+
+        // Find the start of the current line
+        let current_line_start = text_before.rfind('\n').map(|p| p + 1).unwrap_or(0);
+
+        // Column position in current line
+        let col = self.tab_input_cursor - current_line_start;
+
+        // Find the end of current line (next newline after cursor)
+        let next_newline = text_after.find('\n');
+
+        // If there's no next line, do nothing
+        let Some(offset) = next_newline else {
+            return;
+        };
+
+        // Start of next line
+        let next_line_start = self.tab_input_cursor + offset + 1;
+
+        // Find end of next line
+        let next_line_end = self.tab_input[next_line_start..]
+            .find('\n')
+            .map(|p| next_line_start + p)
+            .unwrap_or(self.tab_input.len());
+
+        // Length of next line
+        let next_line_len = next_line_end - next_line_start;
+
+        // Move to the same column or end of next line
+        self.tab_input_cursor = next_line_start + col.min(next_line_len);
+    }
+
+    /// Get the current line number and column for the tab input cursor
+    pub fn get_tab_input_cursor_position(&self) -> (usize, usize) {
+        let text_before = &self.tab_input[..self.tab_input_cursor];
+        let line = text_before.matches('\n').count();
+        let line_start = text_before.rfind('\n').map(|p| p + 1).unwrap_or(0);
+        let col = self.tab_input_cursor - line_start;
+        (line, col)
+    }
+
+    /// Get the total number of lines in the tab input
+    pub fn get_tab_input_line_count(&self) -> usize {
+        self.tab_input.matches('\n').count() + 1
     }
 }
 
@@ -489,5 +567,126 @@ mod tests {
         assert_eq!(session.name, "test-feature");
         assert_eq!(session.input_mode, InputMode::Normal);
         assert_eq!(session.status, SessionStatus::Planning);
+    }
+
+    #[test]
+    fn test_insert_newline() {
+        let mut session = Session::new(0);
+        session.tab_input = "hello".to_string();
+        session.tab_input_cursor = 5;
+
+        session.insert_tab_input_newline();
+
+        assert_eq!(session.tab_input, "hello\n");
+        assert_eq!(session.tab_input_cursor, 6);
+
+        // Insert newline in the middle
+        session.tab_input = "hello world".to_string();
+        session.tab_input_cursor = 5;
+        session.insert_tab_input_newline();
+
+        assert_eq!(session.tab_input, "hello\n world");
+        assert_eq!(session.tab_input_cursor, 6);
+    }
+
+    #[test]
+    fn test_cursor_up_movement() {
+        let mut session = Session::new(0);
+        session.tab_input = "line1\nline2\nline3".to_string();
+        session.tab_input_cursor = 14; // At 'n' in "line3"
+
+        session.move_tab_input_cursor_up();
+        assert_eq!(session.tab_input_cursor, 8); // At 'n' in "line2"
+
+        session.move_tab_input_cursor_up();
+        assert_eq!(session.tab_input_cursor, 2); // At 'n' in "line1"
+    }
+
+    #[test]
+    fn test_cursor_down_movement() {
+        let mut session = Session::new(0);
+        session.tab_input = "line1\nline2\nline3".to_string();
+        session.tab_input_cursor = 2; // At 'n' in "line1"
+
+        session.move_tab_input_cursor_down();
+        assert_eq!(session.tab_input_cursor, 8); // At 'n' in "line2"
+
+        session.move_tab_input_cursor_down();
+        assert_eq!(session.tab_input_cursor, 14); // At 'n' in "line3"
+    }
+
+    #[test]
+    fn test_cursor_up_at_first_line() {
+        let mut session = Session::new(0);
+        session.tab_input = "line1\nline2".to_string();
+        session.tab_input_cursor = 2; // At 'n' in "line1"
+
+        session.move_tab_input_cursor_up();
+        assert_eq!(session.tab_input_cursor, 2); // Should stay at same position
+    }
+
+    #[test]
+    fn test_cursor_down_at_last_line() {
+        let mut session = Session::new(0);
+        session.tab_input = "line1\nline2".to_string();
+        session.tab_input_cursor = 8; // At 'n' in "line2"
+
+        session.move_tab_input_cursor_down();
+        assert_eq!(session.tab_input_cursor, 8); // Should stay at same position
+    }
+
+    #[test]
+    fn test_cursor_up_clamps_to_shorter_line() {
+        let mut session = Session::new(0);
+        session.tab_input = "hi\nworld".to_string();
+        session.tab_input_cursor = 7; // At 'l' in "world" (col 4)
+
+        session.move_tab_input_cursor_up();
+        assert_eq!(session.tab_input_cursor, 2); // Clamped to end of "hi" (col 2)
+    }
+
+    #[test]
+    fn test_cursor_down_clamps_to_shorter_line() {
+        let mut session = Session::new(0);
+        session.tab_input = "world\nhi".to_string();
+        session.tab_input_cursor = 4; // At 'l' in "world" (col 4)
+
+        session.move_tab_input_cursor_down();
+        assert_eq!(session.tab_input_cursor, 8); // Clamped to end of "hi" (col 2)
+    }
+
+    #[test]
+    fn test_get_tab_input_cursor_position() {
+        let mut session = Session::new(0);
+        session.tab_input = "line1\nline2\nline3".to_string();
+
+        session.tab_input_cursor = 0;
+        assert_eq!(session.get_tab_input_cursor_position(), (0, 0));
+
+        session.tab_input_cursor = 3;
+        assert_eq!(session.get_tab_input_cursor_position(), (0, 3));
+
+        session.tab_input_cursor = 6; // Start of line2
+        assert_eq!(session.get_tab_input_cursor_position(), (1, 0));
+
+        session.tab_input_cursor = 14; // At 'n' in line3
+        assert_eq!(session.get_tab_input_cursor_position(), (2, 2));
+    }
+
+    #[test]
+    fn test_get_tab_input_line_count() {
+        let mut session = Session::new(0);
+
+        session.tab_input = "single line".to_string();
+        assert_eq!(session.get_tab_input_line_count(), 1);
+
+        session.tab_input = "line1\nline2".to_string();
+        assert_eq!(session.get_tab_input_line_count(), 2);
+
+        session.tab_input = "line1\nline2\nline3".to_string();
+        assert_eq!(session.get_tab_input_line_count(), 3);
+
+        session.tab_input = "".to_string();
+        assert_eq!(session.get_tab_input_line_count(), 1);
     }
 }
