@@ -1,5 +1,4 @@
 use std::fs;
-use std::path::PathBuf;
 
 // Embed skill files at compile time
 const PLANNING_SKILL: &str = include_str!("../skills/planning/SKILL.md");
@@ -27,9 +26,4 @@ pub fn install_skills_if_needed() -> anyhow::Result<()> {
     }
 
     Ok(())
-}
-
-/// Get the path where skills are installed
-pub fn skills_path() -> Option<PathBuf> {
-    dirs::home_dir().map(|h| h.join(".claude/skills"))
 }

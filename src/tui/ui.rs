@@ -347,7 +347,7 @@ fn draw_stats(frame: &mut Frame, app: &App, area: Rect) {
 fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
     let phase = app.workflow_state.as_ref().map(|s| &s.phase);
 
-    let phases = vec![
+    let phases = [
         ("Planning", Phase::Planning),
         ("Reviewing", Phase::Reviewing),
         ("Revising", Phase::Revising),
@@ -359,12 +359,12 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
 
     for (i, (name, p)) in phases.iter().enumerate() {
         let is_current = phase == Some(p);
-        let is_complete = match (phase, p) {
-            (Some(Phase::Complete), _) => true,
-            (Some(Phase::Revising), Phase::Planning) => true,
-            (Some(Phase::Reviewing), Phase::Planning) => true,
-            _ => false,
-        };
+        let is_complete = matches!(
+            (phase, p),
+            (Some(Phase::Complete), _)
+                | (Some(Phase::Revising), Phase::Planning)
+                | (Some(Phase::Reviewing), Phase::Planning)
+        );
 
         let style = if is_current {
             Style::default().fg(Color::Yellow).bold()
@@ -420,18 +420,18 @@ fn parse_markdown_line(line: &str) -> Line<'static> {
     let trimmed = line.trim();
 
     // Headers
-    if trimmed.starts_with("## ") {
+    if let Some(header) = trimmed.strip_prefix("## ") {
         return Line::from(vec![
             Span::styled(
-                trimmed[3..].to_string(),
+                header.to_string(),
                 Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
             ),
         ]);
     }
-    if trimmed.starts_with("# ") {
+    if let Some(header) = trimmed.strip_prefix("# ") {
         return Line::from(vec![
             Span::styled(
-                trimmed[2..].to_string(),
+                header.to_string(),
                 Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
             ),
         ]);
@@ -533,7 +533,7 @@ fn draw_choice_popup(frame: &mut Frame, app: &App, area: Rect) {
     let summary_lines: Vec<Line> = app
         .plan_summary
         .lines()
-        .map(|line| parse_markdown_line(line))
+        .map(parse_markdown_line)
         .collect();
 
     let total_lines = summary_lines.len();

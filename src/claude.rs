@@ -1,6 +1,5 @@
 use crate::tui::{Event, TokenUsage};
 use anyhow::{Context, Result};
-use chrono;
 use serde::Deserialize;
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -165,8 +164,7 @@ impl ClaudeInvocation {
         // Parse JSON output - Claude outputs multiple JSON lines (NDJSON), find the result line
         let result: ClaudeResult = stdout
             .lines()
-            .filter(|line| line.contains("\"type\":\"result\""))
-            .next()
+            .find(|line| line.contains("\"type\":\"result\""))
             .ok_or_else(|| anyhow::anyhow!("No result line found in claude output"))
             .and_then(|line| {
                 serde_json::from_str(line)
@@ -319,7 +317,7 @@ impl ClaudeInvocation {
                                                                             item.get("input")
                                                                                 .and_then(|i| i.get("command"))
                                                                                 .and_then(|c| c.as_str())
-                                                                                .map(|cmd| extract_bash_command(cmd))
+                                                                                .map(extract_bash_command)
                                                                                 .unwrap_or_else(|| "Bash".to_string())
                                                                         } else {
                                                                             name.to_string()

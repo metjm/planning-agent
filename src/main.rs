@@ -11,7 +11,7 @@ use phases::{run_planning_phase, run_review_phase, run_revision_phase};
 use state::{parse_feedback_status, FeedbackStatus, Phase, State};
 use std::fs::OpenOptions;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tui::{App, ApprovalMode, Event, EventHandler, UserApprovalResponse};
@@ -24,7 +24,7 @@ fn get_run_id() -> String {
     }).clone()
 }
 
-fn log_workflow(working_dir: &PathBuf, message: &str) {
+fn log_workflow(working_dir: &Path, message: &str) {
     let run_id = get_run_id();
     let log_path = working_dir.join(format!(".planning-agent/workflow-{}.log", run_id));
     if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(&log_path) {
@@ -420,9 +420,6 @@ async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
             }
             Event::PhaseStarted(phase) => {
                 app.start_phase(phase);
-            }
-            Event::ToolOutput { tool_name, lines } => {
-                app.add_tool_output_lines(tool_name, lines);
             }
         }
 

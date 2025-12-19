@@ -32,8 +32,6 @@ pub enum Event {
     TokenUsage(TokenUsage),
     /// Phase timing: phase started
     PhaseStarted(String),
-    /// Tool output line count
-    ToolOutput { tool_name: String, lines: usize },
 }
 
 /// User's response to approval request
@@ -63,10 +61,10 @@ impl EventHandler {
                     maybe_event = event_stream.next() => {
                         match maybe_event {
                             Some(Ok(CrosstermEvent::Key(key))) => {
-                                if key.kind == KeyEventKind::Press {
-                                    if event_tx.send(Event::Key(key)).is_err() {
-                                        break;
-                                    }
+                                if key.kind == KeyEventKind::Press
+                                    && event_tx.send(Event::Key(key)).is_err()
+                                {
+                                    break;
                                 }
                             }
                             Some(Err(_)) | None => break,

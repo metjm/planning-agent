@@ -73,13 +73,13 @@ impl State {
     }
 
     pub fn transition(&mut self, to: Phase) -> Result<()> {
-        let valid = match (&self.phase, &to) {
-            (Phase::Planning, Phase::Reviewing) => true,
-            (Phase::Reviewing, Phase::Revising) => true,
-            (Phase::Reviewing, Phase::Complete) => true,
-            (Phase::Revising, Phase::Reviewing) => true,
-            _ => false,
-        };
+        let valid = matches!(
+            (&self.phase, &to),
+            (Phase::Planning, Phase::Reviewing)
+                | (Phase::Reviewing, Phase::Revising)
+                | (Phase::Reviewing, Phase::Complete)
+                | (Phase::Revising, Phase::Reviewing)
+        );
 
         if valid {
             self.phase = to;

@@ -48,7 +48,6 @@ pub struct App {
 
     // Tool stats
     pub tool_call_count: usize,
-    pub tool_output_lines: HashMap<String, usize>,
 
     // Streaming rate
     pub last_bytes_sample: (Instant, usize),
@@ -84,7 +83,6 @@ impl App {
             current_phase_start: None,
             // Tool stats
             tool_call_count: 0,
-            tool_output_lines: HashMap::new(),
             // Streaming rate
             last_bytes_sample: (Instant::now(), 0),
             bytes_per_second: 0.0,
@@ -120,10 +118,6 @@ impl App {
             *self.phase_times.entry(prev_phase).or_default() += duration;
         }
         self.current_phase_start = Some((phase, Instant::now()));
-    }
-
-    pub fn add_tool_output_lines(&mut self, tool_name: String, lines: usize) {
-        *self.tool_output_lines.entry(tool_name).or_default() += lines;
     }
 
     pub fn start_approval(&mut self, summary: String) {
@@ -174,14 +168,6 @@ impl App {
 
     pub fn tool_started(&mut self, name: String) {
         self.active_tools.push((name, Instant::now()));
-    }
-
-    pub fn tool_finished(&mut self, name: &str) {
-        self.active_tools.retain(|(n, _)| n != name);
-    }
-
-    pub fn clear_active_tools(&mut self) {
-        self.active_tools.clear();
     }
 
     pub fn elapsed(&self) -> Duration {
