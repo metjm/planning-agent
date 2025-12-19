@@ -52,6 +52,7 @@ fn extract_bash_command(cmd: &str) -> String {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)] // Fields are part of Claude API response, kept for completeness
 pub struct ClaudeResult {
     #[serde(rename = "type")]
     pub result_type: Option<String>,
@@ -189,10 +190,12 @@ impl ClaudeInvocation {
         let mut cmd = Command::new("claude");
 
         // Non-interactive mode with streaming JSON output
+        // Note: --verbose is required when using -p with stream-json
         cmd.arg("-p")
             .arg(&self.prompt)
             .arg("--output-format")
-            .arg("stream-json");
+            .arg("stream-json")
+            .arg("--verbose");
 
         // Add system prompt if provided
         if let Some(ref system_prompt) = self.append_system_prompt {
