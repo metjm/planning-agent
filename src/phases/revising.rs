@@ -1,13 +1,19 @@
 use crate::claude::ClaudeInvocation;
 use crate::state::State;
+use crate::tui::Event;
 use anyhow::Result;
 use std::path::Path;
+use tokio::sync::mpsc;
 
 const ALLOWED_TOOLS: &[&str] = &[
     "Read", "Glob", "Grep", "Edit", "Write", "WebSearch", "WebFetch",
 ];
 
-pub async fn run_revision_phase(state: &State, working_dir: &Path) -> Result<()> {
+pub async fn run_revision_phase(
+    state: &State,
+    working_dir: &Path,
+    output_tx: mpsc::UnboundedSender<Event>,
+) -> Result<()> {
     let prompt = format!(
         r#"Read the feedback at: {}
 Read the current plan at: {}
@@ -35,12 +41,14 @@ Preserve the structure and good parts of the existing plan."#;
         .with_system_prompt(system_prompt)
         .with_allowed_tools(ALLOWED_TOOLS.iter().map(|s| s.to_string()).collect())
         .with_working_dir(working_dir.to_path_buf())
-        .execute()
+        .execute_streaming(output_tx.clone())
         .await?;
 
-    eprintln!("[planning-agent] Revision phase complete");
-    eprintln!("[planning-agent] Result preview: {}...",
-        result.result.chars().take(200).collect::<String>());
+    let _ = output_tx.send(Event::Output("[planning-agent] Revision phase complete".to_string()));
+    let _ = output_tx.send(Event::Output(format!(
+        "[planning-agent] Result preview: {}...",
+        result.result.chars().take(200).collect::<String>()
+    )));
 
     Ok(())
 }

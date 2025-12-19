@@ -8,10 +8,29 @@ use clap::Parser;
 use crossterm::event::{KeyCode, KeyModifiers};
 use phases::{run_planning_phase, run_review_phase, run_revision_phase};
 use state::{parse_feedback_status, FeedbackStatus, Phase, State};
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::path::PathBuf;
 use std::time::Duration;
 use tokio::sync::mpsc;
-use tui::{App, Event, EventHandler};
+use tui::{App, ApprovalMode, Event, EventHandler, UserApprovalResponse};
+
+fn get_run_id() -> String {
+    use std::sync::OnceLock;
+    static RUN_ID: OnceLock<String> = OnceLock::new();
+    RUN_ID.get_or_init(|| {
+        chrono::Local::now().format("%Y%m%d-%H%M%S").to_string()
+    }).clone()
+}
+
+fn log_workflow(working_dir: &PathBuf, message: &str) {
+    let run_id = get_run_id();
+    let log_path = working_dir.join(format!(".planning-agent/workflow-{}.log", run_id));
+    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(&log_path) {
+        let timestamp = chrono::Local::now().format("%H:%M:%S");
+        let _ = writeln!(f, "[{}] {}", timestamp, message);
+    }
+}
 
 #[derive(Parser)]
 #[command(name = "planning")]
@@ -44,14 +63,42 @@ struct Cli {
     headless: bool,
 }
 
+fn debug_log(start: std::time::Instant, msg: &str) {
+    use std::io::Write;
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("/tmp/planning-debug.log")
+    {
+        let now = chrono::Local::now().format("%H:%M:%S%.3f");
+        let _ = writeln!(f, "[{}][+{:?}] {}", now, start.elapsed(), msg);
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
+    let start = std::time::Instant::now();
+    // Log run start with timestamp
+    {
+        use std::io::Write;
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open("/tmp/planning-debug.log")
+        {
+            let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+            let _ = writeln!(f, "\n=== NEW RUN {} ===", now);
+        }
+    }
+    debug_log(start, "main starting");
+
     let cli = Cli::parse();
+    debug_log(start, "cli parsed");
 
     if cli.headless {
         run_headless(cli).await
     } else {
-        run_tui(cli).await
+        run_tui(cli, start).await
     }
 }
 
@@ -98,21 +145,64 @@ Example outputs: "sharing-permissions", "user-auth", "api-rate-limiting""#,
     }
 }
 
-async fn run_tui(cli: Cli) -> Result<()> {
-    // Initialize terminal
+async fn summarize_plan(plan_path: &std::path::Path, output_tx: &mpsc::UnboundedSender<Event>) -> Result<String> {
+    use claude::ClaudeInvocation;
+
+    let _ = output_tx.send(Event::Output("[planning] Generating plan summary...".to_string()));
+
+    let plan_content = std::fs::read_to_string(plan_path)
+        .with_context(|| format!("Failed to read plan file: {}", plan_path.display()))?;
+
+    // Truncate if too long
+    let plan_preview: String = plan_content.chars().take(8000).collect();
+
+    let prompt = format!(
+        r#"Summarize this implementation plan in a concise, bullet-point format.
+Focus on:
+- What is being built
+- Key components/changes
+- Main implementation steps (high level)
+
+Keep it under 20 lines.
+
+---
+{}
+---
+
+Provide ONLY the summary, no preamble."#,
+        plan_preview
+    );
+
+    let result = ClaudeInvocation::new(prompt)
+        .with_max_turns(1)
+        .execute()
+        .await?;
+
+    Ok(result.result)
+}
+
+async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
+    debug_log(start, "run_tui starting");
+
+    // Initialize terminal FIRST so we can show UI immediately
     crossterm::terminal::enable_raw_mode()?;
+    debug_log(start, "raw mode enabled");
     let mut stdout = std::io::stdout();
     crossterm::execute!(
         stdout,
         crossterm::terminal::EnterAlternateScreen,
         crossterm::event::EnableMouseCapture
     )?;
+    debug_log(start, "alternate screen entered");
     let backend = ratatui::backend::CrosstermBackend::new(stdout);
     let mut terminal = ratatui::Terminal::new(backend)?;
+    debug_log(start, "terminal created");
 
     // Create app and event handler
     let mut app = App::new();
+    debug_log(start, "app created");
     let mut event_handler = EventHandler::new(Duration::from_millis(100));
+    debug_log(start, "event handler created");
     let output_tx = event_handler.sender();
 
     let working_dir = cli
@@ -122,45 +212,62 @@ async fn run_tui(cli: Cli) -> Result<()> {
 
     let objective = cli.objective.join(" ");
 
-    // Get or generate feature name
-    let feature_name = if let Some(name) = cli.name.clone() {
-        name
-    } else if cli.continue_workflow {
+    // Handle --continue validation
+    if cli.continue_workflow && cli.name.is_none() {
         restore_terminal(&mut terminal)?;
         anyhow::bail!("--continue requires --name to specify which workflow to continue");
-    } else {
-        extract_feature_name(&objective, Some(&output_tx)).await?
-    };
+    }
 
-    let state_path = working_dir.join(format!(".planning-agent/{}.json", feature_name));
+    // Spawn initialization task to run in background while UI renders
+    let init_tx = output_tx.clone();
+    let init_working_dir = working_dir.clone();
+    let init_objective = objective.clone();
+    let init_name = cli.name.clone();
+    let init_continue = cli.continue_workflow;
+    let init_max_iterations = cli.max_iterations;
 
-    let state = if cli.continue_workflow {
-        let _ = output_tx.send(Event::Output(format!("[planning] Loading existing workflow: {}", feature_name)));
-        State::load(&state_path)?
-    } else {
-        let _ = output_tx.send(Event::Output(format!("[planning] Starting new workflow: {}", feature_name)));
-        let _ = output_tx.send(Event::Output(format!("[planning] Objective: {}", objective)));
-        State::new(&feature_name, &objective, cli.max_iterations)
-    };
+    let init_handle = tokio::spawn(async move {
+        let _ = init_tx.send(Event::Output("[planning] Initializing...".to_string()));
 
-    app.workflow_state = Some(state.clone());
+        // Get or generate feature name
+        let feature_name = if let Some(name) = init_name {
+            name
+        } else {
+            extract_feature_name(&init_objective, Some(&init_tx)).await?
+        };
 
-    // Create docs/plans directory
-    let plans_dir = working_dir.join("docs/plans");
-    std::fs::create_dir_all(&plans_dir).context("Failed to create docs/plans directory")?;
+        let state_path = init_working_dir.join(format!(".planning-agent/{}.json", feature_name));
 
-    // Save initial state
-    state.save(&state_path)?;
+        let state = if init_continue {
+            let _ = init_tx.send(Event::Output(format!("[planning] Loading existing workflow: {}", feature_name)));
+            State::load(&state_path)?
+        } else {
+            let _ = init_tx.send(Event::Output(format!("[planning] Starting new workflow: {}", feature_name)));
+            let _ = init_tx.send(Event::Output(format!("[planning] Objective: {}", init_objective)));
+            State::new(&feature_name, &init_objective, init_max_iterations)
+        };
 
-    // Spawn workflow task
-    let workflow_tx = output_tx.clone();
-    let workflow_working_dir = working_dir.clone();
-    let workflow_state_path = state_path.clone();
-    let initial_state = state.clone();
+        // Create docs/plans directory
+        let plans_dir = init_working_dir.join("docs/plans");
+        std::fs::create_dir_all(&plans_dir).context("Failed to create docs/plans directory")?;
 
-    let workflow_handle = tokio::spawn(async move {
-        run_workflow(initial_state, workflow_working_dir, workflow_state_path, workflow_tx).await
+        // Save initial state
+        state.save(&state_path)?;
+
+        let _ = init_tx.send(Event::StateUpdate(state.clone()));
+
+        Ok::<_, anyhow::Error>((state, state_path))
     });
+    debug_log(start, "init task spawned");
+
+    // Track initialization state
+    let mut init_handle = Some(init_handle);
+    let mut workflow_handle: Option<tokio::task::JoinHandle<Result<WorkflowResult>>> = None;
+    let mut approval_tx: Option<mpsc::Sender<UserApprovalResponse>> = None;
+    let mut current_state: Option<State> = None;
+    let mut workflow_state_path: Option<PathBuf> = None;
+
+    debug_log(start, "entering main loop");
 
     // Main event loop
     loop {
@@ -170,26 +277,85 @@ async fn run_tui(cli: Cli) -> Result<()> {
         // Handle events
         match event_handler.next().await? {
             Event::Key(key) => {
-                match key.code {
-                    KeyCode::Char('q') | KeyCode::Esc => {
-                        app.should_quit = true;
+                // Handle approval mode input
+                match app.approval_mode {
+                    ApprovalMode::AwaitingChoice => {
+                        match key.code {
+                            KeyCode::Char('a') | KeyCode::Char('A') => {
+                                // Accept
+                                if let Some(tx) = approval_tx.take() {
+                                    let _ = tx.send(UserApprovalResponse::Accept).await;
+                                }
+                                app.approval_mode = ApprovalMode::None;
+                                app.should_quit = true;
+                            }
+                            KeyCode::Char('d') | KeyCode::Char('D') => {
+                                // Decline - switch to feedback input mode
+                                app.start_feedback_input();
+                            }
+                            KeyCode::Char('q') | KeyCode::Esc => {
+                                app.should_quit = true;
+                            }
+                            _ => {}
+                        }
                     }
-                    KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                        app.should_quit = true;
+                    ApprovalMode::EnteringFeedback => {
+                        match key.code {
+                            KeyCode::Enter => {
+                                // Submit feedback
+                                if !app.user_feedback.trim().is_empty() {
+                                    let feedback = app.user_feedback.clone();
+                                    if let Some(tx) = approval_tx.take() {
+                                        let _ = tx.send(UserApprovalResponse::Decline(feedback)).await;
+                                    }
+                                    app.approval_mode = ApprovalMode::None;
+                                }
+                            }
+                            KeyCode::Esc => {
+                                // Cancel - go back to choice
+                                app.approval_mode = ApprovalMode::AwaitingChoice;
+                                app.user_feedback.clear();
+                                app.cursor_position = 0;
+                            }
+                            KeyCode::Backspace => {
+                                app.delete_char();
+                            }
+                            KeyCode::Left => {
+                                app.move_cursor_left();
+                            }
+                            KeyCode::Right => {
+                                app.move_cursor_right();
+                            }
+                            KeyCode::Char(c) => {
+                                app.insert_char(c);
+                            }
+                            _ => {}
+                        }
                     }
-                    KeyCode::Char('j') | KeyCode::Down => {
-                        app.scroll_down();
+                    ApprovalMode::None => {
+                        // Normal mode
+                        match key.code {
+                            KeyCode::Char('q') | KeyCode::Esc => {
+                                app.should_quit = true;
+                            }
+                            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                                app.should_quit = true;
+                            }
+                            KeyCode::Char('j') | KeyCode::Down => {
+                                app.scroll_down();
+                            }
+                            KeyCode::Char('k') | KeyCode::Up => {
+                                app.scroll_up();
+                            }
+                            KeyCode::Char('g') => {
+                                app.scroll_to_top();
+                            }
+                            KeyCode::Char('G') => {
+                                app.scroll_to_bottom();
+                            }
+                            _ => {}
+                        }
                     }
-                    KeyCode::Char('k') | KeyCode::Up => {
-                        app.scroll_up();
-                    }
-                    KeyCode::Char('g') => {
-                        app.scroll_to_top();
-                    }
-                    KeyCode::Char('G') => {
-                        app.scroll_to_bottom();
-                    }
-                    _ => {}
                 }
             }
             Event::Tick => {
@@ -206,8 +372,23 @@ async fn run_tui(cli: Cli) -> Result<()> {
                 }
                 app.add_output(line);
             }
-            Event::Quit => {
-                app.should_quit = true;
+            Event::Streaming(line) => {
+                app.add_streaming(line);
+            }
+            Event::ToolStarted(name) => {
+                app.tool_started(name);
+            }
+            Event::ToolFinished(_id) => {
+                // Remove the oldest tool (FIFO) since we don't track IDs
+                if !app.active_tools.is_empty() {
+                    app.active_tools.remove(0);
+                }
+            }
+            Event::StateUpdate(new_state) => {
+                app.workflow_state = Some(new_state);
+            }
+            Event::RequestUserApproval(summary) => {
+                app.start_approval(summary);
             }
         }
 
@@ -215,22 +396,112 @@ async fn run_tui(cli: Cli) -> Result<()> {
             break;
         }
 
+        // Check if initialization completed - start workflow
+        if let Some(handle) = init_handle.take() {
+            if handle.is_finished() {
+                match handle.await {
+                    Ok(Ok((state, state_path))) => {
+                        current_state = Some(state.clone());
+                        workflow_state_path = Some(state_path.clone());
+                        app.workflow_state = Some(state.clone());
+
+                        // Create approval channel and start workflow
+                        let (new_approval_tx, new_approval_rx) = mpsc::channel::<UserApprovalResponse>(1);
+                        approval_tx = Some(new_approval_tx);
+
+                        workflow_handle = Some(tokio::spawn({
+                            let working_dir = working_dir.clone();
+                            let tx = output_tx.clone();
+                            async move {
+                                run_workflow(state, working_dir, state_path, tx, new_approval_rx).await
+                            }
+                        }));
+                    }
+                    Ok(Err(e)) => {
+                        app.add_output(format!("[error] Initialization failed: {}", e));
+                        app.running = false;
+                        tokio::time::sleep(Duration::from_secs(2)).await;
+                        break;
+                    }
+                    Err(e) => {
+                        app.add_output(format!("[error] Initialization panicked: {}", e));
+                        app.running = false;
+                        tokio::time::sleep(Duration::from_secs(2)).await;
+                        break;
+                    }
+                }
+            } else {
+                // Put it back if not finished
+                init_handle = Some(handle);
+            }
+        }
+
         // Check if workflow completed
-        if workflow_handle.is_finished() {
-            app.running = false;
-            // Wait a bit for user to see final state
-            tokio::time::sleep(Duration::from_secs(2)).await;
-            break;
+        if let Some(handle) = workflow_handle.take() {
+            if handle.is_finished() {
+                match handle.await {
+                    Ok(Ok(WorkflowResult::Accepted)) => {
+                        app.running = false;
+                        break;
+                    }
+                    Ok(Ok(WorkflowResult::NeedsRestart { user_feedback })) => {
+                        // Restart the workflow with updated objective
+                        let _ = output_tx.send(Event::Output("".to_string()));
+                        let _ = output_tx.send(Event::Output("=== RESTARTING WITH YOUR FEEDBACK ===".to_string()));
+                        let _ = output_tx.send(Event::Output(format!("Changes requested: {}", user_feedback)));
+
+                        if let (Some(ref mut state), Some(ref state_path)) = (&mut current_state, &workflow_state_path) {
+                            // Reset state for new iteration
+                            state.phase = Phase::Planning;
+                            state.iteration = 1;
+                            // Append user feedback to objective
+                            state.objective = format!(
+                                "{}\n\nUSER FEEDBACK: The previous plan was reviewed and needs changes:\n{}",
+                                state.objective,
+                                user_feedback
+                            );
+                            state.save(state_path)?;
+                            app.workflow_state = Some(state.clone());
+                            app.streaming_lines.clear();
+
+                            // Create new approval channel
+                            let (new_approval_tx, new_approval_rx) = mpsc::channel::<UserApprovalResponse>(1);
+                            approval_tx = Some(new_approval_tx);
+
+                            // Spawn new workflow
+                            workflow_handle = Some(tokio::spawn({
+                                let state = state.clone();
+                                let working_dir = working_dir.clone();
+                                let state_path = state_path.clone();
+                                let tx = output_tx.clone();
+                                async move {
+                                    run_workflow(state, working_dir, state_path, tx, new_approval_rx).await
+                                }
+                            }));
+                        }
+                    }
+                    Ok(Err(e)) => {
+                        app.add_output(format!("[error] Workflow failed: {}", e));
+                        app.running = false;
+                        tokio::time::sleep(Duration::from_secs(2)).await;
+                        break;
+                    }
+                    Err(e) => {
+                        app.add_output(format!("[error] Workflow panicked: {}", e));
+                        app.running = false;
+                        tokio::time::sleep(Duration::from_secs(2)).await;
+                        break;
+                    }
+                }
+            } else {
+                // Put it back if not finished
+                workflow_handle = Some(handle);
+            }
         }
     }
 
     // Restore terminal
     restore_terminal(&mut terminal)?;
-
-    // Wait for workflow to complete
-    if !workflow_handle.is_finished() {
-        workflow_handle.abort();
-    }
 
     Ok(())
 }
@@ -246,81 +517,161 @@ fn restore_terminal(terminal: &mut ratatui::Terminal<ratatui::backend::Crossterm
     Ok(())
 }
 
+/// Result from the workflow - either completed or needs restart with user feedback
+pub enum WorkflowResult {
+    Accepted,
+    NeedsRestart { user_feedback: String },
+}
+
 async fn run_workflow(
     mut state: State,
     working_dir: PathBuf,
     state_path: PathBuf,
     output_tx: mpsc::UnboundedSender<Event>,
-) -> Result<()> {
+    mut approval_rx: mpsc::Receiver<UserApprovalResponse>,
+) -> Result<WorkflowResult> {
+    log_workflow(&working_dir, &format!("=== WORKFLOW START: {} ===", state.feature_name));
+    log_workflow(&working_dir, &format!("Initial phase: {:?}, iteration: {}", state.phase, state.iteration));
+
     while state.should_continue() {
         match state.phase {
             Phase::Planning => {
+                log_workflow(&working_dir, ">>> ENTERING Planning phase");
                 let _ = output_tx.send(Event::Output("".to_string()));
                 let _ = output_tx.send(Event::Output("=== PLANNING PHASE ===".to_string()));
                 let _ = output_tx.send(Event::Output(format!("Feature: {}", state.feature_name)));
                 let _ = output_tx.send(Event::Output(format!("Plan file: {}", state.plan_file.display())));
 
-                run_planning_phase(&state, &working_dir).await?;
+                log_workflow(&working_dir, "Calling run_planning_phase...");
+                run_planning_phase(&state, &working_dir, output_tx.clone()).await?;
+                log_workflow(&working_dir, "run_planning_phase completed");
 
                 let plan_path = working_dir.join(&state.plan_file);
                 if !plan_path.exists() {
+                    log_workflow(&working_dir, "ERROR: Plan file was not created!");
                     let _ = output_tx.send(Event::Output("[error] Plan file was not created!".to_string()));
                     anyhow::bail!("Plan file not created");
                 }
 
+                log_workflow(&working_dir, "Transitioning: Planning -> Reviewing");
                 state.transition(Phase::Reviewing)?;
                 state.save(&state_path)?;
+                let _ = output_tx.send(Event::StateUpdate(state.clone()));
                 let _ = output_tx.send(Event::Output("[planning] Transitioning to review phase...".to_string()));
             }
 
             Phase::Reviewing => {
+                log_workflow(&working_dir, &format!(">>> ENTERING Reviewing phase (iteration {})", state.iteration));
                 let _ = output_tx.send(Event::Output("".to_string()));
                 let _ = output_tx.send(Event::Output(format!("=== REVIEW PHASE (Iteration {}) ===", state.iteration)));
 
-                run_review_phase(&state, &working_dir).await?;
+                log_workflow(&working_dir, "Calling run_review_phase...");
+                run_review_phase(&state, &working_dir, output_tx.clone()).await?;
+                log_workflow(&working_dir, "run_review_phase completed");
 
                 let feedback_path = working_dir.join(&state.feedback_file);
                 if !feedback_path.exists() {
+                    log_workflow(&working_dir, "ERROR: Feedback file was not created!");
                     let _ = output_tx.send(Event::Output("[error] Feedback file was not created!".to_string()));
                     anyhow::bail!("Feedback file not created");
                 }
 
                 let status = parse_feedback_status(&feedback_path)?;
+                log_workflow(&working_dir, &format!("Feedback status: {:?}", status));
                 state.last_feedback_status = Some(status.clone());
 
                 match status {
                     FeedbackStatus::Approved => {
+                        log_workflow(&working_dir, "Plan APPROVED! Transitioning to Complete");
                         let _ = output_tx.send(Event::Output("[planning] Plan APPROVED!".to_string()));
                         state.transition(Phase::Complete)?;
                     }
                     FeedbackStatus::NeedsRevision => {
                         let _ = output_tx.send(Event::Output("[planning] Plan needs revision".to_string()));
                         if state.iteration >= state.max_iterations {
+                            log_workflow(&working_dir, "Max iterations reached, stopping");
                             let _ = output_tx.send(Event::Output("[planning] Max iterations reached".to_string()));
                             break;
                         }
+                        log_workflow(&working_dir, "Transitioning: Reviewing -> Revising");
                         state.transition(Phase::Revising)?;
                     }
                 }
                 state.save(&state_path)?;
+                let _ = output_tx.send(Event::StateUpdate(state.clone()));
             }
 
             Phase::Revising => {
+                log_workflow(&working_dir, &format!(">>> ENTERING Revising phase (iteration {})", state.iteration));
                 let _ = output_tx.send(Event::Output("".to_string()));
                 let _ = output_tx.send(Event::Output(format!("=== REVISION PHASE (Iteration {}) ===", state.iteration)));
 
-                run_revision_phase(&state, &working_dir).await?;
+                log_workflow(&working_dir, "Calling run_revision_phase...");
+                run_revision_phase(&state, &working_dir, output_tx.clone()).await?;
+                log_workflow(&working_dir, "run_revision_phase completed");
+
+                // Delete the feedback file so next review starts fresh
+                let feedback_path = working_dir.join(&state.feedback_file);
+                if feedback_path.exists() {
+                    if let Err(e) = std::fs::remove_file(&feedback_path) {
+                        log_workflow(&working_dir, &format!("Warning: Failed to delete feedback file: {}", e));
+                    } else {
+                        log_workflow(&working_dir, "Deleted old feedback file");
+                    }
+                }
 
                 state.iteration += 1;
+                log_workflow(&working_dir, &format!("Transitioning: Revising -> Reviewing (iteration now {})", state.iteration));
                 state.transition(Phase::Reviewing)?;
                 state.save(&state_path)?;
+                let _ = output_tx.send(Event::StateUpdate(state.clone()));
                 let _ = output_tx.send(Event::Output("[planning] Transitioning to review phase...".to_string()));
             }
 
-            Phase::Complete => break,
+            Phase::Complete => {
+                log_workflow(&working_dir, ">>> Phase is Complete - requesting user approval");
+
+                // Generate plan summary
+                let plan_path = working_dir.join(&state.plan_file);
+                let summary = match summarize_plan(&plan_path, &output_tx).await {
+                    Ok(s) => s,
+                    Err(e) => {
+                        log_workflow(&working_dir, &format!("Failed to summarize plan: {}", e));
+                        format!("(Could not generate summary: {})\n\nThe plan has been approved by AI review.", e)
+                    }
+                };
+
+                let _ = output_tx.send(Event::Output("".to_string()));
+                let _ = output_tx.send(Event::Output("=== PLAN APPROVED BY AI ===".to_string()));
+                let _ = output_tx.send(Event::Output(format!("Completed after {} iteration(s)", state.iteration)));
+                let _ = output_tx.send(Event::Output("Waiting for your approval...".to_string()));
+
+                // Request user approval
+                let _ = output_tx.send(Event::RequestUserApproval(summary));
+
+                // Wait for user response
+                log_workflow(&working_dir, "Waiting for user approval response...");
+                match approval_rx.recv().await {
+                    Some(UserApprovalResponse::Accept) => {
+                        log_workflow(&working_dir, "User ACCEPTED the plan");
+                        let _ = output_tx.send(Event::Output("[planning] User accepted the plan!".to_string()));
+                        return Ok(WorkflowResult::Accepted);
+                    }
+                    Some(UserApprovalResponse::Decline(feedback)) => {
+                        log_workflow(&working_dir, &format!("User DECLINED with feedback: {}", feedback));
+                        let _ = output_tx.send(Event::Output(format!("[planning] User requested changes: {}", feedback)));
+                        return Ok(WorkflowResult::NeedsRestart { user_feedback: feedback });
+                    }
+                    None => {
+                        log_workflow(&working_dir, "Approval channel closed - treating as accept");
+                        return Ok(WorkflowResult::Accepted);
+                    }
+                }
+            }
         }
     }
 
+    log_workflow(&working_dir, &format!("=== WORKFLOW END: phase={:?}, iteration={} ===", state.phase, state.iteration));
     let _ = output_tx.send(Event::Output("".to_string()));
     let _ = output_tx.send(Event::Output("=== WORKFLOW COMPLETE ===".to_string()));
     if state.phase == Phase::Complete {
@@ -329,7 +680,7 @@ async fn run_workflow(
         let _ = output_tx.send(Event::Output("Max iterations reached. Manual review recommended.".to_string()));
     }
 
-    Ok(())
+    Ok(WorkflowResult::Accepted)
 }
 
 async fn run_headless(cli: Cli) -> Result<()> {
@@ -364,11 +715,35 @@ async fn run_headless(cli: Cli) -> Result<()> {
 
     state.save(&state_path)?;
 
+    // Create a channel for streaming output (printed to stderr in headless mode)
+    let (output_tx, mut output_rx) = mpsc::unbounded_channel::<Event>();
+
+    // Spawn task to print streaming output to stderr
+    tokio::spawn(async move {
+        while let Some(event) = output_rx.recv().await {
+            match event {
+                Event::Output(line) | Event::Streaming(line) => {
+                    eprintln!("{}", line);
+                }
+                Event::ToolStarted(name) => {
+                    eprintln!("[tool started] {}", name);
+                }
+                Event::ToolFinished(id) => {
+                    eprintln!("[tool finished] {}", id);
+                }
+                Event::StateUpdate(state) => {
+                    eprintln!("[state] phase={:?} iteration={}", state.phase, state.iteration);
+                }
+                _ => {}
+            }
+        }
+    });
+
     while state.should_continue() {
         match state.phase {
             Phase::Planning => {
                 eprintln!("\n=== PLANNING PHASE ===");
-                run_planning_phase(&state, &working_dir).await?;
+                run_planning_phase(&state, &working_dir, output_tx.clone()).await?;
 
                 let plan_path = working_dir.join(&state.plan_file);
                 if !plan_path.exists() {
@@ -381,7 +756,7 @@ async fn run_headless(cli: Cli) -> Result<()> {
 
             Phase::Reviewing => {
                 eprintln!("\n=== REVIEW PHASE (Iteration {}) ===", state.iteration);
-                run_review_phase(&state, &working_dir).await?;
+                run_review_phase(&state, &working_dir, output_tx.clone()).await?;
 
                 let feedback_path = working_dir.join(&state.feedback_file);
                 if !feedback_path.exists() {
@@ -410,7 +785,7 @@ async fn run_headless(cli: Cli) -> Result<()> {
 
             Phase::Revising => {
                 eprintln!("\n=== REVISION PHASE (Iteration {}) ===", state.iteration);
-                run_revision_phase(&state, &working_dir).await?;
+                run_revision_phase(&state, &working_dir, output_tx.clone()).await?;
 
                 state.iteration += 1;
                 state.transition(Phase::Reviewing)?;

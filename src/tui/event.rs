@@ -4,12 +4,26 @@ use futures::StreamExt;
 use std::time::Duration;
 use tokio::sync::mpsc;
 
+use crate::state::State;
+
 #[derive(Debug, Clone)]
 pub enum Event {
     Key(KeyEvent),
     Tick,
     Output(String),
-    Quit,
+    Streaming(String),
+    ToolStarted(String),
+    ToolFinished(String),
+    StateUpdate(State),
+    /// Request user approval with a plan summary
+    RequestUserApproval(String),
+}
+
+/// User's response to approval request
+#[derive(Debug, Clone)]
+pub enum UserApprovalResponse {
+    Accept,
+    Decline(String), // Contains user's feedback for changes
 }
 
 pub struct EventHandler {
