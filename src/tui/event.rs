@@ -17,30 +17,47 @@ pub struct TokenUsage {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum Event {
     Key(KeyEvent),
     Tick,
+    Resize,
+
+    // Events without session routing (global)
     Output(String),
     Streaming(String),
     ToolStarted(String),
     ToolFinished(String),
     StateUpdate(State),
-    /// Request user approval with a plan summary
     RequestUserApproval(String),
-    /// Stats update: bytes received from Claude
     BytesReceived(usize),
-    /// Token usage update from a Claude message
     TokenUsage(TokenUsage),
-    /// Phase timing: phase started
     PhaseStarted(String),
-    /// A conversation turn completed (assistant responded after user input)
     TurnCompleted,
-    /// Claude model name detected
     ModelDetected(String),
-    /// Tool result received with error status
     ToolResultReceived { tool_id: String, is_error: bool },
-    /// Claude's stop reason (end_turn, tool_use, max_tokens)
     StopReason(String),
+
+    // Session-routed events (for multi-tab support)
+    SessionOutput { session_id: usize, line: String },
+    SessionStreaming { session_id: usize, line: String },
+    SessionStateUpdate { session_id: usize, state: State },
+    SessionApprovalRequest { session_id: usize, summary: String },
+    SessionTokenUsage { session_id: usize, usage: TokenUsage },
+    SessionToolStarted { session_id: usize, name: String },
+    SessionToolFinished { session_id: usize, id: String },
+    SessionBytesReceived { session_id: usize, bytes: usize },
+    SessionPhaseStarted { session_id: usize, phase: String },
+    SessionTurnCompleted { session_id: usize },
+    SessionModelDetected { session_id: usize, name: String },
+    SessionToolResultReceived { session_id: usize, tool_id: String, is_error: bool },
+    SessionStopReason { session_id: usize, reason: String },
+    SessionWorkflowComplete { session_id: usize },
+    SessionWorkflowError { session_id: usize, error: String },
+
+    // Implementation subprocess events
+    SessionImplOutput { session_id: usize, line: String },
+    SessionImplComplete { session_id: usize, success: bool },
 }
 
 /// User's response to approval request
@@ -77,6 +94,11 @@ impl EventHandler {
                                     break;
                                 }
                             }
+                            Some(Ok(CrosstermEvent::Resize(_, _))) => {
+                                if event_tx.send(Event::Resize).is_err() {
+                                    break;
+                                }
+                            }
                             Some(Err(_)) | None => break,
                             _ => {}
                         }
@@ -102,5 +124,197 @@ impl EventHandler {
             .recv()
             .await
             .ok_or_else(|| anyhow::anyhow!("Event channel closed"))
+    }
+}
+
+/// A sender that automatically tags events with a session ID
+/// This is passed to workflow tasks to ensure events are routed correctly
+#[derive(Clone)]
+#[allow(dead_code)]
+pub struct SessionEventSender {
+    session_id: usize,
+    inner: mpsc::UnboundedSender<Event>,
+}
+
+#[allow(dead_code)]
+impl SessionEventSender {
+    pub fn new(session_id: usize, sender: mpsc::UnboundedSender<Event>) -> Self {
+        Self {
+            session_id,
+            inner: sender,
+        }
+    }
+
+    pub fn session_id(&self) -> usize {
+        self.session_id
+    }
+
+    pub fn send_output(&self, line: String) {
+        let _ = self.inner.send(Event::SessionOutput {
+            session_id: self.session_id,
+            line,
+        });
+    }
+
+    pub fn send_streaming(&self, line: String) {
+        let _ = self.inner.send(Event::SessionStreaming {
+            session_id: self.session_id,
+            line,
+        });
+    }
+
+    pub fn send_state_update(&self, state: State) {
+        let _ = self.inner.send(Event::SessionStateUpdate {
+            session_id: self.session_id,
+            state,
+        });
+    }
+
+    pub fn send_approval_request(&self, summary: String) {
+        let _ = self.inner.send(Event::SessionApprovalRequest {
+            session_id: self.session_id,
+            summary,
+        });
+    }
+
+    pub fn send_token_usage(&self, usage: TokenUsage) {
+        let _ = self.inner.send(Event::SessionTokenUsage {
+            session_id: self.session_id,
+            usage,
+        });
+    }
+
+    pub fn send_tool_started(&self, name: String) {
+        let _ = self.inner.send(Event::SessionToolStarted {
+            session_id: self.session_id,
+            name,
+        });
+    }
+
+    pub fn send_tool_finished(&self, id: String) {
+        let _ = self.inner.send(Event::SessionToolFinished {
+            session_id: self.session_id,
+            id,
+        });
+    }
+
+    pub fn send_bytes_received(&self, bytes: usize) {
+        let _ = self.inner.send(Event::SessionBytesReceived {
+            session_id: self.session_id,
+            bytes,
+        });
+    }
+
+    pub fn send_phase_started(&self, phase: String) {
+        let _ = self.inner.send(Event::SessionPhaseStarted {
+            session_id: self.session_id,
+            phase,
+        });
+    }
+
+    pub fn send_turn_completed(&self) {
+        let _ = self.inner.send(Event::SessionTurnCompleted {
+            session_id: self.session_id,
+        });
+    }
+
+    pub fn send_model_detected(&self, name: String) {
+        let _ = self.inner.send(Event::SessionModelDetected {
+            session_id: self.session_id,
+            name,
+        });
+    }
+
+    pub fn send_tool_result_received(&self, tool_id: String, is_error: bool) {
+        let _ = self.inner.send(Event::SessionToolResultReceived {
+            session_id: self.session_id,
+            tool_id,
+            is_error,
+        });
+    }
+
+    pub fn send_stop_reason(&self, reason: String) {
+        let _ = self.inner.send(Event::SessionStopReason {
+            session_id: self.session_id,
+            reason,
+        });
+    }
+
+    pub fn send_workflow_complete(&self) {
+        let _ = self.inner.send(Event::SessionWorkflowComplete {
+            session_id: self.session_id,
+        });
+    }
+
+    pub fn send_workflow_error(&self, error: String) {
+        let _ = self.inner.send(Event::SessionWorkflowError {
+            session_id: self.session_id,
+            error,
+        });
+    }
+
+    pub fn send_impl_output(&self, line: String) {
+        let _ = self.inner.send(Event::SessionImplOutput {
+            session_id: self.session_id,
+            line,
+        });
+    }
+
+    pub fn send_impl_complete(&self, success: bool) {
+        let _ = self.inner.send(Event::SessionImplComplete {
+            session_id: self.session_id,
+            success,
+        });
+    }
+
+    /// Get the raw sender for compatibility with code that expects UnboundedSender<Event>
+    pub fn raw_sender(&self) -> mpsc::UnboundedSender<Event> {
+        self.inner.clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_event_includes_session_id() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let sender = SessionEventSender::new(42, tx);
+
+        sender.send_output("test line".to_string());
+
+        let event = rx.try_recv().unwrap();
+        match event {
+            Event::SessionOutput { session_id, line } => {
+                assert_eq!(session_id, 42);
+                assert_eq!(line, "test line");
+            }
+            _ => panic!("Expected SessionOutput event"),
+        }
+    }
+
+    #[test]
+    fn test_multiple_senders() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+
+        let sender1 = SessionEventSender::new(1, tx.clone());
+        let sender2 = SessionEventSender::new(2, tx);
+
+        sender1.send_output("from session 1".to_string());
+        sender2.send_output("from session 2".to_string());
+
+        let event1 = rx.try_recv().unwrap();
+        let event2 = rx.try_recv().unwrap();
+
+        match event1 {
+            Event::SessionOutput { session_id, .. } => assert_eq!(session_id, 1),
+            _ => panic!("Expected SessionOutput event"),
+        }
+
+        match event2 {
+            Event::SessionOutput { session_id, .. } => assert_eq!(session_id, 2),
+            _ => panic!("Expected SessionOutput event"),
+        }
     }
 }

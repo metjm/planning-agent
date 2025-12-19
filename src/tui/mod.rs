@@ -1,6 +1,8 @@
-mod app;
 mod event;
+mod session;
+mod tabs;
 pub mod ui;
 
-pub use app::{App, ApprovalMode, FocusedPanel};
-pub use event::{Event, EventHandler, TokenUsage, UserApprovalResponse};
+pub use session::{ApprovalMode, FocusedPanel, InputMode, Session, SessionStatus};
+pub use tabs::TabManager;
+pub use event::{Event, EventHandler, SessionEventSender, TokenUsage, UserApprovalResponse};

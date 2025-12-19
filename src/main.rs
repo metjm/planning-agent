@@ -13,15 +13,19 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
+use tokio::io::AsyncBufReadExt;
 use tokio::sync::mpsc;
-use tui::{App, ApprovalMode, Event, EventHandler, FocusedPanel, UserApprovalResponse};
+use tui::{
+    ApprovalMode, Event, EventHandler, InputMode, Session, SessionEventSender, SessionStatus,
+    TabManager, UserApprovalResponse,
+};
 
 fn get_run_id() -> String {
     use std::sync::OnceLock;
     static RUN_ID: OnceLock<String> = OnceLock::new();
-    RUN_ID.get_or_init(|| {
-        chrono::Local::now().format("%Y%m%d-%H%M%S").to_string()
-    }).clone()
+    RUN_ID
+        .get_or_init(|| chrono::Local::now().format("%Y%m%d-%H%M%S").to_string())
+        .clone()
 }
 
 fn log_workflow(working_dir: &Path, message: &str) {
@@ -126,12 +130,17 @@ async fn main() -> Result<()> {
     }
 }
 
-async fn extract_feature_name(objective: &str, output_tx: Option<&mpsc::UnboundedSender<Event>>) -> Result<String> {
+async fn extract_feature_name(
+    objective: &str,
+    output_tx: Option<&mpsc::UnboundedSender<Event>>,
+) -> Result<String> {
     use std::process::Stdio;
     use tokio::process::Command;
 
     if let Some(tx) = output_tx {
-        let _ = tx.send(Event::Output("[planning] Extracting feature name...".to_string()));
+        let _ = tx.send(Event::Output(
+            "[planning] Extracting feature name...".to_string(),
+        ));
     }
 
     let prompt = format!(
@@ -170,10 +179,15 @@ Example outputs: "sharing-permissions", "user-auth", "api-rate-limiting""#,
     }
 }
 
-async fn summarize_plan(plan_path: &std::path::Path, output_tx: &mpsc::UnboundedSender<Event>) -> Result<String> {
+async fn summarize_plan(
+    plan_path: &std::path::Path,
+    output_tx: &mpsc::UnboundedSender<Event>,
+) -> Result<String> {
     use claude::ClaudeInvocation;
 
-    let _ = output_tx.send(Event::Output("[planning] Generating plan summary...".to_string()));
+    let _ = output_tx.send(Event::Output(
+        "[planning] Generating plan summary...".to_string(),
+    ));
 
     let plan_content = std::fs::read_to_string(plan_path)
         .with_context(|| format!("Failed to read plan file: {}", plan_path.display()))?;
@@ -203,10 +217,7 @@ Output ONLY the markdown, no preamble or code fences.
         plan_preview
     );
 
-    let result = ClaudeInvocation::new(prompt)
-        .with_max_turns(1)
-        .execute()
-        .await?;
+    let result = ClaudeInvocation::new(prompt).with_max_turns(50).execute().await?;
 
     Ok(result.result)
 }
@@ -228,9 +239,9 @@ async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
     let mut terminal = ratatui::Terminal::new(backend)?;
     debug_log(start, "terminal created");
 
-    // Create app and event handler
-    let mut app = App::new();
-    debug_log(start, "app created");
+    // Create tab manager and event handler
+    let mut tab_manager = TabManager::new();
+    debug_log(start, "tab manager created");
     let mut event_handler = EventHandler::new(Duration::from_millis(100));
     debug_log(start, "event handler created");
     let output_tx = event_handler.sender();
@@ -247,6 +258,12 @@ async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
         restore_terminal(&mut terminal)?;
         anyhow::bail!("--continue requires --name to specify which workflow to continue");
     }
+
+    // Get the first session and set it up for CLI-provided objective
+    let first_session = tab_manager.active_mut();
+    first_session.input_mode = InputMode::Normal; // Skip naming, we have an objective
+    first_session.status = SessionStatus::Planning;
+    let first_session_id = first_session.id;
 
     // Spawn initialization task to run in background while UI renders
     let init_tx = output_tx.clone();
@@ -269,11 +286,20 @@ async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
         let state_path = init_working_dir.join(format!(".planning-agent/{}.json", feature_name));
 
         let state = if init_continue {
-            let _ = init_tx.send(Event::Output(format!("[planning] Loading existing workflow: {}", feature_name)));
+            let _ = init_tx.send(Event::Output(format!(
+                "[planning] Loading existing workflow: {}",
+                feature_name
+            )));
             State::load(&state_path)?
         } else {
-            let _ = init_tx.send(Event::Output(format!("[planning] Starting new workflow: {}", feature_name)));
-            let _ = init_tx.send(Event::Output(format!("[planning] Objective: {}", init_objective)));
+            let _ = init_tx.send(Event::Output(format!(
+                "[planning] Starting new workflow: {}",
+                feature_name
+            )));
+            let _ = init_tx.send(Event::Output(format!(
+                "[planning] Objective: {}",
+                init_objective
+            )));
             State::new(&feature_name, &init_objective, init_max_iterations)
         };
 
@@ -286,366 +312,619 @@ async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
 
         let _ = init_tx.send(Event::StateUpdate(state.clone()));
 
-        Ok::<_, anyhow::Error>((state, state_path))
+        Ok::<_, anyhow::Error>((state, state_path, feature_name))
     });
     debug_log(start, "init task spawned");
 
-    // Track initialization state
-    let mut init_handle = Some(init_handle);
-    let mut workflow_handle: Option<tokio::task::JoinHandle<Result<WorkflowResult>>> = None;
-    let mut approval_tx: Option<mpsc::Sender<UserApprovalResponse>> = None;
-    let mut current_state: Option<State> = None;
-    let mut workflow_state_path: Option<PathBuf> = None;
+    // Track initialization state for first session
+    let mut init_handle = Some((first_session_id, init_handle));
+    let mut should_quit = false;
 
     debug_log(start, "entering main loop");
 
     // Main event loop
     loop {
         // Draw UI
-        terminal.draw(|frame| tui::ui::draw(frame, &app))?;
+        terminal.draw(|frame| tui::ui::draw(frame, &tab_manager))?;
 
         // Handle events
         match event_handler.next().await? {
             Event::Key(key) => {
+                let session = tab_manager.active_mut();
+
+                // Handle error state first - Esc clears error
+                if session.error_state.is_some() {
+                    match key.code {
+                        KeyCode::Esc => {
+                            session.clear_error();
+                            continue;
+                        }
+                        KeyCode::Char('w') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            tab_manager.close_tab(tab_manager.active_tab);
+                            continue;
+                        }
+                        _ => continue,
+                    }
+                }
+
+                // Handle tab naming input mode
+                if session.input_mode == InputMode::NamingTab {
+                    match key.code {
+                        KeyCode::Enter => {
+                            if !session.tab_input.trim().is_empty() {
+                                // Start workflow with entered objective
+                                let objective = session.tab_input.clone();
+                                session.tab_input.clear();
+                                session.tab_input_cursor = 0;
+                                session.input_mode = InputMode::Normal;
+                                session.status = SessionStatus::Planning;
+
+                                // Spawn workflow for this new session
+                                let session_id = session.id;
+                                let tx = output_tx.clone();
+                                let wd = working_dir.clone();
+                                let max_iter = cli.max_iterations;
+
+                                let new_init_handle = tokio::spawn(async move {
+                                    let _ = tx.send(Event::SessionOutput {
+                                        session_id,
+                                        line: "[planning] Initializing...".to_string(),
+                                    });
+
+                                    let feature_name =
+                                        extract_feature_name(&objective, Some(&tx)).await?;
+
+                                    let state_path =
+                                        wd.join(format!(".planning-agent/{}.json", feature_name));
+
+                                    let _ = tx.send(Event::SessionOutput {
+                                        session_id,
+                                        line: format!(
+                                            "[planning] Starting new workflow: {}",
+                                            feature_name
+                                        ),
+                                    });
+                                    let _ = tx.send(Event::SessionOutput {
+                                        session_id,
+                                        line: format!("[planning] Objective: {}", objective),
+                                    });
+
+                                    let state = State::new(&feature_name, &objective, max_iter);
+
+                                    let plans_dir = wd.join("docs/plans");
+                                    std::fs::create_dir_all(&plans_dir)
+                                        .context("Failed to create docs/plans directory")?;
+
+                                    state.save(&state_path)?;
+
+                                    let _ = tx.send(Event::SessionStateUpdate {
+                                        session_id,
+                                        state: state.clone(),
+                                    });
+
+                                    Ok::<_, anyhow::Error>((state, state_path, feature_name))
+                                });
+
+                                init_handle = Some((session_id, new_init_handle));
+                            }
+                        }
+                        KeyCode::Esc => {
+                            // Cancel - remove empty tab
+                            tab_manager.close_current_if_empty();
+                        }
+                        KeyCode::Char(c) => {
+                            session.insert_tab_input_char(c);
+                        }
+                        KeyCode::Backspace => {
+                            session.delete_tab_input_char();
+                        }
+                        KeyCode::Left => {
+                            session.move_tab_input_cursor_left();
+                        }
+                        KeyCode::Right => {
+                            session.move_tab_input_cursor_right();
+                        }
+                        _ => {}
+                    }
+                    continue;
+                }
+
+                // Handle tab switching (only when not in input/approval mode)
+                if session.approval_mode == ApprovalMode::None {
+                    match (key.code, key.modifiers) {
+                        // Ctrl++ creates new tab
+                        (KeyCode::Char('+'), m) if m.contains(KeyModifiers::CONTROL) => {
+                            tab_manager.add_session();
+                            tab_manager.active_mut().input_mode = InputMode::NamingTab;
+                            continue;
+                        }
+                        // Also handle Ctrl+= (since + is shift+= on most keyboards)
+                        (KeyCode::Char('='), m) if m.contains(KeyModifiers::CONTROL) => {
+                            tab_manager.add_session();
+                            tab_manager.active_mut().input_mode = InputMode::NamingTab;
+                            continue;
+                        }
+                        // Ctrl+PageDown goes to next tab
+                        (KeyCode::PageDown, m) if m.contains(KeyModifiers::CONTROL) => {
+                            tab_manager.next_tab();
+                            continue;
+                        }
+                        // Ctrl+PageUp goes to previous tab
+                        (KeyCode::PageUp, m) if m.contains(KeyModifiers::CONTROL) => {
+                            tab_manager.prev_tab();
+                            continue;
+                        }
+                        // Alt+Right for next tab (alternative)
+                        (KeyCode::Right, m) if m.contains(KeyModifiers::ALT) => {
+                            tab_manager.next_tab();
+                            continue;
+                        }
+                        // Alt+Left for previous tab (alternative)
+                        (KeyCode::Left, m) if m.contains(KeyModifiers::ALT) => {
+                            tab_manager.prev_tab();
+                            continue;
+                        }
+                        // Alt+1 through Alt+9 for direct tab selection
+                        (KeyCode::Char(c @ '1'..='9'), m) if m.contains(KeyModifiers::ALT) => {
+                            let index = (c as usize) - ('1' as usize);
+                            tab_manager.switch_to_tab(index);
+                            continue;
+                        }
+                        // Ctrl+W closes current tab
+                        (KeyCode::Char('w'), m) if m.contains(KeyModifiers::CONTROL) => {
+                            tab_manager.close_tab(tab_manager.active_tab);
+                            continue;
+                        }
+                        _ => {}
+                    }
+                }
+
                 // Handle approval mode input
-                match app.approval_mode {
-                    ApprovalMode::AwaitingChoice => {
-                        match key.code {
-                            KeyCode::Char('a') | KeyCode::Char('A') => {
-                                // Accept
-                                if let Some(tx) = approval_tx.take() {
-                                    let _ = tx.send(UserApprovalResponse::Accept).await;
-                                }
-                                app.approval_mode = ApprovalMode::None;
-                                app.should_quit = true;
+                match session.approval_mode {
+                    ApprovalMode::AwaitingChoice => match key.code {
+                        KeyCode::Char('a') | KeyCode::Char('A') => {
+                            if let Some(tx) = session.approval_tx.take() {
+                                let _ = tx.send(UserApprovalResponse::Accept).await;
                             }
-                            KeyCode::Char('i') | KeyCode::Char('I') => {
-                                // Accept and Implement
-                                if let Some(tx) = approval_tx.take() {
-                                    let plan_file = app
-                                        .workflow_state
-                                        .as_ref()
-                                        .map(|s| s.plan_file.clone())
-                                        .unwrap_or_default();
-                                    let _ = tx.send(UserApprovalResponse::AcceptAndImplement(plan_file)).await;
-                                }
-                                app.approval_mode = ApprovalMode::None;
-                                // Don't set should_quit - let the main loop handle the process replacement
-                            }
-                            KeyCode::Char('d') | KeyCode::Char('D') => {
-                                // Decline - switch to feedback input mode
-                                app.start_feedback_input();
-                            }
-                            KeyCode::Char('j') | KeyCode::Down => {
-                                // Scroll summary down
-                                let max_scroll = app.plan_summary.lines().count().saturating_sub(10);
-                                app.scroll_summary_down(max_scroll);
-                            }
-                            KeyCode::Char('k') | KeyCode::Up => {
-                                // Scroll summary up
-                                app.scroll_summary_up();
-                            }
-                            KeyCode::Char('q') | KeyCode::Esc => {
-                                app.should_quit = true;
-                            }
-                            _ => {}
+                            session.approval_mode = ApprovalMode::None;
+                            session.status = SessionStatus::Complete;
                         }
-                    }
-                    ApprovalMode::EnteringFeedback => {
-                        match key.code {
-                            KeyCode::Enter => {
-                                // Submit feedback
-                                if !app.user_feedback.trim().is_empty() {
-                                    let feedback = app.user_feedback.clone();
-                                    if let Some(tx) = approval_tx.take() {
-                                        let _ = tx.send(UserApprovalResponse::Decline(feedback)).await;
-                                    }
-                                    app.approval_mode = ApprovalMode::None;
-                                }
+                        KeyCode::Char('i') | KeyCode::Char('I') => {
+                            if let Some(tx) = session.approval_tx.take() {
+                                let plan_file = session
+                                    .workflow_state
+                                    .as_ref()
+                                    .map(|s| s.plan_file.clone())
+                                    .unwrap_or_default();
+                                let _ = tx.send(UserApprovalResponse::AcceptAndImplement(plan_file)).await;
                             }
-                            KeyCode::Esc => {
-                                // Cancel - go back to choice
-                                app.approval_mode = ApprovalMode::AwaitingChoice;
-                                app.user_feedback.clear();
-                                app.cursor_position = 0;
-                            }
-                            KeyCode::Backspace => {
-                                app.delete_char();
-                            }
-                            KeyCode::Left => {
-                                app.move_cursor_left();
-                            }
-                            KeyCode::Right => {
-                                app.move_cursor_right();
-                            }
-                            KeyCode::Char(c) => {
-                                app.insert_char(c);
-                            }
-                            _ => {}
+                            session.approval_mode = ApprovalMode::None;
+                            session.status = SessionStatus::Implementing;
                         }
-                    }
-                    ApprovalMode::None => {
-                        // Normal mode
-                        match key.code {
-                            KeyCode::Char('q') | KeyCode::Esc => {
-                                app.should_quit = true;
-                            }
-                            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                                app.should_quit = true;
-                            }
-                            KeyCode::Tab => {
-                                app.toggle_focus();
-                            }
-                            KeyCode::Char('j') | KeyCode::Down => {
-                                match app.focused_panel {
-                                    FocusedPanel::Output => app.scroll_down(),
-                                    FocusedPanel::Streaming => app.streaming_scroll_down(),
-                                }
-                            }
-                            KeyCode::Char('k') | KeyCode::Up => {
-                                match app.focused_panel {
-                                    FocusedPanel::Output => app.scroll_up(),
-                                    FocusedPanel::Streaming => app.streaming_scroll_up(),
-                                }
-                            }
-                            KeyCode::Char('g') => {
-                                match app.focused_panel {
-                                    FocusedPanel::Output => app.scroll_to_top(),
-                                    FocusedPanel::Streaming => {
-                                        app.streaming_follow_mode = false;
-                                        app.streaming_scroll_position = 0;
-                                    }
-                                }
-                            }
-                            KeyCode::Char('G') => {
-                                match app.focused_panel {
-                                    FocusedPanel::Output => app.scroll_to_bottom(),
-                                    FocusedPanel::Streaming => app.streaming_scroll_to_bottom(),
-                                }
-                            }
-                            _ => {}
+                        KeyCode::Char('d') | KeyCode::Char('D') => {
+                            session.start_feedback_input();
                         }
-                    }
+                        KeyCode::Char('j') | KeyCode::Down => {
+                            let max_scroll = session.plan_summary.lines().count().saturating_sub(10);
+                            session.scroll_summary_down(max_scroll);
+                        }
+                        KeyCode::Char('k') | KeyCode::Up => {
+                            session.scroll_summary_up();
+                        }
+                        KeyCode::Char('q') | KeyCode::Esc => {
+                            should_quit = true;
+                        }
+                        _ => {}
+                    },
+                    ApprovalMode::EnteringFeedback => match key.code {
+                        KeyCode::Enter => {
+                            if !session.user_feedback.trim().is_empty() {
+                                let feedback = session.user_feedback.clone();
+                                if let Some(tx) = session.approval_tx.take() {
+                                    let _ = tx.send(UserApprovalResponse::Decline(feedback)).await;
+                                }
+                                session.approval_mode = ApprovalMode::None;
+                            }
+                        }
+                        KeyCode::Esc => {
+                            session.approval_mode = ApprovalMode::AwaitingChoice;
+                            session.user_feedback.clear();
+                            session.cursor_position = 0;
+                        }
+                        KeyCode::Backspace => {
+                            session.delete_char();
+                        }
+                        KeyCode::Left => {
+                            session.move_cursor_left();
+                        }
+                        KeyCode::Right => {
+                            session.move_cursor_right();
+                        }
+                        KeyCode::Char(c) => {
+                            session.insert_char(c);
+                        }
+                        _ => {}
+                    },
+                    ApprovalMode::None => match key.code {
+                        KeyCode::Char('q') | KeyCode::Esc => {
+                            should_quit = true;
+                        }
+                        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            should_quit = true;
+                        }
+                        KeyCode::Tab => {
+                            session.toggle_focus();
+                        }
+                        KeyCode::Char('j') | KeyCode::Down => match session.focused_panel {
+                            tui::FocusedPanel::Output => session.scroll_down(),
+                            tui::FocusedPanel::Streaming => session.streaming_scroll_down(),
+                        },
+                        KeyCode::Char('k') | KeyCode::Up => match session.focused_panel {
+                            tui::FocusedPanel::Output => session.scroll_up(),
+                            tui::FocusedPanel::Streaming => session.streaming_scroll_up(),
+                        },
+                        KeyCode::Char('g') => match session.focused_panel {
+                            tui::FocusedPanel::Output => session.scroll_to_top(),
+                            tui::FocusedPanel::Streaming => {
+                                session.streaming_follow_mode = false;
+                                session.streaming_scroll_position = 0;
+                            }
+                        },
+                        KeyCode::Char('G') => match session.focused_panel {
+                            tui::FocusedPanel::Output => session.scroll_to_bottom(),
+                            tui::FocusedPanel::Streaming => session.streaming_scroll_to_bottom(),
+                        },
+                        _ => {}
+                    },
                 }
             }
             Event::Tick => {
-                // Update elapsed time display (automatic via app.elapsed())
+                // Update elapsed time display (automatic via session.elapsed())
             }
+            Event::Resize => {
+                // Terminal resize is handled automatically by ratatui
+            }
+
+            // Legacy events for backwards compatibility with first session
             Event::Output(line) => {
-                // Check for cost updates before consuming line
-                if line.contains("Cost: $") {
-                    if let Some(cost_str) = line.split("$").nth(1) {
-                        if let Ok(cost) = cost_str.trim().parse::<f64>() {
-                            app.total_cost += cost;
+                if let Some(session) = tab_manager.session_by_id_mut(first_session_id) {
+                    if line.contains("Cost: $") {
+                        if let Some(cost_str) = line.split('$').nth(1) {
+                            if let Ok(cost) = cost_str.trim().parse::<f64>() {
+                                session.total_cost += cost;
+                            }
                         }
                     }
+                    session.add_output(line);
                 }
-                app.add_output(line);
             }
             Event::Streaming(line) => {
-                app.add_streaming(line);
+                if let Some(session) = tab_manager.session_by_id_mut(first_session_id) {
+                    session.add_streaming(line);
+                }
             }
             Event::ToolStarted(name) => {
-                app.tool_started(name);
-                app.tool_call_count += 1;
+                if let Some(session) = tab_manager.session_by_id_mut(first_session_id) {
+                    session.tool_started(name);
+                    session.tool_call_count += 1;
+                }
             }
             Event::ToolFinished(_id) => {
-                // Remove the oldest tool (FIFO) since we don't track IDs
-                if !app.active_tools.is_empty() {
-                    app.active_tools.remove(0);
+                if let Some(session) = tab_manager.session_by_id_mut(first_session_id) {
+                    if !session.active_tools.is_empty() {
+                        session.active_tools.remove(0);
+                    }
                 }
             }
             Event::StateUpdate(new_state) => {
-                app.workflow_state = Some(new_state);
+                if let Some(session) = tab_manager.session_by_id_mut(first_session_id) {
+                    session.name = new_state.feature_name.clone();
+                    session.workflow_state = Some(new_state);
+                }
             }
             Event::RequestUserApproval(summary) => {
-                app.start_approval(summary);
+                if let Some(session) = tab_manager.session_by_id_mut(first_session_id) {
+                    session.start_approval(summary);
+                }
             }
             Event::BytesReceived(bytes) => {
-                app.add_bytes(bytes);
+                if let Some(session) = tab_manager.session_by_id_mut(first_session_id) {
+                    session.add_bytes(bytes);
+                }
             }
             Event::TokenUsage(usage) => {
-                app.add_token_usage(&usage);
+                if let Some(session) = tab_manager.session_by_id_mut(first_session_id) {
+                    session.add_token_usage(&usage);
+                }
             }
             Event::PhaseStarted(phase) => {
-                app.start_phase(phase);
+                if let Some(session) = tab_manager.session_by_id_mut(first_session_id) {
+                    session.start_phase(phase);
+                }
             }
             Event::TurnCompleted => {
-                app.turn_count += 1;
+                if let Some(session) = tab_manager.session_by_id_mut(first_session_id) {
+                    session.turn_count += 1;
+                }
             }
             Event::ModelDetected(name) => {
-                if app.model_name.is_none() {
-                    app.model_name = Some(shorten_model_name(&name));
+                if let Some(session) = tab_manager.session_by_id_mut(first_session_id) {
+                    if session.model_name.is_none() {
+                        session.model_name = Some(shorten_model_name(&name));
+                    }
                 }
             }
             Event::ToolResultReceived { tool_id: _, is_error } => {
-                if is_error {
-                    app.tool_error_count += 1;
-                }
-
-                // Compute duration from active_tools (FIFO - remove oldest)
-                if !app.active_tools.is_empty() {
-                    let (_, start_time) = app.active_tools.remove(0);
-                    let duration_ms = start_time.elapsed().as_millis() as u64;
-                    app.total_tool_duration_ms += duration_ms;
-                    app.completed_tool_count += 1;
+                if let Some(session) = tab_manager.session_by_id_mut(first_session_id) {
+                    if is_error {
+                        session.tool_error_count += 1;
+                    }
+                    if !session.active_tools.is_empty() {
+                        let (_, start_time) = session.active_tools.remove(0);
+                        let duration_ms = start_time.elapsed().as_millis() as u64;
+                        session.total_tool_duration_ms += duration_ms;
+                        session.completed_tool_count += 1;
+                    }
                 }
             }
             Event::StopReason(reason) => {
-                app.last_stop_reason = Some(reason);
+                if let Some(session) = tab_manager.session_by_id_mut(first_session_id) {
+                    session.last_stop_reason = Some(reason);
+                }
+            }
+
+            // Session-routed events for multi-tab support
+            Event::SessionOutput { session_id, line } => {
+                if let Some(session) = tab_manager.session_by_id_mut(session_id) {
+                    if line.contains("Cost: $") {
+                        if let Some(cost_str) = line.split('$').nth(1) {
+                            if let Ok(cost) = cost_str.trim().parse::<f64>() {
+                                session.total_cost += cost;
+                            }
+                        }
+                    }
+                    session.add_output(line);
+                }
+            }
+            Event::SessionStreaming { session_id, line } => {
+                if let Some(session) = tab_manager.session_by_id_mut(session_id) {
+                    session.add_streaming(line);
+                }
+            }
+            Event::SessionStateUpdate { session_id, state } => {
+                if let Some(session) = tab_manager.session_by_id_mut(session_id) {
+                    session.name = state.feature_name.clone();
+                    session.workflow_state = Some(state);
+                }
+            }
+            Event::SessionApprovalRequest { session_id, summary } => {
+                if let Some(session) = tab_manager.session_by_id_mut(session_id) {
+                    session.start_approval(summary);
+                }
+            }
+            Event::SessionTokenUsage { session_id, usage } => {
+                if let Some(session) = tab_manager.session_by_id_mut(session_id) {
+                    session.add_token_usage(&usage);
+                }
+            }
+            Event::SessionToolStarted { session_id, name } => {
+                if let Some(session) = tab_manager.session_by_id_mut(session_id) {
+                    session.tool_started(name);
+                    session.tool_call_count += 1;
+                }
+            }
+            Event::SessionToolFinished { session_id, id: _ } => {
+                if let Some(session) = tab_manager.session_by_id_mut(session_id) {
+                    if !session.active_tools.is_empty() {
+                        session.active_tools.remove(0);
+                    }
+                }
+            }
+            Event::SessionBytesReceived { session_id, bytes } => {
+                if let Some(session) = tab_manager.session_by_id_mut(session_id) {
+                    session.add_bytes(bytes);
+                }
+            }
+            Event::SessionPhaseStarted { session_id, phase } => {
+                if let Some(session) = tab_manager.session_by_id_mut(session_id) {
+                    session.start_phase(phase);
+                }
+            }
+            Event::SessionTurnCompleted { session_id } => {
+                if let Some(session) = tab_manager.session_by_id_mut(session_id) {
+                    session.turn_count += 1;
+                }
+            }
+            Event::SessionModelDetected { session_id, name } => {
+                if let Some(session) = tab_manager.session_by_id_mut(session_id) {
+                    if session.model_name.is_none() {
+                        session.model_name = Some(shorten_model_name(&name));
+                    }
+                }
+            }
+            Event::SessionToolResultReceived {
+                session_id,
+                tool_id: _,
+                is_error,
+            } => {
+                if let Some(session) = tab_manager.session_by_id_mut(session_id) {
+                    if is_error {
+                        session.tool_error_count += 1;
+                    }
+                    if !session.active_tools.is_empty() {
+                        let (_, start_time) = session.active_tools.remove(0);
+                        let duration_ms = start_time.elapsed().as_millis() as u64;
+                        session.total_tool_duration_ms += duration_ms;
+                        session.completed_tool_count += 1;
+                    }
+                }
+            }
+            Event::SessionStopReason { session_id, reason } => {
+                if let Some(session) = tab_manager.session_by_id_mut(session_id) {
+                    session.last_stop_reason = Some(reason);
+                }
+            }
+            Event::SessionWorkflowComplete { session_id } => {
+                if let Some(session) = tab_manager.session_by_id_mut(session_id) {
+                    session.status = SessionStatus::Complete;
+                    session.running = false;
+                }
+            }
+            Event::SessionWorkflowError { session_id, error } => {
+                if let Some(session) = tab_manager.session_by_id_mut(session_id) {
+                    session.handle_error(&error);
+                }
+            }
+            Event::SessionImplOutput { session_id, line } => {
+                if let Some(session) = tab_manager.session_by_id_mut(session_id) {
+                    session.add_streaming(line);
+                }
+            }
+            Event::SessionImplComplete { session_id, success } => {
+                if let Some(session) = tab_manager.session_by_id_mut(session_id) {
+                    if success {
+                        session.status = SessionStatus::Complete;
+                    } else {
+                        session.status = SessionStatus::Error;
+                    }
+                    session.impl_handle = None;
+                }
             }
         }
 
-        if app.should_quit {
+        if should_quit {
             break;
         }
 
         // Check if initialization completed - start workflow
-        if let Some(handle) = init_handle.take() {
+        if let Some((session_id, handle)) = init_handle.take() {
             if handle.is_finished() {
                 match handle.await {
-                    Ok(Ok((state, state_path))) => {
-                        current_state = Some(state.clone());
-                        workflow_state_path = Some(state_path.clone());
-                        app.workflow_state = Some(state.clone());
+                    Ok(Ok((state, state_path, feature_name))) => {
+                        if let Some(session) = tab_manager.session_by_id_mut(session_id) {
+                            session.name = feature_name;
+                            session.workflow_state = Some(state.clone());
 
-                        // Create approval channel and start workflow
-                        let (new_approval_tx, new_approval_rx) = mpsc::channel::<UserApprovalResponse>(1);
-                        approval_tx = Some(new_approval_tx);
+                            // Create approval channel and start workflow
+                            let (new_approval_tx, new_approval_rx) =
+                                mpsc::channel::<UserApprovalResponse>(1);
+                            session.approval_tx = Some(new_approval_tx);
 
-                        workflow_handle = Some(tokio::spawn({
-                            let working_dir = working_dir.clone();
-                            let tx = output_tx.clone();
-                            async move {
-                                run_workflow(state, working_dir, state_path, tx, new_approval_rx).await
-                            }
-                        }));
+                            let workflow_handle = tokio::spawn({
+                                let working_dir = working_dir.clone();
+                                let tx = output_tx.clone();
+                                let sid = session_id;
+                                async move {
+                                    run_workflow(
+                                        state,
+                                        working_dir,
+                                        state_path,
+                                        tx,
+                                        new_approval_rx,
+                                        sid,
+                                    )
+                                    .await
+                                }
+                            });
+
+                            session.workflow_handle = Some(workflow_handle);
+                        }
                     }
                     Ok(Err(e)) => {
-                        app.add_output(format!("[error] Initialization failed: {}", e));
-                        app.running = false;
-                        tokio::time::sleep(Duration::from_secs(2)).await;
-                        break;
+                        if let Some(session) = tab_manager.session_by_id_mut(session_id) {
+                            session.handle_error(&format!("Initialization failed: {}", e));
+                        }
                     }
                     Err(e) => {
-                        app.add_output(format!("[error] Initialization panicked: {}", e));
-                        app.running = false;
-                        tokio::time::sleep(Duration::from_secs(2)).await;
-                        break;
+                        if let Some(session) = tab_manager.session_by_id_mut(session_id) {
+                            session.handle_error(&format!("Initialization panicked: {}", e));
+                        }
                     }
                 }
             } else {
                 // Put it back if not finished
-                init_handle = Some(handle);
+                init_handle = Some((session_id, handle));
             }
         }
 
-        // Check if workflow completed
-        if let Some(handle) = workflow_handle.take() {
-            if handle.is_finished() {
-                match handle.await {
-                    Ok(Ok(WorkflowResult::Accepted)) => {
-                        app.running = false;
-                        break;
-                    }
-                    Ok(Ok(WorkflowResult::AcceptAndImplement { plan_file })) => {
-                        app.running = false;
-
-                        // Restore terminal before exec
-                        restore_terminal(&mut terminal)?;
-
-                        // Get absolute path to plan file
-                        let plan_path = working_dir.join(&plan_file);
-                        let prompt = format!(
-                            "Please implement the following plan fully: {}",
-                            plan_path.display()
-                        );
-
-                        // Launch interactive Claude session
-                        #[cfg(unix)]
-                        {
-                            use std::os::unix::process::CommandExt;
-                            let err = std::process::Command::new("claude")
-                                .arg("--dangerously-skip-permissions")
-                                .arg(&prompt)
-                                .exec();
-                            // exec() only returns if there was an error
-                            eprintln!("Failed to launch Claude: {}", err);
-                            std::process::exit(1);
+        // Check all sessions for completed workflows
+        for session in tab_manager.sessions_mut() {
+            if let Some(handle) = session.workflow_handle.take() {
+                if handle.is_finished() {
+                    match handle.await {
+                        Ok(Ok(WorkflowResult::Accepted)) => {
+                            session.status = SessionStatus::Complete;
+                            session.running = false;
                         }
+                        Ok(Ok(WorkflowResult::AcceptAndImplement { plan_file })) => {
+                            // Start implementation subprocess
+                            session.status = SessionStatus::Implementing;
+                            let plan_path = working_dir.join(&plan_file);
 
-                        #[cfg(not(unix))]
-                        {
-                            // Windows fallback: spawn and wait
-                            let status = std::process::Command::new("claude")
-                                .arg("--dangerously-skip-permissions")
-                                .arg(&prompt)
-                                .stdin(std::process::Stdio::inherit())
-                                .stdout(std::process::Stdio::inherit())
-                                .stderr(std::process::Stdio::inherit())
-                                .status();
+                            // Spawn implementation subprocess
+                            start_implementation(session, plan_path, output_tx.clone());
+                        }
+                        Ok(Ok(WorkflowResult::NeedsRestart { user_feedback })) => {
+                            // Restart the workflow with updated objective
+                            session.add_output("".to_string());
+                            session.add_output("=== RESTARTING WITH YOUR FEEDBACK ===".to_string());
+                            session.add_output(format!("Changes requested: {}", user_feedback));
 
-                            match status {
-                                Ok(s) => std::process::exit(s.code().unwrap_or(0)),
-                                Err(e) => {
-                                    eprintln!("Failed to launch Claude: {}", e);
-                                    std::process::exit(1);
-                                }
+                            if let Some(ref mut state) = session.workflow_state {
+                                // Reset state for new iteration
+                                state.phase = Phase::Planning;
+                                state.iteration = 1;
+                                state.objective = format!(
+                                    "{}\n\nUSER FEEDBACK: The previous plan was reviewed and needs changes:\n{}",
+                                    state.objective,
+                                    user_feedback
+                                );
+                                let state_path = working_dir.join(format!(
+                                    ".planning-agent/{}.json",
+                                    state.feature_name
+                                ));
+                                let _ = state.save(&state_path);
+                                session.streaming_lines.clear();
+                                session.status = SessionStatus::Planning;
+
+                                // Create new approval channel
+                                let (new_approval_tx, new_approval_rx) =
+                                    mpsc::channel::<UserApprovalResponse>(1);
+                                session.approval_tx = Some(new_approval_tx);
+
+                                // Spawn new workflow
+                                let new_handle = tokio::spawn({
+                                    let state = state.clone();
+                                    let working_dir = working_dir.clone();
+                                    let tx = output_tx.clone();
+                                    let sid = session.id;
+                                    async move {
+                                        run_workflow(
+                                            state,
+                                            working_dir,
+                                            state_path,
+                                            tx,
+                                            new_approval_rx,
+                                            sid,
+                                        )
+                                        .await
+                                    }
+                                });
+
+                                session.workflow_handle = Some(new_handle);
                             }
                         }
-                    }
-                    Ok(Ok(WorkflowResult::NeedsRestart { user_feedback })) => {
-                        // Restart the workflow with updated objective
-                        let _ = output_tx.send(Event::Output("".to_string()));
-                        let _ = output_tx.send(Event::Output("=== RESTARTING WITH YOUR FEEDBACK ===".to_string()));
-                        let _ = output_tx.send(Event::Output(format!("Changes requested: {}", user_feedback)));
-
-                        if let (Some(ref mut state), Some(ref state_path)) = (&mut current_state, &workflow_state_path) {
-                            // Reset state for new iteration
-                            state.phase = Phase::Planning;
-                            state.iteration = 1;
-                            // Append user feedback to objective
-                            state.objective = format!(
-                                "{}\n\nUSER FEEDBACK: The previous plan was reviewed and needs changes:\n{}",
-                                state.objective,
-                                user_feedback
-                            );
-                            state.save(state_path)?;
-                            app.workflow_state = Some(state.clone());
-                            app.streaming_lines.clear();
-
-                            // Create new approval channel
-                            let (new_approval_tx, new_approval_rx) = mpsc::channel::<UserApprovalResponse>(1);
-                            approval_tx = Some(new_approval_tx);
-
-                            // Spawn new workflow
-                            workflow_handle = Some(tokio::spawn({
-                                let state = state.clone();
-                                let working_dir = working_dir.clone();
-                                let state_path = state_path.clone();
-                                let tx = output_tx.clone();
-                                async move {
-                                    run_workflow(state, working_dir, state_path, tx, new_approval_rx).await
-                                }
-                            }));
+                        Ok(Err(e)) => {
+                            session.handle_error(&format!("Workflow failed: {}", e));
+                        }
+                        Err(e) => {
+                            session.handle_error(&format!("Workflow panicked: {}", e));
                         }
                     }
-                    Ok(Err(e)) => {
-                        app.add_output(format!("[error] Workflow failed: {}", e));
-                        app.running = false;
-                        tokio::time::sleep(Duration::from_secs(2)).await;
-                        break;
-                    }
-                    Err(e) => {
-                        app.add_output(format!("[error] Workflow panicked: {}", e));
-                        app.running = false;
-                        tokio::time::sleep(Duration::from_secs(2)).await;
-                        break;
-                    }
+                } else {
+                    // Put it back if not finished
+                    session.workflow_handle = Some(handle);
                 }
-            } else {
-                // Put it back if not finished
-                workflow_handle = Some(handle);
             }
         }
     }
@@ -656,7 +935,80 @@ async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
     Ok(())
 }
 
-fn restore_terminal(terminal: &mut ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io::Stdout>>) -> Result<()> {
+/// Start implementation subprocess and stream output to session
+fn start_implementation(
+    session: &mut Session,
+    plan_path: PathBuf,
+    output_tx: mpsc::UnboundedSender<Event>,
+) {
+    let prompt = format!(
+        "Please implement the following plan fully: {}",
+        plan_path.display()
+    );
+
+    let session_id = session.id;
+
+    // Spawn implementation subprocess
+    let handle = tokio::spawn(async move {
+        let mut cmd = tokio::process::Command::new("claude");
+        cmd.arg("--dangerously-skip-permissions")
+            .arg(&prompt)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+
+        match cmd.spawn() {
+            Ok(mut child) => {
+                let stdout = child.stdout.take();
+                let stderr = child.stderr.take();
+
+                // Stream stdout
+                if let Some(stdout) = stdout {
+                    let tx = output_tx.clone();
+                    let reader = tokio::io::BufReader::new(stdout);
+                    let mut lines = reader.lines();
+                    while let Ok(Some(line)) = lines.next_line().await {
+                        let _ = tx.send(Event::SessionImplOutput {
+                            session_id,
+                            line,
+                        });
+                    }
+                }
+
+                // Stream stderr
+                if let Some(stderr) = stderr {
+                    let tx = output_tx.clone();
+                    let reader = tokio::io::BufReader::new(stderr);
+                    let mut lines = reader.lines();
+                    while let Ok(Some(line)) = lines.next_line().await {
+                        let _ = tx.send(Event::SessionImplOutput {
+                            session_id,
+                            line: format!("[stderr] {}", line),
+                        });
+                    }
+                }
+
+                // Wait for completion
+                let status = child.wait().await;
+                let success = status.map(|s| s.success()).unwrap_or(false);
+                let _ = output_tx.send(Event::SessionImplComplete { session_id, success });
+            }
+            Err(e) => {
+                let _ = output_tx.send(Event::SessionWorkflowError {
+                    session_id,
+                    error: format!("Failed to start Claude: {}", e),
+                });
+            }
+        }
+    });
+
+    // Store the child handle (though we don't really need it since we're tracking via events)
+    // The handle will complete when the subprocess exits
+    drop(handle);
+}
+
+fn restore_terminal(
+    terminal: &mut ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io::Stdout>>,
+) -> Result<()> {
     crossterm::terminal::disable_raw_mode()?;
     crossterm::execute!(
         terminal.backend_mut(),
@@ -680,19 +1032,32 @@ async fn run_workflow(
     state_path: PathBuf,
     output_tx: mpsc::UnboundedSender<Event>,
     mut approval_rx: mpsc::Receiver<UserApprovalResponse>,
+    session_id: usize,
 ) -> Result<WorkflowResult> {
-    log_workflow(&working_dir, &format!("=== WORKFLOW START: {} ===", state.feature_name));
-    log_workflow(&working_dir, &format!("Initial phase: {:?}, iteration: {}", state.phase, state.iteration));
+    log_workflow(
+        &working_dir,
+        &format!("=== WORKFLOW START: {} ===", state.feature_name),
+    );
+    log_workflow(
+        &working_dir,
+        &format!(
+            "Initial phase: {:?}, iteration: {}",
+            state.phase, state.iteration
+        ),
+    );
+
+    // Create session event sender for this workflow
+    let sender = SessionEventSender::new(session_id, output_tx.clone());
 
     while state.should_continue() {
         match state.phase {
             Phase::Planning => {
                 log_workflow(&working_dir, ">>> ENTERING Planning phase");
-                let _ = output_tx.send(Event::PhaseStarted("Planning".to_string()));
-                let _ = output_tx.send(Event::Output("".to_string()));
-                let _ = output_tx.send(Event::Output("=== PLANNING PHASE ===".to_string()));
-                let _ = output_tx.send(Event::Output(format!("Feature: {}", state.feature_name)));
-                let _ = output_tx.send(Event::Output(format!("Plan file: {}", state.plan_file.display())));
+                sender.send_phase_started("Planning".to_string());
+                sender.send_output("".to_string());
+                sender.send_output("=== PLANNING PHASE ===".to_string());
+                sender.send_output(format!("Feature: {}", state.feature_name));
+                sender.send_output(format!("Plan file: {}", state.plan_file.display()));
 
                 log_workflow(&working_dir, "Calling run_planning_phase...");
                 run_planning_phase(&state, &working_dir, output_tx.clone()).await?;
@@ -701,22 +1066,31 @@ async fn run_workflow(
                 let plan_path = working_dir.join(&state.plan_file);
                 if !plan_path.exists() {
                     log_workflow(&working_dir, "ERROR: Plan file was not created!");
-                    let _ = output_tx.send(Event::Output("[error] Plan file was not created!".to_string()));
+                    sender.send_output("[error] Plan file was not created!".to_string());
                     anyhow::bail!("Plan file not created");
                 }
 
                 log_workflow(&working_dir, "Transitioning: Planning -> Reviewing");
                 state.transition(Phase::Reviewing)?;
                 state.save(&state_path)?;
-                let _ = output_tx.send(Event::StateUpdate(state.clone()));
-                let _ = output_tx.send(Event::Output("[planning] Transitioning to review phase...".to_string()));
+                sender.send_state_update(state.clone());
+                sender.send_output("[planning] Transitioning to review phase...".to_string());
             }
 
             Phase::Reviewing => {
-                log_workflow(&working_dir, &format!(">>> ENTERING Reviewing phase (iteration {})", state.iteration));
-                let _ = output_tx.send(Event::PhaseStarted("Reviewing".to_string()));
-                let _ = output_tx.send(Event::Output("".to_string()));
-                let _ = output_tx.send(Event::Output(format!("=== REVIEW PHASE (Iteration {}) ===", state.iteration)));
+                log_workflow(
+                    &working_dir,
+                    &format!(
+                        ">>> ENTERING Reviewing phase (iteration {})",
+                        state.iteration
+                    ),
+                );
+                sender.send_phase_started("Reviewing".to_string());
+                sender.send_output("".to_string());
+                sender.send_output(format!(
+                    "=== REVIEW PHASE (Iteration {}) ===",
+                    state.iteration
+                ));
 
                 log_workflow(&working_dir, "Calling run_review_phase...");
                 run_review_phase(&state, &working_dir, output_tx.clone()).await?;
@@ -725,7 +1099,7 @@ async fn run_workflow(
                 let feedback_path = working_dir.join(&state.feedback_file);
                 if !feedback_path.exists() {
                     log_workflow(&working_dir, "ERROR: Feedback file was not created!");
-                    let _ = output_tx.send(Event::Output("[error] Feedback file was not created!".to_string()));
+                    sender.send_output("[error] Feedback file was not created!".to_string());
                     anyhow::bail!("Feedback file not created");
                 }
 
@@ -736,14 +1110,14 @@ async fn run_workflow(
                 match status {
                     FeedbackStatus::Approved => {
                         log_workflow(&working_dir, "Plan APPROVED! Transitioning to Complete");
-                        let _ = output_tx.send(Event::Output("[planning] Plan APPROVED!".to_string()));
+                        sender.send_output("[planning] Plan APPROVED!".to_string());
                         state.transition(Phase::Complete)?;
                     }
                     FeedbackStatus::NeedsRevision => {
-                        let _ = output_tx.send(Event::Output("[planning] Plan needs revision".to_string()));
+                        sender.send_output("[planning] Plan needs revision".to_string());
                         if state.iteration >= state.max_iterations {
                             log_workflow(&working_dir, "Max iterations reached, stopping");
-                            let _ = output_tx.send(Event::Output("[planning] Max iterations reached".to_string()));
+                            sender.send_output("[planning] Max iterations reached".to_string());
                             break;
                         }
                         log_workflow(&working_dir, "Transitioning: Reviewing -> Revising");
@@ -751,14 +1125,23 @@ async fn run_workflow(
                     }
                 }
                 state.save(&state_path)?;
-                let _ = output_tx.send(Event::StateUpdate(state.clone()));
+                sender.send_state_update(state.clone());
             }
 
             Phase::Revising => {
-                log_workflow(&working_dir, &format!(">>> ENTERING Revising phase (iteration {})", state.iteration));
-                let _ = output_tx.send(Event::PhaseStarted("Revising".to_string()));
-                let _ = output_tx.send(Event::Output("".to_string()));
-                let _ = output_tx.send(Event::Output(format!("=== REVISION PHASE (Iteration {}) ===", state.iteration)));
+                log_workflow(
+                    &working_dir,
+                    &format!(
+                        ">>> ENTERING Revising phase (iteration {})",
+                        state.iteration
+                    ),
+                );
+                sender.send_phase_started("Revising".to_string());
+                sender.send_output("".to_string());
+                sender.send_output(format!(
+                    "=== REVISION PHASE (Iteration {}) ===",
+                    state.iteration
+                ));
 
                 log_workflow(&working_dir, "Calling run_revision_phase...");
                 run_revision_phase(&state, &working_dir, output_tx.clone()).await?;
@@ -768,29 +1151,42 @@ async fn run_workflow(
                 let feedback_path = working_dir.join(&state.feedback_file);
                 if feedback_path.exists() {
                     if let Err(e) = std::fs::remove_file(&feedback_path) {
-                        log_workflow(&working_dir, &format!("Warning: Failed to delete feedback file: {}", e));
+                        log_workflow(
+                            &working_dir,
+                            &format!("Warning: Failed to delete feedback file: {}", e),
+                        );
                     } else {
                         log_workflow(&working_dir, "Deleted old feedback file");
                     }
                 }
 
                 state.iteration += 1;
-                log_workflow(&working_dir, &format!("Transitioning: Revising -> Reviewing (iteration now {})", state.iteration));
+                log_workflow(
+                    &working_dir,
+                    &format!(
+                        "Transitioning: Revising -> Reviewing (iteration now {})",
+                        state.iteration
+                    ),
+                );
                 state.transition(Phase::Reviewing)?;
                 state.save(&state_path)?;
-                let _ = output_tx.send(Event::StateUpdate(state.clone()));
-                let _ = output_tx.send(Event::Output("[planning] Transitioning to review phase...".to_string()));
+                sender.send_state_update(state.clone());
+                sender.send_output("[planning] Transitioning to review phase...".to_string());
             }
 
             Phase::Complete => {
-                // This shouldn't be reached since should_continue() returns false for Complete
-                // User approval logic is handled after the loop
                 break;
             }
         }
     }
 
-    log_workflow(&working_dir, &format!("=== WORKFLOW END: phase={:?}, iteration={} ===", state.phase, state.iteration));
+    log_workflow(
+        &working_dir,
+        &format!(
+            "=== WORKFLOW END: phase={:?}, iteration={} ===",
+            state.phase, state.iteration
+        ),
+    );
 
     // If plan was approved, request user approval before finishing
     if state.phase == Phase::Complete {
@@ -802,35 +1198,43 @@ async fn run_workflow(
             Ok(s) => s,
             Err(e) => {
                 log_workflow(&working_dir, &format!("Failed to summarize plan: {}", e));
-                format!("(Could not generate summary: {})\n\nThe plan has been approved by AI review.", e)
+                format!(
+                    "(Could not generate summary: {})\n\nThe plan has been approved by AI review.",
+                    e
+                )
             }
         };
 
-        let _ = output_tx.send(Event::Output("".to_string()));
-        let _ = output_tx.send(Event::Output("=== PLAN APPROVED BY AI ===".to_string()));
-        let _ = output_tx.send(Event::Output(format!("Completed after {} iteration(s)", state.iteration)));
-        let _ = output_tx.send(Event::Output("Waiting for your approval...".to_string()));
+        sender.send_output("".to_string());
+        sender.send_output("=== PLAN APPROVED BY AI ===".to_string());
+        sender.send_output(format!("Completed after {} iteration(s)", state.iteration));
+        sender.send_output("Waiting for your approval...".to_string());
 
         // Request user approval
-        let _ = output_tx.send(Event::RequestUserApproval(summary));
+        sender.send_approval_request(summary);
 
         // Wait for user response
         log_workflow(&working_dir, "Waiting for user approval response...");
         match approval_rx.recv().await {
             Some(UserApprovalResponse::Accept) => {
                 log_workflow(&working_dir, "User ACCEPTED the plan");
-                let _ = output_tx.send(Event::Output("[planning] User accepted the plan!".to_string()));
+                sender.send_output("[planning] User accepted the plan!".to_string());
                 return Ok(WorkflowResult::Accepted);
             }
             Some(UserApprovalResponse::AcceptAndImplement(plan_file)) => {
                 log_workflow(&working_dir, "User chose ACCEPT AND IMPLEMENT");
-                let _ = output_tx.send(Event::Output("[planning] Starting implementation...".to_string()));
+                sender.send_output("[planning] Starting implementation...".to_string());
                 return Ok(WorkflowResult::AcceptAndImplement { plan_file });
             }
             Some(UserApprovalResponse::Decline(feedback)) => {
-                log_workflow(&working_dir, &format!("User DECLINED with feedback: {}", feedback));
-                let _ = output_tx.send(Event::Output(format!("[planning] User requested changes: {}", feedback)));
-                return Ok(WorkflowResult::NeedsRestart { user_feedback: feedback });
+                log_workflow(
+                    &working_dir,
+                    &format!("User DECLINED with feedback: {}", feedback),
+                );
+                sender.send_output(format!("[planning] User requested changes: {}", feedback));
+                return Ok(WorkflowResult::NeedsRestart {
+                    user_feedback: feedback,
+                });
             }
             None => {
                 log_workflow(&working_dir, "Approval channel closed - treating as accept");
@@ -840,9 +1244,9 @@ async fn run_workflow(
     }
 
     // Max iterations reached without approval
-    let _ = output_tx.send(Event::Output("".to_string()));
-    let _ = output_tx.send(Event::Output("=== WORKFLOW COMPLETE ===".to_string()));
-    let _ = output_tx.send(Event::Output("Max iterations reached. Manual review recommended.".to_string()));
+    sender.send_output("".to_string());
+    sender.send_output("=== WORKFLOW COMPLETE ===".to_string());
+    sender.send_output("Max iterations reached. Manual review recommended.".to_string());
 
     Ok(WorkflowResult::Accepted)
 }
@@ -896,7 +1300,10 @@ async fn run_headless(cli: Cli) -> Result<()> {
                     eprintln!("[tool finished] {}", id);
                 }
                 Event::StateUpdate(state) => {
-                    eprintln!("[state] phase={:?} iteration={}", state.phase, state.iteration);
+                    eprintln!(
+                        "[state] phase={:?} iteration={}",
+                        state.phase, state.iteration
+                    );
                 }
                 Event::TurnCompleted => {
                     eprintln!("[turn] completed");
@@ -977,7 +1384,10 @@ async fn run_headless(cli: Cli) -> Result<()> {
     eprintln!("\n=== WORKFLOW COMPLETE ===");
     if state.phase == Phase::Complete {
         eprintln!("Plan APPROVED after {} iteration(s)", state.iteration);
-        eprintln!("Plan file: {}", working_dir.join(&state.plan_file).display());
+        eprintln!(
+            "Plan file: {}",
+            working_dir.join(&state.plan_file).display()
+        );
     } else {
         eprintln!("Max iterations reached. Manual review recommended.");
     }

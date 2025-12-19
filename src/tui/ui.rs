@@ -1,7 +1,7 @@
 use crate::state::Phase;
-use crate::tui::{App, ApprovalMode, FocusedPanel};
+use crate::tui::{ApprovalMode, FocusedPanel, InputMode, Session, SessionStatus, TabManager};
 use ratatui::{
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style, Stylize},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap},
@@ -18,45 +18,101 @@ fn format_bytes(bytes: usize) -> String {
     }
 }
 
-pub fn draw(frame: &mut Frame, app: &App) {
-    // Main layout: header, content, footer
+/// Main draw function for multi-tab interface
+pub fn draw(frame: &mut Frame, tab_manager: &TabManager) {
+    // Main layout: tab bar, content, footer
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1), // Header
+            Constraint::Length(2), // Tab bar (2 lines for tabs + border)
             Constraint::Min(0),    // Main content
             Constraint::Length(3), // Footer
         ])
         .split(frame.area());
 
-    draw_header(frame, app, chunks[0]);
-    draw_main(frame, app, chunks[1]);
-    draw_footer(frame, app, chunks[2]);
+    draw_tab_bar(frame, tab_manager, chunks[0]);
 
-    // Draw approval overlay if in approval mode
-    if app.approval_mode != ApprovalMode::None {
-        draw_approval_overlay(frame, app);
+    let session = tab_manager.active();
+    draw_main(frame, session, chunks[1]);
+    draw_footer(frame, session, tab_manager, chunks[2]);
+
+    // Draw overlays
+    if session.approval_mode != ApprovalMode::None {
+        draw_approval_overlay(frame, session);
+    }
+    if session.input_mode == InputMode::NamingTab {
+        draw_tab_input_overlay(frame, session);
+    }
+    if session.error_state.is_some() {
+        draw_error_overlay(frame, session);
     }
 }
 
-fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
-    let title = format!(
-        " Planning Agent - {} ",
-        app.feature_name()
+/// Draw the tab bar at the top of the screen
+fn draw_tab_bar(frame: &mut Frame, tab_manager: &TabManager, area: Rect) {
+    let mut spans: Vec<Span> = Vec::new();
+    spans.push(Span::raw(" "));
+
+    for (i, session) in tab_manager.sessions.iter().enumerate() {
+        let is_active = i == tab_manager.active_tab;
+
+        // Status indicator
+        let status_icon = match session.status {
+            SessionStatus::InputPending => "...",
+            SessionStatus::Planning => "",
+            SessionStatus::AwaitingApproval => "?",
+            SessionStatus::Implementing => "*",
+            SessionStatus::Complete => "+",
+            SessionStatus::Error => "!",
+        };
+
+        // Tab name (truncate if too long)
+        let name = if session.name.is_empty() {
+            "New Tab"
+        } else {
+            &session.name
+        };
+        let display_name: String = if name.len() > 15 {
+            format!("{}...", &name[..12])
+        } else {
+            name.to_string()
+        };
+
+        // Format tab label
+        let label = if status_icon.is_empty() {
+            format!("[{}]", display_name)
+        } else {
+            format!("[{} {}]", display_name, status_icon)
+        };
+
+        let style = if is_active {
+            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+        } else if session.approval_mode != ApprovalMode::None {
+            // Highlight tabs needing attention
+            Style::default().fg(Color::Magenta)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+
+        spans.push(Span::styled(label, style));
+        spans.push(Span::raw(" "));
+    }
+
+    // Add new tab button hint
+    spans.push(Span::styled("[Ctrl++]", Style::default().fg(Color::Green).dim()));
+
+    let tabs = Paragraph::new(Line::from(spans)).block(
+        Block::default()
+            .borders(Borders::BOTTOM)
+            .border_style(Style::default().fg(Color::DarkGray))
+            .title(" Planning Agent ")
+            .title_alignment(Alignment::Center),
     );
 
-    let header = Paragraph::new(Line::from(vec![
-        Span::styled(title, Style::default().fg(Color::Cyan).bold()),
-        Span::raw(" "),
-        Span::styled("[q]", Style::default().fg(Color::DarkGray)),
-        Span::styled("uit", Style::default().fg(Color::DarkGray)),
-    ]))
-    .style(Style::default().bg(Color::DarkGray).fg(Color::White));
-
-    frame.render_widget(header, area);
+    frame.render_widget(tabs, area);
 }
 
-fn draw_main(frame: &mut Frame, app: &App, area: Rect) {
+fn draw_main(frame: &mut Frame, session: &Session, area: Rect) {
     // Split main area: left (70%) | stats (30%)
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
@@ -69,15 +125,15 @@ fn draw_main(frame: &mut Frame, app: &App, area: Rect) {
         .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
         .split(chunks[0]);
 
-    draw_output(frame, app, left_chunks[0]);
-    draw_streaming(frame, app, left_chunks[1]);
-    draw_stats(frame, app, chunks[1]);
+    draw_output(frame, session, left_chunks[0]);
+    draw_streaming(frame, session, left_chunks[1]);
+    draw_stats(frame, session, chunks[1]);
 }
 
-fn draw_output(frame: &mut Frame, app: &App, area: Rect) {
+fn draw_output(frame: &mut Frame, session: &Session, area: Rect) {
     // Build title with scroll indicator and focus indicator
-    let is_focused = app.focused_panel == FocusedPanel::Output;
-    let title = if app.output_follow_mode {
+    let is_focused = session.focused_panel == FocusedPanel::Output;
+    let title = if session.output_follow_mode {
         if is_focused {
             " Output [*] "
         } else {
@@ -100,15 +156,15 @@ fn draw_output(frame: &mut Frame, app: &App, area: Rect) {
     let visible_height = inner_area.height as usize;
 
     // Calculate which lines to show based on follow mode
-    let total_lines = app.output_lines.len();
+    let total_lines = session.output_lines.len();
     let max_scroll = total_lines.saturating_sub(visible_height);
 
-    let start = if app.output_follow_mode {
+    let start = if session.output_follow_mode {
         // Follow mode: show the last visible_height lines
         max_scroll
     } else {
         // Manual scroll: use user's position, clamped to valid range
-        app.scroll_position.min(max_scroll)
+        session.scroll_position.min(max_scroll)
     };
 
     let end = (start + visible_height).min(total_lines);
@@ -119,7 +175,7 @@ fn draw_output(frame: &mut Frame, app: &App, area: Rect) {
             Style::default().fg(Color::DarkGray),
         ))]
     } else {
-        app.output_lines[start..end]
+        session.output_lines[start..end]
             .iter()
             .map(|line| {
                 // Color different prefixes
@@ -154,10 +210,10 @@ fn draw_output(frame: &mut Frame, app: &App, area: Rect) {
     }
 }
 
-fn draw_streaming(frame: &mut Frame, app: &App, area: Rect) {
+fn draw_streaming(frame: &mut Frame, session: &Session, area: Rect) {
     // Build title with scroll indicator and focus indicator
-    let is_focused = app.focused_panel == FocusedPanel::Streaming;
-    let title = if app.streaming_follow_mode {
+    let is_focused = session.focused_panel == FocusedPanel::Streaming;
+    let title = if session.streaming_follow_mode {
         if is_focused {
             " Claude Streaming [*] "
         } else {
@@ -180,13 +236,14 @@ fn draw_streaming(frame: &mut Frame, app: &App, area: Rect) {
     let visible_height = inner_area.height as usize;
     let inner_width = inner_area.width;
 
-    let lines: Vec<Line> = if app.streaming_lines.is_empty() {
+    let lines: Vec<Line> = if session.streaming_lines.is_empty() {
         vec![Line::from(Span::styled(
             "Waiting for Claude output...",
             Style::default().fg(Color::DarkGray),
         ))]
     } else {
-        app.streaming_lines
+        session
+            .streaming_lines
             .iter()
             .map(|line| {
                 // Color based on content type
@@ -211,12 +268,12 @@ fn draw_streaming(frame: &mut Frame, app: &App, area: Rect) {
 
     // Calculate scroll offset based on follow mode
     let max_scroll = wrapped_line_count.saturating_sub(visible_height);
-    let scroll_offset = if app.streaming_follow_mode {
+    let scroll_offset = if session.streaming_follow_mode {
         // Follow mode: show latest content at bottom
         max_scroll as u16
     } else {
         // Manual scroll: use user's position, clamped to valid range
-        (app.streaming_scroll_position.min(max_scroll)) as u16
+        (session.streaming_scroll_position.min(max_scroll)) as u16
     };
 
     let paragraph = Paragraph::new(lines)
@@ -227,7 +284,8 @@ fn draw_streaming(frame: &mut Frame, app: &App, area: Rect) {
 
     // Scrollbar
     if wrapped_line_count > visible_height {
-        let mut scrollbar_state = ScrollbarState::new(wrapped_line_count).position(scroll_offset as usize);
+        let mut scrollbar_state =
+            ScrollbarState::new(wrapped_line_count).position(scroll_offset as usize);
         frame.render_stateful_widget(
             Scrollbar::new(ScrollbarOrientation::VerticalRight)
                 .begin_symbol(Some("↑"))
@@ -257,14 +315,14 @@ fn format_duration(d: std::time::Duration) -> String {
     }
 }
 
-fn draw_stats(frame: &mut Frame, app: &App, area: Rect) {
-    let elapsed = app.elapsed();
+fn draw_stats(frame: &mut Frame, session: &Session, area: Rect) {
+    let elapsed = session.elapsed();
     let minutes = elapsed.as_secs() / 60;
     let seconds = elapsed.as_secs() % 60;
 
-    let (iter, max_iter) = app.iteration();
+    let (iter, max_iter) = session.iteration();
 
-    let phase_color = match app.workflow_state.as_ref().map(|s| &s.phase) {
+    let phase_color = match session.workflow_state.as_ref().map(|s| &s.phase) {
         Some(Phase::Planning) => Color::Yellow,
         Some(Phase::Reviewing) => Color::Blue,
         Some(Phase::Revising) => Color::Magenta,
@@ -273,23 +331,27 @@ fn draw_stats(frame: &mut Frame, app: &App, area: Rect) {
     };
 
     let mut stats_text = vec![
-        Line::from(vec![
-            Span::styled(" Status", Style::default().add_modifier(Modifier::BOLD)),
-        ]),
+        Line::from(vec![Span::styled(
+            " Status",
+            Style::default().add_modifier(Modifier::BOLD),
+        )]),
         Line::from(vec![
             Span::raw(" Phase: "),
-            Span::styled(app.phase_name(), Style::default().fg(phase_color).bold()),
+            Span::styled(session.phase_name(), Style::default().fg(phase_color).bold()),
         ]),
         Line::from(format!(" Iter: {}/{}", iter, max_iter)),
         Line::from(vec![
             Span::styled(" Turn: ", Style::default().fg(Color::DarkGray)),
-            Span::styled(format!("{}", app.turn_count), Style::default().fg(Color::White)),
+            Span::styled(
+                format!("{}", session.turn_count),
+                Style::default().fg(Color::White),
+            ),
         ]),
         Line::from(format!(" Time: {}m {:02}s", minutes, seconds)),
     ];
 
     // Model name (if detected)
-    if let Some(ref model) = app.model_name {
+    if let Some(ref model) = session.model_name {
         stats_text.push(Line::from(vec![
             Span::styled(" Model: ", Style::default().fg(Color::DarkGray)),
             Span::styled(model.clone(), Style::default().fg(Color::Cyan)),
@@ -297,7 +359,7 @@ fn draw_stats(frame: &mut Frame, app: &App, area: Rect) {
     }
 
     // Stop reason (if available)
-    if let Some(ref reason) = app.last_stop_reason {
+    if let Some(ref reason) = session.last_stop_reason {
         let (icon, color) = match reason.as_str() {
             "end_turn" => ("●", Color::Green),
             "tool_use" => ("⚙", Color::Yellow),
@@ -314,77 +376,111 @@ fn draw_stats(frame: &mut Frame, app: &App, area: Rect) {
     stats_text.push(Line::from(""));
 
     // Token stats
-    stats_text.push(Line::from(vec![
-        Span::styled(" Tokens", Style::default().add_modifier(Modifier::BOLD)),
-    ]));
+    stats_text.push(Line::from(vec![Span::styled(
+        " Tokens",
+        Style::default().add_modifier(Modifier::BOLD),
+    )]));
     stats_text.push(Line::from(vec![
         Span::styled(" In: ", Style::default().fg(Color::DarkGray)),
-        Span::styled(format_tokens(app.total_input_tokens), Style::default().fg(Color::Cyan)),
+        Span::styled(
+            format_tokens(session.total_input_tokens),
+            Style::default().fg(Color::Cyan),
+        ),
         Span::styled("  Out: ", Style::default().fg(Color::DarkGray)),
-        Span::styled(format_tokens(app.total_output_tokens), Style::default().fg(Color::Green)),
+        Span::styled(
+            format_tokens(session.total_output_tokens),
+            Style::default().fg(Color::Green),
+        ),
     ]));
-    if app.total_cache_read_tokens > 0 || app.total_cache_creation_tokens > 0 {
+    if session.total_cache_read_tokens > 0 || session.total_cache_creation_tokens > 0 {
         stats_text.push(Line::from(vec![
             Span::styled(" Cache: ", Style::default().fg(Color::DarkGray)),
-            Span::styled(format!("{}r/{}w", format_tokens(app.total_cache_read_tokens), format_tokens(app.total_cache_creation_tokens)), Style::default().fg(Color::Blue)),
+            Span::styled(
+                format!(
+                    "{}r/{}w",
+                    format_tokens(session.total_cache_read_tokens),
+                    format_tokens(session.total_cache_creation_tokens)
+                ),
+                Style::default().fg(Color::Blue),
+            ),
         ]));
     }
     stats_text.push(Line::from(""));
 
     // Streaming stats
-    stats_text.push(Line::from(vec![
-        Span::styled(" Stream", Style::default().add_modifier(Modifier::BOLD)),
-    ]));
+    stats_text.push(Line::from(vec![Span::styled(
+        " Stream",
+        Style::default().add_modifier(Modifier::BOLD),
+    )]));
     stats_text.push(Line::from(vec![
         Span::styled(" Recv: ", Style::default().fg(Color::DarkGray)),
-        Span::styled(format_bytes(app.bytes_received), Style::default().fg(Color::White)),
+        Span::styled(
+            format_bytes(session.bytes_received),
+            Style::default().fg(Color::White),
+        ),
     ]));
     stats_text.push(Line::from(vec![
         Span::styled(" Rate: ", Style::default().fg(Color::DarkGray)),
-        Span::styled(format!("{}/s", format_bytes(app.bytes_per_second as usize)), Style::default().fg(if app.bytes_per_second > 100.0 { Color::Green } else { Color::Yellow })),
+        Span::styled(
+            format!("{}/s", format_bytes(session.bytes_per_second as usize)),
+            Style::default().fg(if session.bytes_per_second > 100.0 {
+                Color::Green
+            } else {
+                Color::Yellow
+            }),
+        ),
     ]));
-    stats_text.push(Line::from(format!(" Cost: ${:.4}", app.total_cost)));
+    stats_text.push(Line::from(format!(" Cost: ${:.4}", session.total_cost)));
     stats_text.push(Line::from(""));
 
     // Tool stats
-    stats_text.push(Line::from(vec![
-        Span::styled(" Tools", Style::default().add_modifier(Modifier::BOLD)),
-    ]));
+    stats_text.push(Line::from(vec![Span::styled(
+        " Tools",
+        Style::default().add_modifier(Modifier::BOLD),
+    )]));
     stats_text.push(Line::from(vec![
         Span::styled(" Calls: ", Style::default().fg(Color::DarkGray)),
-        Span::styled(format!("{}", app.tool_call_count), Style::default().fg(Color::White)),
+        Span::styled(
+            format!("{}", session.tool_call_count),
+            Style::default().fg(Color::White),
+        ),
     ]));
 
     // Active tools (compact)
-    if !app.active_tools.is_empty() {
-        for (name, start_time) in app.active_tools.iter().take(10) {
+    if !session.active_tools.is_empty() {
+        for (name, start_time) in session.active_tools.iter().take(10) {
             let elapsed = start_time.elapsed().as_secs();
             stats_text.push(Line::from(vec![
                 Span::styled(" ▶ ", Style::default().fg(Color::Yellow)),
-                Span::styled(format!("{} ({}s)", name, elapsed), Style::default().fg(Color::Yellow)),
+                Span::styled(
+                    format!("{} ({}s)", name, elapsed),
+                    Style::default().fg(Color::Yellow),
+                ),
             ]));
         }
-        if app.active_tools.len() > 10 {
+        if session.active_tools.len() > 10 {
             stats_text.push(Line::from(Span::styled(
-                format!("   +{} more", app.active_tools.len() - 10),
+                format!("   +{} more", session.active_tools.len() - 10),
                 Style::default().fg(Color::DarkGray),
             )));
         }
     }
 
     // Tool errors (only show if > 0)
-    if app.tool_error_count > 0 {
+    if session.tool_error_count > 0 {
         stats_text.push(Line::from(vec![
             Span::styled(" Errors: ", Style::default().fg(Color::DarkGray)),
             Span::styled(
-                format!("{}", app.tool_error_count),
-                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                format!("{}", session.tool_error_count),
+                Style::default()
+                    .fg(Color::Red)
+                    .add_modifier(Modifier::BOLD),
             ),
         ]));
     }
 
     // Average tool duration (computed locally)
-    if let Some(avg_ms) = app.average_tool_duration_ms() {
+    if let Some(avg_ms) = session.average_tool_duration_ms() {
         let duration_display = if avg_ms > 1000 {
             format!("{:.1}s", avg_ms as f64 / 1000.0)
         } else {
@@ -397,9 +493,9 @@ fn draw_stats(frame: &mut Frame, app: &App, area: Rect) {
     }
 
     // Tool success rate
-    if app.tool_call_count > 0 {
-        let success_count = app.tool_call_count.saturating_sub(app.tool_error_count);
-        let success_rate = (success_count as f64 / app.tool_call_count as f64) * 100.0;
+    if session.tool_call_count > 0 {
+        let success_count = session.tool_call_count.saturating_sub(session.tool_error_count);
+        let success_rate = (success_count as f64 / session.tool_call_count as f64) * 100.0;
         let color = if success_rate >= 95.0 {
             Color::Green
         } else if success_rate >= 80.0 {
@@ -416,21 +512,25 @@ fn draw_stats(frame: &mut Frame, app: &App, area: Rect) {
     stats_text.push(Line::from(""));
 
     // Phase timing (if any recorded)
-    if !app.phase_times.is_empty() || app.current_phase_start.is_some() {
-        stats_text.push(Line::from(vec![
-            Span::styled(" Timing", Style::default().add_modifier(Modifier::BOLD)),
-        ]));
-        for (phase, duration) in &app.phase_times {
+    if !session.phase_times.is_empty() || session.current_phase_start.is_some() {
+        stats_text.push(Line::from(vec![Span::styled(
+            " Timing",
+            Style::default().add_modifier(Modifier::BOLD),
+        )]));
+        for (phase, duration) in &session.phase_times {
             stats_text.push(Line::from(vec![
                 Span::styled(format!(" {}: ", phase), Style::default().fg(Color::DarkGray)),
                 Span::styled(format_duration(*duration), Style::default().fg(Color::White)),
             ]));
         }
         // Show current phase timing
-        if let Some((phase, start)) = &app.current_phase_start {
+        if let Some((phase, start)) = &session.current_phase_start {
             stats_text.push(Line::from(vec![
                 Span::styled(format!(" {}: ", phase), Style::default().fg(Color::Yellow)),
-                Span::styled(format_duration(start.elapsed()), Style::default().fg(Color::Yellow)),
+                Span::styled(
+                    format_duration(start.elapsed()),
+                    Style::default().fg(Color::Yellow),
+                ),
             ]));
         }
         stats_text.push(Line::from(""));
@@ -462,8 +562,8 @@ fn draw_stats(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(stats, area);
 }
 
-fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
-    let phase = app.workflow_state.as_ref().map(|s| &s.phase);
+fn draw_footer(frame: &mut Frame, session: &Session, tab_manager: &TabManager, area: Rect) {
+    let phase = session.workflow_state.as_ref().map(|s| &s.phase);
 
     let phases = [
         ("Planning", Phase::Planning),
@@ -473,7 +573,13 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
     ];
 
     let mut spans: Vec<Span> = Vec::new();
-    spans.push(Span::raw(" "));
+
+    // Tab indicator
+    spans.push(Span::styled(
+        format!(" Tab {}/{} ", tab_manager.active_tab + 1, tab_manager.len()),
+        Style::default().fg(Color::Cyan),
+    ));
+    spans.push(Span::styled("│ ", Style::default().fg(Color::DarkGray)));
 
     for (i, (name, p)) in phases.iter().enumerate() {
         let is_current = phase == Some(p);
@@ -499,6 +605,21 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
         }
     }
 
+    // Add keybinding hints
+    spans.push(Span::styled(" │ ", Style::default().fg(Color::DarkGray)));
+
+    if session.approval_mode != ApprovalMode::None {
+        spans.push(Span::styled(
+            "[↑/↓] Scroll  [Enter] Select  [Esc] Cancel",
+            Style::default().fg(Color::DarkGray),
+        ));
+    } else {
+        spans.push(Span::styled(
+            "Tabs: [Ctrl+PgUp/Dn] Switch  [Ctrl+W] Close",
+            Style::default().fg(Color::DarkGray),
+        ));
+    }
+
     let footer = Paragraph::new(Line::from(spans)).block(
         Block::default()
             .borders(Borders::ALL)
@@ -508,7 +629,7 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(footer, area);
 }
 
-fn draw_approval_overlay(frame: &mut Frame, app: &App) {
+fn draw_approval_overlay(frame: &mut Frame, session: &Session) {
     let area = frame.area();
 
     // Create a centered popup
@@ -522,12 +643,12 @@ fn draw_approval_overlay(frame: &mut Frame, app: &App) {
     // Clear the background
     frame.render_widget(Clear, popup_area);
 
-    match app.approval_mode {
+    match session.approval_mode {
         ApprovalMode::AwaitingChoice => {
-            draw_choice_popup(frame, app, popup_area);
+            draw_choice_popup(frame, session, popup_area);
         }
         ApprovalMode::EnteringFeedback => {
-            draw_feedback_popup(frame, app, popup_area);
+            draw_feedback_popup(frame, session, popup_area);
         }
         ApprovalMode::None => {}
     }
@@ -539,20 +660,20 @@ fn parse_markdown_line(line: &str) -> Line<'static> {
 
     // Headers
     if let Some(header) = trimmed.strip_prefix("## ") {
-        return Line::from(vec![
-            Span::styled(
-                header.to_string(),
-                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
-            ),
-        ]);
+        return Line::from(vec![Span::styled(
+            header.to_string(),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )]);
     }
     if let Some(header) = trimmed.strip_prefix("# ") {
-        return Line::from(vec![
-            Span::styled(
-                header.to_string(),
-                Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
-            ),
-        ]);
+        return Line::from(vec![Span::styled(
+            header.to_string(),
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        )]);
     }
 
     // Bullet points
@@ -567,7 +688,10 @@ fn parse_markdown_line(line: &str) -> Line<'static> {
     if let Some(rest) = trimmed.strip_prefix(|c: char| c.is_ascii_digit()) {
         if let Some(content) = rest.strip_prefix(". ") {
             let num = &trimmed[..trimmed.len() - rest.len()];
-            let mut spans = vec![Span::styled(format!("  {}. ", num), Style::default().fg(Color::Yellow))];
+            let mut spans = vec![Span::styled(
+                format!("  {}. ", num),
+                Style::default().fg(Color::Yellow),
+            )];
             spans.extend(parse_inline_markdown(content));
             return Line::from(spans);
         }
@@ -593,7 +717,9 @@ fn parse_inline_markdown(text: &str) -> Vec<Span<'static>> {
         if let Some(end) = remaining.find("**") {
             spans.push(Span::styled(
                 remaining[..end].to_string(),
-                Style::default().add_modifier(Modifier::BOLD).fg(Color::White),
+                Style::default()
+                    .add_modifier(Modifier::BOLD)
+                    .fg(Color::White),
             ));
             remaining = &remaining[end + 2..];
         } else {
@@ -614,23 +740,21 @@ fn parse_inline_markdown(text: &str) -> Vec<Span<'static>> {
     spans
 }
 
-fn draw_choice_popup(frame: &mut Frame, app: &App, area: Rect) {
+fn draw_choice_popup(frame: &mut Frame, session: &Session, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),  // Title
-            Constraint::Min(0),     // Summary content
-            Constraint::Length(4),  // Instructions
+            Constraint::Length(3), // Title
+            Constraint::Min(0),    // Summary content
+            Constraint::Length(4), // Instructions
         ])
         .split(area);
 
     // Title block
-    let title = Paragraph::new(Line::from(vec![
-        Span::styled(
-            " ✓ Plan Approved by AI ",
-            Style::default().fg(Color::Green).bold(),
-        ),
-    ]))
+    let title = Paragraph::new(Line::from(vec![Span::styled(
+        " ✓ Plan Approved by AI ",
+        Style::default().fg(Color::Green).bold(),
+    )]))
     .block(
         Block::default()
             .borders(Borders::ALL)
@@ -648,15 +772,11 @@ fn draw_choice_popup(frame: &mut Frame, app: &App, area: Rect) {
     let inner_area = summary_block.inner(chunks[1]);
     let visible_height = inner_area.height as usize;
 
-    let summary_lines: Vec<Line> = app
-        .plan_summary
-        .lines()
-        .map(parse_markdown_line)
-        .collect();
+    let summary_lines: Vec<Line> = session.plan_summary.lines().map(parse_markdown_line).collect();
 
     let total_lines = summary_lines.len();
     let max_scroll = total_lines.saturating_sub(visible_height);
-    let scroll_pos = app.plan_summary_scroll.min(max_scroll);
+    let scroll_pos = session.plan_summary_scroll.min(max_scroll);
 
     let summary = Paragraph::new(summary_lines)
         .block(summary_block)
@@ -676,18 +796,16 @@ fn draw_choice_popup(frame: &mut Frame, app: &App, area: Rect) {
     }
 
     // Instructions
-    let instructions = Paragraph::new(vec![
-        Line::from(vec![
-            Span::styled("  [a] ", Style::default().fg(Color::Green).bold()),
-            Span::raw("Accept  "),
-            Span::styled("  [i] ", Style::default().fg(Color::Magenta).bold()),
-            Span::raw("Implement  "),
-            Span::styled("  [d] ", Style::default().fg(Color::Yellow).bold()),
-            Span::raw("Decline  "),
-            Span::styled("  [j/k] ", Style::default().fg(Color::Cyan).bold()),
-            Span::raw("Scroll"),
-        ]),
-    ])
+    let instructions = Paragraph::new(vec![Line::from(vec![
+        Span::styled("  [a] ", Style::default().fg(Color::Green).bold()),
+        Span::raw("Accept  "),
+        Span::styled("  [i] ", Style::default().fg(Color::Magenta).bold()),
+        Span::raw("Implement  "),
+        Span::styled("  [d] ", Style::default().fg(Color::Yellow).bold()),
+        Span::raw("Decline  "),
+        Span::styled("  [j/k] ", Style::default().fg(Color::Cyan).bold()),
+        Span::raw("Scroll"),
+    ])])
     .block(
         Block::default()
             .borders(Borders::ALL)
@@ -696,23 +814,21 @@ fn draw_choice_popup(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(instructions, chunks[2]);
 }
 
-fn draw_feedback_popup(frame: &mut Frame, app: &App, area: Rect) {
+fn draw_feedback_popup(frame: &mut Frame, session: &Session, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),  // Title
-            Constraint::Min(0),     // Input area
-            Constraint::Length(3),  // Instructions
+            Constraint::Length(3), // Title
+            Constraint::Min(0),    // Input area
+            Constraint::Length(3), // Instructions
         ])
         .split(area);
 
     // Title
-    let title = Paragraph::new(Line::from(vec![
-        Span::styled(
-            " Enter your feedback ",
-            Style::default().fg(Color::Yellow).bold(),
-        ),
-    ]))
+    let title = Paragraph::new(Line::from(vec![Span::styled(
+        " Enter your feedback ",
+        Style::default().fg(Color::Yellow).bold(),
+    )]))
     .block(
         Block::default()
             .borders(Borders::ALL)
@@ -722,13 +838,13 @@ fn draw_feedback_popup(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(title, chunks[0]);
 
     // Input area with cursor
-    let input_text = if app.user_feedback.is_empty() {
+    let input_text = if session.user_feedback.is_empty() {
         "Type your changes here...".to_string()
     } else {
-        app.user_feedback.clone()
+        session.user_feedback.clone()
     };
 
-    let input_style = if app.user_feedback.is_empty() {
+    let input_style = if session.user_feedback.is_empty() {
         Style::default().fg(Color::DarkGray)
     } else {
         Style::default().fg(Color::White)
@@ -747,8 +863,8 @@ fn draw_feedback_popup(frame: &mut Frame, app: &App, area: Rect) {
 
     // Show cursor position
     let inner = chunks[1].inner(ratatui::layout::Margin::new(1, 1));
-    let cursor_x = inner.x + (app.cursor_position as u16 % inner.width);
-    let cursor_y = inner.y + (app.cursor_position as u16 / inner.width);
+    let cursor_x = inner.x + (session.cursor_position as u16 % inner.width);
+    let cursor_y = inner.y + (session.cursor_position as u16 / inner.width);
     frame.set_cursor_position((cursor_x, cursor_y));
 
     // Instructions
@@ -764,4 +880,140 @@ fn draw_feedback_popup(frame: &mut Frame, app: &App, area: Rect) {
             .border_style(Style::default().fg(Color::DarkGray)),
     );
     frame.render_widget(instructions, chunks[2]);
+}
+
+/// Draw the tab input overlay for entering a new tab's objective
+fn draw_tab_input_overlay(frame: &mut Frame, session: &Session) {
+    let area = frame.area();
+
+    // Create a centered popup
+    let popup_width = (area.width as f32 * 0.6).min(80.0) as u16;
+    let popup_height = 10;
+    let popup_x = (area.width.saturating_sub(popup_width)) / 2;
+    let popup_y = (area.height.saturating_sub(popup_height)) / 2;
+
+    let popup_area = Rect::new(popup_x, popup_y, popup_width, popup_height);
+
+    // Clear the background
+    frame.render_widget(Clear, popup_area);
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3), // Title
+            Constraint::Min(3),    // Input
+            Constraint::Length(2), // Instructions
+        ])
+        .split(popup_area);
+
+    // Title
+    let title = Paragraph::new(Line::from(vec![Span::styled(
+        "Enter planning objective:",
+        Style::default().fg(Color::Cyan).bold(),
+    )]))
+    .block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Cyan))
+            .title(" New Tab "),
+    );
+    frame.render_widget(title, chunks[0]);
+
+    // Input with cursor
+    let input_text = if session.tab_input.is_empty() {
+        "What do you want to plan?".to_string()
+    } else {
+        session.tab_input.clone()
+    };
+
+    let input_style = if session.tab_input.is_empty() {
+        Style::default().fg(Color::DarkGray)
+    } else {
+        Style::default().fg(Color::White)
+    };
+
+    let input = Paragraph::new(input_text)
+        .style(input_style)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Yellow)),
+        );
+    frame.render_widget(input, chunks[1]);
+
+    // Show cursor
+    let inner = chunks[1].inner(ratatui::layout::Margin::new(1, 1));
+    if !session.tab_input.is_empty() {
+        let cursor_x = inner.x + session.tab_input_cursor as u16;
+        frame.set_cursor_position((cursor_x.min(inner.x + inner.width - 1), inner.y));
+    }
+
+    // Instructions
+    let help = Paragraph::new(Line::from(vec![
+        Span::styled("[Enter]", Style::default().fg(Color::Green)),
+        Span::raw(" Start  "),
+        Span::styled("[Esc]", Style::default().fg(Color::Red)),
+        Span::raw(" Cancel"),
+    ]))
+    .style(Style::default().fg(Color::DarkGray));
+    frame.render_widget(help, chunks[2]);
+}
+
+/// Draw an error overlay for the session
+fn draw_error_overlay(frame: &mut Frame, session: &Session) {
+    if let Some(ref error) = session.error_state {
+        let area = frame.area();
+
+        let popup_width = (area.width as f32 * 0.5).min(60.0) as u16;
+        let popup_height = 8;
+        let popup_x = (area.width.saturating_sub(popup_width)) / 2;
+        let popup_y = (area.height.saturating_sub(popup_height)) / 2;
+
+        let popup_area = Rect::new(popup_x, popup_y, popup_width, popup_height);
+
+        frame.render_widget(Clear, popup_area);
+
+        let error_text = Paragraph::new(vec![
+            Line::from(""),
+            Line::from(Span::styled(error.clone(), Style::default().fg(Color::Red))),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("[Esc]", Style::default().fg(Color::Yellow)),
+                Span::raw(" Close  "),
+                Span::styled("[Ctrl+W]", Style::default().fg(Color::Red)),
+                Span::raw(" Close Tab"),
+            ]),
+        ])
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Red))
+                .title(" Error "),
+        )
+        .wrap(Wrap { trim: false });
+
+        frame.render_widget(error_text, popup_area);
+    }
+}
+
+/// Helper function to create a centered rect (used for overlays)
+#[allow(dead_code)]
+fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
+    let popup_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage((100 - percent_y) / 2),
+            Constraint::Percentage(percent_y),
+            Constraint::Percentage((100 - percent_y) / 2),
+        ])
+        .split(r);
+
+    Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage((100 - percent_x) / 2),
+            Constraint::Percentage(percent_x),
+            Constraint::Percentage((100 - percent_x) / 2),
+        ])
+        .split(popup_layout[1])[1]
 }
