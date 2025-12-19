@@ -159,9 +159,16 @@ impl ClaudeInvocation {
             );
         }
 
-        // Parse JSON output
-        let result: ClaudeResult = serde_json::from_str(&stdout)
-            .with_context(|| format!("Failed to parse claude output as JSON: {}", stdout))?;
+        // Parse JSON output - Claude outputs multiple JSON lines (NDJSON), find the result line
+        let result: ClaudeResult = stdout
+            .lines()
+            .filter(|line| line.contains("\"type\":\"result\""))
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("No result line found in claude output"))
+            .and_then(|line| {
+                serde_json::from_str(line)
+                    .with_context(|| format!("Failed to parse result line as JSON: {}", line))
+            })?;
 
         if result.is_error {
             anyhow::bail!("Claude returned an error: {}", result.result);
