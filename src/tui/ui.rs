@@ -288,16 +288,16 @@ fn draw_stats(frame: &mut Frame, app: &App, area: Rect) {
 
     // Active tools (compact)
     if !app.active_tools.is_empty() {
-        for (name, start_time) in app.active_tools.iter().take(3) {
+        for (name, start_time) in app.active_tools.iter().take(10) {
             let elapsed = start_time.elapsed().as_secs();
             stats_text.push(Line::from(vec![
                 Span::styled(" ▶ ", Style::default().fg(Color::Yellow)),
                 Span::styled(format!("{} ({}s)", name, elapsed), Style::default().fg(Color::Yellow)),
             ]));
         }
-        if app.active_tools.len() > 3 {
+        if app.active_tools.len() > 10 {
             stats_text.push(Line::from(Span::styled(
-                format!("   +{} more", app.active_tools.len() - 3),
+                format!("   +{} more", app.active_tools.len() - 10),
                 Style::default().fg(Color::DarkGray),
             )));
         }
