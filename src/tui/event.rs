@@ -1,6 +1,7 @@
 use anyhow::Result;
 use crossterm::event::{Event as CrosstermEvent, KeyEvent, KeyEventKind};
 use futures::StreamExt;
+use std::path::PathBuf;
 use std::time::Duration;
 use tokio::sync::mpsc;
 
@@ -46,7 +47,8 @@ pub enum Event {
 #[derive(Debug, Clone)]
 pub enum UserApprovalResponse {
     Accept,
-    Decline(String), // Contains user's feedback for changes
+    AcceptAndImplement(PathBuf), // Accept and launch Claude to implement
+    Decline(String),             // Contains user's feedback for changes
 }
 
 pub struct EventHandler {

@@ -1,5 +1,5 @@
 use crate::state::Phase;
-use crate::tui::{App, ApprovalMode};
+use crate::tui::{App, ApprovalMode, FocusedPanel};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style, Stylize},
@@ -75,34 +75,66 @@ fn draw_main(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_output(frame: &mut Frame, app: &App, area: Rect) {
+    // Build title with scroll indicator and focus indicator
+    let is_focused = app.focused_panel == FocusedPanel::Output;
+    let title = if app.output_follow_mode {
+        if is_focused {
+            " Output [*] "
+        } else {
+            " Output "
+        }
+    } else if is_focused {
+        " Output [SCROLLED *] "
+    } else {
+        " Output [SCROLLED] "
+    };
+
+    let border_color = if is_focused { Color::Yellow } else { Color::Blue };
+
     let output_block = Block::default()
         .borders(Borders::ALL)
-        .title(" Output ")
-        .border_style(Style::default().fg(Color::Blue));
+        .title(title)
+        .border_style(Style::default().fg(border_color));
 
     let inner_area = output_block.inner(area);
     let visible_height = inner_area.height as usize;
 
-    // Calculate which lines to show
+    // Calculate which lines to show based on follow mode
     let total_lines = app.output_lines.len();
-    let start = app.scroll_position;
+    let max_scroll = total_lines.saturating_sub(visible_height);
+
+    let start = if app.output_follow_mode {
+        // Follow mode: show the last visible_height lines
+        max_scroll
+    } else {
+        // Manual scroll: use user's position, clamped to valid range
+        app.scroll_position.min(max_scroll)
+    };
+
     let end = (start + visible_height).min(total_lines);
 
-    let lines: Vec<Line> = app.output_lines[start..end]
-        .iter()
-        .map(|line| {
-            // Color different prefixes
-            if line.starts_with("[planning]") {
-                Line::from(Span::styled(line.clone(), Style::default().fg(Color::Cyan)))
-            } else if line.starts_with("[claude]") || line.starts_with("[planning-agent]") {
-                Line::from(Span::styled(line.clone(), Style::default().fg(Color::Green)))
-            } else if line.contains("error") || line.contains("Error") {
-                Line::from(Span::styled(line.clone(), Style::default().fg(Color::Red)))
-            } else {
-                Line::from(line.clone())
-            }
-        })
-        .collect();
+    let lines: Vec<Line> = if total_lines == 0 {
+        vec![Line::from(Span::styled(
+            "Waiting for output...",
+            Style::default().fg(Color::DarkGray),
+        ))]
+    } else {
+        app.output_lines[start..end]
+            .iter()
+            .map(|line| {
+                // Color different prefixes
+                if line.starts_with("[planning]") {
+                    Line::from(Span::styled(line.clone(), Style::default().fg(Color::Cyan)))
+                } else if line.starts_with("[claude]") || line.starts_with("[planning-agent]") {
+                    Line::from(Span::styled(line.clone(), Style::default().fg(Color::Green)))
+                } else if line.contains("error") || line.contains("Error") {
+                    Line::from(Span::styled(line.clone(), Style::default().fg(Color::Red)))
+                } else {
+                    Line::from(line.clone())
+                }
+            })
+            .collect()
+    };
 
     let paragraph = Paragraph::new(lines)
         .block(output_block)
@@ -111,7 +143,7 @@ fn draw_output(frame: &mut Frame, app: &App, area: Rect) {
 
     // Scrollbar
     if total_lines > visible_height {
-        let mut scrollbar_state = ScrollbarState::new(total_lines).position(app.scroll_position);
+        let mut scrollbar_state = ScrollbarState::new(total_lines).position(start);
         frame.render_stateful_widget(
             Scrollbar::new(ScrollbarOrientation::VerticalRight)
                 .begin_symbol(Some("↑"))
@@ -123,10 +155,26 @@ fn draw_output(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_streaming(frame: &mut Frame, app: &App, area: Rect) {
+    // Build title with scroll indicator and focus indicator
+    let is_focused = app.focused_panel == FocusedPanel::Streaming;
+    let title = if app.streaming_follow_mode {
+        if is_focused {
+            " Claude Streaming [*] "
+        } else {
+            " Claude Streaming "
+        }
+    } else if is_focused {
+        " Claude Streaming [SCROLLED *] "
+    } else {
+        " Claude Streaming [SCROLLED] "
+    };
+
+    let border_color = if is_focused { Color::Yellow } else { Color::Green };
+
     let streaming_block = Block::default()
         .borders(Borders::ALL)
-        .title(" Claude Streaming ")
-        .border_style(Style::default().fg(Color::Green));
+        .title(title)
+        .border_style(Style::default().fg(border_color));
 
     let inner_area = streaming_block.inner(area);
     let visible_height = inner_area.height as usize;
@@ -161,22 +209,15 @@ fn draw_streaming(frame: &mut Frame, app: &App, area: Rect) {
     let paragraph_for_count = Paragraph::new(lines.clone()).wrap(Wrap { trim: false });
     let wrapped_line_count = paragraph_for_count.line_count(inner_width);
 
-    // Scroll to show the latest content at the bottom
-    let scroll_offset = if wrapped_line_count > visible_height {
-        (wrapped_line_count - visible_height) as u16
+    // Calculate scroll offset based on follow mode
+    let max_scroll = wrapped_line_count.saturating_sub(visible_height);
+    let scroll_offset = if app.streaming_follow_mode {
+        // Follow mode: show latest content at bottom
+        max_scroll as u16
     } else {
-        0
+        // Manual scroll: use user's position, clamped to valid range
+        (app.streaming_scroll_position.min(max_scroll)) as u16
     };
-
-    // Debug: show scroll info in title
-    let debug_title = format!(
-        " Claude Streaming [lines:{} wrap:{} vis:{} scroll:{}] ",
-        app.streaming_lines.len(),
-        wrapped_line_count,
-        visible_height,
-        scroll_offset
-    );
-    let streaming_block = streaming_block.title(debug_title);
 
     let paragraph = Paragraph::new(lines)
         .block(streaming_block)
@@ -398,8 +439,15 @@ fn draw_stats(frame: &mut Frame, app: &App, area: Rect) {
     // Keys (compact)
     stats_text.push(Line::from(vec![
         Span::styled(" Keys: ", Style::default().fg(Color::DarkGray)),
+        Span::styled("Tab", Style::default().fg(Color::White)),
+        Span::styled(" focus ", Style::default().fg(Color::DarkGray)),
         Span::styled("j/k", Style::default().fg(Color::White)),
-        Span::styled(" scroll ", Style::default().fg(Color::DarkGray)),
+        Span::styled(" scroll", Style::default().fg(Color::DarkGray)),
+    ]));
+    stats_text.push(Line::from(vec![
+        Span::styled("       ", Style::default().fg(Color::DarkGray)),
+        Span::styled("G", Style::default().fg(Color::White)),
+        Span::styled(" bottom ", Style::default().fg(Color::DarkGray)),
         Span::styled("q", Style::default().fg(Color::White)),
         Span::styled(" quit", Style::default().fg(Color::DarkGray)),
     ]));
@@ -632,6 +680,8 @@ fn draw_choice_popup(frame: &mut Frame, app: &App, area: Rect) {
         Line::from(vec![
             Span::styled("  [a] ", Style::default().fg(Color::Green).bold()),
             Span::raw("Accept  "),
+            Span::styled("  [i] ", Style::default().fg(Color::Magenta).bold()),
+            Span::raw("Implement  "),
             Span::styled("  [d] ", Style::default().fg(Color::Yellow).bold()),
             Span::raw("Decline  "),
             Span::styled("  [j/k] ", Style::default().fg(Color::Cyan).bold()),

@@ -14,11 +14,22 @@ pub enum ApprovalMode {
     EnteringFeedback,
 }
 
+/// Which panel is focused for scrolling
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub enum FocusedPanel {
+    #[default]
+    Output,
+    Streaming,
+}
+
 pub struct App {
     pub output_lines: Vec<String>,
     pub scroll_position: usize,
+    pub output_follow_mode: bool,  // true = auto-scroll to bottom, false = manual scroll
     pub streaming_lines: Vec<String>,
     pub streaming_scroll_position: usize,
+    pub streaming_follow_mode: bool,  // true = auto-scroll to bottom, false = manual scroll
+    pub focused_panel: FocusedPanel,  // which panel j/k scrolls
     pub workflow_state: Option<State>,
     pub start_time: Instant,
     pub total_cost: f64,
@@ -67,8 +78,11 @@ impl App {
         Self {
             output_lines: Vec::new(),
             scroll_position: 0,
+            output_follow_mode: true,  // Start in follow mode
             streaming_lines: Vec::new(),
             streaming_scroll_position: 0,
+            streaming_follow_mode: true,  // Start in follow mode
+            focused_panel: FocusedPanel::default(),
             workflow_state: None,
             start_time: Instant::now(),
             total_cost: 0.0,
@@ -199,35 +213,59 @@ impl App {
 
     pub fn add_output(&mut self, line: String) {
         self.output_lines.push(line);
-        // Auto-scroll to bottom when new output arrives
-        self.scroll_to_bottom();
+        // Enable follow mode when new output arrives
+        self.output_follow_mode = true;
     }
 
     pub fn scroll_up(&mut self) {
+        // User took manual control - disable follow mode
+        self.output_follow_mode = false;
         self.scroll_position = self.scroll_position.saturating_sub(1);
     }
 
     pub fn scroll_down(&mut self) {
-        let max_scroll = self.output_lines.len().saturating_sub(1);
-        self.scroll_position = (self.scroll_position + 1).min(max_scroll);
+        // Don't re-enable follow mode - user is still scrolling manually
+        // UI will clamp to valid range
+        self.scroll_position = self.scroll_position.saturating_add(1);
     }
 
     pub fn scroll_to_top(&mut self) {
+        self.output_follow_mode = false;
         self.scroll_position = 0;
     }
 
     pub fn scroll_to_bottom(&mut self) {
-        self.scroll_position = self.output_lines.len().saturating_sub(1);
+        // Enable follow mode - UI will calculate the correct position
+        self.output_follow_mode = true;
     }
 
     pub fn add_streaming(&mut self, line: String) {
         self.streaming_lines.push(line);
-        // Auto-scroll to bottom when new streaming content arrives
-        self.streaming_scroll_to_bottom();
+        // Enable follow mode when new streaming content arrives
+        self.streaming_follow_mode = true;
+    }
+
+    pub fn streaming_scroll_up(&mut self) {
+        // User took manual control - disable follow mode
+        self.streaming_follow_mode = false;
+        self.streaming_scroll_position = self.streaming_scroll_position.saturating_sub(1);
+    }
+
+    pub fn streaming_scroll_down(&mut self) {
+        // Don't re-enable follow mode - user is still scrolling manually
+        self.streaming_scroll_position = self.streaming_scroll_position.saturating_add(1);
     }
 
     pub fn streaming_scroll_to_bottom(&mut self) {
-        self.streaming_scroll_position = self.streaming_lines.len().saturating_sub(1);
+        // Enable follow mode - UI will calculate the correct position
+        self.streaming_follow_mode = true;
+    }
+
+    pub fn toggle_focus(&mut self) {
+        self.focused_panel = match self.focused_panel {
+            FocusedPanel::Output => FocusedPanel::Streaming,
+            FocusedPanel::Streaming => FocusedPanel::Output,
+        };
     }
 
     pub fn phase_name(&self) -> &str {
@@ -260,5 +298,89 @@ impl App {
 impl Default for App {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_scroll_up_disables_follow_mode() {
+        let mut app = App::new();
+        app.add_output("line1".to_string());
+        app.add_output("line2".to_string());
+        assert!(app.output_follow_mode);
+
+        app.scroll_up();
+        assert!(!app.output_follow_mode);
+    }
+
+    #[test]
+    fn test_scroll_to_bottom_enables_follow_mode() {
+        let mut app = App::new();
+        app.output_follow_mode = false;
+        app.scroll_to_bottom();
+        assert!(app.output_follow_mode);
+    }
+
+    #[test]
+    fn test_add_output_enables_follow_mode() {
+        let mut app = App::new();
+        app.output_follow_mode = false;
+        app.add_output("new line".to_string());
+        assert!(app.output_follow_mode);
+    }
+
+    #[test]
+    fn test_scroll_down_keeps_follow_mode_disabled() {
+        let mut app = App::new();
+        app.add_output("line1".to_string());
+        app.scroll_up();  // Disable follow mode
+        assert!(!app.output_follow_mode);
+
+        app.scroll_down();
+        assert!(!app.output_follow_mode);
+    }
+
+    #[test]
+    fn test_streaming_scroll_up_disables_follow_mode() {
+        let mut app = App::new();
+        app.add_streaming("line1".to_string());
+        assert!(app.streaming_follow_mode);
+
+        app.streaming_scroll_up();
+        assert!(!app.streaming_follow_mode);
+    }
+
+    #[test]
+    fn test_streaming_scroll_to_bottom_enables_follow_mode() {
+        let mut app = App::new();
+        app.streaming_follow_mode = false;
+        app.streaming_scroll_to_bottom();
+        assert!(app.streaming_follow_mode);
+    }
+
+    #[test]
+    fn test_toggle_focus() {
+        let mut app = App::new();
+        assert_eq!(app.focused_panel, FocusedPanel::Output);
+
+        app.toggle_focus();
+        assert_eq!(app.focused_panel, FocusedPanel::Streaming);
+
+        app.toggle_focus();
+        assert_eq!(app.focused_panel, FocusedPanel::Output);
+    }
+
+    #[test]
+    fn test_scroll_to_top_disables_follow_mode() {
+        let mut app = App::new();
+        app.add_output("line1".to_string());
+        assert!(app.output_follow_mode);
+
+        app.scroll_to_top();
+        assert!(!app.output_follow_mode);
+        assert_eq!(app.scroll_position, 0);
     }
 }

@@ -14,7 +14,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tokio::sync::mpsc;
-use tui::{App, ApprovalMode, Event, EventHandler, UserApprovalResponse};
+use tui::{App, ApprovalMode, Event, EventHandler, FocusedPanel, UserApprovalResponse};
 
 fn get_run_id() -> String {
     use std::sync::OnceLock;
@@ -319,6 +319,19 @@ async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                                 app.approval_mode = ApprovalMode::None;
                                 app.should_quit = true;
                             }
+                            KeyCode::Char('i') | KeyCode::Char('I') => {
+                                // Accept and Implement
+                                if let Some(tx) = approval_tx.take() {
+                                    let plan_file = app
+                                        .workflow_state
+                                        .as_ref()
+                                        .map(|s| s.plan_file.clone())
+                                        .unwrap_or_default();
+                                    let _ = tx.send(UserApprovalResponse::AcceptAndImplement(plan_file)).await;
+                                }
+                                app.approval_mode = ApprovalMode::None;
+                                // Don't set should_quit - let the main loop handle the process replacement
+                            }
                             KeyCode::Char('d') | KeyCode::Char('D') => {
                                 // Decline - switch to feedback input mode
                                 app.start_feedback_input();
@@ -380,17 +393,35 @@ async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                                 app.should_quit = true;
                             }
+                            KeyCode::Tab => {
+                                app.toggle_focus();
+                            }
                             KeyCode::Char('j') | KeyCode::Down => {
-                                app.scroll_down();
+                                match app.focused_panel {
+                                    FocusedPanel::Output => app.scroll_down(),
+                                    FocusedPanel::Streaming => app.streaming_scroll_down(),
+                                }
                             }
                             KeyCode::Char('k') | KeyCode::Up => {
-                                app.scroll_up();
+                                match app.focused_panel {
+                                    FocusedPanel::Output => app.scroll_up(),
+                                    FocusedPanel::Streaming => app.streaming_scroll_up(),
+                                }
                             }
                             KeyCode::Char('g') => {
-                                app.scroll_to_top();
+                                match app.focused_panel {
+                                    FocusedPanel::Output => app.scroll_to_top(),
+                                    FocusedPanel::Streaming => {
+                                        app.streaming_follow_mode = false;
+                                        app.streaming_scroll_position = 0;
+                                    }
+                                }
                             }
                             KeyCode::Char('G') => {
-                                app.scroll_to_bottom();
+                                match app.focused_panel {
+                                    FocusedPanel::Output => app.scroll_to_bottom(),
+                                    FocusedPanel::Streaming => app.streaming_scroll_to_bottom(),
+                                }
                             }
                             _ => {}
                         }
@@ -517,6 +548,52 @@ async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                         app.running = false;
                         break;
                     }
+                    Ok(Ok(WorkflowResult::AcceptAndImplement { plan_file })) => {
+                        app.running = false;
+
+                        // Restore terminal before exec
+                        restore_terminal(&mut terminal)?;
+
+                        // Get absolute path to plan file
+                        let plan_path = working_dir.join(&plan_file);
+                        let prompt = format!(
+                            "Please implement the following plan fully: {}",
+                            plan_path.display()
+                        );
+
+                        // Launch interactive Claude session
+                        #[cfg(unix)]
+                        {
+                            use std::os::unix::process::CommandExt;
+                            let err = std::process::Command::new("claude")
+                                .arg("--dangerously-skip-permissions")
+                                .arg(&prompt)
+                                .exec();
+                            // exec() only returns if there was an error
+                            eprintln!("Failed to launch Claude: {}", err);
+                            std::process::exit(1);
+                        }
+
+                        #[cfg(not(unix))]
+                        {
+                            // Windows fallback: spawn and wait
+                            let status = std::process::Command::new("claude")
+                                .arg("--dangerously-skip-permissions")
+                                .arg(&prompt)
+                                .stdin(std::process::Stdio::inherit())
+                                .stdout(std::process::Stdio::inherit())
+                                .stderr(std::process::Stdio::inherit())
+                                .status();
+
+                            match status {
+                                Ok(s) => std::process::exit(s.code().unwrap_or(0)),
+                                Err(e) => {
+                                    eprintln!("Failed to launch Claude: {}", e);
+                                    std::process::exit(1);
+                                }
+                            }
+                        }
+                    }
                     Ok(Ok(WorkflowResult::NeedsRestart { user_feedback })) => {
                         // Restart the workflow with updated objective
                         let _ = output_tx.send(Event::Output("".to_string()));
@@ -593,6 +670,7 @@ fn restore_terminal(terminal: &mut ratatui::Terminal<ratatui::backend::Crossterm
 /// Result from the workflow - either completed or needs restart with user feedback
 pub enum WorkflowResult {
     Accepted,
+    AcceptAndImplement { plan_file: PathBuf },
     NeedsRestart { user_feedback: String },
 }
 
@@ -743,6 +821,11 @@ async fn run_workflow(
                 log_workflow(&working_dir, "User ACCEPTED the plan");
                 let _ = output_tx.send(Event::Output("[planning] User accepted the plan!".to_string()));
                 return Ok(WorkflowResult::Accepted);
+            }
+            Some(UserApprovalResponse::AcceptAndImplement(plan_file)) => {
+                log_workflow(&working_dir, "User chose ACCEPT AND IMPLEMENT");
+                let _ = output_tx.send(Event::Output("[planning] Starting implementation...".to_string()));
+                return Ok(WorkflowResult::AcceptAndImplement { plan_file });
             }
             Some(UserApprovalResponse::Decline(feedback)) => {
                 log_workflow(&working_dir, &format!("User DECLINED with feedback: {}", feedback));
