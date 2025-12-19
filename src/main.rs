@@ -76,6 +76,24 @@ fn debug_log(start: std::time::Instant, msg: &str) {
     }
 }
 
+/// Shorten Claude model name for display
+fn shorten_model_name(full_name: &str) -> String {
+    if full_name.contains("opus") {
+        if full_name.contains("4-5") || full_name.contains("4.5") {
+            "opus-4.5".to_string()
+        } else {
+            "opus".to_string()
+        }
+    } else if full_name.contains("sonnet") {
+        "sonnet".to_string()
+    } else if full_name.contains("haiku") {
+        "haiku".to_string()
+    } else {
+        // Take first two segments
+        full_name.split('-').take(2).collect::<Vec<_>>().join("-")
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     // Install bundled skills if they don't exist
@@ -420,6 +438,30 @@ async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
             }
             Event::PhaseStarted(phase) => {
                 app.start_phase(phase);
+            }
+            Event::TurnCompleted => {
+                app.turn_count += 1;
+            }
+            Event::ModelDetected(name) => {
+                if app.model_name.is_none() {
+                    app.model_name = Some(shorten_model_name(&name));
+                }
+            }
+            Event::ToolResultReceived { tool_id: _, is_error } => {
+                if is_error {
+                    app.tool_error_count += 1;
+                }
+
+                // Compute duration from active_tools (FIFO - remove oldest)
+                if !app.active_tools.is_empty() {
+                    let (_, start_time) = app.active_tools.remove(0);
+                    let duration_ms = start_time.elapsed().as_millis() as u64;
+                    app.total_tool_duration_ms += duration_ms;
+                    app.completed_tool_count += 1;
+                }
+            }
+            Event::StopReason(reason) => {
+                app.last_stop_reason = Some(reason);
             }
         }
 
@@ -772,6 +814,20 @@ async fn run_headless(cli: Cli) -> Result<()> {
                 }
                 Event::StateUpdate(state) => {
                     eprintln!("[state] phase={:?} iteration={}", state.phase, state.iteration);
+                }
+                Event::TurnCompleted => {
+                    eprintln!("[turn] completed");
+                }
+                Event::ModelDetected(name) => {
+                    eprintln!("[model] {}", name);
+                }
+                Event::ToolResultReceived { tool_id, is_error } => {
+                    if is_error {
+                        eprintln!("[tool error] {}", tool_id);
+                    }
+                }
+                Event::StopReason(reason) => {
+                    eprintln!("[stop] {}", reason);
                 }
                 _ => {}
             }

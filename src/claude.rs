@@ -260,6 +260,7 @@ impl ClaudeInvocation {
 
         let mut final_result: Option<ClaudeResult> = None;
         let mut all_output = String::new();
+        let mut last_message_type: Option<String> = None;
 
         // Read stdout and stderr concurrently
         loop {
@@ -284,8 +285,26 @@ impl ClaudeInvocation {
                                 if let Some(msg_type) = json.get("type").and_then(|v| v.as_str()) {
                                     match msg_type {
                                         "assistant" | "user" => {
+                                            // Track turn transitions (assistant responding after user)
+                                            if msg_type == "assistant" && last_message_type.as_deref() == Some("user") {
+                                                let _ = output_tx.send(Event::TurnCompleted);
+                                            }
+                                            last_message_type = Some(msg_type.to_string());
+
                                             // Extract message content for display
                                             if let Some(message) = json.get("message") {
+                                                // Extract model name (typically in first assistant message)
+                                                if let Some(model) = message.get("model").and_then(|m| m.as_str()) {
+                                                    if !model.is_empty() {
+                                                        let _ = output_tx.send(Event::ModelDetected(model.to_string()));
+                                                    }
+                                                }
+
+                                                // Extract stop reason when present
+                                                if let Some(stop) = message.get("stop_reason").and_then(|s| s.as_str()) {
+                                                    let _ = output_tx.send(Event::StopReason(stop.to_string()));
+                                                }
+
                                                 // Parse token usage
                                                 if let Some(usage) = message.get("usage") {
                                                     let token_usage = TokenUsage {
@@ -338,11 +357,20 @@ impl ClaudeInvocation {
                                                                 }
                                                                 // Handle tool_result content
                                                                 if tool_type == "tool_result" {
-                                                                    // Try to get the tool name from tool_use_id or just clear the oldest
-                                                                    if let Some(tool_use_id) = item.get("tool_use_id").and_then(|t| t.as_str()) {
-                                                                        // Send a generic finish - we'll clear by position
-                                                                        let _ = output_tx.send(Event::ToolFinished(tool_use_id.to_string()));
-                                                                    }
+                                                                    let tool_use_id = item.get("tool_use_id").and_then(|t| t.as_str()).unwrap_or("");
+
+                                                                    // Check for error in the tool result
+                                                                    let is_error = item.get("is_error").and_then(|e| e.as_bool()).unwrap_or(false);
+
+                                                                    // Send tool result event with error status
+                                                                    let _ = output_tx.send(Event::ToolResultReceived {
+                                                                        tool_id: tool_use_id.to_string(),
+                                                                        is_error,
+                                                                    });
+
+                                                                    // Send a generic finish - we'll clear by position
+                                                                    let _ = output_tx.send(Event::ToolFinished(tool_use_id.to_string()));
+
                                                                     if let Some(content) = item.get("content").and_then(|c| c.as_str()) {
                                                                         // Split result into lines too
                                                                         let lines: Vec<&str> = content.lines().take(5).collect();

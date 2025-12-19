@@ -52,6 +52,14 @@ pub struct App {
     // Streaming rate
     pub last_bytes_sample: (Instant, usize),
     pub bytes_per_second: f64,
+
+    // Enhanced stats (new)
+    pub turn_count: u32,
+    pub model_name: Option<String>,
+    pub last_stop_reason: Option<String>,
+    pub tool_error_count: usize,
+    pub total_tool_duration_ms: u64,
+    pub completed_tool_count: usize,
 }
 
 impl App {
@@ -86,6 +94,13 @@ impl App {
             // Streaming rate
             last_bytes_sample: (Instant::now(), 0),
             bytes_per_second: 0.0,
+            // Enhanced stats (new)
+            turn_count: 0,
+            model_name: None,
+            last_stop_reason: None,
+            tool_error_count: 0,
+            total_tool_duration_ms: 0,
+            completed_tool_count: 0,
         }
     }
 
@@ -168,6 +183,14 @@ impl App {
 
     pub fn tool_started(&mut self, name: String) {
         self.active_tools.push((name, Instant::now()));
+    }
+
+    pub fn average_tool_duration_ms(&self) -> Option<u64> {
+        if self.completed_tool_count > 0 {
+            Some(self.total_tool_duration_ms / self.completed_tool_count as u64)
+        } else {
+            None
+        }
     }
 
     pub fn elapsed(&self) -> Duration {

@@ -32,6 +32,14 @@ pub enum Event {
     TokenUsage(TokenUsage),
     /// Phase timing: phase started
     PhaseStarted(String),
+    /// A conversation turn completed (assistant responded after user input)
+    TurnCompleted,
+    /// Claude model name detected
+    ModelDetected(String),
+    /// Tool result received with error status
+    ToolResultReceived { tool_id: String, is_error: bool },
+    /// Claude's stop reason (end_turn, tool_use, max_tokens)
+    StopReason(String),
 }
 
 /// User's response to approval request

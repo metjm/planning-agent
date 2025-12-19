@@ -240,9 +240,37 @@ fn draw_stats(frame: &mut Frame, app: &App, area: Rect) {
             Span::styled(app.phase_name(), Style::default().fg(phase_color).bold()),
         ]),
         Line::from(format!(" Iter: {}/{}", iter, max_iter)),
+        Line::from(vec![
+            Span::styled(" Turn: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(format!("{}", app.turn_count), Style::default().fg(Color::White)),
+        ]),
         Line::from(format!(" Time: {}m {:02}s", minutes, seconds)),
-        Line::from(""),
     ];
+
+    // Model name (if detected)
+    if let Some(ref model) = app.model_name {
+        stats_text.push(Line::from(vec![
+            Span::styled(" Model: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(model.clone(), Style::default().fg(Color::Cyan)),
+        ]));
+    }
+
+    // Stop reason (if available)
+    if let Some(ref reason) = app.last_stop_reason {
+        let (icon, color) = match reason.as_str() {
+            "end_turn" => ("●", Color::Green),
+            "tool_use" => ("⚙", Color::Yellow),
+            "max_tokens" => ("!", Color::Red),
+            _ => ("?", Color::Gray),
+        };
+        stats_text.push(Line::from(vec![
+            Span::styled(" Stop: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(icon, Style::default().fg(color)),
+            Span::styled(format!(" {}", reason), Style::default().fg(color)),
+        ]));
+    }
+
+    stats_text.push(Line::from(""));
 
     // Token stats
     stats_text.push(Line::from(vec![
@@ -302,6 +330,48 @@ fn draw_stats(frame: &mut Frame, app: &App, area: Rect) {
             )));
         }
     }
+
+    // Tool errors (only show if > 0)
+    if app.tool_error_count > 0 {
+        stats_text.push(Line::from(vec![
+            Span::styled(" Errors: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                format!("{}", app.tool_error_count),
+                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+            ),
+        ]));
+    }
+
+    // Average tool duration (computed locally)
+    if let Some(avg_ms) = app.average_tool_duration_ms() {
+        let duration_display = if avg_ms > 1000 {
+            format!("{:.1}s", avg_ms as f64 / 1000.0)
+        } else {
+            format!("{}ms", avg_ms)
+        };
+        stats_text.push(Line::from(vec![
+            Span::styled(" Avg Tool: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(duration_display, Style::default().fg(Color::White)),
+        ]));
+    }
+
+    // Tool success rate
+    if app.tool_call_count > 0 {
+        let success_count = app.tool_call_count.saturating_sub(app.tool_error_count);
+        let success_rate = (success_count as f64 / app.tool_call_count as f64) * 100.0;
+        let color = if success_rate >= 95.0 {
+            Color::Green
+        } else if success_rate >= 80.0 {
+            Color::Yellow
+        } else {
+            Color::Red
+        };
+        stats_text.push(Line::from(vec![
+            Span::styled(" Success: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(format!("{:.0}%", success_rate), Style::default().fg(color)),
+        ]));
+    }
+
     stats_text.push(Line::from(""));
 
     // Phase timing (if any recorded)
