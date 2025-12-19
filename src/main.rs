@@ -1,5 +1,6 @@
 mod claude;
 mod phases;
+mod skills;
 mod state;
 mod tui;
 
@@ -77,6 +78,11 @@ fn debug_log(start: std::time::Instant, msg: &str) {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Install bundled skills if they don't exist
+    if let Err(e) = skills::install_skills_if_needed() {
+        eprintln!("[planning-agent] Warning: Failed to install skills: {}", e);
+    }
+
     let start = std::time::Instant::now();
     // Log run start with timestamp
     {
