@@ -107,10 +107,12 @@ impl ClaudeInvocation {
         let mut cmd = Command::new("claude");
 
         // Non-interactive mode with JSON output
+        // Note: --dangerously-skip-permissions is needed for non-interactive use
         cmd.arg("-p")
             .arg(&self.prompt)
             .arg("--output-format")
-            .arg("json");
+            .arg("json")
+            .arg("--dangerously-skip-permissions");
 
         // Add system prompt if provided
         if let Some(ref system_prompt) = self.append_system_prompt {
@@ -191,11 +193,13 @@ impl ClaudeInvocation {
 
         // Non-interactive mode with streaming JSON output
         // Note: --verbose is required when using -p with stream-json
+        // Note: --dangerously-skip-permissions is needed for non-interactive use
         cmd.arg("-p")
             .arg(&self.prompt)
             .arg("--output-format")
             .arg("stream-json")
-            .arg("--verbose");
+            .arg("--verbose")
+            .arg("--dangerously-skip-permissions");
 
         // Add system prompt if provided
         if let Some(ref system_prompt) = self.append_system_prompt {
