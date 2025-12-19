@@ -13,12 +13,17 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
-use tokio::io::AsyncBufReadExt;
 use tokio::sync::mpsc;
 use tui::{
-    ApprovalMode, Event, EventHandler, InputMode, Session, SessionEventSender, SessionStatus,
-    TabManager, UserApprovalResponse,
+    ApprovalMode, Event, EventHandler, InputMode, SessionEventSender, SessionStatus, TabManager,
+    TerminalTitleManager, UserApprovalResponse,
 };
+
+/// Type alias for session initialization handles
+type InitHandle = Option<(
+    usize,
+    tokio::task::JoinHandle<Result<(State, PathBuf, String)>>,
+)>;
 
 fn get_run_id() -> String {
     use std::sync::OnceLock;
@@ -41,10 +46,9 @@ fn log_workflow(working_dir: &Path, message: &str) {
 #[command(name = "planning")]
 #[command(about = "Iterative planning workflow orchestrator using Claude Code")]
 #[command(version)]
-#[command(arg_required_else_help = true)]
 struct Cli {
     /// The objective - what you want to plan (all arguments are joined)
-    #[arg(trailing_var_arg = true, required = true)]
+    #[arg(trailing_var_arg = true)]
     objective: Vec<String>,
 
     /// Maximum iterations before stopping
@@ -95,6 +99,26 @@ fn shorten_model_name(full_name: &str) -> String {
     } else {
         // Take first two segments
         full_name.split('-').take(2).collect::<Vec<_>>().join("-")
+    }
+}
+
+/// Format window title from session state
+fn format_window_title(tab_manager: &TabManager) -> String {
+    let session = tab_manager.active();
+    let plan_name = session.feature_name();
+
+    let status = match session.status {
+        SessionStatus::InputPending => "Input",
+        SessionStatus::Planning => session.phase_name(),
+        SessionStatus::AwaitingApproval => "Awaiting Approval",
+        SessionStatus::Complete => "Complete",
+        SessionStatus::Error => "Error",
+    };
+
+    if plan_name.is_empty() || plan_name == "New Tab" {
+        "Planning Agent".to_string()
+    } else {
+        format!("[{}] {} - Planning Agent", status, plan_name)
     }
 }
 
@@ -239,6 +263,13 @@ async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
     let mut terminal = ratatui::Terminal::new(backend)?;
     debug_log(start, "terminal created");
 
+    // Initialize terminal title manager
+    let title_manager = TerminalTitleManager::new();
+    title_manager.save_title();
+    title_manager.set_title("Planning Agent");
+    let mut last_title = "Planning Agent".to_string();
+    debug_log(start, "title manager initialized");
+
     // Create tab manager and event handler
     let mut tab_manager = TabManager::new();
     debug_log(start, "tab manager created");
@@ -251,7 +282,7 @@ async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
         .clone()
         .unwrap_or_else(|| std::env::current_dir().expect("Failed to get current directory"));
 
-    let objective = cli.objective.join(" ");
+    let objective = cli.objective.join(" ").trim().to_string();
 
     // Handle --continue validation
     if cli.continue_workflow && cli.name.is_none() {
@@ -259,65 +290,79 @@ async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
         anyhow::bail!("--continue requires --name to specify which workflow to continue");
     }
 
-    // Get the first session and set it up for CLI-provided objective
-    let first_session = tab_manager.active_mut();
-    first_session.input_mode = InputMode::Normal; // Skip naming, we have an objective
-    first_session.status = SessionStatus::Planning;
-    let first_session_id = first_session.id;
-
-    // Spawn initialization task to run in background while UI renders
-    let init_tx = output_tx.clone();
-    let init_working_dir = working_dir.clone();
-    let init_objective = objective.clone();
-    let init_name = cli.name.clone();
-    let init_continue = cli.continue_workflow;
-    let init_max_iterations = cli.max_iterations;
-
-    let init_handle = tokio::spawn(async move {
-        let _ = init_tx.send(Event::Output("[planning] Initializing...".to_string()));
-
-        // Get or generate feature name
-        let feature_name = if let Some(name) = init_name {
-            name
-        } else {
-            extract_feature_name(&init_objective, Some(&init_tx)).await?
-        };
-
-        let state_path = init_working_dir.join(format!(".planning-agent/{}.json", feature_name));
-
-        let state = if init_continue {
-            let _ = init_tx.send(Event::Output(format!(
-                "[planning] Loading existing workflow: {}",
-                feature_name
-            )));
-            State::load(&state_path)?
-        } else {
-            let _ = init_tx.send(Event::Output(format!(
-                "[planning] Starting new workflow: {}",
-                feature_name
-            )));
-            let _ = init_tx.send(Event::Output(format!(
-                "[planning] Objective: {}",
-                init_objective
-            )));
-            State::new(&feature_name, &init_objective, init_max_iterations)
-        };
-
-        // Create docs/plans directory
-        let plans_dir = init_working_dir.join("docs/plans");
-        std::fs::create_dir_all(&plans_dir).context("Failed to create docs/plans directory")?;
-
-        // Save initial state
-        state.save(&state_path)?;
-
-        let _ = init_tx.send(Event::StateUpdate(state.clone()));
-
-        Ok::<_, anyhow::Error>((state, state_path, feature_name))
-    });
-    debug_log(start, "init task spawned");
-
     // Track initialization state for first session
-    let mut init_handle = Some((first_session_id, init_handle));
+    let mut init_handle: InitHandle = None;
+
+    // Get first session ID (used by legacy event handlers)
+    let first_session_id = tab_manager.active().id;
+
+    // Check if we have an objective from CLI
+    if objective.is_empty() {
+        // Interactive mode - start with input prompt overlay
+        let first_session = tab_manager.active_mut();
+        first_session.input_mode = InputMode::NamingTab;
+        first_session.status = SessionStatus::InputPending;
+        debug_log(start, "interactive mode - waiting for user input");
+    } else {
+        // CLI-provided objective - start immediately
+        let first_session = tab_manager.active_mut();
+        first_session.input_mode = InputMode::Normal;
+        first_session.status = SessionStatus::Planning;
+
+        // Spawn initialization task to run in background while UI renders
+        let init_tx = output_tx.clone();
+        let init_working_dir = working_dir.clone();
+        let init_objective = objective.clone();
+        let init_name = cli.name.clone();
+        let init_continue = cli.continue_workflow;
+        let init_max_iterations = cli.max_iterations;
+
+        let handle = tokio::spawn(async move {
+            let _ = init_tx.send(Event::Output("[planning] Initializing...".to_string()));
+
+            // Get or generate feature name
+            let feature_name = if let Some(name) = init_name {
+                name
+            } else {
+                extract_feature_name(&init_objective, Some(&init_tx)).await?
+            };
+
+            let state_path =
+                init_working_dir.join(format!(".planning-agent/{}.json", feature_name));
+
+            let state = if init_continue {
+                let _ = init_tx.send(Event::Output(format!(
+                    "[planning] Loading existing workflow: {}",
+                    feature_name
+                )));
+                State::load(&state_path)?
+            } else {
+                let _ = init_tx.send(Event::Output(format!(
+                    "[planning] Starting new workflow: {}",
+                    feature_name
+                )));
+                let _ = init_tx.send(Event::Output(format!(
+                    "[planning] Objective: {}",
+                    init_objective
+                )));
+                State::new(&feature_name, &init_objective, init_max_iterations)
+            };
+
+            // Create docs/plans directory
+            let plans_dir = init_working_dir.join("docs/plans");
+            std::fs::create_dir_all(&plans_dir).context("Failed to create docs/plans directory")?;
+
+            // Save initial state
+            state.save(&state_path)?;
+
+            let _ = init_tx.send(Event::StateUpdate(state.clone()));
+
+            Ok::<_, anyhow::Error>((state, state_path, feature_name))
+        });
+        debug_log(start, "init task spawned");
+
+        init_handle = Some((first_session_id, handle));
+    }
     let mut should_quit = false;
 
     debug_log(start, "entering main loop");
@@ -350,12 +395,26 @@ async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                 // Handle tab naming input mode
                 if session.input_mode == InputMode::NamingTab {
                     match key.code {
+                        // Quit with Ctrl+C
+                        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            should_quit = true;
+                        }
+                        // Quit with 'q' only when input is empty
+                        KeyCode::Char('q') if session.tab_input.is_empty() => {
+                            should_quit = true;
+                        }
+                        // Shift+Enter inserts a newline
+                        KeyCode::Enter if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                            session.insert_tab_input_newline();
+                        }
+                        // Plain Enter submits
                         KeyCode::Enter => {
                             if !session.tab_input.trim().is_empty() {
                                 // Start workflow with entered objective
                                 let objective = session.tab_input.clone();
                                 session.tab_input.clear();
                                 session.tab_input_cursor = 0;
+                                session.tab_input_scroll = 0;
                                 session.input_mode = InputMode::Normal;
                                 session.status = SessionStatus::Planning;
 
@@ -424,6 +483,12 @@ async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                         KeyCode::Right => {
                             session.move_tab_input_cursor_right();
                         }
+                        KeyCode::Up => {
+                            session.move_tab_input_cursor_up();
+                        }
+                        KeyCode::Down => {
+                            session.move_tab_input_cursor_down();
+                        }
                         _ => {}
                     }
                     continue;
@@ -490,16 +555,54 @@ async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                             session.status = SessionStatus::Complete;
                         }
                         KeyCode::Char('i') | KeyCode::Char('I') => {
-                            if let Some(tx) = session.approval_tx.take() {
-                                let plan_file = session
-                                    .workflow_state
-                                    .as_ref()
-                                    .map(|s| s.plan_file.clone())
-                                    .unwrap_or_default();
-                                let _ = tx.send(UserApprovalResponse::AcceptAndImplement(plan_file)).await;
-                            }
+                            // Get plan path before we lose access to session
+                            let plan_path = session
+                                .workflow_state
+                                .as_ref()
+                                .map(|s| working_dir.join(&s.plan_file))
+                                .unwrap_or_default();
+
+                            // Cancel the approval channel since we're exiting
+                            session.approval_tx.take();
                             session.approval_mode = ApprovalMode::None;
-                            session.status = SessionStatus::Implementing;
+
+                            // Restore terminal and exec() Claude
+                            restore_terminal(&mut terminal)?;
+
+                            let prompt = format!(
+                                "Please implement the following plan fully: {}",
+                                plan_path.display()
+                            );
+
+                            #[cfg(unix)]
+                            {
+                                use std::os::unix::process::CommandExt;
+                                let err = std::process::Command::new("claude")
+                                    .arg("--dangerously-skip-permissions")
+                                    .arg(&prompt)
+                                    .exec();
+                                eprintln!("Failed to launch Claude: {}", err);
+                                std::process::exit(1);
+                            }
+
+                            #[cfg(not(unix))]
+                            {
+                                let status = std::process::Command::new("claude")
+                                    .arg("--dangerously-skip-permissions")
+                                    .arg(&prompt)
+                                    .stdin(std::process::Stdio::inherit())
+                                    .stdout(std::process::Stdio::inherit())
+                                    .stderr(std::process::Stdio::inherit())
+                                    .status();
+
+                                match status {
+                                    Ok(s) => std::process::exit(s.code().unwrap_or(0)),
+                                    Err(e) => {
+                                        eprintln!("Failed to launch Claude: {}", e);
+                                        std::process::exit(1);
+                                    }
+                                }
+                            }
                         }
                         KeyCode::Char('d') | KeyCode::Char('D') => {
                             session.start_feedback_input();
@@ -775,21 +878,13 @@ async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                     session.handle_error(&error);
                 }
             }
-            Event::SessionImplOutput { session_id, line } => {
-                if let Some(session) = tab_manager.session_by_id_mut(session_id) {
-                    session.add_streaming(line);
-                }
-            }
-            Event::SessionImplComplete { session_id, success } => {
-                if let Some(session) = tab_manager.session_by_id_mut(session_id) {
-                    if success {
-                        session.status = SessionStatus::Complete;
-                    } else {
-                        session.status = SessionStatus::Error;
-                    }
-                    session.impl_handle = None;
-                }
-            }
+        }
+
+        // Update terminal title if state changed
+        let new_title = format_window_title(&tab_manager);
+        if new_title != last_title {
+            title_manager.set_title(&new_title);
+            last_title = new_title;
         }
 
         if should_quit {
@@ -856,14 +951,6 @@ async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                             session.status = SessionStatus::Complete;
                             session.running = false;
                         }
-                        Ok(Ok(WorkflowResult::AcceptAndImplement { plan_file })) => {
-                            // Start implementation subprocess
-                            session.status = SessionStatus::Implementing;
-                            let plan_path = working_dir.join(&plan_file);
-
-                            // Spawn implementation subprocess
-                            start_implementation(session, plan_path, output_tx.clone());
-                        }
                         Ok(Ok(WorkflowResult::NeedsRestart { user_feedback })) => {
                             // Restart the workflow with updated objective
                             session.add_output("".to_string());
@@ -929,81 +1016,11 @@ async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
         }
     }
 
-    // Restore terminal
+    // Restore terminal title and terminal
+    title_manager.restore_title();
     restore_terminal(&mut terminal)?;
 
     Ok(())
-}
-
-/// Start implementation subprocess and stream output to session
-fn start_implementation(
-    session: &mut Session,
-    plan_path: PathBuf,
-    output_tx: mpsc::UnboundedSender<Event>,
-) {
-    let prompt = format!(
-        "Please implement the following plan fully: {}",
-        plan_path.display()
-    );
-
-    let session_id = session.id;
-
-    // Spawn implementation subprocess
-    let handle = tokio::spawn(async move {
-        let mut cmd = tokio::process::Command::new("claude");
-        cmd.arg("--dangerously-skip-permissions")
-            .arg(&prompt)
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped());
-
-        match cmd.spawn() {
-            Ok(mut child) => {
-                let stdout = child.stdout.take();
-                let stderr = child.stderr.take();
-
-                // Stream stdout
-                if let Some(stdout) = stdout {
-                    let tx = output_tx.clone();
-                    let reader = tokio::io::BufReader::new(stdout);
-                    let mut lines = reader.lines();
-                    while let Ok(Some(line)) = lines.next_line().await {
-                        let _ = tx.send(Event::SessionImplOutput {
-                            session_id,
-                            line,
-                        });
-                    }
-                }
-
-                // Stream stderr
-                if let Some(stderr) = stderr {
-                    let tx = output_tx.clone();
-                    let reader = tokio::io::BufReader::new(stderr);
-                    let mut lines = reader.lines();
-                    while let Ok(Some(line)) = lines.next_line().await {
-                        let _ = tx.send(Event::SessionImplOutput {
-                            session_id,
-                            line: format!("[stderr] {}", line),
-                        });
-                    }
-                }
-
-                // Wait for completion
-                let status = child.wait().await;
-                let success = status.map(|s| s.success()).unwrap_or(false);
-                let _ = output_tx.send(Event::SessionImplComplete { session_id, success });
-            }
-            Err(e) => {
-                let _ = output_tx.send(Event::SessionWorkflowError {
-                    session_id,
-                    error: format!("Failed to start Claude: {}", e),
-                });
-            }
-        }
-    });
-
-    // Store the child handle (though we don't really need it since we're tracking via events)
-    // The handle will complete when the subprocess exits
-    drop(handle);
 }
 
 fn restore_terminal(
@@ -1022,7 +1039,6 @@ fn restore_terminal(
 /// Result from the workflow - either completed or needs restart with user feedback
 pub enum WorkflowResult {
     Accepted,
-    AcceptAndImplement { plan_file: PathBuf },
     NeedsRestart { user_feedback: String },
 }
 
@@ -1221,11 +1237,6 @@ async fn run_workflow(
                 sender.send_output("[planning] User accepted the plan!".to_string());
                 return Ok(WorkflowResult::Accepted);
             }
-            Some(UserApprovalResponse::AcceptAndImplement(plan_file)) => {
-                log_workflow(&working_dir, "User chose ACCEPT AND IMPLEMENT");
-                sender.send_output("[planning] Starting implementation...".to_string());
-                return Ok(WorkflowResult::AcceptAndImplement { plan_file });
-            }
             Some(UserApprovalResponse::Decline(feedback)) => {
                 log_workflow(
                     &working_dir,
@@ -1237,6 +1248,8 @@ async fn run_workflow(
                 });
             }
             None => {
+                // Channel closed - this can happen if user pressed [i] to implement,
+                // which does exec() and terminates the process. Treat as accept.
                 log_workflow(&working_dir, "Approval channel closed - treating as accept");
                 return Ok(WorkflowResult::Accepted);
             }
