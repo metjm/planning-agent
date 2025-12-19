@@ -157,19 +157,24 @@ async fn summarize_plan(plan_path: &std::path::Path, output_tx: &mpsc::Unbounded
     let plan_preview: String = plan_content.chars().take(8000).collect();
 
     let prompt = format!(
-        r#"Summarize this implementation plan in a concise, bullet-point format.
-Focus on:
-- What is being built
-- Key components/changes
-- Main implementation steps (high level)
+        r#"Summarize this implementation plan in markdown format.
 
-Keep it under 20 lines.
+Structure:
+## Overview
+One sentence describing what's being built.
+
+## Key Changes
+- Bullet points of main components/changes
+
+## Implementation Steps
+1. Numbered high-level steps
+
+Keep it concise (under 25 lines). Use **bold** for emphasis.
+Output ONLY the markdown, no preamble or code fences.
 
 ---
 {}
----
-
-Provide ONLY the summary, no preamble."#,
+---"#,
         plan_preview
     );
 
@@ -292,6 +297,15 @@ async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                             KeyCode::Char('d') | KeyCode::Char('D') => {
                                 // Decline - switch to feedback input mode
                                 app.start_feedback_input();
+                            }
+                            KeyCode::Char('j') | KeyCode::Down => {
+                                // Scroll summary down
+                                let max_scroll = app.plan_summary.lines().count().saturating_sub(10);
+                                app.scroll_summary_down(max_scroll);
+                            }
+                            KeyCode::Char('k') | KeyCode::Up => {
+                                // Scroll summary up
+                                app.scroll_summary_up();
                             }
                             KeyCode::Char('q') | KeyCode::Esc => {
                                 app.should_quit = true;

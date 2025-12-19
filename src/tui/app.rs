@@ -29,6 +29,7 @@ pub struct App {
     // User approval state
     pub approval_mode: ApprovalMode,
     pub plan_summary: String,
+    pub plan_summary_scroll: usize,
     pub user_feedback: String,
     pub cursor_position: usize,
 
@@ -69,6 +70,7 @@ impl App {
             active_tools: Vec::new(),
             approval_mode: ApprovalMode::None,
             plan_summary: String::new(),
+            plan_summary_scroll: 0,
             user_feedback: String::new(),
             cursor_position: 0,
             bytes_received: 0,
@@ -126,9 +128,20 @@ impl App {
 
     pub fn start_approval(&mut self, summary: String) {
         self.plan_summary = summary;
+        self.plan_summary_scroll = 0;
         self.approval_mode = ApprovalMode::AwaitingChoice;
         self.user_feedback.clear();
         self.cursor_position = 0;
+    }
+
+    pub fn scroll_summary_up(&mut self) {
+        self.plan_summary_scroll = self.plan_summary_scroll.saturating_sub(1);
+    }
+
+    pub fn scroll_summary_down(&mut self, max_scroll: usize) {
+        if self.plan_summary_scroll < max_scroll {
+            self.plan_summary_scroll += 1;
+        }
     }
 
     pub fn start_feedback_input(&mut self) {

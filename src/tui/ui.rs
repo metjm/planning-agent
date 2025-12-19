@@ -415,13 +415,94 @@ fn draw_approval_overlay(frame: &mut Frame, app: &App) {
     }
 }
 
+/// Parse a markdown line into styled spans
+fn parse_markdown_line(line: &str) -> Line<'static> {
+    let trimmed = line.trim();
+
+    // Headers
+    if trimmed.starts_with("## ") {
+        return Line::from(vec![
+            Span::styled(
+                trimmed[3..].to_string(),
+                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            ),
+        ]);
+    }
+    if trimmed.starts_with("# ") {
+        return Line::from(vec![
+            Span::styled(
+                trimmed[2..].to_string(),
+                Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+            ),
+        ]);
+    }
+
+    // Bullet points
+    if trimmed.starts_with("- ") || trimmed.starts_with("* ") {
+        let content = &trimmed[2..];
+        let mut spans = vec![Span::styled("  • ", Style::default().fg(Color::Yellow))];
+        spans.extend(parse_inline_markdown(content));
+        return Line::from(spans);
+    }
+
+    // Numbered lists
+    if let Some(rest) = trimmed.strip_prefix(|c: char| c.is_ascii_digit()) {
+        if let Some(content) = rest.strip_prefix(". ") {
+            let num = &trimmed[..trimmed.len() - rest.len()];
+            let mut spans = vec![Span::styled(format!("  {}. ", num), Style::default().fg(Color::Yellow))];
+            spans.extend(parse_inline_markdown(content));
+            return Line::from(spans);
+        }
+    }
+
+    // Regular line with inline formatting
+    Line::from(parse_inline_markdown(trimmed))
+}
+
+/// Parse inline markdown (**bold**) into spans
+fn parse_inline_markdown(text: &str) -> Vec<Span<'static>> {
+    let mut spans = Vec::new();
+    let mut remaining = text;
+
+    while let Some(start) = remaining.find("**") {
+        // Add text before **
+        if start > 0 {
+            spans.push(Span::raw(remaining[..start].to_string()));
+        }
+        remaining = &remaining[start + 2..];
+
+        // Find closing **
+        if let Some(end) = remaining.find("**") {
+            spans.push(Span::styled(
+                remaining[..end].to_string(),
+                Style::default().add_modifier(Modifier::BOLD).fg(Color::White),
+            ));
+            remaining = &remaining[end + 2..];
+        } else {
+            // No closing **, add as-is
+            spans.push(Span::raw("**".to_string()));
+        }
+    }
+
+    // Add remaining text
+    if !remaining.is_empty() {
+        spans.push(Span::raw(remaining.to_string()));
+    }
+
+    if spans.is_empty() {
+        spans.push(Span::raw(text.to_string()));
+    }
+
+    spans
+}
+
 fn draw_choice_popup(frame: &mut Frame, app: &App, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3),  // Title
             Constraint::Min(0),     // Summary content
-            Constraint::Length(5),  // Instructions
+            Constraint::Length(4),  // Instructions
         ])
         .split(area);
 
@@ -440,39 +521,57 @@ fn draw_choice_popup(frame: &mut Frame, app: &App, area: Rect) {
     );
     frame.render_widget(title, chunks[0]);
 
-    // Summary content
+    // Summary content with markdown parsing
+    let summary_block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan))
+        .title(" Plan Summary (j/k to scroll) ");
+
+    let inner_area = summary_block.inner(chunks[1]);
+    let visible_height = inner_area.height as usize;
+
     let summary_lines: Vec<Line> = app
         .plan_summary
         .lines()
-        .map(|line| Line::from(line.to_string()))
+        .map(|line| parse_markdown_line(line))
         .collect();
 
+    let total_lines = summary_lines.len();
+    let max_scroll = total_lines.saturating_sub(visible_height);
+    let scroll_pos = app.plan_summary_scroll.min(max_scroll);
+
     let summary = Paragraph::new(summary_lines)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::Cyan))
-                .title(" Plan Summary "),
-        )
-        .wrap(Wrap { trim: false });
+        .block(summary_block)
+        .scroll((scroll_pos as u16, 0));
     frame.render_widget(summary, chunks[1]);
+
+    // Scrollbar if needed
+    if total_lines > visible_height {
+        let mut scrollbar_state = ScrollbarState::new(total_lines).position(scroll_pos);
+        frame.render_stateful_widget(
+            Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                .begin_symbol(Some("↑"))
+                .end_symbol(Some("↓")),
+            chunks[1],
+            &mut scrollbar_state,
+        );
+    }
 
     // Instructions
     let instructions = Paragraph::new(vec![
-        Line::from(""),
         Line::from(vec![
             Span::styled("  [a] ", Style::default().fg(Color::Green).bold()),
-            Span::raw("Accept - Start implementation"),
-        ]),
-        Line::from(vec![
+            Span::raw("Accept  "),
             Span::styled("  [d] ", Style::default().fg(Color::Yellow).bold()),
-            Span::raw("Decline - Request changes"),
+            Span::raw("Decline  "),
+            Span::styled("  [j/k] ", Style::default().fg(Color::Cyan).bold()),
+            Span::raw("Scroll"),
         ]),
     ])
     .block(
         Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Magenta)),
+            .border_style(Style::default().fg(Color::DarkGray)),
     );
     frame.render_widget(instructions, chunks[2]);
 }
