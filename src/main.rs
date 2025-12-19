@@ -131,6 +131,7 @@ Example outputs: "sharing-permissions", "user-auth", "api-rate-limiting""#,
         .arg(&prompt)
         .arg("--output-format")
         .arg("text")
+        .arg("--dangerously-skip-permissions")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()?
