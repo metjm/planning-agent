@@ -1,0 +1,16 @@
+[package]
+name = "planning-agent"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "planning"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full", "process"] }
+anyhow = "1"
+thiserror = "1"
