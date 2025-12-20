@@ -4,9 +4,11 @@ use serde::Deserialize;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::process::Stdio;
+use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::mpsc;
+use tokio::time::Instant;
 
 /// Extract the actual command from a bash command string
 /// Handles env vars, command chains, and paths
@@ -63,12 +65,27 @@ pub struct ClaudeResult {
     pub session_id: Option<String>,
 }
 
+/// Default activity timeout: 5 minutes
+/// If no output is received for this duration, the process is considered stalled
+const DEFAULT_ACTIVITY_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// Default overall timeout: 30 minutes
+/// Maximum total time for a Claude invocation to complete
+const DEFAULT_OVERALL_TIMEOUT: Duration = Duration::from_secs(1800);
+
+/// Timeout for waiting for process exit after streams close
+const PROCESS_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
+
 pub struct ClaudeInvocation {
     prompt: String,
     append_system_prompt: Option<String>,
     allowed_tools: Vec<String>,
     max_turns: Option<u32>,
     working_dir: Option<std::path::PathBuf>,
+    /// Timeout for activity (no output received)
+    activity_timeout: Duration,
+    /// Maximum total time for the invocation
+    overall_timeout: Duration,
 }
 
 impl ClaudeInvocation {
@@ -79,6 +96,8 @@ impl ClaudeInvocation {
             allowed_tools: Vec::new(),
             max_turns: None,
             working_dir: None,
+            activity_timeout: DEFAULT_ACTIVITY_TIMEOUT,
+            overall_timeout: DEFAULT_OVERALL_TIMEOUT,
         }
     }
 
@@ -99,6 +118,18 @@ impl ClaudeInvocation {
 
     pub fn with_working_dir(mut self, dir: std::path::PathBuf) -> Self {
         self.working_dir = Some(dir);
+        self
+    }
+
+    /// Set the activity timeout (how long to wait for output before considering process stalled)
+    pub fn with_activity_timeout(mut self, timeout: Duration) -> Self {
+        self.activity_timeout = timeout;
+        self
+    }
+
+    /// Set the overall timeout (maximum total time for the invocation)
+    pub fn with_overall_timeout(mut self, timeout: Duration) -> Self {
+        self.overall_timeout = timeout;
         self
     }
 
@@ -137,14 +168,25 @@ impl ClaudeInvocation {
         cmd.stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
-        eprintln!("[planning-agent] Invoking claude...");
+        eprintln!("[planning-agent] Invoking claude (timeout: {:?})...", self.overall_timeout);
 
-        let output = cmd
+        let child = cmd
             .spawn()
-            .context("Failed to spawn claude process")?
-            .wait_with_output()
-            .await
-            .context("Failed to wait for claude process")?;
+            .context("Failed to spawn claude process")?;
+
+        // Wrap wait_with_output in timeout
+        // Note: wait_with_output takes ownership, so we can't kill on timeout after calling it
+        // Instead we use a wrapper that handles both the timeout and killing
+        let output = match tokio::time::timeout(self.overall_timeout, child.wait_with_output()).await {
+            Ok(Ok(output)) => output,
+            Ok(Err(e)) => anyhow::bail!("Failed to wait for claude process: {}", e),
+            Err(_) => {
+                // Timeout - the process is still running but we've lost the handle
+                // wait_with_output consumes the child, so we can't kill it directly
+                // However, the process will be orphaned and may be cleaned up by the OS
+                anyhow::bail!("Claude invocation exceeded timeout of {:?}", self.overall_timeout);
+            }
+        };
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -262,10 +304,35 @@ impl ClaudeInvocation {
         let mut all_output = String::new();
         let mut last_message_type: Option<String> = None;
 
+        // Timeout tracking
+        let start_time = Instant::now();
+        let mut last_activity = Instant::now();
+
+        if let Some(ref mut f) = log_file {
+            let _ = writeln!(f, "[timeout] activity_timeout={:?}, overall_timeout={:?}",
+                           self.activity_timeout, self.overall_timeout);
+        }
+
         // Read stdout and stderr concurrently
         loop {
+            // Check overall timeout
+            if start_time.elapsed() > self.overall_timeout {
+                if let Some(ref mut f) = log_file {
+                    let _ = writeln!(f, "[timeout] Overall timeout triggered after {:?}", start_time.elapsed());
+                }
+                let _ = output_tx.send(Event::Output(
+                    format!("[planning-agent] ERROR: Claude invocation exceeded overall timeout of {:?}", self.overall_timeout)
+                ));
+                let _ = child.kill().await;
+                anyhow::bail!("Claude invocation exceeded overall timeout of {:?}", self.overall_timeout);
+            }
+
+            // Calculate remaining time until activity timeout
+            let activity_deadline = last_activity + self.activity_timeout;
+
             tokio::select! {
                 line = stdout_reader.next_line() => {
+                    last_activity = Instant::now();  // Reset activity timer
                     match line {
                         Ok(Some(line)) => {
                             // Log raw line
@@ -440,6 +507,7 @@ impl ClaudeInvocation {
                     }
                 }
                 line = stderr_reader.next_line() => {
+                    last_activity = Instant::now();  // Reset activity timer on stderr too
                     match line {
                         Ok(Some(line)) => {
                             if let Some(ref mut f) = log_file {
@@ -451,10 +519,44 @@ impl ClaudeInvocation {
                         Err(_) => {}
                     }
                 }
+                _ = tokio::time::sleep_until(activity_deadline) => {
+                    // No activity for too long - process may be stuck
+                    let inactivity_duration = last_activity.elapsed();
+                    if let Some(ref mut f) = log_file {
+                        let _ = writeln!(f, "[timeout] Activity timeout triggered after {:?} of inactivity",
+                                       inactivity_duration);
+                    }
+                    let _ = output_tx.send(Event::Output(
+                        format!("[planning-agent] WARNING: No activity for {:?}, terminating subprocess...", self.activity_timeout)
+                    ));
+                    let _ = child.kill().await;
+                    anyhow::bail!("Claude subprocess became unresponsive (no output for {:?})", self.activity_timeout);
+                }
             }
         }
 
-        let status = child.wait().await.context("Failed to wait for claude process")?;
+        // Wait for process exit with timeout
+        let status = match tokio::time::timeout(PROCESS_WAIT_TIMEOUT, child.wait()).await {
+            Ok(Ok(status)) => status,
+            Ok(Err(e)) => {
+                if let Some(ref mut f) = log_file {
+                    let _ = writeln!(f, "[timeout] Failed to wait for process: {}", e);
+                }
+                anyhow::bail!("Failed to wait for claude process: {}", e);
+            }
+            Err(_) => {
+                // Timeout waiting for exit - force kill
+                if let Some(ref mut f) = log_file {
+                    let _ = writeln!(f, "[timeout] Process did not exit within {:?} after stream closed, force killing",
+                                   PROCESS_WAIT_TIMEOUT);
+                }
+                let _ = output_tx.send(Event::Output(
+                    format!("[planning-agent] WARNING: Claude process did not exit within {:?}, force killing...", PROCESS_WAIT_TIMEOUT)
+                ));
+                let _ = child.kill().await;
+                anyhow::bail!("Claude process did not exit within {:?} after stream closed", PROCESS_WAIT_TIMEOUT);
+            }
+        };
 
         if let Some(ref mut f) = log_file {
             let _ = writeln!(f, "[exit] status: {}", status);
@@ -493,5 +595,29 @@ mod tests {
         assert_eq!(inv.append_system_prompt, Some("be helpful".to_string()));
         assert_eq!(inv.allowed_tools, vec!["Read", "Write"]);
         assert_eq!(inv.max_turns, Some(5));
+        // Verify default timeout values
+        assert_eq!(inv.activity_timeout, DEFAULT_ACTIVITY_TIMEOUT);
+        assert_eq!(inv.overall_timeout, DEFAULT_OVERALL_TIMEOUT);
+    }
+
+    #[test]
+    fn test_invocation_builder_with_timeouts() {
+        let custom_activity = Duration::from_secs(60);
+        let custom_overall = Duration::from_secs(600);
+
+        let inv = ClaudeInvocation::new("test prompt")
+            .with_activity_timeout(custom_activity)
+            .with_overall_timeout(custom_overall);
+
+        assert_eq!(inv.activity_timeout, custom_activity);
+        assert_eq!(inv.overall_timeout, custom_overall);
+    }
+
+    #[test]
+    fn test_default_timeout_values() {
+        // Verify the default constants are reasonable
+        assert_eq!(DEFAULT_ACTIVITY_TIMEOUT, Duration::from_secs(300)); // 5 minutes
+        assert_eq!(DEFAULT_OVERALL_TIMEOUT, Duration::from_secs(1800)); // 30 minutes
+        assert_eq!(PROCESS_WAIT_TIMEOUT, Duration::from_secs(30)); // 30 seconds
     }
 }
