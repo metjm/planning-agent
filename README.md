@@ -1,6 +1,15 @@
 # Planning Agent
 
+<img width="982" height="770" alt="image" src="https://github.com/user-attachments/assets/6549dbf1-6aca-428c-88c0-c52a6ed19340" />
+
+
 A TUI application for creating and managing implementation plans.
+
+⚠️⚠️⚠️
+
+This uses --dangerously-skip-permissions by default, so I do **NOT** recommend using it without a container.
+
+⚠️⚠️⚠️
 
 ## Installation
 
