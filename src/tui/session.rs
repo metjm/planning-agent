@@ -244,23 +244,39 @@ impl Session {
 
     pub fn insert_char(&mut self, c: char) {
         self.user_feedback.insert(self.cursor_position, c);
-        self.cursor_position += 1;
+        self.cursor_position += c.len_utf8();
     }
 
     pub fn delete_char(&mut self) {
         if self.cursor_position > 0 {
-            self.cursor_position -= 1;
-            self.user_feedback.remove(self.cursor_position);
+            // Find the previous character boundary
+            let prev_char_boundary = self.user_feedback[..self.cursor_position]
+                .char_indices()
+                .last()
+                .map(|(idx, _)| idx)
+                .unwrap_or(0);
+            self.user_feedback.remove(prev_char_boundary);
+            self.cursor_position = prev_char_boundary;
         }
     }
 
     pub fn move_cursor_left(&mut self) {
-        self.cursor_position = self.cursor_position.saturating_sub(1);
+        if self.cursor_position > 0 {
+            // Find the previous character boundary
+            self.cursor_position = self.user_feedback[..self.cursor_position]
+                .char_indices()
+                .last()
+                .map(|(idx, _)| idx)
+                .unwrap_or(0);
+        }
     }
 
     pub fn move_cursor_right(&mut self) {
         if self.cursor_position < self.user_feedback.len() {
-            self.cursor_position += 1;
+            // Find the next character boundary
+            if let Some((_, c)) = self.user_feedback[self.cursor_position..].char_indices().next() {
+                self.cursor_position += c.len_utf8();
+            }
         }
     }
 
@@ -282,15 +298,19 @@ impl Session {
 
     pub fn add_output(&mut self, line: String) {
         self.output_lines.push(line);
+        // Atomically set follow mode and update scroll position to end
         self.output_follow_mode = true;
+        self.scroll_position = self.output_lines.len().saturating_sub(1);
     }
 
     pub fn scroll_up(&mut self) {
+        // Disable follow mode BEFORE updating position for consistency
         self.output_follow_mode = false;
         self.scroll_position = self.scroll_position.saturating_sub(1);
     }
 
     pub fn scroll_down(&mut self) {
+        // When scrolling down, don't auto-enable follow mode - user is still in control
         self.scroll_position = self.scroll_position.saturating_add(1);
     }
 
@@ -300,25 +320,33 @@ impl Session {
     }
 
     pub fn scroll_to_bottom(&mut self) {
+        // Enable follow mode and sync position
         self.output_follow_mode = true;
+        self.scroll_position = self.output_lines.len().saturating_sub(1);
     }
 
     pub fn add_streaming(&mut self, line: String) {
         self.streaming_lines.push(line);
+        // Atomically set follow mode and update scroll position to end
         self.streaming_follow_mode = true;
+        self.streaming_scroll_position = self.streaming_lines.len().saturating_sub(1);
     }
 
     pub fn streaming_scroll_up(&mut self) {
+        // Disable follow mode BEFORE updating position for consistency
         self.streaming_follow_mode = false;
         self.streaming_scroll_position = self.streaming_scroll_position.saturating_sub(1);
     }
 
     pub fn streaming_scroll_down(&mut self) {
+        // When scrolling down, don't auto-enable follow mode - user is still in control
         self.streaming_scroll_position = self.streaming_scroll_position.saturating_add(1);
     }
 
     pub fn streaming_scroll_to_bottom(&mut self) {
+        // Enable follow mode and sync position
         self.streaming_follow_mode = true;
+        self.streaming_scroll_position = self.streaming_lines.len().saturating_sub(1);
     }
 
     pub fn toggle_focus(&mut self) {
@@ -512,6 +540,36 @@ impl Session {
     /// Get the total number of lines in the tab input
     pub fn get_tab_input_line_count(&self) -> usize {
         self.tab_input.matches('\n').count() + 1
+    }
+
+    /// Get the cursor position for feedback input with proper unicode display width handling
+    /// Returns (row, col) where col is the display width column position
+    pub fn get_feedback_cursor_position(&self, width: usize) -> (usize, usize) {
+        if width == 0 {
+            return (0, 0);
+        }
+
+        let text_before = &self.user_feedback[..self.cursor_position.min(self.user_feedback.len())];
+        let mut row = 0;
+        let mut col = 0;
+
+        for c in text_before.chars() {
+            if c == '\n' {
+                row += 1;
+                col = 0;
+            } else {
+                let char_width = c.width().unwrap_or(0);
+                // Check if adding this character would exceed width (causing a wrap)
+                if col + char_width > width && col > 0 {
+                    row += 1;
+                    col = char_width;
+                } else {
+                    col += char_width;
+                }
+            }
+        }
+
+        (row, col)
     }
 
     /// Get the display cost and its source indicator
@@ -787,5 +845,108 @@ mod tests {
         // Should return estimated cost, not 0
         assert!(cost > 0.0);
         assert_eq!(source, "est");
+    }
+
+    #[test]
+    fn test_feedback_cursor_position_basic() {
+        let mut session = Session::new(0);
+        session.user_feedback = "hello".to_string();
+        session.cursor_position = 5;
+
+        // At width 10, "hello" fits on one line
+        let (row, col) = session.get_feedback_cursor_position(10);
+        assert_eq!(row, 0);
+        assert_eq!(col, 5);
+    }
+
+    #[test]
+    fn test_feedback_cursor_position_with_wrap() {
+        let mut session = Session::new(0);
+        session.user_feedback = "hello world".to_string();
+        session.cursor_position = 11; // At end of "hello world"
+
+        // At width 5, text wraps: "hello" | " worl" | "d"
+        let (row, col) = session.get_feedback_cursor_position(5);
+        // "hello" = row 0 (5 chars), " worl" = row 1 (5 chars), "d" = row 2 (1 char)
+        assert_eq!(row, 2);
+        assert_eq!(col, 1);
+    }
+
+    #[test]
+    fn test_feedback_cursor_position_empty() {
+        let mut session = Session::new(0);
+        session.user_feedback = "".to_string();
+        session.cursor_position = 0;
+
+        let (row, col) = session.get_feedback_cursor_position(10);
+        assert_eq!(row, 0);
+        assert_eq!(col, 0);
+    }
+
+    #[test]
+    fn test_feedback_cursor_with_newline() {
+        let mut session = Session::new(0);
+        session.user_feedback = "hello\nworld".to_string();
+        session.cursor_position = 8; // At "or" in "world"
+
+        let (row, col) = session.get_feedback_cursor_position(20);
+        assert_eq!(row, 1);
+        assert_eq!(col, 2);
+    }
+
+    #[test]
+    fn test_feedback_insert_char_utf8() {
+        let mut session = Session::new(0);
+        session.user_feedback = "".to_string();
+        session.cursor_position = 0;
+
+        session.insert_char('你');
+        assert_eq!(session.user_feedback, "你");
+        assert_eq!(session.cursor_position, 3); // '你' is 3 bytes in UTF-8
+
+        session.insert_char('好');
+        assert_eq!(session.user_feedback, "你好");
+        assert_eq!(session.cursor_position, 6);
+    }
+
+    #[test]
+    fn test_feedback_delete_char_utf8() {
+        let mut session = Session::new(0);
+        session.user_feedback = "你好".to_string();
+        session.cursor_position = 6; // At end
+
+        session.delete_char();
+        assert_eq!(session.user_feedback, "你");
+        assert_eq!(session.cursor_position, 3);
+
+        session.delete_char();
+        assert_eq!(session.user_feedback, "");
+        assert_eq!(session.cursor_position, 0);
+    }
+
+    #[test]
+    fn test_add_output_syncs_scroll() {
+        let mut session = Session::new(0);
+        session.output_follow_mode = false;
+        session.scroll_position = 0;
+
+        session.add_output("line1".to_string());
+        assert!(session.output_follow_mode);
+        assert_eq!(session.scroll_position, 0); // 1 line, saturating_sub(1) = 0
+
+        session.add_output("line2".to_string());
+        assert_eq!(session.scroll_position, 1); // 2 lines, saturating_sub(1) = 1
+    }
+
+    #[test]
+    fn test_scroll_to_bottom_syncs_position() {
+        let mut session = Session::new(0);
+        session.output_lines = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+        session.scroll_position = 0;
+        session.output_follow_mode = false;
+
+        session.scroll_to_bottom();
+        assert!(session.output_follow_mode);
+        assert_eq!(session.scroll_position, 2); // 3 lines, position at 2
     }
 }

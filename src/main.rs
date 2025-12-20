@@ -367,13 +367,29 @@ async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
 
     debug_log(start, "entering main loop");
 
+    // Maximum events to process per frame to prevent UI lag
+    const MAX_EVENTS_PER_FRAME: usize = 50;
+
     // Main event loop
     loop {
         // Draw UI
         terminal.draw(|frame| tui::ui::draw(frame, &tab_manager))?;
 
-        // Handle events
-        match event_handler.next().await? {
+        // Batch process events - first wait for at least one event
+        let first_event = event_handler.next().await?;
+        let mut events_to_process = vec![first_event];
+
+        // Then drain any additional pending events (up to limit)
+        while events_to_process.len() < MAX_EVENTS_PER_FRAME {
+            match event_handler.try_next() {
+                Some(event) => events_to_process.push(event),
+                None => break,
+            }
+        }
+
+        // Process all collected events
+        for event in events_to_process {
+        match event {
             Event::Key(key) => {
                 let session = tab_manager.active_mut();
 
@@ -879,6 +895,7 @@ async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                 }
             }
         }
+        } // End of for event in events_to_process
 
         // Update terminal title if state changed
         let new_title = format_window_title(&tab_manager);
