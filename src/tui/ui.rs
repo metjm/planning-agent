@@ -356,8 +356,8 @@ fn draw_stats(frame: &mut Frame, session: &Session, area: Rect) {
         None => Color::Gray,
     };
 
-    // Get cost with source indicator
-    let (cost, cost_source) = session.display_cost();
+    // Get cost (API-provided only)
+    let cost = session.display_cost();
 
     let mut stats_text = vec![
         // Usage section at the top for prominence
@@ -370,10 +370,6 @@ fn draw_stats(frame: &mut Frame, session: &Session, area: Rect) {
             Span::styled(
                 format!("${:.4}", cost),
                 Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                format!(" ({})", cost_source),
-                Style::default().fg(Color::DarkGray),
             ),
         ]),
         Line::from(vec![
@@ -388,26 +384,79 @@ fn draw_stats(frame: &mut Frame, session: &Session, area: Rect) {
                 Style::default().fg(Color::Green),
             ),
         ]),
-        Line::from(""),
-        // Status section
-        Line::from(vec![Span::styled(
-            " Status",
-            Style::default().add_modifier(Modifier::BOLD),
-        )]),
-        Line::from(vec![
-            Span::raw(" Phase: "),
-            Span::styled(session.phase_name(), Style::default().fg(phase_color).bold()),
-        ]),
-        Line::from(format!(" Iter: {}/{}", iter, max_iter)),
-        Line::from(vec![
-            Span::styled(" Turn: ", Style::default().fg(Color::DarkGray)),
-            Span::styled(
-                format!("{}", session.turn_count),
-                Style::default().fg(Color::White),
-            ),
-        ]),
-        Line::from(format!(" Time: {}m {:02}s", minutes, seconds)),
     ];
+
+    // Claude account usage section
+    let show_usage_section = session.claude_usage.fetched_at.is_some()
+        || session.claude_usage.error_message.is_some();
+
+    if show_usage_section {
+        stats_text.push(Line::from(""));
+        stats_text.push(Line::from(vec![Span::styled(
+            "── Account ──",
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+        )]));
+
+        if let Some(ref error) = session.claude_usage.error_message {
+            stats_text.push(Line::from(vec![
+                Span::styled(" Status: ", Style::default().fg(Color::White)),
+                Span::styled("N/A", Style::default().fg(Color::DarkGray)),
+            ]));
+            stats_text.push(Line::from(vec![
+                Span::styled(format!(" ({})", error), Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC)),
+            ]));
+        } else {
+            // Show plan type
+            if let Some(ref plan) = session.claude_usage.plan_type {
+                stats_text.push(Line::from(vec![
+                    Span::styled(" Plan: ", Style::default().fg(Color::White)),
+                    Span::styled(plan.clone(), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+                ]));
+            }
+
+            // Show session usage remaining
+            if let Some(session_pct) = session.claude_usage.session_remaining {
+                let color = if session_pct <= 10 { Color::Red }
+                           else if session_pct <= 30 { Color::Yellow }
+                           else { Color::Green };
+                stats_text.push(Line::from(vec![
+                    Span::styled(" Session: ", Style::default().fg(Color::White)),
+                    Span::styled(format!("{}% left", session_pct), Style::default().fg(color)),
+                ]));
+            }
+
+            // Show weekly usage remaining
+            if let Some(weekly_pct) = session.claude_usage.weekly_remaining {
+                let color = if weekly_pct <= 10 { Color::Red }
+                           else if weekly_pct <= 30 { Color::Yellow }
+                           else { Color::Green };
+                stats_text.push(Line::from(vec![
+                    Span::styled(" Weekly: ", Style::default().fg(Color::White)),
+                    Span::styled(format!("{}% left", weekly_pct), Style::default().fg(color)),
+                ]));
+            }
+        }
+    }
+
+    stats_text.push(Line::from(""));
+    // Status section
+    stats_text.push(Line::from(vec![Span::styled(
+        " Status",
+        Style::default().add_modifier(Modifier::BOLD),
+    )]));
+    stats_text.push(Line::from(vec![
+        Span::raw(" Phase: "),
+        Span::styled(session.phase_name(), Style::default().fg(phase_color).bold()),
+    ]));
+    stats_text.push(Line::from(format!(" Iter: {}/{}", iter, max_iter)));
+    stats_text.push(Line::from(vec![
+        Span::styled(" Turn: ", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            format!("{}", session.turn_count),
+            Style::default().fg(Color::White),
+        ),
+    ]));
+    stats_text.push(Line::from(format!(" Time: {}m {:02}s", minutes, seconds)));
 
     // Model name (if detected)
     if let Some(ref model) = session.model_name {
@@ -880,16 +929,17 @@ fn draw_feedback_popup(frame: &mut Frame, session: &Session, area: Rect) {
     frame.render_widget(title, chunks[0]);
 
     // Input area with cursor
-    let input_text = if session.user_feedback.is_empty() {
-        "Type your changes here...".to_string()
+    let has_content = !session.user_feedback.is_empty() || session.has_feedback_pastes();
+    let input_text = if has_content {
+        session.get_display_text_feedback()
     } else {
-        session.user_feedback.clone()
+        "Type your changes here...".to_string()
     };
 
-    let input_style = if session.user_feedback.is_empty() {
-        Style::default().fg(Color::DarkGray)
-    } else {
+    let input_style = if has_content {
         Style::default().fg(Color::White)
+    } else {
+        Style::default().fg(Color::DarkGray)
     };
 
     let input_block = Block::default()
@@ -908,7 +958,7 @@ fn draw_feedback_popup(frame: &mut Frame, session: &Session, area: Rect) {
     frame.render_widget(input, chunks[1]);
 
     // Calculate cursor position using unicode-aware method
-    if !session.user_feedback.is_empty() {
+    if has_content {
         let (cursor_row, cursor_col) = session.get_feedback_cursor_position(input_width);
         let cursor_x = inner.x + cursor_col as u16;
         let cursor_y = inner.y + cursor_row as u16;
@@ -973,16 +1023,17 @@ fn draw_tab_input_overlay(frame: &mut Frame, session: &Session) {
     frame.render_widget(title, chunks[0]);
 
     // Input with cursor - now supports multiline with wrapping
-    let input_text = if session.tab_input.is_empty() {
-        "What do you want to plan?".to_string()
+    let has_content = !session.tab_input.is_empty() || session.has_tab_input_pastes();
+    let input_text = if has_content {
+        session.get_display_text_tab()
     } else {
-        session.tab_input.clone()
+        "What do you want to plan?".to_string()
     };
 
-    let input_style = if session.tab_input.is_empty() {
-        Style::default().fg(Color::DarkGray)
-    } else {
+    let input_style = if has_content {
         Style::default().fg(Color::White)
+    } else {
+        Style::default().fg(Color::DarkGray)
     };
 
     let input_block = Block::default()
@@ -1037,7 +1088,7 @@ fn draw_tab_input_overlay(frame: &mut Frame, session: &Session) {
     frame.render_widget(input, chunks[1]);
 
     // Show cursor - now with proper 2D positioning
-    if !session.tab_input.is_empty() {
+    if has_content {
         let cursor_x = inner.x + visual_col as u16;
         let cursor_y = inner.y + (visual_row - scroll) as u16;
         if cursor_y < inner.y + inner.height {

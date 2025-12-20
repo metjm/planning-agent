@@ -1,3 +1,4 @@
+use crate::claude_usage::ClaudeUsage;
 use crate::state::{Phase, State};
 use crate::tui::event::TokenUsage;
 use crate::WorkflowResult;
@@ -49,6 +50,17 @@ pub enum SessionStatus {
     Error,
 }
 
+/// Represents a pasted text block at a specific position
+#[derive(Debug, Clone)]
+pub struct PasteBlock {
+    /// The original pasted content
+    pub content: String,
+    /// Byte position in the input where this paste starts
+    pub start_pos: usize,
+    /// Number of lines in the pasted content
+    pub line_count: usize,
+}
+
 /// An independent planning session that can run in a tab
 #[allow(dead_code)]
 pub struct Session {
@@ -85,6 +97,12 @@ pub struct Session {
     pub tab_input_cursor: usize,
     pub tab_input_scroll: usize,
 
+    // Paste tracking for tab input
+    pub tab_input_pastes: Vec<PasteBlock>,
+
+    // Paste tracking for feedback input
+    pub feedback_pastes: Vec<PasteBlock>,
+
     // Error state
     pub error_state: Option<String>,
 
@@ -109,6 +127,9 @@ pub struct Session {
     // Session-specific workflow handles
     pub workflow_handle: Option<JoinHandle<Result<WorkflowResult>>>,
     pub approval_tx: Option<mpsc::Sender<UserApprovalResponse>>,
+
+    // Claude account usage (shared across sessions)
+    pub claude_usage: ClaudeUsage,
 }
 
 #[allow(dead_code)]
@@ -144,6 +165,9 @@ impl Session {
             tab_input_cursor: 0,
             tab_input_scroll: 0,
 
+            tab_input_pastes: Vec::new(),
+            feedback_pastes: Vec::new(),
+
             error_state: None,
 
             bytes_received: 0,
@@ -165,6 +189,8 @@ impl Session {
 
             workflow_handle: None,
             approval_tx: None,
+
+            claude_usage: ClaudeUsage::default(),
         }
     }
 
@@ -572,42 +598,246 @@ impl Session {
         (row, col)
     }
 
-    /// Get the display cost and its source indicator
-    /// Returns (cost, source_label) where source_label is "API" or "est"
-    pub fn display_cost(&self) -> (f64, &'static str) {
-        if self.total_cost > 0.0 {
-            (self.total_cost, "API")
+    /// Get the display cost (API-provided only)
+    pub fn display_cost(&self) -> f64 {
+        self.total_cost
+    }
+
+    // ===== Paste handling methods =====
+
+    /// Insert a paste block into the tab input at the current cursor position
+    pub fn insert_paste_tab_input(&mut self, text: String) {
+        if text.is_empty() {
+            return;
+        }
+
+        let line_count = text.lines().count().max(1);
+
+        // Create paste block at current cursor position
+        let paste_block = PasteBlock {
+            content: text,
+            start_pos: self.tab_input_cursor,
+            line_count,
+        };
+
+        // Insert placeholder marker into the visible text
+        // We use a zero-width space followed by a special marker character
+        let placeholder = Self::format_paste_placeholder(line_count);
+        self.tab_input.insert_str(self.tab_input_cursor, &placeholder);
+        self.tab_input_cursor += placeholder.len();
+
+        // Update start positions of any pastes that come after this one
+        for paste in &mut self.tab_input_pastes {
+            if paste.start_pos >= paste_block.start_pos {
+                paste.start_pos += placeholder.len();
+            }
+        }
+
+        self.tab_input_pastes.push(paste_block);
+    }
+
+    /// Insert a paste block into the feedback input at the current cursor position
+    pub fn insert_paste_feedback(&mut self, text: String) {
+        if text.is_empty() {
+            return;
+        }
+
+        let line_count = text.lines().count().max(1);
+
+        // Create paste block at current cursor position
+        let paste_block = PasteBlock {
+            content: text,
+            start_pos: self.cursor_position,
+            line_count,
+        };
+
+        // Insert placeholder marker into the visible text
+        let placeholder = Self::format_paste_placeholder(line_count);
+        self.user_feedback.insert_str(self.cursor_position, &placeholder);
+        self.cursor_position += placeholder.len();
+
+        // Update start positions of any pastes that come after this one
+        for paste in &mut self.feedback_pastes {
+            if paste.start_pos >= paste_block.start_pos {
+                paste.start_pos += placeholder.len();
+            }
+        }
+
+        self.feedback_pastes.push(paste_block);
+    }
+
+    /// Format the paste placeholder text
+    fn format_paste_placeholder(line_count: usize) -> String {
+        if line_count <= 1 {
+            "[Pasted]".to_string()
         } else {
-            (self.estimated_cost(), "est")
+            format!("[Pasted +{} lines]", line_count - 1)
         }
     }
 
-    /// Calculate estimated cost based on model and token usage
-    /// Uses API-provided total_cost if available, otherwise calculates from token counts
-    /// Pricing per 1M tokens (as of Jan 2025):
-    /// - Opus 4: Input $15, Output $75, Cache read $1.50, Cache write $18.75
-    /// - Sonnet 3.5: Input $3, Output $15, Cache read $0.30, Cache write $3.75
-    /// - Haiku 3.5: Input $0.80, Output $4, Cache read $0.08, Cache write $1
-    pub fn estimated_cost(&self) -> f64 {
-        // Use API-provided cost if available
-        if self.total_cost > 0.0 {
-            return self.total_cost;
+    /// Delete paste block at cursor position for tab input, returns true if a paste was deleted
+    pub fn delete_paste_at_cursor_tab(&mut self) -> bool {
+        // Check if cursor is within or at the end of any paste placeholder
+        if let Some(idx) = self.find_paste_at_cursor_tab() {
+            let paste = self.tab_input_pastes.remove(idx);
+            let placeholder = Self::format_paste_placeholder(paste.line_count);
+            let placeholder_len = placeholder.len();
+
+            // Remove the placeholder from the text
+            self.tab_input = format!(
+                "{}{}",
+                &self.tab_input[..paste.start_pos],
+                &self.tab_input[paste.start_pos + placeholder_len..]
+            );
+
+            // Move cursor to start of where paste was
+            self.tab_input_cursor = paste.start_pos;
+
+            // Update start positions of any pastes that came after
+            for p in &mut self.tab_input_pastes {
+                if p.start_pos > paste.start_pos {
+                    p.start_pos -= placeholder_len;
+                }
+            }
+
+            return true;
+        }
+        false
+    }
+
+    /// Delete paste block at cursor position for feedback input, returns true if a paste was deleted
+    pub fn delete_paste_at_cursor_feedback(&mut self) -> bool {
+        // Check if cursor is within or at the end of any paste placeholder
+        if let Some(idx) = self.find_paste_at_cursor_feedback() {
+            let paste = self.feedback_pastes.remove(idx);
+            let placeholder = Self::format_paste_placeholder(paste.line_count);
+            let placeholder_len = placeholder.len();
+
+            // Remove the placeholder from the text
+            self.user_feedback = format!(
+                "{}{}",
+                &self.user_feedback[..paste.start_pos],
+                &self.user_feedback[paste.start_pos + placeholder_len..]
+            );
+
+            // Move cursor to start of where paste was
+            self.cursor_position = paste.start_pos;
+
+            // Update start positions of any pastes that came after
+            for p in &mut self.feedback_pastes {
+                if p.start_pos > paste.start_pos {
+                    p.start_pos -= placeholder_len;
+                }
+            }
+
+            return true;
+        }
+        false
+    }
+
+    /// Find paste block index at cursor position for tab input
+    fn find_paste_at_cursor_tab(&self) -> Option<usize> {
+        for (idx, paste) in self.tab_input_pastes.iter().enumerate() {
+            let placeholder = Self::format_paste_placeholder(paste.line_count);
+            let placeholder_end = paste.start_pos + placeholder.len();
+
+            // Check if cursor is at end of placeholder (backspace case)
+            // or within the placeholder
+            if self.tab_input_cursor > paste.start_pos
+                && self.tab_input_cursor <= placeholder_end
+            {
+                return Some(idx);
+            }
+        }
+        None
+    }
+
+    /// Find paste block index at cursor position for feedback input
+    fn find_paste_at_cursor_feedback(&self) -> Option<usize> {
+        for (idx, paste) in self.feedback_pastes.iter().enumerate() {
+            let placeholder = Self::format_paste_placeholder(paste.line_count);
+            let placeholder_end = paste.start_pos + placeholder.len();
+
+            // Check if cursor is at end of placeholder (backspace case)
+            // or within the placeholder
+            if self.cursor_position > paste.start_pos
+                && self.cursor_position <= placeholder_end
+            {
+                return Some(idx);
+            }
+        }
+        None
+    }
+
+    /// Get display text for tab input with placeholders shown
+    pub fn get_display_text_tab(&self) -> String {
+        // The tab_input already contains placeholders, just return it
+        self.tab_input.clone()
+    }
+
+    /// Get display text for feedback input with placeholders shown
+    pub fn get_display_text_feedback(&self) -> String {
+        // The user_feedback already contains placeholders, just return it
+        self.user_feedback.clone()
+    }
+
+    /// Get full text for submission with pastes expanded (tab input)
+    pub fn get_submit_text_tab(&self) -> String {
+        self.expand_pastes_in_text(&self.tab_input, &self.tab_input_pastes)
+    }
+
+    /// Get full text for submission with pastes expanded (feedback input)
+    pub fn get_submit_text_feedback(&self) -> String {
+        self.expand_pastes_in_text(&self.user_feedback, &self.feedback_pastes)
+    }
+
+    /// Expand paste placeholders in text with their actual content
+    fn expand_pastes_in_text(&self, text: &str, pastes: &[PasteBlock]) -> String {
+        if pastes.is_empty() {
+            return text.to_string();
         }
 
-        // Calculate from token counts
-        let (input_rate, output_rate, cache_read_rate, cache_write_rate) =
-            match self.model_name.as_deref() {
-                Some(m) if m.contains("opus") => (15.0, 75.0, 1.50, 18.75),
-                Some(m) if m.contains("sonnet") => (3.0, 15.0, 0.30, 3.75),
-                Some(m) if m.contains("haiku") => (0.80, 4.0, 0.08, 1.0),
-                _ => (3.0, 15.0, 0.30, 3.75), // Default to Sonnet pricing
-            };
+        // Sort pastes by position (in reverse to process from end to start)
+        let mut sorted_pastes: Vec<_> = pastes.iter().collect();
+        sorted_pastes.sort_by(|a, b| b.start_pos.cmp(&a.start_pos));
 
-        let million = 1_000_000.0;
-        (self.total_input_tokens as f64 * input_rate / million)
-            + (self.total_output_tokens as f64 * output_rate / million)
-            + (self.total_cache_read_tokens as f64 * cache_read_rate / million)
-            + (self.total_cache_creation_tokens as f64 * cache_write_rate / million)
+        let mut result = text.to_string();
+
+        for paste in sorted_pastes {
+            let placeholder = Self::format_paste_placeholder(paste.line_count);
+            let placeholder_end = paste.start_pos + placeholder.len();
+
+            if placeholder_end <= result.len() {
+                result = format!(
+                    "{}{}{}",
+                    &result[..paste.start_pos],
+                    &paste.content,
+                    &result[placeholder_end..]
+                );
+            }
+        }
+
+        result
+    }
+
+    /// Clear paste blocks for tab input (call when clearing the input)
+    pub fn clear_tab_input_pastes(&mut self) {
+        self.tab_input_pastes.clear();
+    }
+
+    /// Clear paste blocks for feedback input (call when clearing the input)
+    pub fn clear_feedback_pastes(&mut self) {
+        self.feedback_pastes.clear();
+    }
+
+    /// Check if tab input has any paste blocks
+    pub fn has_tab_input_pastes(&self) -> bool {
+        !self.tab_input_pastes.is_empty()
+    }
+
+    /// Check if feedback input has any paste blocks
+    pub fn has_feedback_pastes(&self) -> bool {
+        !self.feedback_pastes.is_empty()
     }
 }
 
@@ -822,29 +1052,27 @@ mod tests {
     }
 
     #[test]
-    fn test_display_cost_returns_api_cost_when_available() {
+    fn test_display_cost_returns_api_cost() {
         let mut session = Session::new(0);
         session.total_cost = 0.1234;
         session.total_input_tokens = 1000;
         session.total_output_tokens = 500;
 
-        let (cost, source) = session.display_cost();
+        let cost = session.display_cost();
         assert_eq!(cost, 0.1234);
-        assert_eq!(source, "API");
     }
 
     #[test]
-    fn test_display_cost_falls_back_to_estimated() {
+    fn test_display_cost_returns_zero_when_no_api_cost() {
         let mut session = Session::new(0);
         session.total_cost = 0.0;
         session.total_input_tokens = 1000;
         session.total_output_tokens = 500;
         session.model_name = Some("claude-3.5-sonnet".to_string());
 
-        let (cost, source) = session.display_cost();
-        // Should return estimated cost, not 0
-        assert!(cost > 0.0);
-        assert_eq!(source, "est");
+        let cost = session.display_cost();
+        // Should return 0.0, not an estimated cost
+        assert_eq!(cost, 0.0);
     }
 
     #[test]
@@ -948,5 +1176,123 @@ mod tests {
         session.scroll_to_bottom();
         assert!(session.output_follow_mode);
         assert_eq!(session.scroll_position, 2); // 3 lines, position at 2
+    }
+
+    // ===== Paste handling tests =====
+
+    #[test]
+    fn test_insert_paste_basic() {
+        let mut session = Session::new(0);
+        session.insert_paste_tab_input("hello world".to_string());
+
+        assert!(session.has_tab_input_pastes());
+        assert_eq!(session.tab_input_pastes.len(), 1);
+        assert_eq!(session.tab_input, "[Pasted]");
+        assert_eq!(session.tab_input_cursor, 8);
+    }
+
+    #[test]
+    fn test_insert_paste_multiline() {
+        let mut session = Session::new(0);
+        session.insert_paste_tab_input("line1\nline2\nline3".to_string());
+
+        assert_eq!(session.tab_input_pastes.len(), 1);
+        assert_eq!(session.tab_input_pastes[0].line_count, 3);
+        assert_eq!(session.tab_input, "[Pasted +2 lines]");
+    }
+
+    #[test]
+    fn test_get_display_text_with_paste() {
+        let mut session = Session::new(0);
+        session.tab_input = "prefix ".to_string();
+        session.tab_input_cursor = 7;
+        session.insert_paste_tab_input("pasted content\nmore content".to_string());
+
+        let display = session.get_display_text_tab();
+        assert_eq!(display, "prefix [Pasted +1 lines]");
+    }
+
+    #[test]
+    fn test_get_submit_text_expands_paste() {
+        let mut session = Session::new(0);
+        session.insert_paste_tab_input("pasted content".to_string());
+
+        let submit = session.get_submit_text_tab();
+        assert_eq!(submit, "pasted content");
+    }
+
+    #[test]
+    fn test_get_submit_text_with_surrounding_text() {
+        let mut session = Session::new(0);
+        session.tab_input = "before ".to_string();
+        session.tab_input_cursor = 7;
+        session.insert_paste_tab_input("pasted".to_string());
+        session.tab_input.push_str(" after");
+
+        let submit = session.get_submit_text_tab();
+        assert_eq!(submit, "before pasted after");
+    }
+
+    #[test]
+    fn test_delete_paste_block() {
+        let mut session = Session::new(0);
+        session.insert_paste_tab_input("content".to_string());
+
+        assert!(session.has_tab_input_pastes());
+        assert!(session.delete_paste_at_cursor_tab());
+        assert!(!session.has_tab_input_pastes());
+        assert!(session.tab_input.is_empty());
+        assert_eq!(session.tab_input_cursor, 0);
+    }
+
+    #[test]
+    fn test_multiple_pastes() {
+        let mut session = Session::new(0);
+
+        session.insert_paste_tab_input("first".to_string());
+        session.tab_input.push(' ');
+        session.tab_input_cursor = session.tab_input.len();
+        session.insert_paste_tab_input("second".to_string());
+
+        assert_eq!(session.tab_input_pastes.len(), 2);
+        assert_eq!(session.tab_input, "[Pasted] [Pasted]");
+
+        let submit = session.get_submit_text_tab();
+        assert_eq!(submit, "first second");
+    }
+
+    #[test]
+    fn test_feedback_paste_insert_and_expand() {
+        let mut session = Session::new(0);
+        session.insert_paste_feedback("feedback content".to_string());
+
+        assert!(session.has_feedback_pastes());
+        assert_eq!(session.get_display_text_feedback(), "[Pasted]");
+        assert_eq!(session.get_submit_text_feedback(), "feedback content");
+    }
+
+    #[test]
+    fn test_clear_pastes() {
+        let mut session = Session::new(0);
+        session.insert_paste_tab_input("content".to_string());
+        session.insert_paste_feedback("feedback".to_string());
+
+        assert!(session.has_tab_input_pastes());
+        assert!(session.has_feedback_pastes());
+
+        session.clear_tab_input_pastes();
+        session.clear_feedback_pastes();
+
+        assert!(!session.has_tab_input_pastes());
+        assert!(!session.has_feedback_pastes());
+    }
+
+    #[test]
+    fn test_empty_paste_ignored() {
+        let mut session = Session::new(0);
+        session.insert_paste_tab_input("".to_string());
+
+        assert!(!session.has_tab_input_pastes());
+        assert!(session.tab_input.is_empty());
     }
 }
