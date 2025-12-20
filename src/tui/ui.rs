@@ -892,22 +892,33 @@ fn draw_feedback_popup(frame: &mut Frame, session: &Session, area: Rect) {
         Style::default().fg(Color::White)
     };
 
-    let input = Paragraph::new(input_text)
+    let input_block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan))
+        .title(" Your Feedback ");
+
+    let inner = input_block.inner(chunks[1]);
+    let input_width = inner.width as usize;
+
+    // Use character-based wrapping to match cursor calculation
+    let wrapped_input = wrap_text_at_width(&input_text, input_width);
+    let input = Paragraph::new(wrapped_input)
         .style(input_style)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::Cyan))
-                .title(" Your Feedback "),
-        )
-        .wrap(Wrap { trim: false });
+        .block(input_block);
     frame.render_widget(input, chunks[1]);
 
-    // Show cursor position
-    let inner = chunks[1].inner(ratatui::layout::Margin::new(1, 1));
-    let cursor_x = inner.x + (session.cursor_position as u16 % inner.width);
-    let cursor_y = inner.y + (session.cursor_position as u16 / inner.width);
-    frame.set_cursor_position((cursor_x, cursor_y));
+    // Calculate cursor position using unicode-aware method
+    if !session.user_feedback.is_empty() {
+        let (cursor_row, cursor_col) = session.get_feedback_cursor_position(input_width);
+        let cursor_x = inner.x + cursor_col as u16;
+        let cursor_y = inner.y + cursor_row as u16;
+        if cursor_y < inner.y + inner.height {
+            frame.set_cursor_position((cursor_x.min(inner.x + inner.width - 1), cursor_y));
+        }
+    } else {
+        // Placeholder text - cursor at start
+        frame.set_cursor_position((inner.x, inner.y));
+    }
 
     // Instructions
     let instructions = Paragraph::new(Line::from(vec![

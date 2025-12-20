@@ -119,6 +119,12 @@ impl EventHandler {
             .await
             .ok_or_else(|| anyhow::anyhow!("Event channel closed"))
     }
+
+    /// Try to receive an event without blocking
+    /// Returns None if no event is available
+    pub fn try_next(&mut self) -> Option<Event> {
+        self.rx.try_recv().ok()
+    }
 }
 
 /// A sender that automatically tags events with a session ID
