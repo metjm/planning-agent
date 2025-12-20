@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use super::event::UserApprovalResponse;
 
@@ -372,33 +373,49 @@ impl Session {
     /// Insert a character into the tab input buffer
     pub fn insert_tab_input_char(&mut self, c: char) {
         self.tab_input.insert(self.tab_input_cursor, c);
-        self.tab_input_cursor += 1;
+        self.tab_input_cursor += c.len_utf8();
     }
 
     /// Delete a character from the tab input buffer
     pub fn delete_tab_input_char(&mut self) {
         if self.tab_input_cursor > 0 {
-            self.tab_input_cursor -= 1;
-            self.tab_input.remove(self.tab_input_cursor);
+            // Find the previous character boundary
+            let prev_char_boundary = self.tab_input[..self.tab_input_cursor]
+                .char_indices()
+                .last()
+                .map(|(idx, _)| idx)
+                .unwrap_or(0);
+            self.tab_input.remove(prev_char_boundary);
+            self.tab_input_cursor = prev_char_boundary;
         }
     }
 
     /// Move tab input cursor left
     pub fn move_tab_input_cursor_left(&mut self) {
-        self.tab_input_cursor = self.tab_input_cursor.saturating_sub(1);
+        if self.tab_input_cursor > 0 {
+            // Find the previous character boundary
+            self.tab_input_cursor = self.tab_input[..self.tab_input_cursor]
+                .char_indices()
+                .last()
+                .map(|(idx, _)| idx)
+                .unwrap_or(0);
+        }
     }
 
     /// Move tab input cursor right
     pub fn move_tab_input_cursor_right(&mut self) {
         if self.tab_input_cursor < self.tab_input.len() {
-            self.tab_input_cursor += 1;
+            // Find the next character boundary
+            if let Some((_, c)) = self.tab_input[self.tab_input_cursor..].char_indices().next() {
+                self.tab_input_cursor += c.len_utf8();
+            }
         }
     }
 
     /// Insert a newline into the tab input buffer
     pub fn insert_tab_input_newline(&mut self) {
         self.tab_input.insert(self.tab_input_cursor, '\n');
-        self.tab_input_cursor += 1;
+        self.tab_input_cursor += '\n'.len_utf8();
     }
 
     /// Move tab input cursor up to the previous line
@@ -413,8 +430,8 @@ impl Session {
             return;
         }
 
-        // Column position in current line
-        let col = self.tab_input_cursor - current_line_start;
+        // Display width column position in current line
+        let display_col = self.tab_input[current_line_start..self.tab_input_cursor].width();
 
         // Find the start of the previous line
         let prev_line_end = current_line_start - 1; // Position of the '\n' before current line
@@ -423,11 +440,19 @@ impl Session {
             .map(|p| p + 1)
             .unwrap_or(0);
 
-        // Length of previous line
-        let prev_line_len = prev_line_end - prev_line_start;
+        // Find byte position in previous line that corresponds to target display column
+        let prev_line = &self.tab_input[prev_line_start..prev_line_end];
+        let mut accumulated_width = 0;
+        let mut target_byte_offset = prev_line.len(); // Default to end of line
+        for (idx, c) in prev_line.char_indices() {
+            if accumulated_width >= display_col {
+                target_byte_offset = idx;
+                break;
+            }
+            accumulated_width += c.width().unwrap_or(0);
+        }
 
-        // Move to the same column or end of previous line
-        self.tab_input_cursor = prev_line_start + col.min(prev_line_len);
+        self.tab_input_cursor = prev_line_start + target_byte_offset;
     }
 
     /// Move tab input cursor down to the next line
@@ -438,8 +463,8 @@ impl Session {
         // Find the start of the current line
         let current_line_start = text_before.rfind('\n').map(|p| p + 1).unwrap_or(0);
 
-        // Column position in current line
-        let col = self.tab_input_cursor - current_line_start;
+        // Display width column position in current line
+        let display_col = self.tab_input[current_line_start..self.tab_input_cursor].width();
 
         // Find the end of current line (next newline after cursor)
         let next_newline = text_after.find('\n');
@@ -458,25 +483,73 @@ impl Session {
             .map(|p| next_line_start + p)
             .unwrap_or(self.tab_input.len());
 
-        // Length of next line
-        let next_line_len = next_line_end - next_line_start;
+        // Find byte position in next line that corresponds to target display column
+        let next_line = &self.tab_input[next_line_start..next_line_end];
+        let mut accumulated_width = 0;
+        let mut target_byte_offset = next_line.len(); // Default to end of line
+        for (idx, c) in next_line.char_indices() {
+            if accumulated_width >= display_col {
+                target_byte_offset = idx;
+                break;
+            }
+            accumulated_width += c.width().unwrap_or(0);
+        }
 
-        // Move to the same column or end of next line
-        self.tab_input_cursor = next_line_start + col.min(next_line_len);
+        self.tab_input_cursor = next_line_start + target_byte_offset;
     }
 
     /// Get the current line number and column for the tab input cursor
+    /// Returns (line_number, display_column) where display_column is the unicode width
     pub fn get_tab_input_cursor_position(&self) -> (usize, usize) {
         let text_before = &self.tab_input[..self.tab_input_cursor];
         let line = text_before.matches('\n').count();
         let line_start = text_before.rfind('\n').map(|p| p + 1).unwrap_or(0);
-        let col = self.tab_input_cursor - line_start;
+        // Use display width for column, not byte offset
+        let col = self.tab_input[line_start..self.tab_input_cursor].width();
         (line, col)
     }
 
     /// Get the total number of lines in the tab input
     pub fn get_tab_input_line_count(&self) -> usize {
         self.tab_input.matches('\n').count() + 1
+    }
+
+    /// Get the display cost and its source indicator
+    /// Returns (cost, source_label) where source_label is "API" or "est"
+    pub fn display_cost(&self) -> (f64, &'static str) {
+        if self.total_cost > 0.0 {
+            (self.total_cost, "API")
+        } else {
+            (self.estimated_cost(), "est")
+        }
+    }
+
+    /// Calculate estimated cost based on model and token usage
+    /// Uses API-provided total_cost if available, otherwise calculates from token counts
+    /// Pricing per 1M tokens (as of Jan 2025):
+    /// - Opus 4: Input $15, Output $75, Cache read $1.50, Cache write $18.75
+    /// - Sonnet 3.5: Input $3, Output $15, Cache read $0.30, Cache write $3.75
+    /// - Haiku 3.5: Input $0.80, Output $4, Cache read $0.08, Cache write $1
+    pub fn estimated_cost(&self) -> f64 {
+        // Use API-provided cost if available
+        if self.total_cost > 0.0 {
+            return self.total_cost;
+        }
+
+        // Calculate from token counts
+        let (input_rate, output_rate, cache_read_rate, cache_write_rate) =
+            match self.model_name.as_deref() {
+                Some(m) if m.contains("opus") => (15.0, 75.0, 1.50, 18.75),
+                Some(m) if m.contains("sonnet") => (3.0, 15.0, 0.30, 3.75),
+                Some(m) if m.contains("haiku") => (0.80, 4.0, 0.08, 1.0),
+                _ => (3.0, 15.0, 0.30, 3.75), // Default to Sonnet pricing
+            };
+
+        let million = 1_000_000.0;
+        (self.total_input_tokens as f64 * input_rate / million)
+            + (self.total_output_tokens as f64 * output_rate / million)
+            + (self.total_cache_read_tokens as f64 * cache_read_rate / million)
+            + (self.total_cache_creation_tokens as f64 * cache_write_rate / million)
     }
 }
 
@@ -688,5 +761,31 @@ mod tests {
 
         session.tab_input = "".to_string();
         assert_eq!(session.get_tab_input_line_count(), 1);
+    }
+
+    #[test]
+    fn test_display_cost_returns_api_cost_when_available() {
+        let mut session = Session::new(0);
+        session.total_cost = 0.1234;
+        session.total_input_tokens = 1000;
+        session.total_output_tokens = 500;
+
+        let (cost, source) = session.display_cost();
+        assert_eq!(cost, 0.1234);
+        assert_eq!(source, "API");
+    }
+
+    #[test]
+    fn test_display_cost_falls_back_to_estimated() {
+        let mut session = Session::new(0);
+        session.total_cost = 0.0;
+        session.total_input_tokens = 1000;
+        session.total_output_tokens = 500;
+        session.model_name = Some("claude-3.5-sonnet".to_string());
+
+        let (cost, source) = session.display_cost();
+        // Should return estimated cost, not 0
+        assert!(cost > 0.0);
+        assert_eq!(source, "est");
     }
 }
