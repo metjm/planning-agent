@@ -1,4 +1,5 @@
 mod claude;
+mod claude_usage;
 mod phases;
 mod skills;
 mod state;
@@ -256,7 +257,8 @@ async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
     crossterm::execute!(
         stdout,
         crossterm::terminal::EnterAlternateScreen,
-        crossterm::event::EnableMouseCapture
+        crossterm::event::EnableMouseCapture,
+        crossterm::event::EnableBracketedPaste
     )?;
     debug_log(start, "alternate screen entered");
     let backend = ratatui::backend::CrosstermBackend::new(stdout);
@@ -276,6 +278,21 @@ async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
     let mut event_handler = EventHandler::new(Duration::from_millis(100));
     debug_log(start, "event handler created");
     let output_tx = event_handler.sender();
+
+    // Spawn background task to fetch Claude usage periodically
+    {
+        let usage_tx = event_handler.sender();
+        tokio::spawn(async move {
+            loop {
+                let usage = tokio::task::spawn_blocking(claude_usage::fetch_claude_usage_sync)
+                    .await
+                    .unwrap_or_else(|_| claude_usage::ClaudeUsage::default());
+                let _ = usage_tx.send(Event::ClaudeUsageUpdate(usage));
+                tokio::time::sleep(Duration::from_secs(300)).await;
+            }
+        });
+    }
+    debug_log(start, "claude usage fetch task spawned");
 
     let working_dir = cli
         .working_dir
@@ -425,12 +442,14 @@ async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                         }
                         // Plain Enter submits
                         KeyCode::Enter => {
-                            if !session.tab_input.trim().is_empty() {
-                                // Start workflow with entered objective
-                                let objective = session.tab_input.clone();
+                            let has_content = !session.tab_input.trim().is_empty() || session.has_tab_input_pastes();
+                            if has_content {
+                                // Start workflow with entered objective (expand any pastes)
+                                let objective = session.get_submit_text_tab();
                                 session.tab_input.clear();
                                 session.tab_input_cursor = 0;
                                 session.tab_input_scroll = 0;
+                                session.clear_tab_input_pastes();
                                 session.input_mode = InputMode::Normal;
                                 session.status = SessionStatus::Planning;
 
@@ -491,7 +510,10 @@ async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                             session.insert_tab_input_char(c);
                         }
                         KeyCode::Backspace => {
-                            session.delete_tab_input_char();
+                            // Try to delete paste block first, fall back to char deletion
+                            if !session.delete_paste_at_cursor_tab() {
+                                session.delete_tab_input_char();
+                            }
                         }
                         KeyCode::Left => {
                             session.move_tab_input_cursor_left();
@@ -637,11 +659,16 @@ async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                     },
                     ApprovalMode::EnteringFeedback => match key.code {
                         KeyCode::Enter => {
-                            if !session.user_feedback.trim().is_empty() {
-                                let feedback = session.user_feedback.clone();
+                            let has_content = !session.user_feedback.trim().is_empty() || session.has_feedback_pastes();
+                            if has_content {
+                                // Expand any pasted content for submission
+                                let feedback = session.get_submit_text_feedback();
                                 if let Some(tx) = session.approval_tx.take() {
                                     let _ = tx.send(UserApprovalResponse::Decline(feedback)).await;
                                 }
+                                session.user_feedback.clear();
+                                session.cursor_position = 0;
+                                session.clear_feedback_pastes();
                                 session.approval_mode = ApprovalMode::None;
                             }
                         }
@@ -649,9 +676,13 @@ async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                             session.approval_mode = ApprovalMode::AwaitingChoice;
                             session.user_feedback.clear();
                             session.cursor_position = 0;
+                            session.clear_feedback_pastes();
                         }
                         KeyCode::Backspace => {
-                            session.delete_char();
+                            // Try to delete paste block first, fall back to char deletion
+                            if !session.delete_paste_at_cursor_feedback() {
+                                session.delete_char();
+                            }
                         }
                         KeyCode::Left => {
                             session.move_cursor_left();
@@ -702,6 +733,17 @@ async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
             }
             Event::Resize => {
                 // Terminal resize is handled automatically by ratatui
+            }
+            Event::Paste(text) => {
+                let session = tab_manager.active_mut();
+
+                // Handle paste based on current input mode
+                if session.input_mode == InputMode::NamingTab {
+                    session.insert_paste_tab_input(text);
+                } else if session.approval_mode == ApprovalMode::EnteringFeedback {
+                    session.insert_paste_feedback(text);
+                }
+                // Ignore paste in other modes
             }
 
             // Legacy events for backwards compatibility with first session
@@ -894,6 +936,12 @@ async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                     session.handle_error(&error);
                 }
             }
+            Event::ClaudeUsageUpdate(usage) => {
+                // Update all sessions (usage is global/account-wide)
+                for session in tab_manager.sessions_mut() {
+                    session.claude_usage = usage.clone();
+                }
+            }
         }
         } // End of for event in events_to_process
 
@@ -1046,6 +1094,7 @@ fn restore_terminal(
     crossterm::terminal::disable_raw_mode()?;
     crossterm::execute!(
         terminal.backend_mut(),
+        crossterm::event::DisableBracketedPaste,
         crossterm::terminal::LeaveAlternateScreen,
         crossterm::event::DisableMouseCapture
     )?;

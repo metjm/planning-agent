@@ -4,6 +4,7 @@ use futures::StreamExt;
 use std::time::Duration;
 use tokio::sync::mpsc;
 
+use crate::claude_usage::ClaudeUsage;
 use crate::state::State;
 
 /// Token usage statistics from Claude API
@@ -19,6 +20,7 @@ pub struct TokenUsage {
 #[allow(dead_code)]
 pub enum Event {
     Key(KeyEvent),
+    Paste(String),
     Tick,
     Resize,
 
@@ -53,6 +55,9 @@ pub enum Event {
     SessionStopReason { session_id: usize, reason: String },
     SessionWorkflowComplete { session_id: usize },
     SessionWorkflowError { session_id: usize, error: String },
+
+    /// Claude usage update (global, not per-session since usage is account-wide)
+    ClaudeUsageUpdate(ClaudeUsage),
 }
 
 /// User's response to approval request
@@ -85,6 +90,11 @@ impl EventHandler {
                                 if key.kind == KeyEventKind::Press
                                     && event_tx.send(Event::Key(key)).is_err()
                                 {
+                                    break;
+                                }
+                            }
+                            Some(Ok(CrosstermEvent::Paste(text))) => {
+                                if event_tx.send(Event::Paste(text)).is_err() {
                                     break;
                                 }
                             }
