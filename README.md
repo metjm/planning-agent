@@ -2,6 +2,12 @@
 
 A TUI application for creating and managing implementation plans.
 
+⚠️⚠️⚠️
+
+This uses --dangerously-skip-permissions by default, so I do **not** recommend using it without a container.
+
+⚠️⚠️⚠️
+
 ## Installation
 
 ### Quick Install
