@@ -1,5 +1,6 @@
 use crate::state::Phase;
 use crate::tui::{ApprovalMode, FocusedPanel, InputMode, Session, SessionStatus, TabManager};
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style, Stylize},
@@ -7,6 +8,32 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap},
     Frame,
 };
+
+/// Wrap text at character boundaries using unicode display width.
+/// This ensures cursor position calculation matches the rendered text.
+fn wrap_text_at_width(text: &str, width: usize) -> String {
+    if width == 0 {
+        return text.to_string();
+    }
+
+    let mut result = String::new();
+    for line in text.split('\n') {
+        if !result.is_empty() {
+            result.push('\n');
+        }
+        let mut current_width = 0;
+        for c in line.chars() {
+            let char_width = c.width().unwrap_or(0);
+            if current_width + char_width > width && current_width > 0 {
+                result.push('\n');
+                current_width = 0;
+            }
+            result.push(c);
+            current_width += char_width;
+        }
+    }
+    result
+}
 
 fn format_bytes(bytes: usize) -> String {
     if bytes < 1024 {
@@ -329,7 +356,40 @@ fn draw_stats(frame: &mut Frame, session: &Session, area: Rect) {
         None => Color::Gray,
     };
 
+    // Get cost with source indicator
+    let (cost, cost_source) = session.display_cost();
+
     let mut stats_text = vec![
+        // Usage section at the top for prominence
+        Line::from(vec![Span::styled(
+            "── Usage ──",
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+        )]),
+        Line::from(vec![
+            Span::styled(" Cost: ", Style::default().fg(Color::White)),
+            Span::styled(
+                format!("${:.4}", cost),
+                Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                format!(" ({})", cost_source),
+                Style::default().fg(Color::DarkGray),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled(" Tokens: ", Style::default().fg(Color::White)),
+            Span::styled(
+                format!("{}↓", format_tokens(session.total_input_tokens)),
+                Style::default().fg(Color::Cyan),
+            ),
+            Span::styled(" ", Style::default()),
+            Span::styled(
+                format!("{}↑", format_tokens(session.total_output_tokens)),
+                Style::default().fg(Color::Green),
+            ),
+        ]),
+        Line::from(""),
+        // Status section
         Line::from(vec![Span::styled(
             " Status",
             Style::default().add_modifier(Modifier::BOLD),
@@ -374,23 +434,7 @@ fn draw_stats(frame: &mut Frame, session: &Session, area: Rect) {
 
     stats_text.push(Line::from(""));
 
-    // Token stats
-    stats_text.push(Line::from(vec![Span::styled(
-        " Tokens",
-        Style::default().add_modifier(Modifier::BOLD),
-    )]));
-    stats_text.push(Line::from(vec![
-        Span::styled(" In: ", Style::default().fg(Color::DarkGray)),
-        Span::styled(
-            format_tokens(session.total_input_tokens),
-            Style::default().fg(Color::Cyan),
-        ),
-        Span::styled("  Out: ", Style::default().fg(Color::DarkGray)),
-        Span::styled(
-            format_tokens(session.total_output_tokens),
-            Style::default().fg(Color::Green),
-        ),
-    ]));
+    // Cache stats (only show when there's cache usage)
     if session.total_cache_read_tokens > 0 || session.total_cache_creation_tokens > 0 {
         stats_text.push(Line::from(vec![
             Span::styled(" Cache: ", Style::default().fg(Color::DarkGray)),
@@ -403,8 +447,8 @@ fn draw_stats(frame: &mut Frame, session: &Session, area: Rect) {
                 Style::default().fg(Color::Blue),
             ),
         ]));
+        stats_text.push(Line::from(""));
     }
-    stats_text.push(Line::from(""));
 
     // Streaming stats
     stats_text.push(Line::from(vec![Span::styled(
@@ -429,7 +473,6 @@ fn draw_stats(frame: &mut Frame, session: &Session, area: Rect) {
             }),
         ),
     ]));
-    stats_text.push(Line::from(format!(" Cost: ${:.4}", session.total_cost)));
     stats_text.push(Line::from(""));
 
     // Tool stats
@@ -948,15 +991,16 @@ fn draw_tab_input_overlay(frame: &mut Frame, session: &Session) {
 
     for (i, line) in session.tab_input.split('\n').enumerate() {
         if i < cursor_line {
-            // Add wrapped rows for previous lines
+            // Add wrapped rows for previous lines using unicode display width
             let line_rows = if line.is_empty() {
                 1
             } else {
-                line.len().div_ceil(input_width)
+                line.width().div_ceil(input_width)
             };
             visual_row += line_rows;
         } else if i == cursor_line {
             // Calculate visual position within current line due to wrapping
+            // cursor_col is already display width from get_tab_input_cursor_position
             visual_row += cursor_col / input_width;
             visual_col = cursor_col % input_width;
             break;
@@ -972,10 +1016,12 @@ fn draw_tab_input_overlay(frame: &mut Frame, session: &Session) {
         session.tab_input_scroll
     };
 
-    let input = Paragraph::new(input_text)
+    // Pre-wrap text at character boundaries to match our cursor calculation
+    // This avoids mismatch between word-based wrapping and character-based cursor positioning
+    let wrapped_text = wrap_text_at_width(&input_text, input_width);
+    let input = Paragraph::new(wrapped_text)
         .style(input_style)
         .block(input_block)
-        .wrap(Wrap { trim: false })
         .scroll((scroll as u16, 0));
     frame.render_widget(input, chunks[1]);
 
