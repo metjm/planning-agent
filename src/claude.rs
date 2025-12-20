@@ -122,12 +122,14 @@ impl ClaudeInvocation {
     }
 
     /// Set the activity timeout (how long to wait for output before considering process stalled)
+    #[allow(dead_code)]
     pub fn with_activity_timeout(mut self, timeout: Duration) -> Self {
         self.activity_timeout = timeout;
         self
     }
 
     /// Set the overall timeout (maximum total time for the invocation)
+    #[allow(dead_code)]
     pub fn with_overall_timeout(mut self, timeout: Duration) -> Self {
         self.overall_timeout = timeout;
         self
