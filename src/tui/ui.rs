@@ -472,7 +472,7 @@ fn draw_stats(frame: &mut Frame, session: &Session, area: Rect) {
             Span::styled(
                 format!("{}", session.tool_error_count),
                 Style::default()
-                    .fg(Color::Red)
+                    .fg(Color::White)
                     .add_modifier(Modifier::BOLD),
             ),
         ]));
