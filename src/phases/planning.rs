@@ -1,4 +1,6 @@
+use crate::agents::AgentType;
 use crate::claude::ClaudeInvocation;
+use crate::config::WorkflowConfig;
 use crate::state::State;
 use crate::tui::Event;
 use anyhow::Result;
@@ -9,6 +11,7 @@ const ALLOWED_TOOLS: &[&str] = &[
     "Read", "Glob", "Grep", "Write", "WebSearch", "WebFetch", "Skill", "Task",
 ];
 
+/// Run planning phase with Claude (legacy behavior)
 pub async fn run_planning_phase(
     state: &State,
     working_dir: &Path,
@@ -45,4 +48,79 @@ After the plan is created, confirm completion."#;
     )));
 
     Ok(())
+}
+
+const PLANNING_SYSTEM_PROMPT: &str = r#"You are a technical planning agent.
+Create a detailed implementation plan for the given objective.
+Use the available tools to read the codebase and understand the existing structure.
+Write your plan to the specified file path."#;
+
+/// Run planning phase with a configured agent
+pub async fn run_planning_phase_with_config(
+    state: &State,
+    working_dir: &Path,
+    config: &WorkflowConfig,
+    output_tx: mpsc::UnboundedSender<Event>,
+) -> Result<()> {
+    let planning_config = &config.workflow.planning;
+    let agent_name = &planning_config.agent;
+
+    let agent_config = config
+        .get_agent(agent_name)
+        .ok_or_else(|| anyhow::anyhow!("Planning agent '{}' not found in config", agent_name))?;
+
+    let _ = output_tx.send(Event::Output(format!(
+        "[planning] Using agent: {}",
+        agent_name
+    )));
+
+    // For Claude, use the skill-based approach for compatibility
+    if agent_name == "claude" {
+        return run_planning_phase(state, working_dir, output_tx).await;
+    }
+
+    // For other agents, use a direct prompt approach
+    let agent = AgentType::from_config(agent_name, agent_config, working_dir.to_path_buf())?;
+
+    let prompt = build_planning_prompt(state);
+
+    let result = agent
+        .execute_streaming(prompt, Some(PLANNING_SYSTEM_PROMPT.to_string()), output_tx.clone())
+        .await?;
+
+    let _ = output_tx.send(Event::Output(format!(
+        "[planning:{}] Planning phase complete",
+        agent_name
+    )));
+    let _ = output_tx.send(Event::Output(format!(
+        "[planning:{}] Result preview: {}...",
+        agent_name,
+        result.output.chars().take(200).collect::<String>()
+    )));
+
+    Ok(())
+}
+
+/// Build the planning prompt for configurable agents
+fn build_planning_prompt(state: &State) -> String {
+    format!(
+        r#"Create a detailed implementation plan for the following:
+
+Feature Name: {}
+Objective: {}
+
+Requirements:
+1. Analyze the existing codebase to understand the current architecture
+2. Identify all files that need to be modified or created
+3. Break down the implementation into clear, actionable steps
+4. Consider edge cases and potential issues
+5. Include a testing strategy
+
+Write your plan to: {}
+
+Use the Read, Glob, and Grep tools to explore the codebase as needed."#,
+        state.feature_name,
+        state.objective,
+        state.plan_file.display()
+    )
 }

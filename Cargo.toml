@@ -23,3 +23,7 @@ futures = "0.3"
 # Utils
 dirs = "6"
 unicode-width = "0.2"
+
+# Multi-agent orchestration
+serde_yaml = "0.9"
+async-trait = "0.1"

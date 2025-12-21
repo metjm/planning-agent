@@ -1,5 +1,7 @@
+mod agents;
 mod claude;
 mod claude_usage;
+mod config;
 mod phases;
 mod skills;
 mod state;
@@ -8,7 +10,12 @@ mod tui;
 use anyhow::{Context, Result};
 use clap::Parser;
 use crossterm::event::{KeyCode, KeyModifiers, KeyboardEnhancementFlags, PushKeyboardEnhancementFlags, PopKeyboardEnhancementFlags};
-use phases::{run_planning_phase, run_review_phase, run_revision_phase};
+use config::WorkflowConfig;
+use phases::{
+    aggregate_reviews, merge_feedback, run_multi_agent_review_phase, run_planning_phase,
+    run_planning_phase_with_config, run_review_phase, run_revision_phase,
+    run_revision_phase_with_reviews, write_feedback_files,
+};
 use state::{parse_feedback_status, FeedbackStatus, Phase, State};
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -71,6 +78,10 @@ struct Cli {
     /// Run without TUI (headless mode)
     #[arg(long)]
     headless: bool,
+
+    /// Path to workflow configuration file (YAML)
+    #[arg(long, short = 'c')]
+    config: Option<PathBuf>,
 }
 
 fn debug_log(start: std::time::Instant, msg: &str) {
@@ -318,6 +329,42 @@ async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
         .working_dir
         .clone()
         .unwrap_or_else(|| std::env::current_dir().expect("Failed to get current directory"));
+
+    // Load workflow config if provided, otherwise use defaults
+    let workflow_config = if let Some(config_path) = &cli.config {
+        let full_path = if config_path.is_absolute() {
+            config_path.clone()
+        } else {
+            working_dir.join(config_path)
+        };
+        match WorkflowConfig::load(&full_path) {
+            Ok(cfg) => {
+                debug_log(start, &format!("Loaded config from {:?}", full_path));
+                Some(cfg)
+            }
+            Err(e) => {
+                eprintln!("[planning-agent] Warning: Failed to load config: {}", e);
+                None
+            }
+        }
+    } else {
+        // Check for workflow.yaml in working directory
+        let default_config_path = working_dir.join("workflow.yaml");
+        if default_config_path.exists() {
+            match WorkflowConfig::load(&default_config_path) {
+                Ok(cfg) => {
+                    debug_log(start, "Loaded default workflow.yaml");
+                    Some(cfg)
+                }
+                Err(e) => {
+                    eprintln!("[planning-agent] Warning: Failed to load workflow.yaml: {}", e);
+                    None
+                }
+            }
+        } else {
+            None
+        }
+    };
 
     let objective = cli.objective.join(" ").trim().to_string();
 
@@ -1029,22 +1076,42 @@ async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                                 mpsc::channel::<UserApprovalResponse>(1);
                             session.approval_tx = Some(new_approval_tx);
 
-                            let workflow_handle = tokio::spawn({
-                                let working_dir = working_dir.clone();
-                                let tx = output_tx.clone();
-                                let sid = session_id;
-                                async move {
-                                    run_workflow(
-                                        state,
-                                        working_dir,
-                                        state_path,
-                                        tx,
-                                        new_approval_rx,
-                                        sid,
-                                    )
-                                    .await
-                                }
-                            });
+                            let workflow_handle = if let Some(cfg) = workflow_config.clone() {
+                                tokio::spawn({
+                                    let working_dir = working_dir.clone();
+                                    let tx = output_tx.clone();
+                                    let sid = session_id;
+                                    async move {
+                                        run_workflow_with_config(
+                                            state,
+                                            working_dir,
+                                            state_path,
+                                            cfg,
+                                            tx,
+                                            new_approval_rx,
+                                            sid,
+                                        )
+                                        .await
+                                    }
+                                })
+                            } else {
+                                tokio::spawn({
+                                    let working_dir = working_dir.clone();
+                                    let tx = output_tx.clone();
+                                    let sid = session_id;
+                                    async move {
+                                        run_workflow(
+                                            state,
+                                            working_dir,
+                                            state_path,
+                                            tx,
+                                            new_approval_rx,
+                                            sid,
+                                        )
+                                        .await
+                                    }
+                                })
+                            };
 
                             session.workflow_handle = Some(workflow_handle);
                         }
@@ -1104,23 +1171,44 @@ async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                                 session.approval_tx = Some(new_approval_tx);
 
                                 // Spawn new workflow
-                                let new_handle = tokio::spawn({
-                                    let state = state.clone();
-                                    let working_dir = working_dir.clone();
-                                    let tx = output_tx.clone();
-                                    let sid = session.id;
-                                    async move {
-                                        run_workflow(
-                                            state,
-                                            working_dir,
-                                            state_path,
-                                            tx,
-                                            new_approval_rx,
-                                            sid,
-                                        )
-                                        .await
-                                    }
-                                });
+                                let new_handle = if let Some(cfg) = workflow_config.clone() {
+                                    tokio::spawn({
+                                        let state = state.clone();
+                                        let working_dir = working_dir.clone();
+                                        let tx = output_tx.clone();
+                                        let sid = session.id;
+                                        async move {
+                                            run_workflow_with_config(
+                                                state,
+                                                working_dir,
+                                                state_path,
+                                                cfg,
+                                                tx,
+                                                new_approval_rx,
+                                                sid,
+                                            )
+                                            .await
+                                        }
+                                    })
+                                } else {
+                                    tokio::spawn({
+                                        let state = state.clone();
+                                        let working_dir = working_dir.clone();
+                                        let tx = output_tx.clone();
+                                        let sid = session.id;
+                                        async move {
+                                            run_workflow(
+                                                state,
+                                                working_dir,
+                                                state_path,
+                                                tx,
+                                                new_approval_rx,
+                                                sid,
+                                            )
+                                            .await
+                                        }
+                                    })
+                                };
 
                                 session.workflow_handle = Some(new_handle);
                             }
@@ -1379,6 +1467,303 @@ async fn run_workflow(
             None => {
                 // Channel closed - this can happen if user pressed [i] to implement,
                 // which does exec() and terminates the process. Treat as accept.
+                log_workflow(&working_dir, "Approval channel closed - treating as accept");
+                return Ok(WorkflowResult::Accepted);
+            }
+        }
+    }
+
+    // Max iterations reached without approval
+    sender.send_output("".to_string());
+    sender.send_output("=== WORKFLOW COMPLETE ===".to_string());
+    sender.send_output("Max iterations reached. Manual review recommended.".to_string());
+
+    Ok(WorkflowResult::Accepted)
+}
+
+/// Run workflow with multi-agent configuration
+async fn run_workflow_with_config(
+    mut state: State,
+    working_dir: PathBuf,
+    state_path: PathBuf,
+    config: WorkflowConfig,
+    output_tx: mpsc::UnboundedSender<Event>,
+    mut approval_rx: mpsc::Receiver<UserApprovalResponse>,
+    session_id: usize,
+) -> Result<WorkflowResult> {
+    log_workflow(
+        &working_dir,
+        &format!("=== WORKFLOW START (multi-agent): {} ===", state.feature_name),
+    );
+    log_workflow(
+        &working_dir,
+        &format!(
+            "Config: planning={}, reviewers={:?}, revising={}",
+            config.workflow.planning.agent,
+            config.workflow.reviewing.agents,
+            config.workflow.revising.agent
+        ),
+    );
+
+    // Create session event sender for this workflow
+    let sender = SessionEventSender::new(session_id, output_tx.clone());
+
+    // Track reviews from multi-agent review phase
+    let mut last_reviews: Vec<phases::ReviewResult> = Vec::new();
+
+    while state.should_continue() {
+        match state.phase {
+            Phase::Planning => {
+                log_workflow(&working_dir, ">>> ENTERING Planning phase");
+                sender.send_phase_started("Planning".to_string());
+                sender.send_output("".to_string());
+                sender.send_output("=== PLANNING PHASE ===".to_string());
+                sender.send_output(format!("Feature: {}", state.feature_name));
+                sender.send_output(format!("Agent: {}", config.workflow.planning.agent));
+                sender.send_output(format!("Plan file: {}", state.plan_file.display()));
+
+                log_workflow(&working_dir, "Calling run_planning_phase_with_config...");
+                run_planning_phase_with_config(&state, &working_dir, &config, output_tx.clone())
+                    .await?;
+                log_workflow(&working_dir, "run_planning_phase_with_config completed");
+
+                let plan_path = working_dir.join(&state.plan_file);
+                if !plan_path.exists() {
+                    log_workflow(&working_dir, "ERROR: Plan file was not created!");
+                    sender.send_output("[error] Plan file was not created!".to_string());
+                    anyhow::bail!("Plan file not created");
+                }
+
+                log_workflow(&working_dir, "Transitioning: Planning -> Reviewing");
+                state.transition(Phase::Reviewing)?;
+                state.save(&state_path)?;
+                sender.send_state_update(state.clone());
+                sender.send_output("[planning] Transitioning to review phase...".to_string());
+            }
+
+            Phase::Reviewing => {
+                log_workflow(
+                    &working_dir,
+                    &format!(
+                        ">>> ENTERING Reviewing phase (iteration {})",
+                        state.iteration
+                    ),
+                );
+                sender.send_phase_started("Reviewing".to_string());
+                sender.send_output("".to_string());
+                sender.send_output(format!(
+                    "=== REVIEW PHASE (Iteration {}) ===",
+                    state.iteration
+                ));
+                sender.send_output(format!(
+                    "Reviewers: {}",
+                    config.workflow.reviewing.agents.join(", ")
+                ));
+
+                // Use multi-agent review if more than one reviewer
+                if config.workflow.reviewing.agents.len() > 1 {
+                    log_workflow(&working_dir, "Running multi-agent parallel review...");
+                    let reviews = run_multi_agent_review_phase(
+                        &state,
+                        &working_dir,
+                        &config,
+                        output_tx.clone(),
+                    )
+                    .await?;
+
+                    // Write individual feedback files
+                    let feedback_path = working_dir.join(&state.feedback_file);
+                    let _ = write_feedback_files(&reviews, &feedback_path);
+
+                    // Also write merged feedback
+                    let _ = merge_feedback(&reviews, &feedback_path);
+
+                    // Aggregate reviews
+                    let status = aggregate_reviews(&reviews, &config.workflow.reviewing.aggregation);
+                    log_workflow(&working_dir, &format!("Aggregated status: {:?}", status));
+
+                    // Store reviews for revision phase
+                    last_reviews = reviews;
+                    state.last_feedback_status = Some(status.clone());
+
+                    match status {
+                        FeedbackStatus::Approved => {
+                            log_workflow(&working_dir, "Plan APPROVED! Transitioning to Complete");
+                            sender.send_output("[planning] Plan APPROVED!".to_string());
+                            state.transition(Phase::Complete)?;
+                        }
+                        FeedbackStatus::NeedsRevision => {
+                            sender.send_output("[planning] Plan needs revision".to_string());
+                            if state.iteration >= state.max_iterations {
+                                log_workflow(&working_dir, "Max iterations reached, stopping");
+                                sender.send_output("[planning] Max iterations reached".to_string());
+                                break;
+                            }
+                            log_workflow(&working_dir, "Transitioning: Reviewing -> Revising");
+                            state.transition(Phase::Revising)?;
+                        }
+                    }
+                } else {
+                    // Single reviewer - use legacy approach
+                    log_workflow(&working_dir, "Calling run_review_phase...");
+                    run_review_phase(&state, &working_dir, output_tx.clone()).await?;
+                    log_workflow(&working_dir, "run_review_phase completed");
+
+                    let feedback_path = working_dir.join(&state.feedback_file);
+                    if !feedback_path.exists() {
+                        log_workflow(&working_dir, "ERROR: Feedback file was not created!");
+                        sender.send_output("[error] Feedback file was not created!".to_string());
+                        anyhow::bail!("Feedback file not created");
+                    }
+
+                    let status = parse_feedback_status(&feedback_path)?;
+                    log_workflow(&working_dir, &format!("Feedback status: {:?}", status));
+                    state.last_feedback_status = Some(status.clone());
+
+                    match status {
+                        FeedbackStatus::Approved => {
+                            log_workflow(&working_dir, "Plan APPROVED! Transitioning to Complete");
+                            sender.send_output("[planning] Plan APPROVED!".to_string());
+                            state.transition(Phase::Complete)?;
+                        }
+                        FeedbackStatus::NeedsRevision => {
+                            sender.send_output("[planning] Plan needs revision".to_string());
+                            if state.iteration >= state.max_iterations {
+                                log_workflow(&working_dir, "Max iterations reached, stopping");
+                                sender.send_output("[planning] Max iterations reached".to_string());
+                                break;
+                            }
+                            log_workflow(&working_dir, "Transitioning: Reviewing -> Revising");
+                            state.transition(Phase::Revising)?;
+                        }
+                    }
+                }
+                state.save(&state_path)?;
+                sender.send_state_update(state.clone());
+            }
+
+            Phase::Revising => {
+                log_workflow(
+                    &working_dir,
+                    &format!(
+                        ">>> ENTERING Revising phase (iteration {})",
+                        state.iteration
+                    ),
+                );
+                sender.send_phase_started("Revising".to_string());
+                sender.send_output("".to_string());
+                sender.send_output(format!(
+                    "=== REVISION PHASE (Iteration {}) ===",
+                    state.iteration
+                ));
+                sender.send_output(format!("Agent: {}", config.workflow.revising.agent));
+
+                // Use reviews if available from multi-agent review
+                if !last_reviews.is_empty() {
+                    log_workflow(&working_dir, "Calling run_revision_phase_with_reviews...");
+                    run_revision_phase_with_reviews(
+                        &state,
+                        &working_dir,
+                        &config,
+                        &last_reviews,
+                        output_tx.clone(),
+                    )
+                    .await?;
+                    last_reviews.clear(); // Clear after use
+                } else {
+                    log_workflow(&working_dir, "Calling run_revision_phase...");
+                    run_revision_phase(&state, &working_dir, output_tx.clone()).await?;
+                }
+                log_workflow(&working_dir, "run_revision_phase completed");
+
+                // Delete the feedback file so next review starts fresh
+                let feedback_path = working_dir.join(&state.feedback_file);
+                if feedback_path.exists() {
+                    if let Err(e) = std::fs::remove_file(&feedback_path) {
+                        log_workflow(
+                            &working_dir,
+                            &format!("Warning: Failed to delete feedback file: {}", e),
+                        );
+                    } else {
+                        log_workflow(&working_dir, "Deleted old feedback file");
+                    }
+                }
+
+                state.iteration += 1;
+                log_workflow(
+                    &working_dir,
+                    &format!(
+                        "Transitioning: Revising -> Reviewing (iteration now {})",
+                        state.iteration
+                    ),
+                );
+                state.transition(Phase::Reviewing)?;
+                state.save(&state_path)?;
+                sender.send_state_update(state.clone());
+                sender.send_output("[planning] Transitioning to review phase...".to_string());
+            }
+
+            Phase::Complete => {
+                break;
+            }
+        }
+    }
+
+    log_workflow(
+        &working_dir,
+        &format!(
+            "=== WORKFLOW END: phase={:?}, iteration={} ===",
+            state.phase, state.iteration
+        ),
+    );
+
+    // If plan was approved, request user approval before finishing
+    if state.phase == Phase::Complete {
+        log_workflow(&working_dir, ">>> Plan complete - requesting user approval");
+
+        // Signal that summary generation is starting
+        sender.send_generating_summary();
+
+        // Generate plan summary
+        let plan_path = working_dir.join(&state.plan_file);
+        let summary = match summarize_plan(&plan_path, &output_tx).await {
+            Ok(s) => s,
+            Err(e) => {
+                log_workflow(&working_dir, &format!("Failed to summarize plan: {}", e));
+                format!(
+                    "(Could not generate summary: {})\n\nThe plan has been approved by AI review.",
+                    e
+                )
+            }
+        };
+
+        sender.send_output("".to_string());
+        sender.send_output("=== PLAN APPROVED BY AI ===".to_string());
+        sender.send_output(format!("Completed after {} iteration(s)", state.iteration));
+        sender.send_output("Waiting for your approval...".to_string());
+
+        // Request user approval
+        sender.send_approval_request(summary);
+
+        // Wait for user response
+        log_workflow(&working_dir, "Waiting for user approval response...");
+        match approval_rx.recv().await {
+            Some(UserApprovalResponse::Accept) => {
+                log_workflow(&working_dir, "User ACCEPTED the plan");
+                sender.send_output("[planning] User accepted the plan!".to_string());
+                return Ok(WorkflowResult::Accepted);
+            }
+            Some(UserApprovalResponse::Decline(feedback)) => {
+                log_workflow(
+                    &working_dir,
+                    &format!("User DECLINED with feedback: {}", feedback),
+                );
+                sender.send_output(format!("[planning] User requested changes: {}", feedback));
+                return Ok(WorkflowResult::NeedsRestart {
+                    user_feedback: feedback,
+                });
+            }
+            None => {
                 log_workflow(&working_dir, "Approval channel closed - treating as accept");
                 return Ok(WorkflowResult::Accepted);
             }

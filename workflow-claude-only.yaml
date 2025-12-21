@@ -1,0 +1,35 @@
+# Single-agent Claude-only workflow configuration
+# This is equivalent to the default behavior
+
+agents:
+  claude:
+    command: "claude"
+    args:
+      - "-p"
+      - "--output-format"
+      - "stream-json"
+      - "--verbose"
+      - "--dangerously-skip-permissions"
+    allowed_tools:
+      - "Read"
+      - "Glob"
+      - "Grep"
+      - "Write"
+      - "Edit"
+      - "WebSearch"
+      - "WebFetch"
+      - "Skill"
+      - "Task"
+
+workflow:
+  planning:
+    agent: claude
+    max_turns: 50
+
+  reviewing:
+    agents:
+      - claude
+    aggregation: any_rejects
+
+  revising:
+    agent: claude
