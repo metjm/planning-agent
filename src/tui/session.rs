@@ -45,6 +45,7 @@ pub enum SessionStatus {
     #[default]
     InputPending,
     Planning,
+    GeneratingSummary,
     AwaitingApproval,
     Complete,
     Error,
@@ -97,6 +98,9 @@ pub struct Session {
     pub tab_input_cursor: usize,
     pub tab_input_scroll: usize,
 
+    // Track last key for Shift+Enter detection (some terminals send backslash before Enter)
+    pub last_key_was_backslash: bool,
+
     // Paste tracking for tab input
     pub tab_input_pastes: Vec<PasteBlock>,
 
@@ -130,6 +134,9 @@ pub struct Session {
 
     // Claude account usage (shared across sessions)
     pub claude_usage: ClaudeUsage,
+
+    /// Spinner frame counter for generating summary animation
+    pub spinner_frame: u8,
 }
 
 #[allow(dead_code)]
@@ -164,6 +171,7 @@ impl Session {
             tab_input: String::new(),
             tab_input_cursor: 0,
             tab_input_scroll: 0,
+            last_key_was_backslash: false,
 
             tab_input_pastes: Vec::new(),
             feedback_pastes: Vec::new(),
@@ -191,6 +199,8 @@ impl Session {
             approval_tx: None,
 
             claude_usage: ClaudeUsage::default(),
+
+            spinner_frame: 0,
         }
     }
 
@@ -304,6 +314,12 @@ impl Session {
                 self.cursor_position += c.len_utf8();
             }
         }
+    }
+
+    /// Insert a newline into the feedback input buffer
+    pub fn insert_feedback_newline(&mut self) {
+        self.user_feedback.insert(self.cursor_position, '\n');
+        self.cursor_position += '\n'.len_utf8();
     }
 
     pub fn tool_started(&mut self, name: String) {
@@ -1294,5 +1310,29 @@ mod tests {
 
         assert!(!session.has_tab_input_pastes());
         assert!(session.tab_input.is_empty());
+    }
+
+    #[test]
+    fn test_insert_feedback_newline() {
+        let mut session = Session::new(0);
+        session.user_feedback = "hello".to_string();
+        session.cursor_position = 5;
+
+        session.insert_feedback_newline();
+
+        assert_eq!(session.user_feedback, "hello\n");
+        assert_eq!(session.cursor_position, 6);
+    }
+
+    #[test]
+    fn test_insert_feedback_newline_middle() {
+        let mut session = Session::new(0);
+        session.user_feedback = "hello world".to_string();
+        session.cursor_position = 5;
+
+        session.insert_feedback_newline();
+
+        assert_eq!(session.user_feedback, "hello\n world");
+        assert_eq!(session.cursor_position, 6);
     }
 }

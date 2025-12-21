@@ -21,6 +21,17 @@ Before planning any implementation that uses libraries or APIs:
 
 **Never assume a method or feature exists - always verify first.**
 
+## Pattern Verification (CRITICAL)
+
+When referencing existing code as a pattern to copy or mirror:
+
+1. **Verify the pattern works** - Don't just confirm the code exists; verify it actually functions as intended
+2. **Understand why it works, not just what it does** - Trace the full dependency chain; the pattern may depend on things outside its immediate code
+3. **Test the existing behavior** - If the plan says "copy the approach from X", manually test that X works correctly first
+4. **Look for related bug reports or TODOs** - The pattern might be known-broken or have limitations
+
+**"Code exists" ≠ "Code works". Always verify existing patterns function correctly before proposing to replicate them.**
+
 ## Workflow
 
 ### Phase 1: Research and Analysis
