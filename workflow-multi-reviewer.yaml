@@ -1,0 +1,54 @@
+# Multi-reviewer workflow configuration
+# Uses Claude for planning and revising, with multiple reviewers
+
+agents:
+  claude:
+    command: "claude"
+    args:
+      - "-p"
+      - "--output-format"
+      - "stream-json"
+      - "--verbose"
+      - "--dangerously-skip-permissions"
+    allowed_tools:
+      - "Read"
+      - "Glob"
+      - "Grep"
+      - "Write"
+      - "Edit"
+      - "WebSearch"
+      - "WebFetch"
+      - "Skill"
+      - "Task"
+
+  codex:
+    command: "codex"
+    args:
+      - "exec"
+      - "--json"
+    allowed_tools: []
+
+  gemini:
+    command: "gemini"
+    args:
+      - "-p"
+      - "--output-format"
+      - "json"
+    allowed_tools: []
+
+workflow:
+  planning:
+    agent: claude
+    max_turns: 50
+
+  # All three agents review in parallel
+  reviewing:
+    agents:
+      - claude
+      - codex
+      - gemini
+    # Use majority voting - 2 of 3 must reject to trigger revision
+    aggregation: majority
+
+  revising:
+    agent: claude

@@ -1,5 +1,7 @@
+use crate::agents::AgentType;
 use crate::claude::ClaudeInvocation;
-use crate::state::State;
+use crate::config::{AggregationMode, WorkflowConfig};
+use crate::state::{FeedbackStatus, State};
 use crate::tui::Event;
 use anyhow::Result;
 use std::path::Path;
@@ -9,6 +11,19 @@ const ALLOWED_TOOLS: &[&str] = &[
     "Read", "Glob", "Grep", "Write", "WebSearch", "WebFetch", "Skill", "Task",
 ];
 
+/// Result from a single reviewer
+#[derive(Debug, Clone)]
+pub struct ReviewResult {
+    pub agent_name: String,
+    pub needs_revision: bool,
+    pub feedback: String,
+}
+
+const REVIEW_SYSTEM_PROMPT: &str = r#"You are a technical plan reviewer.
+Review the plan for correctness, completeness, and technical accuracy.
+Output "APPROVED" or "NEEDS REVISION" with specific feedback."#;
+
+/// Run review phase with a single agent (legacy behavior)
 pub async fn run_review_phase(
     state: &State,
     working_dir: &Path,
@@ -48,4 +63,355 @@ Do not ask questions - proceed with the skill invocation immediately."#;
     )));
 
     Ok(())
+}
+
+/// Run review phase with multiple agents in parallel
+pub async fn run_multi_agent_review_phase(
+    state: &State,
+    working_dir: &Path,
+    config: &WorkflowConfig,
+    output_tx: mpsc::UnboundedSender<Event>,
+) -> Result<Vec<ReviewResult>> {
+    let review_config = &config.workflow.reviewing;
+
+    let _ = output_tx.send(Event::Output(format!(
+        "[review] Running {} reviewer(s) in parallel: {}",
+        review_config.agents.len(),
+        review_config.agents.join(", ")
+    )));
+
+    // Build agents from config
+    let agents: Vec<AgentType> = review_config
+        .agents
+        .iter()
+        .filter_map(|name| {
+            config.agents.get(name).map(|agent_config| {
+                AgentType::from_config(name, agent_config, working_dir.to_path_buf())
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    let prompt = build_review_prompt(state);
+
+    // Execute all reviewers in parallel using futures::future::join_all
+    let futures: Vec<_> = agents
+        .into_iter()
+        .map(|agent| {
+            let p = prompt.clone();
+            let tx = output_tx.clone();
+            let agent_name = agent.name().to_string();
+
+            async move {
+                let _ = tx.send(Event::Output(format!(
+                    "[review:{}] Starting review...",
+                    agent_name
+                )));
+                let result = agent
+                    .execute_streaming(p, Some(REVIEW_SYSTEM_PROMPT.to_string()), tx.clone())
+                    .await;
+                let _ = tx.send(Event::Output(format!(
+                    "[review:{}] Review complete",
+                    agent_name
+                )));
+                (agent_name, result)
+            }
+        })
+        .collect();
+
+    let results = futures::future::join_all(futures).await;
+
+    // Parse each result for APPROVED/NEEDS_REVISION
+    let mut reviews = Vec::new();
+    for (agent_name, result) in results {
+        match result {
+            Ok(agent_result) => {
+                let needs_revision = agent_result.output.contains("NEEDS REVISION")
+                    || agent_result.output.contains("NEEDS_REVISION")
+                    || agent_result.output.contains("MAJOR ISSUES");
+
+                let _ = output_tx.send(Event::Output(format!(
+                    "[review:{}] Verdict: {}",
+                    agent_name,
+                    if needs_revision {
+                        "NEEDS REVISION"
+                    } else {
+                        "APPROVED"
+                    }
+                )));
+
+                reviews.push(ReviewResult {
+                    agent_name,
+                    needs_revision,
+                    feedback: agent_result.output,
+                });
+            }
+            Err(e) => {
+                // Log error but continue with other reviewers
+                let _ = output_tx.send(Event::Output(format!(
+                    "[error] {} review failed: {}",
+                    agent_name, e
+                )));
+            }
+        }
+    }
+
+    Ok(reviews)
+}
+
+/// Build the review prompt for multi-agent review
+fn build_review_prompt(state: &State) -> String {
+    format!(
+        r#"Review the implementation plan at: {}
+
+Provide your assessment with one of these verdicts:
+- "APPROVED" - if the plan is ready for implementation
+- "NEEDS REVISION" - if the plan has issues that need to be fixed
+
+Include specific feedback about any issues found.
+
+Read the plan file first, then provide your detailed review."#,
+        state.plan_file.display()
+    )
+}
+
+/// Aggregate reviews based on configured aggregation mode
+pub fn aggregate_reviews(reviews: &[ReviewResult], mode: &AggregationMode) -> FeedbackStatus {
+    if reviews.is_empty() {
+        return FeedbackStatus::NeedsRevision; // No reviews = problem
+    }
+
+    let rejections = reviews.iter().filter(|r| r.needs_revision).count();
+    let total = reviews.len();
+
+    match mode {
+        AggregationMode::AnyRejects => {
+            if rejections > 0 {
+                FeedbackStatus::NeedsRevision
+            } else {
+                FeedbackStatus::Approved
+            }
+        }
+        AggregationMode::AllReject => {
+            if rejections == total {
+                FeedbackStatus::NeedsRevision
+            } else {
+                FeedbackStatus::Approved
+            }
+        }
+        AggregationMode::Majority => {
+            if rejections > total / 2 {
+                FeedbackStatus::NeedsRevision
+            } else {
+                FeedbackStatus::Approved
+            }
+        }
+    }
+}
+
+/// Write individual feedback files for each reviewer
+pub fn write_feedback_files(
+    reviews: &[ReviewResult],
+    base_feedback_path: &Path,
+) -> Result<Vec<std::path::PathBuf>> {
+    let mut paths = Vec::new();
+
+    for review in reviews {
+        let feedback_path = if reviews.len() == 1 {
+            // Single reviewer - use the base path
+            base_feedback_path.to_path_buf()
+        } else {
+            // Multiple reviewers - add agent suffix
+            let stem = base_feedback_path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("feedback");
+            let ext = base_feedback_path
+                .extension()
+                .and_then(|s| s.to_str())
+                .unwrap_or("md");
+            base_feedback_path
+                .parent()
+                .unwrap_or(Path::new("."))
+                .join(format!("{}_{}.{}", stem, review.agent_name, ext))
+        };
+
+        std::fs::write(&feedback_path, &review.feedback)?;
+        paths.push(feedback_path);
+    }
+
+    Ok(paths)
+}
+
+/// Merge multiple reviewer feedback into a single file
+pub fn merge_feedback(reviews: &[ReviewResult], output_path: &Path) -> Result<()> {
+    let merged = reviews
+        .iter()
+        .map(|r| {
+            format!(
+                "## {} Review\n\n{}\n",
+                r.agent_name.to_uppercase(),
+                r.feedback
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n---\n\n");
+
+    let header = format!(
+        "# Consolidated Review Feedback\n\n{} reviewer(s): {}\n\n---\n\n",
+        reviews.len(),
+        reviews
+            .iter()
+            .map(|r| r.agent_name.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+
+    std::fs::write(output_path, format!("{}{}", header, merged))?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_aggregate_any_rejects_none() {
+        let reviews = vec![
+            ReviewResult {
+                agent_name: "claude".to_string(),
+                needs_revision: false,
+                feedback: "APPROVED".to_string(),
+            },
+            ReviewResult {
+                agent_name: "codex".to_string(),
+                needs_revision: false,
+                feedback: "APPROVED".to_string(),
+            },
+        ];
+        assert_eq!(
+            aggregate_reviews(&reviews, &AggregationMode::AnyRejects),
+            FeedbackStatus::Approved
+        );
+    }
+
+    #[test]
+    fn test_aggregate_any_rejects_one() {
+        let reviews = vec![
+            ReviewResult {
+                agent_name: "claude".to_string(),
+                needs_revision: false,
+                feedback: "APPROVED".to_string(),
+            },
+            ReviewResult {
+                agent_name: "codex".to_string(),
+                needs_revision: true,
+                feedback: "NEEDS REVISION".to_string(),
+            },
+        ];
+        assert_eq!(
+            aggregate_reviews(&reviews, &AggregationMode::AnyRejects),
+            FeedbackStatus::NeedsRevision
+        );
+    }
+
+    #[test]
+    fn test_aggregate_all_reject_partial() {
+        let reviews = vec![
+            ReviewResult {
+                agent_name: "claude".to_string(),
+                needs_revision: false,
+                feedback: "APPROVED".to_string(),
+            },
+            ReviewResult {
+                agent_name: "codex".to_string(),
+                needs_revision: true,
+                feedback: "NEEDS REVISION".to_string(),
+            },
+        ];
+        assert_eq!(
+            aggregate_reviews(&reviews, &AggregationMode::AllReject),
+            FeedbackStatus::Approved
+        );
+    }
+
+    #[test]
+    fn test_aggregate_all_reject_full() {
+        let reviews = vec![
+            ReviewResult {
+                agent_name: "claude".to_string(),
+                needs_revision: true,
+                feedback: "NEEDS REVISION".to_string(),
+            },
+            ReviewResult {
+                agent_name: "codex".to_string(),
+                needs_revision: true,
+                feedback: "NEEDS REVISION".to_string(),
+            },
+        ];
+        assert_eq!(
+            aggregate_reviews(&reviews, &AggregationMode::AllReject),
+            FeedbackStatus::NeedsRevision
+        );
+    }
+
+    #[test]
+    fn test_aggregate_majority_one_of_three() {
+        let reviews = vec![
+            ReviewResult {
+                agent_name: "claude".to_string(),
+                needs_revision: false,
+                feedback: "APPROVED".to_string(),
+            },
+            ReviewResult {
+                agent_name: "codex".to_string(),
+                needs_revision: false,
+                feedback: "APPROVED".to_string(),
+            },
+            ReviewResult {
+                agent_name: "gemini".to_string(),
+                needs_revision: true,
+                feedback: "NEEDS REVISION".to_string(),
+            },
+        ];
+        // 1 of 3 rejects = 33%, not majority
+        assert_eq!(
+            aggregate_reviews(&reviews, &AggregationMode::Majority),
+            FeedbackStatus::Approved
+        );
+    }
+
+    #[test]
+    fn test_aggregate_majority_two_of_three() {
+        let reviews = vec![
+            ReviewResult {
+                agent_name: "claude".to_string(),
+                needs_revision: true,
+                feedback: "NEEDS REVISION".to_string(),
+            },
+            ReviewResult {
+                agent_name: "codex".to_string(),
+                needs_revision: true,
+                feedback: "NEEDS REVISION".to_string(),
+            },
+            ReviewResult {
+                agent_name: "gemini".to_string(),
+                needs_revision: false,
+                feedback: "APPROVED".to_string(),
+            },
+        ];
+        // 2 of 3 rejects = 66%, majority
+        assert_eq!(
+            aggregate_reviews(&reviews, &AggregationMode::Majority),
+            FeedbackStatus::NeedsRevision
+        );
+    }
+
+    #[test]
+    fn test_aggregate_empty_reviews() {
+        let reviews: Vec<ReviewResult> = vec![];
+        assert_eq!(
+            aggregate_reviews(&reviews, &AggregationMode::AnyRejects),
+            FeedbackStatus::NeedsRevision
+        );
+    }
 }

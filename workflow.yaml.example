@@ -1,0 +1,61 @@
+# Multi-Agent Workflow Configuration
+# Copy this file to workflow.yaml to enable multi-agent orchestration
+
+# Agent definitions
+# Each agent specifies the CLI command and arguments to use
+agents:
+  claude:
+    command: "claude"
+    args:
+      - "-p"
+      - "--output-format"
+      - "stream-json"
+      - "--verbose"
+      - "--dangerously-skip-permissions"
+    allowed_tools:
+      - "Read"
+      - "Glob"
+      - "Grep"
+      - "Write"
+      - "Edit"
+      - "WebSearch"
+      - "WebFetch"
+      - "Skill"
+      - "Task"
+
+  codex:
+    command: "codex"
+    args:
+      - "exec"
+      - "--json"
+    allowed_tools: []
+
+  gemini:
+    command: "gemini"
+    args:
+      - "-p"
+      - "--output-format"
+      - "json"
+    allowed_tools: []
+
+# Workflow phase configuration
+workflow:
+  # Planning phase - which agent creates the initial plan
+  planning:
+    agent: claude
+    max_turns: 50
+
+  # Reviewing phase - can use multiple agents for parallel review
+  reviewing:
+    agents:
+      - claude
+      - codex
+    # Aggregation mode determines when revision is needed:
+    # - any_rejects: If ANY reviewer rejects, needs revision (default, strictest)
+    # - all_reject: Only if ALL reviewers reject
+    # - majority: If majority rejects
+    aggregation: any_rejects
+
+  # Revising phase - which agent revises the plan based on feedback
+  revising:
+    agent: claude
