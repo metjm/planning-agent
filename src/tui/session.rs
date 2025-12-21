@@ -627,7 +627,9 @@ impl Session {
             return;
         }
 
-        let line_count = text.lines().count().max(1);
+        // Normalize line endings: \r\n -> \n, \r -> \n
+        let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+        let line_count = normalized.lines().count().max(1);
 
         // Create paste block at current cursor position
         let paste_block = PasteBlock {
@@ -658,7 +660,9 @@ impl Session {
             return;
         }
 
-        let line_count = text.lines().count().max(1);
+        // Normalize line endings: \r\n -> \n, \r -> \n
+        let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+        let line_count = normalized.lines().count().max(1);
 
         // Create paste block at current cursor position
         let paste_block = PasteBlock {
