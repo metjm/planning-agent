@@ -7,7 +7,7 @@ mod tui;
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use crossterm::event::{KeyCode, KeyModifiers};
+use crossterm::event::{KeyCode, KeyModifiers, KeyboardEnhancementFlags, PushKeyboardEnhancementFlags, PopKeyboardEnhancementFlags};
 use phases::{run_planning_phase, run_review_phase, run_revision_phase};
 use state::{parse_feedback_status, FeedbackStatus, Phase, State};
 use std::fs::OpenOptions;
@@ -111,6 +111,7 @@ fn format_window_title(tab_manager: &TabManager) -> String {
     let status = match session.status {
         SessionStatus::InputPending => "Input",
         SessionStatus::Planning => session.phase_name(),
+        SessionStatus::GeneratingSummary => "Generating Summary",
         SessionStatus::AwaitingApproval => "Awaiting Approval",
         SessionStatus::Complete => "Complete",
         SessionStatus::Error => "Error",
@@ -261,6 +262,25 @@ async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
         crossterm::event::EnableBracketedPaste
     )?;
     debug_log(start, "alternate screen entered");
+
+    // Try to enable keyboard enhancement for Shift+Enter detection
+    let keyboard_enhancement_enabled = match crossterm::execute!(
+        stdout,
+        PushKeyboardEnhancementFlags(
+            KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+                | KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES
+        )
+    ) {
+        Ok(_) => {
+            debug_log(start, "keyboard enhancement enabled successfully");
+            true
+        }
+        Err(e) => {
+            debug_log(start, &format!("keyboard enhancement failed: {}", e));
+            false
+        }
+    };
+    let _ = keyboard_enhancement_enabled; // suppress unused warning for now
     let backend = ratatui::backend::CrosstermBackend::new(stdout);
     let mut terminal = ratatui::Terminal::new(backend)?;
     debug_log(start, "terminal created");
@@ -436,9 +456,16 @@ async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                         KeyCode::Char('q') if session.tab_input.is_empty() => {
                             should_quit = true;
                         }
-                        // Shift+Enter inserts a newline
+                        // Shift+Enter inserts a newline (detected via SHIFT modifier or backslash escape sequence)
                         KeyCode::Enter if key.modifiers.contains(KeyModifiers::SHIFT) => {
                             session.insert_tab_input_newline();
+                        }
+                        // Detect Shift+Enter sent as backslash escape sequence (common in many terminals)
+                        KeyCode::Enter if session.last_key_was_backslash => {
+                            // Remove the backslash that was inserted and add newline instead
+                            session.delete_tab_input_char();
+                            session.insert_tab_input_newline();
+                            session.last_key_was_backslash = false;
                         }
                         // Plain Enter submits
                         KeyCode::Enter => {
@@ -508,8 +535,11 @@ async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                         }
                         KeyCode::Char(c) => {
                             session.insert_tab_input_char(c);
+                            // Track backslash for Shift+Enter detection (terminals may send \+Enter)
+                            session.last_key_was_backslash = c == '\\';
                         }
                         KeyCode::Backspace => {
+                            session.last_key_was_backslash = false;
                             // Try to delete paste block first, fall back to char deletion
                             if !session.delete_paste_at_cursor_tab() {
                                 session.delete_tab_input_char();
@@ -658,6 +688,18 @@ async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                         _ => {}
                     },
                     ApprovalMode::EnteringFeedback => match key.code {
+                        // Shift+Enter inserts a newline (detected via SHIFT modifier)
+                        KeyCode::Enter if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                            session.insert_feedback_newline();
+                        }
+                        // Detect Shift+Enter sent as backslash escape sequence (common in many terminals)
+                        KeyCode::Enter if session.last_key_was_backslash => {
+                            // Remove the backslash that was inserted and add newline instead
+                            session.delete_char();
+                            session.insert_feedback_newline();
+                            session.last_key_was_backslash = false;
+                        }
+                        // Plain Enter submits
                         KeyCode::Enter => {
                             let has_content = !session.user_feedback.trim().is_empty() || session.has_feedback_pastes();
                             if has_content {
@@ -692,8 +734,12 @@ async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                         }
                         KeyCode::Char(c) => {
                             session.insert_char(c);
+                            // Track backslash for Shift+Enter detection (terminals may send \+Enter)
+                            session.last_key_was_backslash = c == '\\';
                         }
-                        _ => {}
+                        _ => {
+                            session.last_key_was_backslash = false;
+                        }
                     },
                     ApprovalMode::None => match key.code {
                         KeyCode::Char('q') | KeyCode::Esc => {
@@ -730,6 +776,12 @@ async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
             }
             Event::Tick => {
                 // Update elapsed time display (automatic via session.elapsed())
+                // Update spinners for any sessions generating summary
+                for session in tab_manager.sessions_mut() {
+                    if session.status == SessionStatus::GeneratingSummary {
+                        session.spinner_frame = session.spinner_frame.wrapping_add(1);
+                    }
+                }
             }
             Event::Resize => {
                 // Terminal resize is handled automatically by ratatui
@@ -936,6 +988,13 @@ async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                     session.handle_error(&error);
                 }
             }
+            Event::SessionGeneratingSummary { session_id } => {
+                if let Some(session) = tab_manager.session_by_id_mut(session_id) {
+                    session.status = SessionStatus::GeneratingSummary;
+                    // Reset spinner frame for fresh animation
+                    session.spinner_frame = 0;
+                }
+            }
             Event::ClaudeUsageUpdate(usage) => {
                 // Update all sessions (usage is global/account-wide)
                 for session in tab_manager.sessions_mut() {
@@ -1094,6 +1153,7 @@ fn restore_terminal(
     crossterm::terminal::disable_raw_mode()?;
     crossterm::execute!(
         terminal.backend_mut(),
+        PopKeyboardEnhancementFlags,
         crossterm::event::DisableBracketedPaste,
         crossterm::terminal::LeaveAlternateScreen,
         crossterm::event::DisableMouseCapture
@@ -1273,6 +1333,9 @@ async fn run_workflow(
     // If plan was approved, request user approval before finishing
     if state.phase == Phase::Complete {
         log_workflow(&working_dir, ">>> Plan complete - requesting user approval");
+
+        // Signal that summary generation is starting
+        sender.send_generating_summary();
 
         // Generate plan summary
         let plan_path = working_dir.join(&state.plan_file);

@@ -66,6 +66,17 @@ For each section of the plan, systematically verify:
   - Confirm request/response formats are accurate
   - Check authentication requirements are correctly stated
 
+#### Pattern Reference Verification
+
+When the plan says "mirror the approach from X" or "follow the pattern at Y":
+
+1. **Test the referenced pattern** - Does it actually work as the plan claims?
+2. **Understand why it works, not just what it does** - Trace the full dependency chain; the pattern may depend on things outside its immediate code
+3. **Look for user complaints** - Search for issues, TODOs, or comments suggesting the pattern is broken
+4. **Verify the pattern was ever tested** - Just because code exists doesn't mean it was validated
+
+**Never assume existing patterns work correctly just because they exist in the codebase.**
+
 #### Approach Evaluation
 
 - Is this the best approach for the problem?

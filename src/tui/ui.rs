@@ -87,6 +87,7 @@ fn draw_tab_bar(frame: &mut Frame, tab_manager: &TabManager, area: Rect) {
         let status_icon = match session.status {
             SessionStatus::InputPending => "...",
             SessionStatus::Planning => "",
+            SessionStatus::GeneratingSummary => "◐",
             SessionStatus::AwaitingApproval => "?",
             SessionStatus::Complete => "+",
             SessionStatus::Error => "!",
@@ -457,6 +458,24 @@ fn draw_stats(frame: &mut Frame, session: &Session, area: Rect) {
         ),
     ]));
     stats_text.push(Line::from(format!(" Time: {}m {:02}s", minutes, seconds)));
+
+    // Show generating summary spinner
+    if session.status == SessionStatus::GeneratingSummary {
+        stats_text.push(Line::from(""));
+        stats_text.push(Line::from(vec![Span::styled(
+            "── Summary ──",
+            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+        )]));
+
+        // Get current spinner character using frame counter
+        let spinner_chars = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+        let spinner_char = spinner_chars[(session.spinner_frame as usize) % spinner_chars.len()];
+
+        stats_text.push(Line::from(vec![
+            Span::styled(format!(" {} ", spinner_char), Style::default().fg(Color::Yellow)),
+            Span::styled("Generating...", Style::default().fg(Color::Cyan)),
+        ]));
+    }
 
     // Model name (if detected)
     if let Some(ref model) = session.model_name {

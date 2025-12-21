@@ -55,6 +55,7 @@ pub enum Event {
     SessionStopReason { session_id: usize, reason: String },
     SessionWorkflowComplete { session_id: usize },
     SessionWorkflowError { session_id: usize, error: String },
+    SessionGeneratingSummary { session_id: usize },
 
     /// Claude usage update (global, not per-session since usage is account-wide)
     ClaudeUsageUpdate(ClaudeUsage),
@@ -260,6 +261,12 @@ impl SessionEventSender {
         let _ = self.inner.send(Event::SessionWorkflowError {
             session_id: self.session_id,
             error,
+        });
+    }
+
+    pub fn send_generating_summary(&self) {
+        let _ = self.inner.send(Event::SessionGeneratingSummary {
+            session_id: self.session_id,
         });
     }
 
