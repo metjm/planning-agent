@@ -4,10 +4,17 @@ pub mod gemini;
 mod log;
 
 use crate::config::AgentConfig;
-use crate::tui::Event;
+use crate::tui::{Event, SessionEventSender};
 use anyhow::Result;
 use std::path::PathBuf;
 use tokio::sync::mpsc;
+
+/// Agent execution context with session routing for chat messages
+#[derive(Clone)]
+pub struct AgentContext {
+    pub session_sender: SessionEventSender,
+    pub phase: String,  // "Planning", "Reviewing #1", etc.
+}
 
 /// Result from an agent execution
 #[derive(Debug, Clone)]
@@ -88,6 +95,33 @@ impl AgentType {
             Self::Gemini(agent) => {
                 agent
                     .execute_streaming(prompt, system_prompt, max_turns, output_tx)
+                    .await
+            }
+        }
+    }
+
+    /// Execute the agent with session-aware event routing (for chat messages)
+    pub async fn execute_streaming_with_context(
+        &self,
+        prompt: String,
+        system_prompt: Option<String>,
+        max_turns: Option<u32>,
+        context: AgentContext,
+    ) -> Result<AgentResult> {
+        match self {
+            Self::Claude(agent) => {
+                agent
+                    .execute_streaming_with_context(prompt, system_prompt, max_turns, context)
+                    .await
+            }
+            Self::Codex(agent) => {
+                agent
+                    .execute_streaming_with_context(prompt, system_prompt, max_turns, context)
+                    .await
+            }
+            Self::Gemini(agent) => {
+                agent
+                    .execute_streaming_with_context(prompt, system_prompt, max_turns, context)
                     .await
             }
         }

@@ -11,6 +11,22 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use super::event::UserApprovalResponse;
 
+/// A single chat message from an agent
+#[derive(Debug, Clone)]
+pub struct ChatMessage {
+    pub agent_name: String,
+    pub message: String,
+    pub timestamp: Instant,
+}
+
+/// A run tab containing messages for a specific phase
+#[derive(Debug, Clone)]
+pub struct RunTab {
+    pub phase: String,           // "Planning", "Reviewing #1", "Revising #1", etc.
+    pub messages: Vec<ChatMessage>,
+    pub scroll_position: usize,  // Per-tab scroll state
+}
+
 /// Mode for user approval interaction
 #[derive(Debug, Clone, PartialEq)]
 pub enum ApprovalMode {
@@ -35,7 +51,7 @@ pub enum ApprovalContext {
 pub enum FocusedPanel {
     #[default]
     Output,
-    Streaming,
+    Chat,  // Renamed from Streaming
 }
 
 /// Input mode for the session
@@ -146,6 +162,11 @@ pub struct Session {
 
     /// Spinner frame counter for generating summary animation
     pub spinner_frame: u8,
+
+    // Chat tabs system (replaces streaming_lines for the chat view)
+    pub run_tabs: Vec<RunTab>,
+    pub active_run_tab: usize,
+    pub chat_follow_mode: bool,  // Auto-scroll to bottom on new messages
 }
 
 #[allow(dead_code)]
@@ -211,6 +232,10 @@ impl Session {
             claude_usage: ClaudeUsage::default(),
 
             spinner_frame: 0,
+
+            run_tabs: Vec::new(),
+            active_run_tab: 0,
+            chat_follow_mode: true,
         }
     }
 
@@ -414,8 +439,8 @@ impl Session {
 
     pub fn toggle_focus(&mut self) {
         self.focused_panel = match self.focused_panel {
-            FocusedPanel::Output => FocusedPanel::Streaming,
-            FocusedPanel::Streaming => FocusedPanel::Output,
+            FocusedPanel::Output => FocusedPanel::Chat,
+            FocusedPanel::Chat => FocusedPanel::Output,
         };
     }
 
@@ -459,6 +484,85 @@ impl Session {
                 self.status = SessionStatus::Planning;
             }
         }
+    }
+
+    // ===== Chat tabs methods =====
+
+    /// Create a new run tab for a phase
+    pub fn add_run_tab(&mut self, phase: String) {
+        self.run_tabs.push(RunTab {
+            phase,
+            messages: Vec::new(),
+            scroll_position: 0,
+        });
+        // Auto-switch to newest tab
+        self.active_run_tab = self.run_tabs.len().saturating_sub(1);
+    }
+
+    /// Add a chat message to the appropriate tab (creates tab if none exists for phase)
+    pub fn add_chat_message(&mut self, agent_name: &str, phase: &str, message: String) {
+        // Skip empty/whitespace messages
+        if message.trim().is_empty() {
+            return;
+        }
+
+        // Find or create tab for this phase
+        let tab_idx = self.run_tabs.iter().position(|t| t.phase == phase);
+        let idx = match tab_idx {
+            Some(i) => i,
+            None => {
+                self.add_run_tab(phase.to_string());
+                self.run_tabs.len() - 1
+            }
+        };
+
+        self.run_tabs[idx].messages.push(ChatMessage {
+            agent_name: agent_name.to_string(),
+            message,
+            timestamp: Instant::now(),
+        });
+
+        // Auto-scroll if in follow mode
+        if self.chat_follow_mode {
+            // This will be calculated during render
+        }
+    }
+
+    pub fn next_run_tab(&mut self) {
+        if self.active_run_tab < self.run_tabs.len().saturating_sub(1) {
+            self.active_run_tab += 1;
+        }
+    }
+
+    pub fn prev_run_tab(&mut self) {
+        self.active_run_tab = self.active_run_tab.saturating_sub(1);
+    }
+
+    /// Reset chat tabs (call on workflow restart)
+    pub fn clear_chat_tabs(&mut self) {
+        self.run_tabs.clear();
+        self.active_run_tab = 0;
+        self.chat_follow_mode = true;
+    }
+
+    /// Scroll the active chat tab up
+    pub fn chat_scroll_up(&mut self) {
+        if let Some(tab) = self.run_tabs.get_mut(self.active_run_tab) {
+            tab.scroll_position = tab.scroll_position.saturating_sub(1);
+            self.chat_follow_mode = false;
+        }
+    }
+
+    /// Scroll the active chat tab down
+    pub fn chat_scroll_down(&mut self) {
+        if let Some(tab) = self.run_tabs.get_mut(self.active_run_tab) {
+            tab.scroll_position = tab.scroll_position.saturating_add(1);
+        }
+    }
+
+    /// Scroll to bottom and enable follow mode for chat
+    pub fn chat_scroll_to_bottom(&mut self) {
+        self.chat_follow_mode = true;
     }
 
     /// Insert a character into the tab input buffer
@@ -925,7 +1029,7 @@ mod tests {
         assert_eq!(session.focused_panel, FocusedPanel::Output);
 
         session.toggle_focus();
-        assert_eq!(session.focused_panel, FocusedPanel::Streaming);
+        assert_eq!(session.focused_panel, FocusedPanel::Chat);
 
         session.toggle_focus();
         assert_eq!(session.focused_panel, FocusedPanel::Output);
@@ -1359,5 +1463,95 @@ mod tests {
 
         assert_eq!(session.user_feedback, "hello\n world");
         assert_eq!(session.cursor_position, 6);
+    }
+
+    // ===== Chat tabs tests =====
+
+    #[test]
+    fn test_add_run_tab() {
+        let mut session = Session::new(0);
+        assert!(session.run_tabs.is_empty());
+
+        session.add_run_tab("Planning".to_string());
+        assert_eq!(session.run_tabs.len(), 1);
+        assert_eq!(session.run_tabs[0].phase, "Planning");
+        assert_eq!(session.active_run_tab, 0);
+
+        session.add_run_tab("Reviewing".to_string());
+        assert_eq!(session.run_tabs.len(), 2);
+        assert_eq!(session.active_run_tab, 1); // Auto-switched to newest
+    }
+
+    #[test]
+    fn test_add_chat_message() {
+        let mut session = Session::new(0);
+
+        session.add_chat_message("claude", "Planning", "Hello world".to_string());
+        assert_eq!(session.run_tabs.len(), 1);
+        assert_eq!(session.run_tabs[0].messages.len(), 1);
+        assert_eq!(session.run_tabs[0].messages[0].agent_name, "claude");
+        assert_eq!(session.run_tabs[0].messages[0].message, "Hello world");
+    }
+
+    #[test]
+    fn test_add_chat_message_creates_tab_if_needed() {
+        let mut session = Session::new(0);
+
+        // Adding a message creates the tab automatically
+        session.add_chat_message("codex", "Reviewing", "Test message".to_string());
+        assert_eq!(session.run_tabs.len(), 1);
+        assert_eq!(session.run_tabs[0].phase, "Reviewing");
+    }
+
+    #[test]
+    fn test_add_chat_message_filters_empty() {
+        let mut session = Session::new(0);
+        session.add_run_tab("Planning".to_string());
+
+        session.add_chat_message("claude", "Planning", "".to_string());
+        session.add_chat_message("claude", "Planning", "   ".to_string());
+        assert!(session.run_tabs[0].messages.is_empty());
+    }
+
+    #[test]
+    fn test_run_tab_navigation() {
+        let mut session = Session::new(0);
+        session.add_run_tab("Planning".to_string());
+        session.add_run_tab("Reviewing".to_string());
+        session.add_run_tab("Revising".to_string());
+
+        assert_eq!(session.active_run_tab, 2);
+
+        session.prev_run_tab();
+        assert_eq!(session.active_run_tab, 1);
+
+        session.prev_run_tab();
+        assert_eq!(session.active_run_tab, 0);
+
+        session.prev_run_tab(); // Should not go below 0
+        assert_eq!(session.active_run_tab, 0);
+
+        session.next_run_tab();
+        assert_eq!(session.active_run_tab, 1);
+
+        session.next_run_tab();
+        assert_eq!(session.active_run_tab, 2);
+
+        session.next_run_tab(); // Should not exceed max
+        assert_eq!(session.active_run_tab, 2);
+    }
+
+    #[test]
+    fn test_clear_chat_tabs() {
+        let mut session = Session::new(0);
+        session.add_run_tab("Planning".to_string());
+        session.add_chat_message("claude", "Planning", "Test".to_string());
+        session.chat_follow_mode = false;
+
+        session.clear_chat_tabs();
+
+        assert!(session.run_tabs.is_empty());
+        assert_eq!(session.active_run_tab, 0);
+        assert!(session.chat_follow_mode);
     }
 }

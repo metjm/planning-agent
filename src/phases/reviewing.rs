@@ -1,17 +1,11 @@
-use crate::agents::AgentType;
-use crate::claude::ClaudeInvocation;
+use crate::agents::{AgentContext, AgentType};
 use crate::config::{AggregationMode, WorkflowConfig};
 use crate::state::{FeedbackStatus, State};
-use crate::tui::Event;
+use crate::tui::SessionEventSender;
 use anyhow::Result;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
-use tokio::sync::mpsc;
-
-const ALLOWED_TOOLS: &[&str] = &[
-    "Read", "Glob", "Grep", "Write", "WebSearch", "WebFetch", "Skill", "Task",
-];
 
 /// Result from a single reviewer
 #[derive(Debug, Clone)]
@@ -39,87 +33,24 @@ const REVIEW_SYSTEM_PROMPT: &str = r#"You are a technical plan reviewer.
 Review the plan for correctness, completeness, and technical accuracy.
 Output "APPROVED" or "NEEDS REVISION" with specific feedback."#;
 
-/// Run review phase with a single agent (legacy behavior)
-pub async fn run_review_phase(
-    state: &State,
-    working_dir: &Path,
-    output_tx: mpsc::UnboundedSender<Event>,
-) -> Result<()> {
-    let prompt = format!(
-        r###"Use the Skill tool to invoke the plan-review skill:
-Skill(skill: "plan-review", args: "{}")
-
-User objective (used to create the plan):
-```text
-{}
-```
-
-Return the full feedback as markdown in your final response. Do not write files.
-
-IMPORTANT: Your feedback MUST include one of these exact strings in the output:
-- "Overall Assessment:** APPROVED" - if the plan is ready for implementation
-- "Overall Assessment:** NEEDS REVISION" - if the plan has issues that need to be fixed
-
-The orchestrator will parse your response to determine the next phase."###,
-        state.plan_file.display(),
-        state.objective,
-    );
-
-    let system_prompt = r#"You are orchestrating a plan review workflow.
-Your task is to invoke the plan-review skill to review an implementation plan.
-The review must result in a clear APPROVED or NEEDS REVISION assessment.
-Do not ask questions - proceed with the skill invocation immediately."#;
-
-    let result = ClaudeInvocation::new(prompt)
-        .with_system_prompt(system_prompt)
-        .with_allowed_tools(ALLOWED_TOOLS.iter().map(|s| s.to_string()).collect())
-        .with_working_dir(working_dir.to_path_buf())
-        .execute_streaming(output_tx.clone())
-        .await?;
-
-    let feedback_path = working_dir.join(&state.feedback_file);
-    let mut feedback = result.result;
-    if feedback.trim().is_empty() && feedback_path.exists() {
-        if let Ok(content) = fs::read_to_string(&feedback_path) {
-            feedback = content;
-        }
-    }
-
-    if feedback.trim().is_empty() {
-        anyhow::bail!("Review produced no output");
-    }
-
-    if let Some(parent) = feedback_path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    fs::write(&feedback_path, &feedback)?;
-
-    let _ = output_tx.send(Event::Output("[planning-agent] Review phase complete".to_string()));
-    let _ = output_tx.send(Event::Output(format!(
-        "[planning-agent] Result preview: {}...",
-        feedback.chars().take(200).collect::<String>()
-    )));
-
-    Ok(())
-}
-
 /// Run review phase with multiple agents in parallel
-pub async fn run_multi_agent_review_phase(
+pub async fn run_multi_agent_review_with_context(
     state: &State,
     working_dir: &Path,
     config: &WorkflowConfig,
     agent_names: &[String],
-    output_tx: mpsc::UnboundedSender<Event>,
+    session_sender: SessionEventSender,
+    iteration: u32,
 ) -> Result<ReviewBatchResult> {
     if agent_names.is_empty() {
         anyhow::bail!("No reviewers configured");
     }
 
-    let _ = output_tx.send(Event::Output(format!(
+    session_sender.send_output(format!(
         "[review] Running {} reviewer(s) in parallel: {}",
         agent_names.len(),
         agent_names.join(", ")
-    )));
+    ));
 
     let total_reviewers = agent_names.len();
     let base_feedback_path = state.feedback_file.as_path();
@@ -147,21 +78,29 @@ pub async fn run_multi_agent_review_phase(
         .into_iter()
         .map(|(agent_name, agent, feedback_path_abs)| {
             let p = build_review_prompt(state);
-            let tx = output_tx.clone();
+            let sender = session_sender.clone();
+            let phase = format!("Reviewing #{}", iteration);
 
             async move {
-                let _ = tx.send(Event::Output(format!(
-                    "[review:{}] Starting review...",
-                    agent_name
-                )));
+                sender.send_output(format!("[review:{}] Starting review...", agent_name));
                 let started_at = SystemTime::now();
+
+                // Create agent context for chat message routing
+                let context = AgentContext {
+                    session_sender: sender.clone(),
+                    phase,
+                };
+
                 let result = agent
-                    .execute_streaming(p, Some(REVIEW_SYSTEM_PROMPT.to_string()), None, tx.clone())
+                    .execute_streaming_with_context(
+                        p,
+                        Some(REVIEW_SYSTEM_PROMPT.to_string()),
+                        None,
+                        context,
+                    )
                     .await;
-                let _ = tx.send(Event::Output(format!(
-                    "[review:{}] Review complete",
-                    agent_name
-                )));
+
+                sender.send_output(format!("[review:{}] Review complete", agent_name));
                 (agent_name, feedback_path_abs, started_at, result)
             }
         })
@@ -200,12 +139,12 @@ pub async fn run_multi_agent_review_phase(
                                     Ok(Some(content)) => {
                                         output = content;
                                         feedback_source = Some(base_feedback_path_abs.clone());
-                                        let _ = output_tx.send(Event::Output(format!(
+                                        session_sender.send_output(format!(
                                             "[review:{}] WARNING: feedback written to {} (expected {})",
                                             agent_name,
                                             base_feedback_path_abs.display(),
                                             feedback_path.display()
-                                        )));
+                                        ));
                                     }
                                     _ => {}
                                 }
@@ -217,34 +156,34 @@ pub async fn run_multi_agent_review_phase(
                 let trimmed_output = output.trim();
                 if trimmed_output.is_empty() {
                     let error = "No output produced".to_string();
-                    let _ = output_tx.send(Event::Output(format!(
+                    session_sender.send_output(format!(
                         "[review:{}] ERROR: {}",
                         agent_name, error
-                    )));
+                    ));
                     failures.push(ReviewFailure { agent_name, error });
                     continue;
                 }
 
                 if let Some(source) = feedback_source {
-                    let _ = output_tx.send(Event::Output(format!(
+                    session_sender.send_output(format!(
                         "[review:{}] Loaded feedback from {}",
                         agent_name,
                         source.display()
-                    )));
+                    ));
                 }
 
                 if agent_result.is_error {
-                    let _ = output_tx.send(Event::Output(format!(
+                    session_sender.send_output(format!(
                         "[review:{}] WARNING: reviewer reported an error; using available feedback",
                         agent_name
-                    )));
+                    ));
                 }
 
                 let needs_revision = output.contains("NEEDS REVISION")
                     || output.contains("NEEDS_REVISION")
                     || output.contains("MAJOR ISSUES");
 
-                let _ = output_tx.send(Event::Output(format!(
+                session_sender.send_output(format!(
                     "[review:{}] Verdict: {}",
                     agent_name,
                     if needs_revision {
@@ -252,7 +191,7 @@ pub async fn run_multi_agent_review_phase(
                     } else {
                         "APPROVED"
                     }
-                )));
+                ));
 
                 reviews.push(ReviewResult {
                     agent_name,
@@ -262,10 +201,10 @@ pub async fn run_multi_agent_review_phase(
             }
             Err(e) => {
                 // Log error but continue with other reviewers
-                let _ = output_tx.send(Event::Output(format!(
+                session_sender.send_output(format!(
                     "[error] {} review failed: {}",
                     agent_name, e
-                )));
+                ));
                 failures.push(ReviewFailure {
                     agent_name,
                     error: e.to_string(),

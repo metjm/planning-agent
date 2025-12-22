@@ -1,5 +1,5 @@
 use super::log::AgentLogger;
-use super::AgentResult;
+use super::{AgentContext, AgentResult};
 use crate::config::AgentConfig;
 use crate::tui::Event;
 use anyhow::{Context, Result};
@@ -340,6 +340,268 @@ impl CodexAgent {
             output: final_output,
             is_error,
             cost_usd: None, // Codex CLI doesn't report cost
+        })
+    }
+
+    /// Execute with session-aware context for chat message routing
+    pub async fn execute_streaming_with_context(
+        &self,
+        prompt: String,
+        _system_prompt: Option<String>,
+        _max_turns: Option<u32>,
+        context: AgentContext,
+    ) -> Result<AgentResult> {
+        let logger = AgentLogger::new(&self.name, &self.working_dir);
+        if let Some(ref logger) = logger {
+            let args = if self.config.args.is_empty() {
+                String::new()
+            } else {
+                format!(" {}", self.config.args.join(" "))
+            };
+            logger.log_line(
+                "start",
+                &format!("command: {}{} (with context)", self.config.command, args),
+            );
+        }
+
+        let mut cmd = Command::new(&self.config.command);
+
+        for arg in &self.config.args {
+            cmd.arg(arg);
+        }
+
+        cmd.arg(&prompt);
+        cmd.current_dir(&self.working_dir);
+        cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+
+        context.session_sender.send_output("[agent:codex] Starting...".to_string());
+
+        let mut child = cmd.spawn().context("Failed to spawn codex process")?;
+
+        let stdout = child.stdout.take().context("Failed to get stdout")?;
+        let stderr = child.stderr.take().context("Failed to get stderr")?;
+
+        let mut stdout_reader = BufReader::new(stdout).lines();
+        let mut stderr_reader = BufReader::new(stderr).lines();
+
+        let mut final_output = String::new();
+        let mut is_error = false;
+
+        let start_time = Instant::now();
+        let mut last_activity = Instant::now();
+
+        loop {
+            if start_time.elapsed() > self.overall_timeout {
+                context.session_sender.send_output(format!(
+                    "[agent:codex] ERROR: Exceeded overall timeout of {:?}",
+                    self.overall_timeout
+                ));
+                let _ = child.kill().await;
+                anyhow::bail!(
+                    "Codex invocation exceeded overall timeout of {:?}",
+                    self.overall_timeout
+                );
+            }
+
+            let activity_deadline = last_activity + self.activity_timeout;
+
+            tokio::select! {
+                line = stdout_reader.next_line() => {
+                    last_activity = Instant::now();
+                    match line {
+                        Ok(Some(line)) => {
+                            if let Some(ref logger) = logger {
+                                logger.log_line("stdout", &line);
+                            }
+                            context.session_sender.send_bytes_received(line.len());
+
+                            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&line) {
+                                if let Some(event_type) = json.get("type").and_then(|v| v.as_str()) {
+                                    match event_type {
+                                        "message" | "content" | "text" => {
+                                            if let Some(content) = json.get("content")
+                                                .or_else(|| json.get("text"))
+                                                .or_else(|| json.get("message"))
+                                                .and_then(|c| c.as_str())
+                                            {
+                                                context.session_sender.send_streaming(content.to_string());
+                                                context.session_sender.send_agent_message(
+                                                    self.name.clone(),
+                                                    context.phase.clone(),
+                                                    content.to_string(),
+                                                );
+                                                final_output.push_str(content);
+                                            }
+                                        }
+                                        "item.completed" | "item.delta" => {
+                                            if let Some(item) = json.get("item") {
+                                                let item_type = item.get("type").and_then(|v| v.as_str());
+                                                let is_message = matches!(
+                                                    item_type,
+                                                    Some("agent_message")
+                                                        | Some("message")
+                                                        | Some("assistant_message")
+                                                        | Some("final_message")
+                                                        | Some("text")
+                                                );
+                                                if is_message {
+                                                    if let Some(content) = item
+                                                        .get("text")
+                                                        .or_else(|| item.get("delta"))
+                                                        .or_else(|| item.get("content"))
+                                                        .and_then(|c| c.as_str())
+                                                    {
+                                                        context.session_sender.send_streaming(content.to_string());
+                                                        context.session_sender.send_agent_message(
+                                                            self.name.clone(),
+                                                            context.phase.clone(),
+                                                            content.to_string(),
+                                                        );
+                                                        final_output.push_str(content);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        "function_call" | "tool_call" => {
+                                            if let Some(name) = json.get("name")
+                                                .or_else(|| json.get("function").and_then(|f| f.get("name")))
+                                                .and_then(|n| n.as_str())
+                                            {
+                                                context.session_sender.send_tool_started(name.to_string());
+                                                context.session_sender.send_streaming(format!("[Tool: {}]", name));
+                                            }
+                                        }
+                                        "function_result" | "tool_result" => {
+                                            let tool_id = json.get("call_id")
+                                                .or_else(|| json.get("id"))
+                                                .and_then(|i| i.as_str())
+                                                .unwrap_or("")
+                                                .to_string();
+                                            context.session_sender.send_tool_finished(tool_id);
+                                        }
+                                        "done" | "complete" | "finished" => {
+                                            if let Some(message) = json.get("message")
+                                                .or_else(|| json.get("result"))
+                                                .or_else(|| json.get("output"))
+                                                .and_then(|m| m.as_str())
+                                            {
+                                                final_output = message.to_string();
+                                            }
+                                        }
+                                        "error" => {
+                                            is_error = true;
+                                            if let Some(message) = json.get("message")
+                                                .or_else(|| json.get("error"))
+                                                .and_then(|m| m.as_str())
+                                            {
+                                                context.session_sender.send_streaming(format!("[error] {}", message));
+                                                final_output = message.to_string();
+                                            }
+                                        }
+                                        _ => {
+                                            if let Some(content) = json.get("content")
+                                                .or_else(|| json.get("text"))
+                                                .and_then(|c| c.as_str())
+                                            {
+                                                context.session_sender.send_streaming(content.to_string());
+                                                context.session_sender.send_agent_message(
+                                                    self.name.clone(),
+                                                    context.phase.clone(),
+                                                    content.to_string(),
+                                                );
+                                                final_output.push_str(content);
+                                            }
+                                        }
+                                    }
+                                } else if let Some(content) = json.get("content")
+                                    .or_else(|| json.get("text"))
+                                    .or_else(|| json.get("output"))
+                                    .and_then(|c| c.as_str())
+                                {
+                                    context.session_sender.send_streaming(content.to_string());
+                                    context.session_sender.send_agent_message(
+                                        self.name.clone(),
+                                        context.phase.clone(),
+                                        content.to_string(),
+                                    );
+                                    final_output.push_str(content);
+                                }
+                            } else {
+                                context.session_sender.send_streaming(line.clone());
+                                context.session_sender.send_agent_message(
+                                    self.name.clone(),
+                                    context.phase.clone(),
+                                    line.clone(),
+                                );
+                                final_output.push_str(&line);
+                                final_output.push('\n');
+                            }
+                        }
+                        Ok(None) => break,
+                        Err(e) => {
+                            context.session_sender.send_output(format!(
+                                "[error] Failed to read stdout: {}",
+                                e
+                            ));
+                            break;
+                        }
+                    }
+                }
+                line = stderr_reader.next_line() => {
+                    last_activity = Instant::now();
+                    match line {
+                        Ok(Some(line)) => {
+                            if let Some(ref logger) = logger {
+                                logger.log_line("stderr", &line);
+                            }
+                            context.session_sender.send_streaming(format!("[stderr] {}", line));
+                        }
+                        Ok(None) => {}
+                        Err(_) => {}
+                    }
+                }
+                _ = tokio::time::sleep_until(activity_deadline) => {
+                    context.session_sender.send_output(format!(
+                        "[agent:codex] WARNING: No activity for {:?}, terminating...",
+                        self.activity_timeout
+                    ));
+                    let _ = child.kill().await;
+                    anyhow::bail!(
+                        "Codex subprocess became unresponsive (no output for {:?})",
+                        self.activity_timeout
+                    );
+                }
+            }
+        }
+
+        let status = match tokio::time::timeout(PROCESS_WAIT_TIMEOUT, child.wait()).await {
+            Ok(Ok(status)) => status,
+            Ok(Err(e)) => {
+                anyhow::bail!("Failed to wait for codex process: {}", e);
+            }
+            Err(_) => {
+                context.session_sender.send_output(format!(
+                    "[agent:codex] WARNING: Process did not exit within {:?}, force killing...",
+                    PROCESS_WAIT_TIMEOUT
+                ));
+                let _ = child.kill().await;
+                anyhow::bail!(
+                    "Codex process did not exit within {:?} after stream closed",
+                    PROCESS_WAIT_TIMEOUT
+                );
+            }
+        };
+
+        if !status.success() {
+            is_error = true;
+        }
+
+        context.session_sender.send_output("[agent:codex] Complete".to_string());
+
+        Ok(AgentResult {
+            output: final_output,
+            is_error,
+            cost_usd: None,
         })
     }
 }
