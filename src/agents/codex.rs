@@ -1,3 +1,4 @@
+use super::log::AgentLogger;
 use super::AgentResult;
 use crate::config::AgentConfig;
 use crate::tui::Event;
@@ -22,6 +23,7 @@ const PROCESS_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
 /// OpenAI Codex CLI agent implementation
 #[derive(Debug, Clone)]
 pub struct CodexAgent {
+    name: String,
     config: AgentConfig,
     working_dir: PathBuf,
     activity_timeout: Duration,
@@ -29,13 +31,18 @@ pub struct CodexAgent {
 }
 
 impl CodexAgent {
-    pub fn new(config: AgentConfig, working_dir: PathBuf) -> Self {
+    pub fn new(name: String, config: AgentConfig, working_dir: PathBuf) -> Self {
         Self {
+            name,
             config,
             working_dir,
             activity_timeout: DEFAULT_ACTIVITY_TIMEOUT,
             overall_timeout: DEFAULT_OVERALL_TIMEOUT,
         }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
     }
 
     #[allow(dead_code)]
@@ -58,6 +65,23 @@ impl CodexAgent {
         _max_turns: Option<u32>,
         output_tx: mpsc::UnboundedSender<Event>,
     ) -> Result<AgentResult> {
+        let logger = AgentLogger::new(&self.name, &self.working_dir);
+        if let Some(ref logger) = logger {
+            let args = if self.config.args.is_empty() {
+                String::new()
+            } else {
+                format!(" {}", self.config.args.join(" "))
+            };
+            logger.log_line(
+                "start",
+                &format!("command: {}{}", self.config.command, args),
+            );
+            logger.log_line(
+                "prompt",
+                &prompt.chars().take(200).collect::<String>(),
+            );
+        }
+
         let mut cmd = Command::new(&self.config.command);
 
         // Add base args (typically ["exec", "--json"])
@@ -109,6 +133,9 @@ impl CodexAgent {
                     last_activity = Instant::now();
                     match line {
                         Ok(Some(line)) => {
+                            if let Some(ref logger) = logger {
+                                logger.log_line("stdout", &line);
+                            }
                             let _ = output_tx.send(Event::BytesReceived(line.len()));
 
                             // Try to parse as JSON (Codex outputs NDJSON events)
@@ -210,6 +237,9 @@ impl CodexAgent {
                     last_activity = Instant::now();
                     match line {
                         Ok(Some(line)) => {
+                            if let Some(ref logger) = logger {
+                                logger.log_line("stderr", &line);
+                            }
                             let _ = output_tx.send(Event::Streaming(format!("[stderr] {}", line)));
                         }
                         Ok(None) => {}
@@ -217,6 +247,15 @@ impl CodexAgent {
                     }
                 }
                 _ = tokio::time::sleep_until(activity_deadline) => {
+                    if let Some(ref logger) = logger {
+                        logger.log_line(
+                            "timeout",
+                            &format!(
+                                "activity timeout triggered after {:?}",
+                                self.activity_timeout
+                            ),
+                        );
+                    }
                     let _ = output_tx.send(Event::Output(format!(
                         "[agent:codex] WARNING: No activity for {:?}, terminating...",
                         self.activity_timeout
@@ -234,9 +273,21 @@ impl CodexAgent {
         let status = match tokio::time::timeout(PROCESS_WAIT_TIMEOUT, child.wait()).await {
             Ok(Ok(status)) => status,
             Ok(Err(e)) => {
+                if let Some(ref logger) = logger {
+                    logger.log_line("timeout", &format!("failed to wait for process: {}", e));
+                }
                 anyhow::bail!("Failed to wait for codex process: {}", e);
             }
             Err(_) => {
+                if let Some(ref logger) = logger {
+                    logger.log_line(
+                        "timeout",
+                        &format!(
+                            "process did not exit within {:?} after stream closed, force killing",
+                            PROCESS_WAIT_TIMEOUT
+                        ),
+                    );
+                }
                 let _ = output_tx.send(Event::Output(format!(
                     "[agent:codex] WARNING: Process did not exit within {:?}, force killing...",
                     PROCESS_WAIT_TIMEOUT
@@ -251,6 +302,10 @@ impl CodexAgent {
 
         if !status.success() {
             is_error = true;
+        }
+
+        if let Some(ref logger) = logger {
+            logger.log_line("exit", &format!("status: {}", status));
         }
 
         let _ = output_tx.send(Event::Output("[agent:codex] Complete".to_string()));
@@ -274,7 +329,7 @@ mod tests {
             args: vec!["exec".to_string(), "--json".to_string()],
             allowed_tools: vec![],
         };
-        let agent = CodexAgent::new(config, PathBuf::from("."));
+        let agent = CodexAgent::new("codex".to_string(), config, PathBuf::from("."));
         assert_eq!(agent.activity_timeout, DEFAULT_ACTIVITY_TIMEOUT);
         assert_eq!(agent.overall_timeout, DEFAULT_OVERALL_TIMEOUT);
     }

@@ -1,9 +1,8 @@
+use super::log::AgentLogger;
 use super::AgentResult;
 use crate::config::AgentConfig;
 use crate::tui::{Event, TokenUsage};
 use anyhow::{Context, Result};
-use std::fs::OpenOptions;
-use std::io::Write;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::time::Duration;
@@ -64,6 +63,7 @@ fn extract_bash_command(cmd: &str) -> String {
 /// Claude Code CLI agent implementation
 #[derive(Debug, Clone)]
 pub struct ClaudeAgent {
+    name: String,
     config: AgentConfig,
     working_dir: PathBuf,
     activity_timeout: Duration,
@@ -71,13 +71,18 @@ pub struct ClaudeAgent {
 }
 
 impl ClaudeAgent {
-    pub fn new(config: AgentConfig, working_dir: PathBuf) -> Self {
+    pub fn new(name: String, config: AgentConfig, working_dir: PathBuf) -> Self {
         Self {
+            name,
             config,
             working_dir,
             activity_timeout: DEFAULT_ACTIVITY_TIMEOUT,
             overall_timeout: DEFAULT_OVERALL_TIMEOUT,
         }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
     }
 
     #[allow(dead_code)]
@@ -100,6 +105,29 @@ impl ClaudeAgent {
         max_turns: Option<u32>,
         output_tx: mpsc::UnboundedSender<Event>,
     ) -> Result<AgentResult> {
+        let logger = AgentLogger::new(&self.name, &self.working_dir);
+        if let Some(ref logger) = logger {
+            let args = if self.config.args.is_empty() {
+                String::new()
+            } else {
+                format!(" {}", self.config.args.join(" "))
+            };
+            logger.log_line(
+                "start",
+                &format!("command: {}{}", self.config.command, args),
+            );
+            logger.log_line(
+                "prompt",
+                &prompt.chars().take(200).collect::<String>(),
+            );
+            if let Some(ref sys_prompt) = system_prompt {
+                logger.log_line(
+                    "system_prompt",
+                    &sys_prompt.chars().take(200).collect::<String>(),
+                );
+            }
+        }
+
         let mut cmd = Command::new(&self.config.command);
 
         // Add base args from config
@@ -133,41 +161,6 @@ impl ClaudeAgent {
             "[agent:claude] Starting...".to_string(),
         ));
 
-        // Set up log file with run ID
-        let run_id = {
-            use std::sync::OnceLock;
-            static RUN_ID: OnceLock<String> = OnceLock::new();
-            RUN_ID
-                .get_or_init(|| chrono::Local::now().format("%Y%m%d-%H%M%S").to_string())
-                .clone()
-        };
-        let log_path = self
-            .working_dir
-            .join(format!(".planning-agent/claude-stream-{}.log", run_id));
-        let _ = std::fs::create_dir_all(
-            log_path
-                .parent()
-                .unwrap_or(&std::path::PathBuf::from(".")),
-        );
-        let mut log_file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&log_path)
-            .ok();
-
-        if let Some(ref mut f) = log_file {
-            let _ = writeln!(
-                f,
-                "\n=== New Claude invocation at {:?} ===",
-                std::time::SystemTime::now()
-            );
-            let _ = writeln!(
-                f,
-                "Prompt: {}",
-                prompt.chars().take(200).collect::<String>()
-            );
-        }
-
         let mut child = cmd
             .spawn()
             .context("Failed to spawn claude process")?;
@@ -187,22 +180,26 @@ impl ClaudeAgent {
         let start_time = Instant::now();
         let mut last_activity = Instant::now();
 
-        if let Some(ref mut f) = log_file {
-            let _ = writeln!(
-                f,
-                "[timeout] activity_timeout={:?}, overall_timeout={:?}",
-                self.activity_timeout, self.overall_timeout
+        if let Some(ref logger) = logger {
+            logger.log_line(
+                "timeout",
+                &format!(
+                    "activity_timeout={:?}, overall_timeout={:?}",
+                    self.activity_timeout, self.overall_timeout
+                ),
             );
         }
 
         loop {
             // Check overall timeout
             if start_time.elapsed() > self.overall_timeout {
-                if let Some(ref mut f) = log_file {
-                    let _ = writeln!(
-                        f,
-                        "[timeout] Overall timeout triggered after {:?}",
-                        start_time.elapsed()
+                if let Some(ref logger) = logger {
+                    logger.log_line(
+                        "timeout",
+                        &format!(
+                            "overall timeout triggered after {:?}",
+                            start_time.elapsed()
+                        ),
                     );
                 }
                 let _ = output_tx.send(Event::Output(format!(
@@ -223,8 +220,8 @@ impl ClaudeAgent {
                     last_activity = Instant::now();
                     match line {
                         Ok(Some(line)) => {
-                            if let Some(ref mut f) = log_file {
-                                let _ = writeln!(f, "[stdout] {}", line);
+                            if let Some(ref logger) = logger {
+                                logger.log_line("stdout", &line);
                             }
 
                             let _ = output_tx.send(Event::BytesReceived(line.len()));
@@ -473,8 +470,8 @@ impl ClaudeAgent {
                     last_activity = Instant::now();
                     match line {
                         Ok(Some(line)) => {
-                            if let Some(ref mut f) = log_file {
-                                let _ = writeln!(f, "[stderr] {}", line);
+                            if let Some(ref logger) = logger {
+                                logger.log_line("stderr", &line);
                             }
                             let _ = output_tx.send(Event::Streaming(format!("[stderr] {}", line)));
                         }
@@ -484,11 +481,13 @@ impl ClaudeAgent {
                 }
                 _ = tokio::time::sleep_until(activity_deadline) => {
                     let inactivity_duration = last_activity.elapsed();
-                    if let Some(ref mut f) = log_file {
-                        let _ = writeln!(
-                            f,
-                            "[timeout] Activity timeout triggered after {:?} of inactivity",
-                            inactivity_duration
+                    if let Some(ref logger) = logger {
+                        logger.log_line(
+                            "timeout",
+                            &format!(
+                                "activity timeout triggered after {:?} of inactivity",
+                                inactivity_duration
+                            ),
                         );
                     }
                     let _ = output_tx.send(Event::Output(format!(
@@ -508,17 +507,19 @@ impl ClaudeAgent {
         let status = match tokio::time::timeout(PROCESS_WAIT_TIMEOUT, child.wait()).await {
             Ok(Ok(status)) => status,
             Ok(Err(e)) => {
-                if let Some(ref mut f) = log_file {
-                    let _ = writeln!(f, "[timeout] Failed to wait for process: {}", e);
+                if let Some(ref logger) = logger {
+                    logger.log_line("timeout", &format!("failed to wait for process: {}", e));
                 }
                 anyhow::bail!("Failed to wait for claude process: {}", e);
             }
             Err(_) => {
-                if let Some(ref mut f) = log_file {
-                    let _ = writeln!(
-                        f,
-                        "[timeout] Process did not exit within {:?} after stream closed, force killing",
-                        PROCESS_WAIT_TIMEOUT
+                if let Some(ref logger) = logger {
+                    logger.log_line(
+                        "timeout",
+                        &format!(
+                            "process did not exit within {:?} after stream closed, force killing",
+                            PROCESS_WAIT_TIMEOUT
+                        ),
                     );
                 }
                 let _ = output_tx.send(Event::Output(format!(
@@ -533,8 +534,8 @@ impl ClaudeAgent {
             }
         };
 
-        if let Some(ref mut f) = log_file {
-            let _ = writeln!(f, "[exit] status: {}", status);
+        if let Some(ref logger) = logger {
+            logger.log_line("exit", &format!("status: {}", status));
         }
 
         if !status.success() {
@@ -576,7 +577,7 @@ mod tests {
             args: vec!["-p".to_string()],
             allowed_tools: vec!["Read".to_string()],
         };
-        let agent = ClaudeAgent::new(config, PathBuf::from("."));
+        let agent = ClaudeAgent::new("claude".to_string(), config, PathBuf::from("."));
         assert_eq!(agent.activity_timeout, DEFAULT_ACTIVITY_TIMEOUT);
         assert_eq!(agent.overall_timeout, DEFAULT_OVERALL_TIMEOUT);
     }

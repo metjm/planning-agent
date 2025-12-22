@@ -1,6 +1,7 @@
 pub mod claude;
 pub mod codex;
 pub mod gemini;
+mod log;
 
 use crate::config::AgentConfig;
 use crate::tui::Event;
@@ -31,20 +32,23 @@ pub enum AgentType {
 impl AgentType {
     /// Create an agent from configuration
     pub fn from_config(
-        _name: &str,
+        name: &str,
         config: &AgentConfig,
         working_dir: PathBuf,
     ) -> Result<Self> {
         match config.command.as_str() {
             "claude" => Ok(Self::Claude(claude::ClaudeAgent::new(
+                name.to_string(),
                 config.clone(),
                 working_dir,
             ))),
             "codex" => Ok(Self::Codex(codex::CodexAgent::new(
+                name.to_string(),
                 config.clone(),
                 working_dir,
             ))),
             "gemini" => Ok(Self::Gemini(gemini::GeminiAgent::new(
+                name.to_string(),
                 config.clone(),
                 working_dir,
             ))),
@@ -56,9 +60,9 @@ impl AgentType {
     #[allow(dead_code)]
     pub fn name(&self) -> &str {
         match self {
-            Self::Claude(_) => "claude",
-            Self::Codex(_) => "codex",
-            Self::Gemini(_) => "gemini",
+            Self::Claude(agent) => agent.name(),
+            Self::Codex(agent) => agent.name(),
+            Self::Gemini(agent) => agent.name(),
         }
     }
 

@@ -59,8 +59,7 @@ impl WorkflowConfig {
         Ok(config)
     }
 
-    /// Returns the default configuration matching current Claude-only behavior
-    #[allow(dead_code)]
+    /// Returns the default configuration for multi-agent workflows
     pub fn default_config() -> Self {
         let mut agents = HashMap::new();
         agents.insert(
@@ -87,6 +86,26 @@ impl WorkflowConfig {
                 ],
             },
         );
+        agents.insert(
+            "codex".to_string(),
+            AgentConfig {
+                command: "codex".to_string(),
+                args: vec!["exec".to_string(), "--json".to_string()],
+                allowed_tools: vec![],
+            },
+        );
+        agents.insert(
+            "gemini".to_string(),
+            AgentConfig {
+                command: "gemini".to_string(),
+                args: vec![
+                    "-p".to_string(),
+                    "--output-format".to_string(),
+                    "json".to_string(),
+                ],
+                allowed_tools: vec![],
+            },
+        );
 
         Self {
             agents,
@@ -96,7 +115,7 @@ impl WorkflowConfig {
                     max_turns: Some(50),
                 },
                 reviewing: MultiAgentPhase {
-                    agents: vec!["claude".to_string()],
+                    agents: vec!["claude".to_string(), "codex".to_string()],
                     aggregation: AggregationMode::AnyRejects,
                 },
                 revising: SingleAgentPhase {
@@ -157,8 +176,13 @@ mod tests {
     fn test_default_config() {
         let config = WorkflowConfig::default_config();
         assert!(config.agents.contains_key("claude"));
+        assert!(config.agents.contains_key("codex"));
+        assert!(config.agents.contains_key("gemini"));
         assert_eq!(config.workflow.planning.agent, "claude");
-        assert_eq!(config.workflow.reviewing.agents, vec!["claude"]);
+        assert_eq!(
+            config.workflow.reviewing.agents,
+            vec!["claude", "codex"]
+        );
         assert_eq!(config.workflow.revising.agent, "claude");
     }
 

@@ -10,16 +10,6 @@ agents:
       - "stream-json"
       - "--verbose"
       - "--dangerously-skip-permissions"
-    allowed_tools:
-      - "Read"
-      - "Glob"
-      - "Grep"
-      - "Write"
-      - "Edit"
-      - "WebSearch"
-      - "WebFetch"
-      - "Skill"
-      - "Task"
 
   codex:
     command: "codex"
@@ -39,16 +29,16 @@ agents:
 workflow:
   planning:
     agent: claude
-    max_turns: 50
+    max_turns: 100
 
   # All three agents review in parallel
   reviewing:
     agents:
       - claude
       - codex
-      - gemini
+      #- gemini
     # Use majority voting - 2 of 3 must reject to trigger revision
-    aggregation: majority
+    aggregation: any_rejects
 
   revising:
     agent: claude

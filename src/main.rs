@@ -389,11 +389,12 @@ async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
         match WorkflowConfig::load(&full_path) {
             Ok(cfg) => {
                 debug_log(start, &format!("Loaded config from {:?}", full_path));
-                Some(cfg)
+                cfg
             }
             Err(e) => {
                 eprintln!("[planning-agent] Warning: Failed to load config: {}", e);
-                None
+                debug_log(start, "Falling back to built-in multi-agent workflow config");
+                WorkflowConfig::default_config()
             }
         }
     } else {
@@ -403,15 +404,17 @@ async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
             match WorkflowConfig::load(&default_config_path) {
                 Ok(cfg) => {
                     debug_log(start, "Loaded default workflow.yaml");
-                    Some(cfg)
+                    cfg
                 }
                 Err(e) => {
                     eprintln!("[planning-agent] Warning: Failed to load workflow.yaml: {}", e);
-                    None
+                    debug_log(start, "Falling back to built-in multi-agent workflow config");
+                    WorkflowConfig::default_config()
                 }
             }
         } else {
-            None
+            debug_log(start, "Using built-in multi-agent workflow config");
+            WorkflowConfig::default_config()
         }
     };
 
@@ -1163,42 +1166,24 @@ async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                                 mpsc::channel::<UserApprovalResponse>(1);
                             session.approval_tx = Some(new_approval_tx);
 
-                            let workflow_handle = if let Some(cfg) = workflow_config.clone() {
-                                tokio::spawn({
-                                    let working_dir = working_dir.clone();
-                                    let tx = output_tx.clone();
-                                    let sid = session_id;
-                                    async move {
-                                        run_workflow_with_config(
-                                            state,
-                                            working_dir,
-                                            state_path,
-                                            cfg,
-                                            tx,
-                                            new_approval_rx,
-                                            sid,
-                                        )
-                                        .await
-                                    }
-                                })
-                            } else {
-                                tokio::spawn({
-                                    let working_dir = working_dir.clone();
-                                    let tx = output_tx.clone();
-                                    let sid = session_id;
-                                    async move {
-                                        run_workflow(
-                                            state,
-                                            working_dir,
-                                            state_path,
-                                            tx,
-                                            new_approval_rx,
-                                            sid,
-                                        )
-                                        .await
-                                    }
-                                })
-                            };
+                            let cfg = workflow_config.clone();
+                            let workflow_handle = tokio::spawn({
+                                let working_dir = working_dir.clone();
+                                let tx = output_tx.clone();
+                                let sid = session_id;
+                                async move {
+                                    run_workflow_with_config(
+                                        state,
+                                        working_dir,
+                                        state_path,
+                                        cfg,
+                                        tx,
+                                        new_approval_rx,
+                                        sid,
+                                    )
+                                    .await
+                                }
+                            });
 
                             session.workflow_handle = Some(workflow_handle);
                         }
@@ -1258,44 +1243,25 @@ async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                                 session.approval_tx = Some(new_approval_tx);
 
                                 // Spawn new workflow
-                                let new_handle = if let Some(cfg) = workflow_config.clone() {
-                                    tokio::spawn({
-                                        let state = state.clone();
-                                        let working_dir = working_dir.clone();
-                                        let tx = output_tx.clone();
-                                        let sid = session.id;
-                                        async move {
-                                            run_workflow_with_config(
-                                                state,
-                                                working_dir,
-                                                state_path,
-                                                cfg,
-                                                tx,
-                                                new_approval_rx,
-                                                sid,
-                                            )
-                                            .await
-                                        }
-                                    })
-                                } else {
-                                    tokio::spawn({
-                                        let state = state.clone();
-                                        let working_dir = working_dir.clone();
-                                        let tx = output_tx.clone();
-                                        let sid = session.id;
-                                        async move {
-                                            run_workflow(
-                                                state,
-                                                working_dir,
-                                                state_path,
-                                                tx,
-                                                new_approval_rx,
-                                                sid,
-                                            )
-                                            .await
-                                        }
-                                    })
-                                };
+                                let cfg = workflow_config.clone();
+                                let new_handle = tokio::spawn({
+                                    let state = state.clone();
+                                    let working_dir = working_dir.clone();
+                                    let tx = output_tx.clone();
+                                    let sid = session.id;
+                                    async move {
+                                        run_workflow_with_config(
+                                            state,
+                                            working_dir,
+                                            state_path,
+                                            cfg,
+                                            tx,
+                                            new_approval_rx,
+                                            sid,
+                                        )
+                                        .await
+                                    }
+                                });
 
                                 session.workflow_handle = Some(new_handle);
                             }
@@ -1519,6 +1485,7 @@ pub enum WorkflowResult {
     NeedsRestart { user_feedback: String },
 }
 
+#[allow(dead_code)]
 async fn run_workflow(
     mut state: State,
     working_dir: PathBuf,
@@ -2160,6 +2127,10 @@ async fn run_headless(cli: Cli) -> Result<()> {
             None
         }
     };
+    let workflow_config = workflow_config.unwrap_or_else(|| {
+        eprintln!("[planning-agent] Using built-in multi-agent workflow config");
+        WorkflowConfig::default_config()
+    });
 
     let objective = cli.objective.join(" ");
 
@@ -2174,7 +2145,7 @@ async fn run_headless(cli: Cli) -> Result<()> {
 
     let state_path = working_dir.join(format!(".planning-agent/{}.json", feature_name));
 
-    let mut state = if cli.continue_workflow {
+    let state = if cli.continue_workflow {
         eprintln!("[planning] Loading existing workflow: {}", feature_name);
         State::load(&state_path)?
     } else {
@@ -2229,79 +2200,14 @@ async fn run_headless(cli: Cli) -> Result<()> {
         }
     });
 
-    if let Some(config) = workflow_config {
-        run_headless_with_config(state, working_dir, state_path, config, output_tx.clone())
-            .await?;
-        return Ok(());
-    }
-
-    while state.should_continue() {
-        match state.phase {
-            Phase::Planning => {
-                eprintln!("\n=== PLANNING PHASE ===");
-                run_planning_phase(&state, &working_dir, output_tx.clone()).await?;
-
-                let plan_path = working_dir.join(&state.plan_file);
-                if !plan_path.exists() {
-                    anyhow::bail!("Plan file not created: {}", plan_path.display());
-                }
-
-                state.transition(Phase::Reviewing)?;
-                state.save(&state_path)?;
-            }
-
-            Phase::Reviewing => {
-                eprintln!("\n=== REVIEW PHASE (Iteration {}) ===", state.iteration);
-                run_review_phase(&state, &working_dir, output_tx.clone()).await?;
-
-                let feedback_path = working_dir.join(&state.feedback_file);
-                if !feedback_path.exists() {
-                    anyhow::bail!("Feedback file not created: {}", feedback_path.display());
-                }
-
-                let status = parse_feedback_status(&feedback_path)?;
-                state.last_feedback_status = Some(status.clone());
-
-                match status {
-                    FeedbackStatus::Approved => {
-                        eprintln!("[planning] Plan APPROVED!");
-                        state.transition(Phase::Complete)?;
-                    }
-                    FeedbackStatus::NeedsRevision => {
-                        eprintln!("[planning] Plan needs revision");
-                        if state.iteration >= state.max_iterations {
-                            eprintln!("[planning] Max iterations reached");
-                            break;
-                        }
-                        state.transition(Phase::Revising)?;
-                    }
-                }
-                state.save(&state_path)?;
-            }
-
-            Phase::Revising => {
-                eprintln!("\n=== REVISION PHASE (Iteration {}) ===", state.iteration);
-                run_revision_phase(&state, &working_dir, output_tx.clone()).await?;
-
-                state.iteration += 1;
-                state.transition(Phase::Reviewing)?;
-                state.save(&state_path)?;
-            }
-
-            Phase::Complete => break,
-        }
-    }
-
-    eprintln!("\n=== WORKFLOW COMPLETE ===");
-    if state.phase == Phase::Complete {
-        eprintln!("Plan APPROVED after {} iteration(s)", state.iteration);
-        eprintln!(
-            "Plan file: {}",
-            working_dir.join(&state.plan_file).display()
-        );
-    } else {
-        eprintln!("Max iterations reached. Manual review recommended.");
-    }
+    run_headless_with_config(
+        state,
+        working_dir,
+        state_path,
+        workflow_config,
+        output_tx.clone(),
+    )
+    .await?;
 
     Ok(())
 }
