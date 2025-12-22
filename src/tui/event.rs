@@ -58,6 +58,14 @@ pub enum Event {
     SessionWorkflowError { session_id: usize, error: String },
     SessionGeneratingSummary { session_id: usize },
 
+    /// Agent chat message for display in chat tabs (session-routed)
+    SessionAgentMessage {
+        session_id: usize,
+        agent_name: String,
+        phase: String,   // "Planning", "Reviewing #1", "Revising #1", etc.
+        message: String,
+    },
+
     /// Claude usage update (global, not per-session since usage is account-wide)
     ClaudeUsageUpdate(ClaudeUsage),
 }
@@ -277,6 +285,16 @@ impl SessionEventSender {
     pub fn send_generating_summary(&self) {
         let _ = self.inner.send(Event::SessionGeneratingSummary {
             session_id: self.session_id,
+        });
+    }
+
+    /// Send an agent chat message for display in the chat tabs
+    pub fn send_agent_message(&self, agent_name: String, phase: String, message: String) {
+        let _ = self.inner.send(Event::SessionAgentMessage {
+            session_id: self.session_id,
+            agent_name,
+            phase,
+            message,
         });
     }
 

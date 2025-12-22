@@ -12,11 +12,10 @@ use clap::Parser;
 use crossterm::event::{KeyCode, KeyModifiers, KeyboardEnhancementFlags, PushKeyboardEnhancementFlags, PopKeyboardEnhancementFlags};
 use config::WorkflowConfig;
 use phases::{
-    aggregate_reviews, merge_feedback, run_multi_agent_review_phase, run_planning_phase,
-    run_planning_phase_with_config, run_review_phase, run_revision_phase,
-    run_revision_phase_with_config, run_revision_phase_with_reviews, write_feedback_files,
+    aggregate_reviews, merge_feedback, run_multi_agent_review_with_context,
+    run_planning_phase_with_context, run_revision_phase_with_context, write_feedback_files,
 };
-use state::{parse_feedback_status, FeedbackStatus, Phase, State};
+use state::{FeedbackStatus, Phase, State};
 use std::collections::HashMap;
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -263,49 +262,6 @@ Example outputs: "sharing-permissions", "user-auth", "api-rate-limiting""#,
     } else {
         Ok(name)
     }
-}
-
-async fn summarize_plan(
-    plan_path: &std::path::Path,
-    output_tx: &mpsc::UnboundedSender<Event>,
-) -> Result<String> {
-    use claude::ClaudeInvocation;
-
-    let _ = output_tx.send(Event::Output(
-        "[planning] Generating plan summary...".to_string(),
-    ));
-
-    let plan_content = std::fs::read_to_string(plan_path)
-        .with_context(|| format!("Failed to read plan file: {}", plan_path.display()))?;
-
-    // Truncate if too long
-    let plan_preview: String = plan_content.chars().take(8000).collect();
-
-    let prompt = format!(
-        r#"Summarize this implementation plan in markdown format.
-
-Structure:
-## Overview
-One sentence describing what's being built.
-
-## Key Changes
-- Bullet points of main components/changes
-
-## Implementation Steps
-1. Numbered high-level steps
-
-Keep it concise (under 25 lines). Use **bold** for emphasis.
-Output ONLY the markdown, no preamble or code fences.
-
----
-{}
----"#,
-        plan_preview
-    );
-
-    let result = ClaudeInvocation::new(prompt).with_max_turns(50).execute().await?;
-
-    Ok(result.result)
 }
 
 async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
@@ -885,23 +841,36 @@ async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                         }
                         KeyCode::Char('j') | KeyCode::Down => match session.focused_panel {
                             tui::FocusedPanel::Output => session.scroll_down(),
-                            tui::FocusedPanel::Streaming => session.streaming_scroll_down(),
+                            tui::FocusedPanel::Chat => session.chat_scroll_down(),
                         },
                         KeyCode::Char('k') | KeyCode::Up => match session.focused_panel {
                             tui::FocusedPanel::Output => session.scroll_up(),
-                            tui::FocusedPanel::Streaming => session.streaming_scroll_up(),
+                            tui::FocusedPanel::Chat => session.chat_scroll_up(),
                         },
                         KeyCode::Char('g') => match session.focused_panel {
                             tui::FocusedPanel::Output => session.scroll_to_top(),
-                            tui::FocusedPanel::Streaming => {
-                                session.streaming_follow_mode = false;
-                                session.streaming_scroll_position = 0;
+                            tui::FocusedPanel::Chat => {
+                                session.chat_follow_mode = false;
+                                if let Some(tab) = session.run_tabs.get_mut(session.active_run_tab) {
+                                    tab.scroll_position = 0;
+                                }
                             }
                         },
                         KeyCode::Char('G') => match session.focused_panel {
                             tui::FocusedPanel::Output => session.scroll_to_bottom(),
-                            tui::FocusedPanel::Streaming => session.streaming_scroll_to_bottom(),
+                            tui::FocusedPanel::Chat => session.chat_scroll_to_bottom(),
                         },
+                        // Left/Right arrow keys navigate run tabs when Chat panel is focused
+                        KeyCode::Left => {
+                            if session.focused_panel == tui::FocusedPanel::Chat {
+                                session.prev_run_tab();
+                            }
+                        }
+                        KeyCode::Right => {
+                            if session.focused_panel == tui::FocusedPanel::Chat {
+                                session.next_run_tab();
+                            }
+                        }
                         _ => {}
                     },
                 }
@@ -1132,6 +1101,16 @@ async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                     session.spinner_frame = 0;
                 }
             }
+            Event::SessionAgentMessage {
+                session_id,
+                agent_name,
+                phase,
+                message,
+            } => {
+                if let Some(session) = tab_manager.session_by_id_mut(session_id) {
+                    session.add_chat_message(&agent_name, &phase, message);
+                }
+            }
             Event::ClaudeUsageUpdate(usage) => {
                 // Update all sessions (usage is global/account-wide)
                 for session in tab_manager.sessions_mut() {
@@ -1295,13 +1274,15 @@ async fn run_headless_with_config(
     config: WorkflowConfig,
     output_tx: mpsc::UnboundedSender<Event>,
 ) -> Result<()> {
+    // Create a session sender for headless mode (session 0)
+    let sender = SessionEventSender::new(0, output_tx.clone());
     let mut last_reviews: Vec<phases::ReviewResult> = Vec::new();
 
     while state.should_continue() {
         match state.phase {
             Phase::Planning => {
-                let _ = output_tx.send(Event::Output("\n=== PLANNING PHASE ===".to_string()));
-                run_planning_phase_with_config(&state, &working_dir, &config, output_tx.clone())
+                sender.send_output("\n=== PLANNING PHASE ===".to_string());
+                run_planning_phase_with_context(&state, &working_dir, &config, sender.clone())
                     .await?;
 
                 let plan_path = working_dir.join(&state.plan_file);
@@ -1314,22 +1295,23 @@ async fn run_headless_with_config(
             }
 
             Phase::Reviewing => {
-                let _ = output_tx.send(Event::Output(format!(
+                sender.send_output(format!(
                     "\n=== REVIEW PHASE (Iteration {}) ===",
                     state.iteration
-                )));
+                ));
 
                 let mut reviews_by_agent: HashMap<String, phases::ReviewResult> = HashMap::new();
                 let mut pending_reviewers = config.workflow.reviewing.agents.clone();
                 let mut retry_attempts = 0usize;
 
                 loop {
-                    let batch = run_multi_agent_review_phase(
+                    let batch = run_multi_agent_review_with_context(
                         &state,
                         &working_dir,
                         &config,
                         &pending_reviewers,
-                        output_tx.clone(),
+                        sender.clone(),
+                        state.iteration,
                     )
                     .await?;
 
@@ -1348,31 +1330,31 @@ async fn run_headless_with_config(
                         .collect::<Vec<_>>();
 
                     for failure in &batch.failures {
-                        let _ = output_tx.send(Event::Output(format!(
+                        sender.send_output(format!(
                             "[review:{}] failed: {}",
                             failure.agent_name,
                             truncate_for_summary(&failure.error, 160)
-                        )));
+                        ));
                     }
 
                     if reviews_by_agent.is_empty() {
                         if retry_attempts < REVIEW_FAILURE_RETRY_LIMIT {
                             retry_attempts += 1;
-                            let _ = output_tx.send(Event::Output(format!(
+                            sender.send_output(format!(
                                 "[review] All reviewers failed; retrying ({}/{})...",
                                 retry_attempts, REVIEW_FAILURE_RETRY_LIMIT
-                            )));
+                            ));
                             pending_reviewers = failed_names;
                             continue;
                         }
                         anyhow::bail!("All reviewers failed to complete review");
                     }
 
-                    let _ = output_tx.send(Event::Output(format!(
+                    sender.send_output(format!(
                         "[review] Some reviewers failed: {}. Continuing with {} successful review(s).",
                         failed_names.join(", "),
                         reviews_by_agent.len()
-                    )));
+                    ));
                     break;
                 }
 
@@ -1389,19 +1371,13 @@ async fn run_headless_with_config(
 
                 match status {
                     FeedbackStatus::Approved => {
-                        let _ = output_tx.send(Event::Output(
-                            "[planning] Plan APPROVED!".to_string(),
-                        ));
+                        sender.send_output("[planning] Plan APPROVED!".to_string());
                         state.transition(Phase::Complete)?;
                     }
                     FeedbackStatus::NeedsRevision => {
-                        let _ = output_tx.send(Event::Output(
-                            "[planning] Plan needs revision".to_string(),
-                        ));
+                        sender.send_output("[planning] Plan needs revision".to_string());
                         if state.iteration >= state.max_iterations {
-                            let _ = output_tx.send(Event::Output(
-                                "[planning] Max iterations reached".to_string(),
-                            ));
+                            sender.send_output("[planning] Max iterations reached".to_string());
                             break;
                         }
                         state.transition(Phase::Revising)?;
@@ -1412,24 +1388,20 @@ async fn run_headless_with_config(
             }
 
             Phase::Revising => {
-                let _ = output_tx.send(Event::Output(format!(
+                sender.send_output(format!(
                     "\n=== REVISION PHASE (Iteration {}) ===",
                     state.iteration
-                )));
-                if !last_reviews.is_empty() {
-                    run_revision_phase_with_reviews(
-                        &state,
-                        &working_dir,
-                        &config,
-                        &last_reviews,
-                        output_tx.clone(),
-                    )
-                    .await?;
-                    last_reviews.clear();
-                } else {
-                    run_revision_phase_with_config(&state, &working_dir, &config, output_tx.clone())
-                        .await?;
-                }
+                ));
+                run_revision_phase_with_context(
+                    &state,
+                    &working_dir,
+                    &config,
+                    &last_reviews,
+                    sender.clone(),
+                    state.iteration,
+                )
+                .await?;
+                last_reviews.clear();
 
                 let feedback_path = working_dir.join(&state.feedback_file);
                 if feedback_path.exists() {
@@ -1445,20 +1417,18 @@ async fn run_headless_with_config(
         }
     }
 
-    let _ = output_tx.send(Event::Output("\n=== WORKFLOW COMPLETE ===".to_string()));
+    sender.send_output("\n=== WORKFLOW COMPLETE ===".to_string());
     if state.phase == Phase::Complete {
-        let _ = output_tx.send(Event::Output(format!(
+        sender.send_output(format!(
             "Plan APPROVED after {} iteration(s)",
             state.iteration
-        )));
-        let _ = output_tx.send(Event::Output(format!(
+        ));
+        sender.send_output(format!(
             "Plan file: {}",
             working_dir.join(&state.plan_file).display()
-        )));
-    } else {
-        let _ = output_tx.send(Event::Output(
-            "Max iterations reached. Manual review recommended.".to_string(),
         ));
+    } else {
+        sender.send_output("Max iterations reached. Manual review recommended.".to_string());
     }
 
     Ok(())
@@ -1483,242 +1453,6 @@ fn restore_terminal(
 pub enum WorkflowResult {
     Accepted,
     NeedsRestart { user_feedback: String },
-}
-
-#[allow(dead_code)]
-async fn run_workflow(
-    mut state: State,
-    working_dir: PathBuf,
-    state_path: PathBuf,
-    output_tx: mpsc::UnboundedSender<Event>,
-    mut approval_rx: mpsc::Receiver<UserApprovalResponse>,
-    session_id: usize,
-) -> Result<WorkflowResult> {
-    log_workflow(
-        &working_dir,
-        &format!("=== WORKFLOW START: {} ===", state.feature_name),
-    );
-    log_workflow(
-        &working_dir,
-        &format!(
-            "Initial phase: {:?}, iteration: {}",
-            state.phase, state.iteration
-        ),
-    );
-
-    // Create session event sender for this workflow
-    let sender = SessionEventSender::new(session_id, output_tx.clone());
-
-    while state.should_continue() {
-        match state.phase {
-            Phase::Planning => {
-                log_workflow(&working_dir, ">>> ENTERING Planning phase");
-                sender.send_phase_started("Planning".to_string());
-                sender.send_output("".to_string());
-                sender.send_output("=== PLANNING PHASE ===".to_string());
-                sender.send_output(format!("Feature: {}", state.feature_name));
-                sender.send_output(format!("Plan file: {}", state.plan_file.display()));
-
-                log_workflow(&working_dir, "Calling run_planning_phase...");
-                run_planning_phase(&state, &working_dir, output_tx.clone()).await?;
-                log_workflow(&working_dir, "run_planning_phase completed");
-
-                let plan_path = working_dir.join(&state.plan_file);
-                if !plan_path.exists() {
-                    log_workflow(&working_dir, "ERROR: Plan file was not created!");
-                    sender.send_output("[error] Plan file was not created!".to_string());
-                    anyhow::bail!("Plan file not created");
-                }
-
-                log_workflow(&working_dir, "Transitioning: Planning -> Reviewing");
-                state.transition(Phase::Reviewing)?;
-                state.save(&state_path)?;
-                sender.send_state_update(state.clone());
-                sender.send_output("[planning] Transitioning to review phase...".to_string());
-            }
-
-            Phase::Reviewing => {
-                log_workflow(
-                    &working_dir,
-                    &format!(
-                        ">>> ENTERING Reviewing phase (iteration {})",
-                        state.iteration
-                    ),
-                );
-                sender.send_phase_started("Reviewing".to_string());
-                sender.send_output("".to_string());
-                sender.send_output(format!(
-                    "=== REVIEW PHASE (Iteration {}) ===",
-                    state.iteration
-                ));
-
-                log_workflow(&working_dir, "Calling run_review_phase...");
-                run_review_phase(&state, &working_dir, output_tx.clone()).await?;
-                log_workflow(&working_dir, "run_review_phase completed");
-
-                let feedback_path = working_dir.join(&state.feedback_file);
-                if !feedback_path.exists() {
-                    log_workflow(&working_dir, "ERROR: Feedback file was not created!");
-                    sender.send_output("[error] Feedback file was not created!".to_string());
-                    anyhow::bail!("Feedback file not created");
-                }
-
-                let status = parse_feedback_status(&feedback_path)?;
-                log_workflow(&working_dir, &format!("Feedback status: {:?}", status));
-                state.last_feedback_status = Some(status.clone());
-
-                match status {
-                    FeedbackStatus::Approved => {
-                        log_workflow(&working_dir, "Plan APPROVED! Transitioning to Complete");
-                        sender.send_output("[planning] Plan APPROVED!".to_string());
-                        state.transition(Phase::Complete)?;
-                    }
-                    FeedbackStatus::NeedsRevision => {
-                        sender.send_output("[planning] Plan needs revision".to_string());
-                        if state.iteration >= state.max_iterations {
-                            log_workflow(&working_dir, "Max iterations reached, stopping");
-                            sender.send_output("[planning] Max iterations reached".to_string());
-                            break;
-                        }
-                        log_workflow(&working_dir, "Transitioning: Reviewing -> Revising");
-                        state.transition(Phase::Revising)?;
-                    }
-                }
-                state.save(&state_path)?;
-                sender.send_state_update(state.clone());
-            }
-
-            Phase::Revising => {
-                log_workflow(
-                    &working_dir,
-                    &format!(
-                        ">>> ENTERING Revising phase (iteration {})",
-                        state.iteration
-                    ),
-                );
-                sender.send_phase_started("Revising".to_string());
-                sender.send_output("".to_string());
-                sender.send_output(format!(
-                    "=== REVISION PHASE (Iteration {}) ===",
-                    state.iteration
-                ));
-
-                log_workflow(&working_dir, "Calling run_revision_phase...");
-                run_revision_phase(&state, &working_dir, output_tx.clone()).await?;
-                log_workflow(&working_dir, "run_revision_phase completed");
-
-                // Delete the feedback file so next review starts fresh
-                let feedback_path = working_dir.join(&state.feedback_file);
-                if feedback_path.exists() {
-                    if let Err(e) = std::fs::remove_file(&feedback_path) {
-                        log_workflow(
-                            &working_dir,
-                            &format!("Warning: Failed to delete feedback file: {}", e),
-                        );
-                    } else {
-                        log_workflow(&working_dir, "Deleted old feedback file");
-                    }
-                }
-
-                state.iteration += 1;
-                log_workflow(
-                    &working_dir,
-                    &format!(
-                        "Transitioning: Revising -> Reviewing (iteration now {})",
-                        state.iteration
-                    ),
-                );
-                state.transition(Phase::Reviewing)?;
-                state.save(&state_path)?;
-                sender.send_state_update(state.clone());
-                sender.send_output("[planning] Transitioning to review phase...".to_string());
-            }
-
-            Phase::Complete => {
-                break;
-            }
-        }
-    }
-
-    log_workflow(
-        &working_dir,
-        &format!(
-            "=== WORKFLOW END: phase={:?}, iteration={} ===",
-            state.phase, state.iteration
-        ),
-    );
-
-    // If plan was approved, request user approval before finishing
-    if state.phase == Phase::Complete {
-        log_workflow(&working_dir, ">>> Plan complete - requesting user approval");
-
-        // Signal that summary generation is starting
-        sender.send_generating_summary();
-
-        // Generate plan summary
-        let plan_path = working_dir.join(&state.plan_file);
-        let summary = match summarize_plan(&plan_path, &output_tx).await {
-            Ok(s) => s,
-            Err(e) => {
-                log_workflow(&working_dir, &format!("Failed to summarize plan: {}", e));
-                format!(
-                    "(Could not generate summary: {})\n\nThe plan has been approved by AI review.",
-                    e
-                )
-            }
-        };
-
-        sender.send_output("".to_string());
-        sender.send_output("=== PLAN APPROVED BY AI ===".to_string());
-        sender.send_output(format!("Completed after {} iteration(s)", state.iteration));
-        sender.send_output("Waiting for your approval...".to_string());
-
-        // Request user approval
-        sender.send_approval_request(summary);
-
-        // Wait for user response
-        log_workflow(&working_dir, "Waiting for user approval response...");
-        loop {
-            match approval_rx.recv().await {
-                Some(UserApprovalResponse::Accept) => {
-                    log_workflow(&working_dir, "User ACCEPTED the plan");
-                    sender.send_output("[planning] User accepted the plan!".to_string());
-                    return Ok(WorkflowResult::Accepted);
-                }
-                Some(UserApprovalResponse::Decline(feedback)) => {
-                    log_workflow(
-                        &working_dir,
-                        &format!("User DECLINED with feedback: {}", feedback),
-                    );
-                    sender.send_output(format!("[planning] User requested changes: {}", feedback));
-                    return Ok(WorkflowResult::NeedsRestart {
-                        user_feedback: feedback,
-                    });
-                }
-                Some(UserApprovalResponse::ReviewRetry)
-                | Some(UserApprovalResponse::ReviewContinue) => {
-                    log_workflow(
-                        &working_dir,
-                        "Received review decision while awaiting plan approval, ignoring",
-                    );
-                    continue;
-                }
-                None => {
-                    // Channel closed - this can happen if user pressed [i] to implement,
-                    // which does exec() and terminates the process. Treat as accept.
-                    log_workflow(&working_dir, "Approval channel closed - treating as accept");
-                    return Ok(WorkflowResult::Accepted);
-                }
-            }
-        }
-    }
-
-    // Max iterations reached without approval
-    sender.send_output("".to_string());
-    sender.send_output("=== WORKFLOW COMPLETE ===".to_string());
-    sender.send_output("Max iterations reached. Manual review recommended.".to_string());
-
-    Ok(WorkflowResult::Accepted)
 }
 
 /// Run workflow with multi-agent configuration
@@ -1762,10 +1496,10 @@ async fn run_workflow_with_config(
                 sender.send_output(format!("Agent: {}", config.workflow.planning.agent));
                 sender.send_output(format!("Plan file: {}", state.plan_file.display()));
 
-                log_workflow(&working_dir, "Calling run_planning_phase_with_config...");
-                run_planning_phase_with_config(&state, &working_dir, &config, output_tx.clone())
+                log_workflow(&working_dir, "Calling run_planning_phase_with_context...");
+                run_planning_phase_with_context(&state, &working_dir, &config, sender.clone())
                     .await?;
-                log_workflow(&working_dir, "run_planning_phase_with_config completed");
+                log_workflow(&working_dir, "run_planning_phase_with_context completed");
 
                 let plan_path = working_dir.join(&state.plan_file);
                 if !plan_path.exists() {
@@ -1809,12 +1543,13 @@ async fn run_workflow_with_config(
                         &working_dir,
                         &format!("Running reviewers: {:?}", pending_reviewers),
                     );
-                    let batch = run_multi_agent_review_phase(
+                    let batch = run_multi_agent_review_with_context(
                         &state,
                         &working_dir,
                         &config,
                         &pending_reviewers,
-                        output_tx.clone(),
+                        sender.clone(),
+                        state.iteration,
                     )
                     .await?;
 
@@ -1953,24 +1688,18 @@ async fn run_workflow_with_config(
                 ));
                 sender.send_output(format!("Agent: {}", config.workflow.revising.agent));
 
-                // Use reviews if available from multi-agent review
-                if !last_reviews.is_empty() {
-                    log_workflow(&working_dir, "Calling run_revision_phase_with_reviews...");
-                    run_revision_phase_with_reviews(
-                        &state,
-                        &working_dir,
-                        &config,
-                        &last_reviews,
-                        output_tx.clone(),
-                    )
-                    .await?;
-                    last_reviews.clear(); // Clear after use
-                } else {
-                    log_workflow(&working_dir, "Calling run_revision_phase_with_config...");
-                    run_revision_phase_with_config(&state, &working_dir, &config, output_tx.clone())
-                        .await?;
-                }
-                log_workflow(&working_dir, "run_revision_phase completed");
+                log_workflow(&working_dir, "Calling run_revision_phase_with_context...");
+                run_revision_phase_with_context(
+                    &state,
+                    &working_dir,
+                    &config,
+                    &last_reviews,
+                    sender.clone(),
+                    state.iteration,
+                )
+                .await?;
+                last_reviews.clear(); // Clear after use
+                log_workflow(&working_dir, "run_revision_phase_with_context completed");
 
                 // Delete the feedback file so next review starts fresh
                 let feedback_path = working_dir.join(&state.feedback_file);
@@ -2017,28 +1746,17 @@ async fn run_workflow_with_config(
     if state.phase == Phase::Complete {
         log_workflow(&working_dir, ">>> Plan complete - requesting user approval");
 
-        // Signal that summary generation is starting
-        sender.send_generating_summary();
-
-        // Generate plan summary
-        let plan_path = working_dir.join(&state.plan_file);
-        let summary = match summarize_plan(&plan_path, &output_tx).await {
-            Ok(s) => s,
-            Err(e) => {
-                log_workflow(&working_dir, &format!("Failed to summarize plan: {}", e));
-                format!(
-                    "(Could not generate summary: {})\n\nThe plan has been approved by AI review.",
-                    e
-                )
-            }
-        };
-
         sender.send_output("".to_string());
         sender.send_output("=== PLAN APPROVED BY AI ===".to_string());
         sender.send_output(format!("Completed after {} iteration(s)", state.iteration));
         sender.send_output("Waiting for your approval...".to_string());
 
-        // Request user approval
+        // Request user approval (plan file path as summary)
+        let plan_path = working_dir.join(&state.plan_file);
+        let summary = format!(
+            "The plan has been approved by AI review.\n\nPlan file: {}",
+            plan_path.display()
+        );
         sender.send_approval_request(summary);
 
         // Wait for user response
