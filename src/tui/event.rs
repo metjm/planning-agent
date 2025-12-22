@@ -44,6 +44,7 @@ pub enum Event {
     SessionStreaming { session_id: usize, line: String },
     SessionStateUpdate { session_id: usize, state: State },
     SessionApprovalRequest { session_id: usize, summary: String },
+    SessionReviewDecisionRequest { session_id: usize, summary: String },
     SessionTokenUsage { session_id: usize, usage: TokenUsage },
     SessionToolStarted { session_id: usize, name: String },
     SessionToolFinished { session_id: usize, id: String },
@@ -66,6 +67,8 @@ pub enum Event {
 pub enum UserApprovalResponse {
     Accept,
     Decline(String), // Contains user's feedback for changes
+    ReviewRetry,
+    ReviewContinue,
 }
 
 pub struct EventHandler {
@@ -183,6 +186,13 @@ impl SessionEventSender {
 
     pub fn send_approval_request(&self, summary: String) {
         let _ = self.inner.send(Event::SessionApprovalRequest {
+            session_id: self.session_id,
+            summary,
+        });
+    }
+
+    pub fn send_review_decision_request(&self, summary: String) {
+        let _ = self.inner.send(Event::SessionReviewDecisionRequest {
             session_id: self.session_id,
             summary,
         });

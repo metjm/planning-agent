@@ -22,6 +22,14 @@ pub enum ApprovalMode {
     EnteringFeedback,
 }
 
+/// What kind of approval prompt is being shown
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub enum ApprovalContext {
+    #[default]
+    PlanApproval,
+    ReviewDecision,
+}
+
 /// Which panel is focused for scrolling
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum FocusedPanel {
@@ -87,6 +95,7 @@ pub struct Session {
 
     // User approval state
     pub approval_mode: ApprovalMode,
+    pub approval_context: ApprovalContext,
     pub plan_summary: String,
     pub plan_summary_scroll: usize,
     pub user_feedback: String,
@@ -162,6 +171,7 @@ impl Session {
             active_tools: Vec::new(),
 
             approval_mode: ApprovalMode::None,
+            approval_context: ApprovalContext::PlanApproval,
             plan_summary: String::new(),
             plan_summary_scroll: 0,
             user_feedback: String::new(),
@@ -257,6 +267,17 @@ impl Session {
         self.plan_summary = summary;
         self.plan_summary_scroll = 0;
         self.approval_mode = ApprovalMode::AwaitingChoice;
+        self.approval_context = ApprovalContext::PlanApproval;
+        self.user_feedback.clear();
+        self.cursor_position = 0;
+        self.status = SessionStatus::AwaitingApproval;
+    }
+
+    pub fn start_review_decision(&mut self, summary: String) {
+        self.plan_summary = summary;
+        self.plan_summary_scroll = 0;
+        self.approval_mode = ApprovalMode::AwaitingChoice;
+        self.approval_context = ApprovalContext::ReviewDecision;
         self.user_feedback.clear();
         self.cursor_position = 0;
         self.status = SessionStatus::AwaitingApproval;

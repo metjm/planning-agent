@@ -71,6 +71,7 @@ pub async fn run_revision_phase_with_config(
 ) -> Result<()> {
     let revising_config = &config.workflow.revising;
     let agent_name = &revising_config.agent;
+    let max_turns = revising_config.max_turns;
 
     let agent_config = config
         .get_agent(agent_name)
@@ -81,18 +82,17 @@ pub async fn run_revision_phase_with_config(
         agent_name
     )));
 
-    // For Claude, use the legacy approach for compatibility
-    if agent_name == "claude" {
-        return run_revision_phase(state, working_dir, output_tx).await;
-    }
-
-    // For other agents, use a direct prompt approach
     let agent = AgentType::from_config(agent_name, agent_config, working_dir.to_path_buf())?;
 
     let prompt = build_revision_prompt(state);
 
     let result = agent
-        .execute_streaming(prompt, Some(REVISION_SYSTEM_PROMPT.to_string()), output_tx.clone())
+        .execute_streaming(
+            prompt,
+            Some(REVISION_SYSTEM_PROMPT.to_string()),
+            max_turns,
+            output_tx.clone(),
+        )
         .await?;
 
     let _ = output_tx.send(Event::Output(format!(
@@ -118,6 +118,7 @@ pub async fn run_revision_phase_with_reviews(
 ) -> Result<()> {
     let revising_config = &config.workflow.revising;
     let agent_name = &revising_config.agent;
+    let max_turns = revising_config.max_turns;
 
     let agent_config = config
         .get_agent(agent_name)
@@ -129,22 +130,17 @@ pub async fn run_revision_phase_with_reviews(
         reviews.len()
     )));
 
-    // For Claude, use the skill-based approach but with merged feedback
-    if agent_name == "claude" {
-        // Write merged feedback to the feedback file
-        let feedback_path = working_dir.join(&state.feedback_file);
-        super::merge_feedback(reviews, &feedback_path)?;
-
-        return run_revision_phase(state, working_dir, output_tx).await;
-    }
-
-    // For other agents, include merged feedback in the prompt
     let agent = AgentType::from_config(agent_name, agent_config, working_dir.to_path_buf())?;
 
     let prompt = build_revision_prompt_with_reviews(state, reviews);
 
     let result = agent
-        .execute_streaming(prompt, Some(REVISION_SYSTEM_PROMPT.to_string()), output_tx.clone())
+        .execute_streaming(
+            prompt,
+            Some(REVISION_SYSTEM_PROMPT.to_string()),
+            max_turns,
+            output_tx.clone(),
+        )
         .await?;
 
     let _ = output_tx.send(Event::Output(format!(

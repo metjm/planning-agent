@@ -64,6 +64,7 @@ pub async fn run_planning_phase_with_config(
 ) -> Result<()> {
     let planning_config = &config.workflow.planning;
     let agent_name = &planning_config.agent;
+    let max_turns = planning_config.max_turns;
 
     let agent_config = config
         .get_agent(agent_name)
@@ -74,18 +75,17 @@ pub async fn run_planning_phase_with_config(
         agent_name
     )));
 
-    // For Claude, use the skill-based approach for compatibility
-    if agent_name == "claude" {
-        return run_planning_phase(state, working_dir, output_tx).await;
-    }
-
-    // For other agents, use a direct prompt approach
     let agent = AgentType::from_config(agent_name, agent_config, working_dir.to_path_buf())?;
 
     let prompt = build_planning_prompt(state);
 
     let result = agent
-        .execute_streaming(prompt, Some(PLANNING_SYSTEM_PROMPT.to_string()), output_tx.clone())
+        .execute_streaming(
+            prompt,
+            Some(PLANNING_SYSTEM_PROMPT.to_string()),
+            max_turns,
+            output_tx.clone(),
+        )
         .await?;
 
     let _ = output_tx.send(Event::Output(format!(
