@@ -97,6 +97,7 @@ impl ClaudeAgent {
         &self,
         prompt: String,
         system_prompt: Option<String>,
+        max_turns: Option<u32>,
         output_tx: mpsc::UnboundedSender<Event>,
     ) -> Result<AgentResult> {
         let mut cmd = Command::new(&self.config.command);
@@ -118,6 +119,11 @@ impl ClaudeAgent {
         if !self.config.allowed_tools.is_empty() {
             cmd.arg("--allowedTools")
                 .arg(self.config.allowed_tools.join(","));
+        }
+
+        // Add max turns if provided
+        if let Some(turns) = max_turns {
+            cmd.arg("--max-turns").arg(turns.to_string());
         }
 
         cmd.current_dir(&self.working_dir);

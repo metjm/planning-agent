@@ -19,6 +19,20 @@ pub struct ReviewResult {
     pub feedback: String,
 }
 
+/// Result when a reviewer fails to produce a usable review
+#[derive(Debug, Clone)]
+pub struct ReviewFailure {
+    pub agent_name: String,
+    pub error: String,
+}
+
+/// Batch results for a multi-agent review run
+#[derive(Debug, Clone)]
+pub struct ReviewBatchResult {
+    pub reviews: Vec<ReviewResult>,
+    pub failures: Vec<ReviewFailure>,
+}
+
 const REVIEW_SYSTEM_PROMPT: &str = r#"You are a technical plan reviewer.
 Review the plan for correctness, completeness, and technical accuracy.
 Output "APPROVED" or "NEEDS REVISION" with specific feedback."#;
@@ -70,24 +84,30 @@ pub async fn run_multi_agent_review_phase(
     state: &State,
     working_dir: &Path,
     config: &WorkflowConfig,
+    agent_names: &[String],
     output_tx: mpsc::UnboundedSender<Event>,
-) -> Result<Vec<ReviewResult>> {
-    let review_config = &config.workflow.reviewing;
+) -> Result<ReviewBatchResult> {
+    if agent_names.is_empty() {
+        anyhow::bail!("No reviewers configured");
+    }
 
     let _ = output_tx.send(Event::Output(format!(
         "[review] Running {} reviewer(s) in parallel: {}",
-        review_config.agents.len(),
-        review_config.agents.join(", ")
+        agent_names.len(),
+        agent_names.join(", ")
     )));
 
     // Build agents from config
-    let agents: Vec<AgentType> = review_config
-        .agents
+    let agents: Vec<(String, AgentType)> = agent_names
         .iter()
-        .filter_map(|name| {
-            config.agents.get(name).map(|agent_config| {
-                AgentType::from_config(name, agent_config, working_dir.to_path_buf())
-            })
+        .map(|name| {
+            let agent_config = config
+                .get_agent(name)
+                .ok_or_else(|| anyhow::anyhow!("Review agent '{}' not found in config", name))?;
+            Ok((
+                name.to_string(),
+                AgentType::from_config(name, agent_config, working_dir.to_path_buf())?,
+            ))
         })
         .collect::<Result<Vec<_>>>()?;
 
@@ -96,10 +116,9 @@ pub async fn run_multi_agent_review_phase(
     // Execute all reviewers in parallel using futures::future::join_all
     let futures: Vec<_> = agents
         .into_iter()
-        .map(|agent| {
+        .map(|(agent_name, agent)| {
             let p = prompt.clone();
             let tx = output_tx.clone();
-            let agent_name = agent.name().to_string();
 
             async move {
                 let _ = tx.send(Event::Output(format!(
@@ -107,7 +126,7 @@ pub async fn run_multi_agent_review_phase(
                     agent_name
                 )));
                 let result = agent
-                    .execute_streaming(p, Some(REVIEW_SYSTEM_PROMPT.to_string()), tx.clone())
+                    .execute_streaming(p, Some(REVIEW_SYSTEM_PROMPT.to_string()), None, tx.clone())
                     .await;
                 let _ = tx.send(Event::Output(format!(
                     "[review:{}] Review complete",
@@ -122,9 +141,25 @@ pub async fn run_multi_agent_review_phase(
 
     // Parse each result for APPROVED/NEEDS_REVISION
     let mut reviews = Vec::new();
+    let mut failures = Vec::new();
     for (agent_name, result) in results {
         match result {
             Ok(agent_result) => {
+                let trimmed_output = agent_result.output.trim();
+                if agent_result.is_error || trimmed_output.is_empty() {
+                    let error = if trimmed_output.is_empty() {
+                        "No output produced".to_string()
+                    } else {
+                        agent_result.output.clone()
+                    };
+                    let _ = output_tx.send(Event::Output(format!(
+                        "[review:{}] ERROR: {}",
+                        agent_name, error
+                    )));
+                    failures.push(ReviewFailure { agent_name, error });
+                    continue;
+                }
+
                 let needs_revision = agent_result.output.contains("NEEDS REVISION")
                     || agent_result.output.contains("NEEDS_REVISION")
                     || agent_result.output.contains("MAJOR ISSUES");
@@ -151,11 +186,15 @@ pub async fn run_multi_agent_review_phase(
                     "[error] {} review failed: {}",
                     agent_name, e
                 )));
+                failures.push(ReviewFailure {
+                    agent_name,
+                    error: e.to_string(),
+                });
             }
         }
     }
 
-    Ok(reviews)
+    Ok(ReviewBatchResult { reviews, failures })
 }
 
 /// Build the review prompt for multi-agent review

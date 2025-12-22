@@ -53,6 +53,7 @@ impl AgentType {
     }
 
     /// Get the agent's name
+    #[allow(dead_code)]
     pub fn name(&self) -> &str {
         match self {
             Self::Claude(_) => "claude",
@@ -66,22 +67,23 @@ impl AgentType {
         &self,
         prompt: String,
         system_prompt: Option<String>,
+        max_turns: Option<u32>,
         output_tx: mpsc::UnboundedSender<Event>,
     ) -> Result<AgentResult> {
         match self {
             Self::Claude(agent) => {
                 agent
-                    .execute_streaming(prompt, system_prompt, output_tx)
+                    .execute_streaming(prompt, system_prompt, max_turns, output_tx)
                     .await
             }
             Self::Codex(agent) => {
                 agent
-                    .execute_streaming(prompt, system_prompt, output_tx)
+                    .execute_streaming(prompt, system_prompt, max_turns, output_tx)
                     .await
             }
             Self::Gemini(agent) => {
                 agent
-                    .execute_streaming(prompt, system_prompt, output_tx)
+                    .execute_streaming(prompt, system_prompt, max_turns, output_tx)
                     .await
             }
         }

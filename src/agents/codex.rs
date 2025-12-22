@@ -55,6 +55,7 @@ impl CodexAgent {
         &self,
         prompt: String,
         _system_prompt: Option<String>, // Codex doesn't support separate system prompt
+        _max_turns: Option<u32>,
         output_tx: mpsc::UnboundedSender<Event>,
     ) -> Result<AgentResult> {
         let mut cmd = Command::new(&self.config.command);

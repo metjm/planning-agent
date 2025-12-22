@@ -55,6 +55,7 @@ impl GeminiAgent {
         &self,
         prompt: String,
         _system_prompt: Option<String>, // Gemini CLI may use different mechanism
+        _max_turns: Option<u32>,
         output_tx: mpsc::UnboundedSender<Event>,
     ) -> Result<AgentResult> {
         let mut cmd = Command::new(&self.config.command);

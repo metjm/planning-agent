@@ -1,5 +1,7 @@
 use crate::state::Phase;
-use crate::tui::{ApprovalMode, FocusedPanel, InputMode, Session, SessionStatus, TabManager};
+use crate::tui::{
+    ApprovalContext, ApprovalMode, FocusedPanel, InputMode, Session, SessionStatus, TabManager,
+};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -860,16 +862,34 @@ fn draw_choice_popup(frame: &mut Frame, session: &Session, area: Rect) {
         ])
         .split(area);
 
+    let (title_text, title_color, border_color, block_title, summary_title) =
+        match session.approval_context {
+            ApprovalContext::PlanApproval => (
+                " ✓ Plan Approved by AI ",
+                Color::Green,
+                Color::Green,
+                " Review Plan ",
+                " Plan Summary (j/k to scroll) ",
+            ),
+            ApprovalContext::ReviewDecision => (
+                " ! Reviewer Errors Detected ",
+                Color::Yellow,
+                Color::Yellow,
+                " Review Decision ",
+                " Review Failure Details (j/k to scroll) ",
+            ),
+        };
+
     // Title block
     let title = Paragraph::new(Line::from(vec![Span::styled(
-        " ✓ Plan Approved by AI ",
-        Style::default().fg(Color::Green).bold(),
+        title_text,
+        Style::default().fg(title_color).bold(),
     )]))
     .block(
         Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Green))
-            .title(" Review Plan "),
+            .border_style(Style::default().fg(border_color))
+            .title(block_title),
     );
     frame.render_widget(title, chunks[0]);
 
@@ -877,7 +897,7 @@ fn draw_choice_popup(frame: &mut Frame, session: &Session, area: Rect) {
     let summary_block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Cyan))
-        .title(" Plan Summary (j/k to scroll) ");
+        .title(summary_title);
 
     let inner_area = summary_block.inner(chunks[1]);
     let visible_height = inner_area.height as usize;
@@ -906,16 +926,26 @@ fn draw_choice_popup(frame: &mut Frame, session: &Session, area: Rect) {
     }
 
     // Instructions
-    let instructions = Paragraph::new(vec![Line::from(vec![
-        Span::styled("  [a] ", Style::default().fg(Color::Green).bold()),
-        Span::raw("Accept  "),
-        Span::styled("  [i] ", Style::default().fg(Color::Magenta).bold()),
-        Span::raw("Implement  "),
-        Span::styled("  [d] ", Style::default().fg(Color::Yellow).bold()),
-        Span::raw("Decline  "),
-        Span::styled("  [j/k] ", Style::default().fg(Color::Cyan).bold()),
-        Span::raw("Scroll"),
-    ])])
+    let instructions = match session.approval_context {
+        ApprovalContext::PlanApproval => Paragraph::new(vec![Line::from(vec![
+            Span::styled("  [a] ", Style::default().fg(Color::Green).bold()),
+            Span::raw("Accept  "),
+            Span::styled("  [i] ", Style::default().fg(Color::Magenta).bold()),
+            Span::raw("Implement  "),
+            Span::styled("  [d] ", Style::default().fg(Color::Yellow).bold()),
+            Span::raw("Decline  "),
+            Span::styled("  [j/k] ", Style::default().fg(Color::Cyan).bold()),
+            Span::raw("Scroll"),
+        ])]),
+        ApprovalContext::ReviewDecision => Paragraph::new(vec![Line::from(vec![
+            Span::styled("  [c] ", Style::default().fg(Color::Green).bold()),
+            Span::raw("Continue  "),
+            Span::styled("  [r] ", Style::default().fg(Color::Yellow).bold()),
+            Span::raw("Retry Failed  "),
+            Span::styled("  [j/k] ", Style::default().fg(Color::Cyan).bold()),
+            Span::raw("Scroll"),
+        ])]),
+    }
     .block(
         Block::default()
             .borders(Borders::ALL)
