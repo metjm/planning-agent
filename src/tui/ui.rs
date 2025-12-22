@@ -244,14 +244,14 @@ fn draw_streaming(frame: &mut Frame, session: &Session, area: Rect) {
     let is_focused = session.focused_panel == FocusedPanel::Chat;
     let title = if session.streaming_follow_mode {
         if is_focused {
-            " Claude Streaming [*] "
+            " Agent Output [*] "
         } else {
-            " Claude Streaming "
+            " Agent Output "
         }
     } else if is_focused {
-        " Claude Streaming [SCROLLED *] "
+        " Agent Output [SCROLLED *] "
     } else {
-        " Claude Streaming [SCROLLED] "
+        " Agent Output [SCROLLED] "
     };
 
     let border_color = if is_focused { Color::Yellow } else { Color::Green };
