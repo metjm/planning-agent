@@ -153,6 +153,32 @@ impl CodexAgent {
                                                 final_output.push_str(content);
                                             }
                                         }
+                                        "item.completed" | "item.delta" => {
+                                            if let Some(item) = json.get("item") {
+                                                let item_type = item.get("type").and_then(|v| v.as_str());
+                                                let is_message = matches!(
+                                                    item_type,
+                                                    Some("agent_message")
+                                                        | Some("message")
+                                                        | Some("assistant_message")
+                                                        | Some("final_message")
+                                                        | Some("text")
+                                                );
+                                                if is_message {
+                                                    if let Some(content) = item
+                                                        .get("text")
+                                                        .or_else(|| item.get("delta"))
+                                                        .or_else(|| item.get("content"))
+                                                        .and_then(|c| c.as_str())
+                                                    {
+                                                        let _ = output_tx.send(Event::Streaming(
+                                                            content.to_string(),
+                                                        ));
+                                                        final_output.push_str(content);
+                                                    }
+                                                }
+                                            }
+                                        }
                                         "function_call" | "tool_call" => {
                                             if let Some(name) = json.get("name")
                                                 .or_else(|| json.get("function").and_then(|f| f.get("name")))
