@@ -163,6 +163,7 @@ impl CodexAgent {
                                                         | Some("assistant_message")
                                                         | Some("final_message")
                                                         | Some("text")
+                                                        | Some("reasoning")
                                                 );
                                                 if is_message {
                                                     if let Some(content) = item
@@ -443,6 +444,7 @@ impl CodexAgent {
                                                         | Some("assistant_message")
                                                         | Some("final_message")
                                                         | Some("text")
+                                                        | Some("reasoning")
                                                 );
                                                 if is_message {
                                                     if let Some(content) = item
