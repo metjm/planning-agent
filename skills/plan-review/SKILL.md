@@ -1,6 +1,6 @@
 ---
 name: plan-review
-description: Expert technical reviewer for implementation plans. Reviews plans in docs/plans/ for correctness, completeness, and technical accuracy. Validates libraries, APIs, and approaches. Outputs feedback to <plan-name>_feedback.md.
+description: Expert technical reviewer for implementation plans. Reviews plans in docs/plans/ for correctness, completeness, and technical accuracy. Validates libraries, APIs, and approaches. Outputs feedback as markdown in the final response.
 ---
 
 # Plan Review and Validation
@@ -123,9 +123,9 @@ Think deeply about alternative approaches:
 
 ### Phase 4: Write Feedback
 
-Generate comprehensive feedback document at the same location as the plan with `_feedback` suffix:
+Generate comprehensive feedback as markdown in your final response.
 
-- If plan is at `docs/plans/feature-name.md`, feedback goes to `docs/plans/feature-name_feedback.md`
+- Do not write files.
 - Do not edit the original plan.
 
 ## Output Format
@@ -313,7 +313,8 @@ Use sub-agents extensively for parallel verification tasks. You can use up to 20
 
 - DO NOT implement anything - review only
 - DO NOT modify the original plan
-- ALWAYS write feedback to the `_feedback.md` file
+- ALWAYS return the feedback as markdown in your final response
+- DO NOT write feedback to a file
 - VERIFY all technical claims by reading actual source code or documentation
 - BE SPECIFIC - cite exact files, lines, and evidence for all findings
 - BE CONSTRUCTIVE - provide actionable recommendations, not just criticism

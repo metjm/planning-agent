@@ -24,8 +24,21 @@ pub fn install_skills_if_needed() -> anyhow::Result<()> {
             let skill_dir = skills_dir.join(name);
             let skill_file = skill_dir.join("SKILL.md");
 
-            if !skill_file.exists() {
-                eprintln!("[planning-agent] Installing skill: {}", name);
+            let mut action = "Installing";
+            let should_write = match fs::read_to_string(&skill_file) {
+                Ok(existing) => {
+                    if existing == content {
+                        false
+                    } else {
+                        action = "Updating";
+                        true
+                    }
+                }
+                Err(_) => true,
+            };
+
+            if should_write {
+                eprintln!("[planning-agent] {} skill: {}", action, name);
                 fs::create_dir_all(&skill_dir)?;
                 fs::write(&skill_file, content)?;
             }
