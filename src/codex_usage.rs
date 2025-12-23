@@ -95,9 +95,15 @@ pub fn fetch_codex_usage_sync() -> CodexUsage {
 
     match run_codex_status_via_pty("codex", timeout) {
         Ok(raw_output) => {
-            let output = strip_ansi_codes(&raw_output);
+            let output = normalize_status_output(&raw_output);
+            let parse_result = parse_codex_usage(&output);
 
-            match parse_codex_usage(&output) {
+            if is_debug_enabled() {
+                let result_str = format!("{:?}", parse_result);
+                write_debug_log(&raw_output, &output, &result_str);
+            }
+
+            match parse_result {
                 ParseResult::Success {
                     hourly,
                     weekly,
@@ -119,11 +125,20 @@ pub fn fetch_codex_usage_sync() -> CodexUsage {
                     fetched_at: Some(Instant::now()),
                     ..Default::default()
                 },
-                ParseResult::UnrecognizedFormat => CodexUsage {
-                    error_message: Some("Could not parse status".to_string()),
-                    fetched_at: Some(Instant::now()),
-                    ..Default::default()
-                },
+                ParseResult::UnrecognizedFormat => {
+                    if is_debug_enabled() {
+                        write_debug_log(
+                            &raw_output,
+                            &output,
+                            "UnrecognizedFormat - PARSE FAILURE",
+                        );
+                    }
+                    CodexUsage {
+                        error_message: Some("Could not parse status".to_string()),
+                        fetched_at: Some(Instant::now()),
+                        ..Default::default()
+                    }
+                }
             }
         }
         Err(e) => CodexUsage::with_error(e),
@@ -296,6 +311,8 @@ fn run_codex_status_via_pty(command: &str, timeout: Duration) -> Result<String, 
         return Err("Timeout".to_string());
     }
 
+    let status_start_offset = output_buffer.lock().unwrap().len();
+
     for c in "/status".chars() {
         writer.write_all(&[c as u8]).map_err(|e| format!("Failed to send: {}", e))?;
         std::thread::sleep(Duration::from_millis(30));
@@ -304,24 +321,56 @@ fn run_codex_status_via_pty(command: &str, timeout: Duration) -> Result<String, 
     writer.write_all(b"\r").map_err(|e| format!("Failed to send Enter: {}", e))?;
 
     let status_start = Instant::now();
-    let status_timeout = Duration::from_secs(5);
+    let status_timeout = Duration::from_secs(10);
+    let idle_threshold = Duration::from_millis(500);
+
+    let mut last_len = status_start_offset;
+    let mut last_change = Instant::now();
+    let mut found_status_markers = false;
 
     loop {
         if status_start.elapsed() > status_timeout {
             break;
         }
 
-        let data = output_buffer.lock().unwrap();
-        let text = String::from_utf8_lossy(&data);
-        let stripped = strip_ansi_codes(&text);
-        drop(data);
+        respond_to_cursor_query(&mut writer, &needs_cursor_response);
 
-        if stripped.contains("Weekly limit") || stripped.contains("5h limit") {
-            std::thread::sleep(Duration::from_millis(500)); 
+        let current_len = output_buffer.lock().unwrap().len();
+
+        if current_len != last_len {
+            last_len = current_len;
+            last_change = Instant::now();
+
+            let data = output_buffer.lock().unwrap();
+            let status_slice = if status_start_offset < data.len() {
+                &data[status_start_offset..]
+            } else {
+                &[]
+            };
+            let text = String::from_utf8_lossy(status_slice);
+            let stripped = strip_ansi_codes(&text);
+            drop(data);
+
+            if stripped.contains("Weekly limit")
+                || stripped.contains("weekly limit")
+                || stripped.contains("5h limit")
+                || stripped.contains("5-hour limit")
+                || stripped.contains("hit your usage limit")
+                || stripped.contains("data not available")
+            {
+                found_status_markers = true;
+            }
+        }
+
+        if found_status_markers && last_change.elapsed() > idle_threshold {
             break;
         }
 
-        std::thread::sleep(Duration::from_millis(100));
+        if last_change.elapsed() > idle_threshold * 2 {
+            break;
+        }
+
+        std::thread::sleep(Duration::from_millis(50));
     }
 
     let _ = writer.write_all(&[0x03]); 
@@ -365,20 +414,46 @@ fn strip_ansi_codes(text: &str) -> String {
     let mut chars = text.chars().peekable();
     while let Some(c) = chars.next() {
         if c == '\x1b' {
-            if chars.peek() == Some(&'[') {
-                chars.next();
-                while let Some(&next) = chars.peek() {
+            match chars.peek() {
+                Some(&'[') => {
                     chars.next();
-                    if next.is_ascii_alphabetic() {
-                        break;
+                    while let Some(&next) = chars.peek() {
+                        chars.next();
+                        if next.is_ascii_alphabetic() {
+                            break;
+                        }
                     }
                 }
+                Some(&']') => {
+                    chars.next();
+                    while let Some(&next) = chars.peek() {
+                        chars.next();
+                        if next == '\x07' || next == '\\' {
+                            break;
+                        }
+                    }
+                }
+                _ => {}
             }
         } else {
             result.push(c);
         }
     }
     result
+}
+
+fn normalize_status_output(text: &str) -> String {
+    let stripped = strip_ansi_codes(text);
+
+    let without_cr = stripped.replace('\r', "");
+
+    let lines: Vec<&str> = without_cr
+        .lines()
+        .map(|line| line.trim())
+        .filter(|line| !line.is_empty())
+        .collect();
+
+    lines.join("\n")
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -421,25 +496,29 @@ pub fn parse_codex_usage(text: &str) -> ParseResult {
     for line in text.lines() {
         let line_lower = line.to_lowercase();
 
-        if line_lower.contains("5h limit") {
-            if let Some(pct) = extract_percentage_left(line) {
+        let is_hourly_limit = line_lower.contains("5h limit")
+            || line_lower.contains("5-hour limit")
+            || line_lower.contains("5 hour limit")
+            || line_lower.contains("5 h limit")
+            || line_lower.contains("hourly limit");
+
+        if is_hourly_limit {
+            if let Some(pct) = extract_percentage(line) {
                 hourly = Some(pct);
             }
         }
 
         if line_lower.contains("weekly limit") {
-            if let Some(pct) = extract_percentage_left(line) {
+            if let Some(pct) = extract_percentage(line) {
                 weekly = Some(pct);
             }
         }
 
         if line_lower.contains("account:") {
-
             if let Some(start) = line.rfind('(') {
                 if let Some(end) = line.rfind(')') {
                     if end > start {
                         let plan_str = &line[start + 1..end];
-
                         if !plan_str.is_empty()
                             && !plan_str.contains('@')
                             && plan_str.to_lowercase() != "unknown"
@@ -463,11 +542,44 @@ pub fn parse_codex_usage(text: &str) -> ParseResult {
     }
 }
 
-fn extract_percentage_left(line: &str) -> Option<u8> {
+fn extract_percentage(line: &str) -> Option<u8> {
+    let line_lower = line.to_lowercase();
 
+    let patterns = [
+        ("% left", false),
+        ("% remaining", false),
+        ("% used", true),
+    ];
+
+    for (pattern, is_used) in patterns {
+        if let Some(pos) = line_lower.find(pattern) {
+            let before = &line[..pos];
+            let digits: String = before
+                .chars()
+                .rev()
+                .take_while(|c| c.is_ascii_digit())
+                .collect::<String>()
+                .chars()
+                .rev()
+                .collect();
+            if !digits.is_empty() {
+                if let Ok(pct) = digits.parse::<u8>() {
+                    return if is_used {
+                        Some(100u8.saturating_sub(pct))
+                    } else {
+                        Some(pct)
+                    };
+                }
+            }
+        }
+    }
+    None
+}
+
+#[allow(dead_code)]
+fn extract_percentage_left(line: &str) -> Option<u8> {
     if let Some(left_pos) = line.find("% left") {
         let before = &line[..left_pos];
-
         let digits: String = before
             .chars()
             .rev()
@@ -569,6 +681,116 @@ mod tests {
         assert_eq!(extract_percentage_left("84% left"), Some(84));
         assert_eq!(extract_percentage_left("[███] 100% left (resets)"), Some(100));
         assert_eq!(extract_percentage_left("no percentage"), None);
+    }
+
+    #[test]
+    fn test_extract_percentage_new() {
+        assert_eq!(extract_percentage("84% left"), Some(84));
+        assert_eq!(extract_percentage("[███] 100% left (resets)"), Some(100));
+        assert_eq!(extract_percentage("no percentage"), None);
+
+        assert_eq!(extract_percentage("75% remaining"), Some(75));
+        assert_eq!(extract_percentage("[███] 50% remaining (resets tomorrow)"), Some(50));
+
+        assert_eq!(extract_percentage("25% used"), Some(75));
+        assert_eq!(extract_percentage("[███] 10% used (resets 12:00)"), Some(90));
+        assert_eq!(extract_percentage("100% used"), Some(0));
+        assert_eq!(extract_percentage("0% used"), Some(100));
+    }
+
+    #[test]
+    fn test_parse_codex_usage_5hour_variations() {
+        let output1 = "5-hour limit: [███] 70% left (resets 12:00)";
+        let result1 = parse_codex_usage(output1);
+        assert_eq!(
+            result1,
+            ParseResult::Success {
+                hourly: Some(70),
+                weekly: None,
+                plan: None,
+            }
+        );
+
+        let output2 = "5 hour limit: [███] 60% remaining";
+        let result2 = parse_codex_usage(output2);
+        assert_eq!(
+            result2,
+            ParseResult::Success {
+                hourly: Some(60),
+                weekly: None,
+                plan: None,
+            }
+        );
+
+        let output3 = "hourly limit: [███] 50% left";
+        let result3 = parse_codex_usage(output3);
+        assert_eq!(
+            result3,
+            ParseResult::Success {
+                hourly: Some(50),
+                weekly: None,
+                plan: None,
+            }
+        );
+    }
+
+    #[test]
+    fn test_parse_codex_usage_percent_used() {
+        let output = r#"
+  5h limit:         [██░░░░░░░░░░░░░░░░░░] 20% used
+  Weekly limit:     [████░░░░░░░░░░░░░░░░] 35% used
+  Account:          user@example.com (Pro)
+"#;
+        let result = parse_codex_usage(output);
+        assert_eq!(
+            result,
+            ParseResult::Success {
+                hourly: Some(80),
+                weekly: Some(65),
+                plan: Some("Pro".to_string()),
+            }
+        );
+    }
+
+    #[test]
+    fn test_normalize_status_output() {
+        let input = "line1\r\nline2\r\n\r\nline3";
+        let normalized = normalize_status_output(input);
+        assert_eq!(normalized, "line1\nline2\nline3");
+
+        let with_empty = "  line1  \n\n  line2  \n  ";
+        let normalized2 = normalize_status_output(with_empty);
+        assert_eq!(normalized2, "line1\nline2");
+    }
+
+    #[test]
+    fn test_strip_ansi_codes_osc() {
+        let with_osc = "text\x1b]0;window title\x07more text";
+        let stripped = strip_ansi_codes(with_osc);
+        assert_eq!(stripped, "textmore text");
+
+        let with_csi = "text\x1b[32mgreen\x1b[0m plain";
+        let stripped2 = strip_ansi_codes(with_csi);
+        assert_eq!(stripped2, "textgreen plain");
+    }
+
+    #[test]
+    fn test_parse_with_box_drawing() {
+        let output = r#"
+╭──────────────────────────────────────────────────────────────╮
+│  5h limit:         [█████████████████░░░] 84% left           │
+│  Weekly limit:     [██████████████████░░] 89% left           │
+╰──────────────────────────────────────────────────────────────╯
+"#;
+        let result = parse_codex_usage(output);
+        assert_eq!(
+            result,
+            ParseResult::Success {
+                hourly: Some(84),
+                weekly: Some(89),
+                plan: None,
+            }
+        );
     }
 
     #[test]
