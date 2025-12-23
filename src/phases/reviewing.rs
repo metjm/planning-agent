@@ -205,12 +205,24 @@ pub async fn run_multi_agent_review_with_context(
                 }
 
                 let extracted = extract_plan_feedback(&output);
-                let feedback = if extracted != output {
+                let has_tags = extracted != output;
+                let require_tags = config.workflow.reviewing.require_plan_feedback_tags;
+
+                let feedback = if has_tags {
                     session_sender.send_output(format!(
                         "[review:{}] Extracted feedback from <plan-feedback> tags",
                         agent_name
                     ));
                     extracted
+                } else if require_tags {
+                    // When require_plan_feedback_tags is true, missing tags is a parse failure
+                    let error = "No <plan-feedback> tags found (required by config)".to_string();
+                    session_sender.send_output(format!(
+                        "[review:{}] ERROR: {}",
+                        agent_name, error
+                    ));
+                    failures.push(ReviewFailure { agent_name, error });
+                    continue;
                 } else {
                     session_sender.send_output(format!(
                         "[review:{}] WARNING: No <plan-feedback> tags found, using raw output",

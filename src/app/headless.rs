@@ -91,7 +91,7 @@ pub async fn run_headless_with_config(
                 }
 
                 state.transition(Phase::Reviewing)?;
-                state.save(&state_path)?;
+                state.save_atomic(&state_path)?;
             }
 
             Phase::Reviewing => {
@@ -186,7 +186,7 @@ pub async fn run_headless_with_config(
                     }
                 }
                 last_reviews = reviews;
-                state.save(&state_path)?;
+                state.save_atomic(&state_path)?;
             }
 
             Phase::Revising => {
@@ -212,7 +212,7 @@ pub async fn run_headless_with_config(
 
                 state.iteration += 1;
                 state.transition(Phase::Reviewing)?;
-                state.save(&state_path)?;
+                state.save_atomic(&state_path)?;
             }
 
             Phase::Complete => break,
@@ -307,7 +307,7 @@ pub async fn run_headless(cli: Cli) -> Result<()> {
     let plans_dir = working_dir.join("docs/plans");
     std::fs::create_dir_all(&plans_dir).context("Failed to create docs/plans directory")?;
 
-    state.save(&state_path)?;
+    state.save_atomic(&state_path)?;
 
     let (output_tx, mut output_rx) = mpsc::unbounded_channel::<Event>();
 

@@ -48,6 +48,10 @@ pub struct MultiAgentPhase {
     pub agents: Vec<String>,
     #[serde(default)]
     pub aggregation: AggregationMode,
+    /// If true, reviews without `<plan-feedback>` tags are treated as parse failures.
+    /// If false (default), raw output is used when tags are missing.
+    #[serde(default)]
+    pub require_plan_feedback_tags: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default, PartialEq)]

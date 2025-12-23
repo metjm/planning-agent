@@ -1,5 +1,5 @@
-use super::log::AgentLogger;
-use super::{AgentContext, AgentResult};
+use crate::agents::log::AgentLogger;
+use crate::agents::{AgentContext, AgentResult};
 use crate::config::AgentConfig;
 use crate::tui::Event;
 use anyhow::{Context, Result};

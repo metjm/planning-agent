@@ -1,45 +1,138 @@
+//! Claude CLI output parser implementing the unified AgentStreamParser trait.
+//!
+//! This is the reference parser implementation that other agent parsers follow.
+//! It parses the Claude CLI's stream-json output format.
 
+use crate::agents::protocol::{AgentEvent, AgentStreamParser, AgentTokenUsage, ParseError};
 use crate::tui::{TodoItem, TodoStatus, TokenUsage};
 use serde_json::Value;
 
 use super::util::extract_bash_command;
 
+/// Events parsed from Claude CLI output.
+///
+/// This enum is kept for backward compatibility with existing code that uses
+/// the `parse_json_line` function directly.
+#[derive(Debug, Clone)]
 pub enum ParsedEvent {
-
+    /// Signals end of a turn
     TurnCompleted,
-
+    /// Detected model name
     ModelDetected(String),
-
+    /// Reason for stopping
     StopReason(String),
-
+    /// Token usage metrics
     TokenUsage(TokenUsage),
-
+    /// Text content from the model
     TextContent(String),
-
+    /// Tool execution started
     ToolStarted {
         name: String,
         display_name: String,
         input_preview: String,
     },
-
+    /// Tool execution result
     ToolResult {
         tool_use_id: String,
         is_error: bool,
         content_lines: Vec<String>,
         has_more: bool,
     },
-
+    /// Todo list updates
     TodosUpdate(Vec<TodoItem>),
-
+    /// Start of a content block
     ContentBlockStart { name: String },
-
+    /// Content delta (streaming text)
     ContentDelta(String),
-
+    /// Final result
     Result {
         output: Option<String>,
         cost: Option<f64>,
         is_error: bool,
     },
+}
+
+impl ParsedEvent {
+    /// Convert a ParsedEvent to an AgentEvent for unified handling.
+    pub fn to_agent_event(self) -> AgentEvent {
+        match self {
+            ParsedEvent::TurnCompleted => AgentEvent::TurnCompleted,
+            ParsedEvent::ModelDetected(model) => AgentEvent::ModelDetected(model),
+            ParsedEvent::StopReason(reason) => AgentEvent::StopReason(reason),
+            ParsedEvent::TokenUsage(usage) => AgentEvent::TokenUsage(AgentTokenUsage {
+                input_tokens: usage.input_tokens,
+                output_tokens: usage.output_tokens,
+                cache_creation_tokens: usage.cache_creation_tokens,
+                cache_read_tokens: usage.cache_read_tokens,
+            }),
+            ParsedEvent::TextContent(text) => AgentEvent::TextContent(text),
+            ParsedEvent::ToolStarted {
+                name,
+                display_name,
+                input_preview,
+            } => AgentEvent::ToolStarted {
+                name,
+                display_name,
+                input_preview,
+            },
+            ParsedEvent::ToolResult {
+                tool_use_id,
+                is_error,
+                content_lines,
+                has_more,
+            } => AgentEvent::ToolResult {
+                tool_use_id,
+                is_error,
+                content_lines,
+                has_more,
+            },
+            ParsedEvent::TodosUpdate(items) => AgentEvent::TodosUpdate(items),
+            ParsedEvent::ContentBlockStart { name } => AgentEvent::ContentBlockStart { name },
+            ParsedEvent::ContentDelta(text) => AgentEvent::ContentDelta(text),
+            ParsedEvent::Result {
+                output,
+                cost,
+                is_error,
+            } => AgentEvent::Result {
+                output,
+                cost,
+                is_error,
+            },
+        }
+    }
+}
+
+/// Parser for Claude CLI JSON output implementing the unified AgentStreamParser trait.
+#[derive(Debug, Clone, Default)]
+pub struct ClaudeParser {
+    last_message_type: Option<String>,
+}
+
+impl ClaudeParser {
+    pub fn new() -> Self {
+        Self {
+            last_message_type: None,
+        }
+    }
+}
+
+impl AgentStreamParser for ClaudeParser {
+    fn parse_line(&mut self, line: &str) -> Result<Option<AgentEvent>, ParseError> {
+        let events = self.parse_line_multi(line)?;
+        Ok(events.into_iter().next())
+    }
+
+    fn parse_line_multi(&mut self, line: &str) -> Result<Vec<AgentEvent>, ParseError> {
+        let parsed_events = parse_json_line(line, &mut self.last_message_type);
+        Ok(parsed_events
+            .into_iter()
+            .map(|e| e.to_agent_event())
+            .collect())
+    }
+
+    fn reset(&mut self) {
+        self.last_message_type = None;
+    }
 }
 
 pub fn parse_json_line(line: &str, last_message_type: &mut Option<String>) -> Vec<ParsedEvent> {
