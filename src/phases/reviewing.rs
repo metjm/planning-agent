@@ -45,7 +45,8 @@ pub struct ReviewBatchResult {
 
 const REVIEW_SYSTEM_PROMPT: &str = r#"You are a technical plan reviewer.
 Review the plan for correctness, completeness, and technical accuracy.
-Output "APPROVED" or "NEEDS REVISION" with specific feedback."#;
+Use the "plan-review" skill to review.
+"#;
 
 /// Run review phase with multiple agents in parallel
 pub async fn run_multi_agent_review_with_context(
