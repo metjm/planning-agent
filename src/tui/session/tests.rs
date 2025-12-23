@@ -1,0 +1,553 @@
+
+use super::*;
+
+#[test]
+fn test_scroll_up_disables_follow_mode() {
+    let mut session = Session::new(0);
+    session.add_output("line1".to_string());
+    session.add_output("line2".to_string());
+    assert!(session.output_follow_mode);
+
+    session.scroll_up();
+    assert!(!session.output_follow_mode);
+}
+
+#[test]
+fn test_scroll_to_bottom_enables_follow_mode() {
+    let mut session = Session::new(0);
+    session.output_follow_mode = false;
+    session.scroll_to_bottom();
+    assert!(session.output_follow_mode);
+}
+
+#[test]
+fn test_add_output_enables_follow_mode() {
+    let mut session = Session::new(0);
+    session.output_follow_mode = false;
+    session.add_output("new line".to_string());
+    assert!(session.output_follow_mode);
+}
+
+#[test]
+fn test_toggle_focus() {
+    let mut session = Session::new(0);
+    assert_eq!(session.focused_panel, FocusedPanel::Output);
+
+    session.toggle_focus();
+    assert_eq!(session.focused_panel, FocusedPanel::Chat);
+
+    session.toggle_focus();
+    assert_eq!(session.focused_panel, FocusedPanel::Output);
+}
+
+#[test]
+fn test_input_mode_transitions() {
+    let mut session = Session::new(0);
+    assert_eq!(session.input_mode, InputMode::Normal);
+
+    session.input_mode = InputMode::NamingTab;
+    assert_eq!(session.input_mode, InputMode::NamingTab);
+
+    session.input_mode = InputMode::Normal;
+    assert_eq!(session.input_mode, InputMode::Normal);
+}
+
+#[test]
+fn test_tab_input_buffer() {
+    let mut session = Session::new(0);
+    session.input_mode = InputMode::NamingTab;
+
+    session.insert_tab_input_char('h');
+    session.insert_tab_input_char('e');
+    session.insert_tab_input_char('l');
+    session.insert_tab_input_char('l');
+    session.insert_tab_input_char('o');
+
+    assert_eq!(session.tab_input, "hello");
+    assert_eq!(session.tab_input_cursor, 5);
+
+    session.delete_tab_input_char();
+    assert_eq!(session.tab_input, "hell");
+    assert_eq!(session.tab_input_cursor, 4);
+}
+
+#[test]
+fn test_session_with_name() {
+    let session = Session::with_name(1, "test-feature".to_string());
+    assert_eq!(session.id, 1);
+    assert_eq!(session.name, "test-feature");
+    assert_eq!(session.input_mode, InputMode::Normal);
+    assert_eq!(session.status, SessionStatus::Planning);
+}
+
+#[test]
+fn test_insert_newline() {
+    let mut session = Session::new(0);
+    session.tab_input = "hello".to_string();
+    session.tab_input_cursor = 5;
+
+    session.insert_tab_input_newline();
+
+    assert_eq!(session.tab_input, "hello\n");
+    assert_eq!(session.tab_input_cursor, 6);
+
+    session.tab_input = "hello world".to_string();
+    session.tab_input_cursor = 5;
+    session.insert_tab_input_newline();
+
+    assert_eq!(session.tab_input, "hello\n world");
+    assert_eq!(session.tab_input_cursor, 6);
+}
+
+#[test]
+fn test_cursor_up_movement() {
+    let mut session = Session::new(0);
+    session.tab_input = "line1\nline2\nline3".to_string();
+    session.tab_input_cursor = 14; 
+
+    session.move_tab_input_cursor_up();
+    assert_eq!(session.tab_input_cursor, 8); 
+
+    session.move_tab_input_cursor_up();
+    assert_eq!(session.tab_input_cursor, 2); 
+}
+
+#[test]
+fn test_cursor_down_movement() {
+    let mut session = Session::new(0);
+    session.tab_input = "line1\nline2\nline3".to_string();
+    session.tab_input_cursor = 2; 
+
+    session.move_tab_input_cursor_down();
+    assert_eq!(session.tab_input_cursor, 8); 
+
+    session.move_tab_input_cursor_down();
+    assert_eq!(session.tab_input_cursor, 14); 
+}
+
+#[test]
+fn test_cursor_up_at_first_line() {
+    let mut session = Session::new(0);
+    session.tab_input = "line1\nline2".to_string();
+    session.tab_input_cursor = 2; 
+
+    session.move_tab_input_cursor_up();
+    assert_eq!(session.tab_input_cursor, 2); 
+}
+
+#[test]
+fn test_cursor_down_at_last_line() {
+    let mut session = Session::new(0);
+    session.tab_input = "line1\nline2".to_string();
+    session.tab_input_cursor = 8; 
+
+    session.move_tab_input_cursor_down();
+    assert_eq!(session.tab_input_cursor, 8); 
+}
+
+#[test]
+fn test_cursor_up_clamps_to_shorter_line() {
+    let mut session = Session::new(0);
+    session.tab_input = "hi\nworld".to_string();
+    session.tab_input_cursor = 7; 
+
+    session.move_tab_input_cursor_up();
+    assert_eq!(session.tab_input_cursor, 2); 
+}
+
+#[test]
+fn test_cursor_down_clamps_to_shorter_line() {
+    let mut session = Session::new(0);
+    session.tab_input = "world\nhi".to_string();
+    session.tab_input_cursor = 4; 
+
+    session.move_tab_input_cursor_down();
+    assert_eq!(session.tab_input_cursor, 8); 
+}
+
+#[test]
+fn test_get_tab_input_cursor_position() {
+    let mut session = Session::new(0);
+    session.tab_input = "line1\nline2\nline3".to_string();
+
+    session.tab_input_cursor = 0;
+    assert_eq!(session.get_tab_input_cursor_position(), (0, 0));
+
+    session.tab_input_cursor = 3;
+    assert_eq!(session.get_tab_input_cursor_position(), (0, 3));
+
+    session.tab_input_cursor = 6; 
+    assert_eq!(session.get_tab_input_cursor_position(), (1, 0));
+
+    session.tab_input_cursor = 14; 
+    assert_eq!(session.get_tab_input_cursor_position(), (2, 2));
+}
+
+#[test]
+fn test_get_tab_input_line_count() {
+    let mut session = Session::new(0);
+
+    session.tab_input = "single line".to_string();
+    assert_eq!(session.get_tab_input_line_count(), 1);
+
+    session.tab_input = "line1\nline2".to_string();
+    assert_eq!(session.get_tab_input_line_count(), 2);
+
+    session.tab_input = "line1\nline2\nline3".to_string();
+    assert_eq!(session.get_tab_input_line_count(), 3);
+
+    session.tab_input = "".to_string();
+    assert_eq!(session.get_tab_input_line_count(), 1);
+}
+
+#[test]
+fn test_display_cost_returns_api_cost() {
+    let mut session = Session::new(0);
+    session.total_cost = 0.1234;
+    session.total_input_tokens = 1000;
+    session.total_output_tokens = 500;
+
+    let cost = session.display_cost();
+    assert_eq!(cost, 0.1234);
+}
+
+#[test]
+fn test_display_cost_returns_zero_when_no_api_cost() {
+    let mut session = Session::new(0);
+    session.total_cost = 0.0;
+    session.total_input_tokens = 1000;
+    session.total_output_tokens = 500;
+    session.model_name = Some("claude-3.5-sonnet".to_string());
+
+    let cost = session.display_cost();
+
+    assert_eq!(cost, 0.0);
+}
+
+#[test]
+fn test_feedback_cursor_position_basic() {
+    let mut session = Session::new(0);
+    session.user_feedback = "hello".to_string();
+    session.cursor_position = 5;
+
+    let (row, col) = session.get_feedback_cursor_position(10);
+    assert_eq!(row, 0);
+    assert_eq!(col, 5);
+}
+
+#[test]
+fn test_feedback_cursor_position_with_wrap() {
+    let mut session = Session::new(0);
+    session.user_feedback = "hello world".to_string();
+    session.cursor_position = 11; 
+
+    let (row, col) = session.get_feedback_cursor_position(5);
+
+    assert_eq!(row, 2);
+    assert_eq!(col, 1);
+}
+
+#[test]
+fn test_feedback_cursor_position_empty() {
+    let mut session = Session::new(0);
+    session.user_feedback = "".to_string();
+    session.cursor_position = 0;
+
+    let (row, col) = session.get_feedback_cursor_position(10);
+    assert_eq!(row, 0);
+    assert_eq!(col, 0);
+}
+
+#[test]
+fn test_feedback_cursor_with_newline() {
+    let mut session = Session::new(0);
+    session.user_feedback = "hello\nworld".to_string();
+    session.cursor_position = 8; 
+
+    let (row, col) = session.get_feedback_cursor_position(20);
+    assert_eq!(row, 1);
+    assert_eq!(col, 2);
+}
+
+#[test]
+fn test_feedback_insert_char_utf8() {
+    let mut session = Session::new(0);
+    session.user_feedback = "".to_string();
+    session.cursor_position = 0;
+
+    session.insert_char('你');
+    assert_eq!(session.user_feedback, "你");
+    assert_eq!(session.cursor_position, 3); 
+
+    session.insert_char('好');
+    assert_eq!(session.user_feedback, "你好");
+    assert_eq!(session.cursor_position, 6);
+}
+
+#[test]
+fn test_feedback_delete_char_utf8() {
+    let mut session = Session::new(0);
+    session.user_feedback = "你好".to_string();
+    session.cursor_position = 6; 
+
+    session.delete_char();
+    assert_eq!(session.user_feedback, "你");
+    assert_eq!(session.cursor_position, 3);
+
+    session.delete_char();
+    assert_eq!(session.user_feedback, "");
+    assert_eq!(session.cursor_position, 0);
+}
+
+#[test]
+fn test_add_output_syncs_scroll() {
+    let mut session = Session::new(0);
+    session.output_follow_mode = false;
+    session.scroll_position = 0;
+
+    session.add_output("line1".to_string());
+    assert!(session.output_follow_mode);
+    assert_eq!(session.scroll_position, 0); 
+
+    session.add_output("line2".to_string());
+    assert_eq!(session.scroll_position, 1); 
+}
+
+#[test]
+fn test_scroll_to_bottom_syncs_position() {
+    let mut session = Session::new(0);
+    session.output_lines = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+    session.scroll_position = 0;
+    session.output_follow_mode = false;
+
+    session.scroll_to_bottom();
+    assert!(session.output_follow_mode);
+    assert_eq!(session.scroll_position, 2); 
+}
+
+#[test]
+fn test_insert_paste_basic() {
+    let mut session = Session::new(0);
+    session.insert_paste_tab_input("hello world".to_string());
+
+    assert!(session.has_tab_input_pastes());
+    assert_eq!(session.tab_input_pastes.len(), 1);
+    assert_eq!(session.tab_input, "[Pasted]");
+    assert_eq!(session.tab_input_cursor, 8);
+}
+
+#[test]
+fn test_insert_paste_multiline() {
+    let mut session = Session::new(0);
+    session.insert_paste_tab_input("line1\nline2\nline3".to_string());
+
+    assert_eq!(session.tab_input_pastes.len(), 1);
+    assert_eq!(session.tab_input_pastes[0].line_count, 3);
+    assert_eq!(session.tab_input, "[Pasted +2 lines]");
+}
+
+#[test]
+fn test_get_display_text_with_paste() {
+    let mut session = Session::new(0);
+    session.tab_input = "prefix ".to_string();
+    session.tab_input_cursor = 7;
+    session.insert_paste_tab_input("pasted content\nmore content".to_string());
+
+    let display = session.get_display_text_tab();
+    assert_eq!(display, "prefix [Pasted +1 lines]");
+}
+
+#[test]
+fn test_get_submit_text_expands_paste() {
+    let mut session = Session::new(0);
+    session.insert_paste_tab_input("pasted content".to_string());
+
+    let submit = session.get_submit_text_tab();
+    assert_eq!(submit, "pasted content");
+}
+
+#[test]
+fn test_get_submit_text_with_surrounding_text() {
+    let mut session = Session::new(0);
+    session.tab_input = "before ".to_string();
+    session.tab_input_cursor = 7;
+    session.insert_paste_tab_input("pasted".to_string());
+    session.tab_input.push_str(" after");
+
+    let submit = session.get_submit_text_tab();
+    assert_eq!(submit, "before pasted after");
+}
+
+#[test]
+fn test_delete_paste_block() {
+    let mut session = Session::new(0);
+    session.insert_paste_tab_input("content".to_string());
+
+    assert!(session.has_tab_input_pastes());
+    assert!(session.delete_paste_at_cursor_tab());
+    assert!(!session.has_tab_input_pastes());
+    assert!(session.tab_input.is_empty());
+    assert_eq!(session.tab_input_cursor, 0);
+}
+
+#[test]
+fn test_multiple_pastes() {
+    let mut session = Session::new(0);
+
+    session.insert_paste_tab_input("first".to_string());
+    session.tab_input.push(' ');
+    session.tab_input_cursor = session.tab_input.len();
+    session.insert_paste_tab_input("second".to_string());
+
+    assert_eq!(session.tab_input_pastes.len(), 2);
+    assert_eq!(session.tab_input, "[Pasted] [Pasted]");
+
+    let submit = session.get_submit_text_tab();
+    assert_eq!(submit, "first second");
+}
+
+#[test]
+fn test_feedback_paste_insert_and_expand() {
+    let mut session = Session::new(0);
+    session.insert_paste_feedback("feedback content".to_string());
+
+    assert!(session.has_feedback_pastes());
+    assert_eq!(session.get_display_text_feedback(), "[Pasted]");
+    assert_eq!(session.get_submit_text_feedback(), "feedback content");
+}
+
+#[test]
+fn test_clear_pastes() {
+    let mut session = Session::new(0);
+    session.insert_paste_tab_input("content".to_string());
+    session.insert_paste_feedback("feedback".to_string());
+
+    assert!(session.has_tab_input_pastes());
+    assert!(session.has_feedback_pastes());
+
+    session.clear_tab_input_pastes();
+    session.clear_feedback_pastes();
+
+    assert!(!session.has_tab_input_pastes());
+    assert!(!session.has_feedback_pastes());
+}
+
+#[test]
+fn test_empty_paste_ignored() {
+    let mut session = Session::new(0);
+    session.insert_paste_tab_input("".to_string());
+
+    assert!(!session.has_tab_input_pastes());
+    assert!(session.tab_input.is_empty());
+}
+
+#[test]
+fn test_insert_feedback_newline() {
+    let mut session = Session::new(0);
+    session.user_feedback = "hello".to_string();
+    session.cursor_position = 5;
+
+    session.insert_feedback_newline();
+
+    assert_eq!(session.user_feedback, "hello\n");
+    assert_eq!(session.cursor_position, 6);
+}
+
+#[test]
+fn test_insert_feedback_newline_middle() {
+    let mut session = Session::new(0);
+    session.user_feedback = "hello world".to_string();
+    session.cursor_position = 5;
+
+    session.insert_feedback_newline();
+
+    assert_eq!(session.user_feedback, "hello\n world");
+    assert_eq!(session.cursor_position, 6);
+}
+
+#[test]
+fn test_add_run_tab() {
+    let mut session = Session::new(0);
+    assert!(session.run_tabs.is_empty());
+
+    session.add_run_tab("Planning".to_string());
+    assert_eq!(session.run_tabs.len(), 1);
+    assert_eq!(session.run_tabs[0].phase, "Planning");
+    assert_eq!(session.active_run_tab, 0);
+
+    session.add_run_tab("Reviewing".to_string());
+    assert_eq!(session.run_tabs.len(), 2);
+    assert_eq!(session.active_run_tab, 1); 
+}
+
+#[test]
+fn test_add_chat_message() {
+    let mut session = Session::new(0);
+
+    session.add_chat_message("claude", "Planning", "Hello world".to_string());
+    assert_eq!(session.run_tabs.len(), 1);
+    assert_eq!(session.run_tabs[0].messages.len(), 1);
+    assert_eq!(session.run_tabs[0].messages[0].agent_name, "claude");
+    assert_eq!(session.run_tabs[0].messages[0].message, "Hello world");
+}
+
+#[test]
+fn test_add_chat_message_creates_tab_if_needed() {
+    let mut session = Session::new(0);
+
+    session.add_chat_message("codex", "Reviewing", "Test message".to_string());
+    assert_eq!(session.run_tabs.len(), 1);
+    assert_eq!(session.run_tabs[0].phase, "Reviewing");
+}
+
+#[test]
+fn test_add_chat_message_filters_empty() {
+    let mut session = Session::new(0);
+    session.add_run_tab("Planning".to_string());
+
+    session.add_chat_message("claude", "Planning", "".to_string());
+    session.add_chat_message("claude", "Planning", "   ".to_string());
+    assert!(session.run_tabs[0].messages.is_empty());
+}
+
+#[test]
+fn test_run_tab_navigation() {
+    let mut session = Session::new(0);
+    session.add_run_tab("Planning".to_string());
+    session.add_run_tab("Reviewing".to_string());
+    session.add_run_tab("Revising".to_string());
+
+    assert_eq!(session.active_run_tab, 2);
+
+    session.prev_run_tab();
+    assert_eq!(session.active_run_tab, 1);
+
+    session.prev_run_tab();
+    assert_eq!(session.active_run_tab, 0);
+
+    session.prev_run_tab(); 
+    assert_eq!(session.active_run_tab, 0);
+
+    session.next_run_tab();
+    assert_eq!(session.active_run_tab, 1);
+
+    session.next_run_tab();
+    assert_eq!(session.active_run_tab, 2);
+
+    session.next_run_tab(); 
+    assert_eq!(session.active_run_tab, 2);
+}
+
+#[test]
+fn test_clear_chat_tabs() {
+    let mut session = Session::new(0);
+    session.add_run_tab("Planning".to_string());
+    session.add_chat_message("claude", "Planning", "Test".to_string());
+    session.chat_follow_mode = false;
+
+    session.clear_chat_tabs();
+
+    assert!(session.run_tabs.is_empty());
+    assert_eq!(session.active_run_tab, 0);
+    assert!(session.chat_follow_mode);
+}

@@ -13,7 +13,6 @@ Use the "planning" skill to create the plan.
 Before finalizing your plan, perform a self-review against the "plan-review" skill criteria, so you can be confident that it will pass review.
 Your plan should be structured to pass review without requiring revision cycles."#;
 
-/// Run planning phase with a configured agent
 pub async fn run_planning_phase_with_context(
     state: &State,
     working_dir: &Path,
@@ -34,7 +33,6 @@ pub async fn run_planning_phase_with_context(
 
     let prompt = build_planning_prompt(state);
 
-    // Create agent context for chat message routing
     let context = AgentContext {
         session_sender: session_sender.clone(),
         phase: "Planning".to_string(),
@@ -59,7 +57,6 @@ pub async fn run_planning_phase_with_context(
     Ok(())
 }
 
-/// Build the planning prompt for configurable agents
 fn build_planning_prompt(state: &State) -> String {
     format!(
         r#"Create a detailed implementation plan for the following:

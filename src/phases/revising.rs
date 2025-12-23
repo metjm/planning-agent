@@ -11,7 +11,6 @@ Focus on addressing all blocking issues first, then important improvements.
 Verify each finding before making changes. Only address those that require revision.
 "#;
 
-/// Run revision phase with merged multi-agent feedback
 pub async fn run_revision_phase_with_context(
     state: &State,
     working_dir: &Path,
@@ -38,7 +37,6 @@ pub async fn run_revision_phase_with_context(
 
     let prompt = build_revision_prompt_with_reviews(state, reviews);
 
-    // Create agent context for chat message routing
     let context = AgentContext {
         session_sender: session_sender.clone(),
         phase: format!("Revising #{}", iteration),
@@ -66,7 +64,6 @@ pub async fn run_revision_phase_with_context(
     Ok(())
 }
 
-/// Build revision prompt with merged multi-reviewer feedback
 fn build_revision_prompt_with_reviews(state: &State, reviews: &[ReviewResult]) -> String {
     let merged_feedback = reviews
         .iter()

@@ -1,4 +1,3 @@
-//! Gemini CLI usage tracking via /stats command
 
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use std::io::{Read, Write};
@@ -7,13 +6,13 @@ use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, Default)]
 pub struct GeminiUsage {
-    /// Usage remaining as percentage (lowest across all models)
+
     pub usage_remaining: Option<u8>,
-    /// Model with the lowest usage remaining
+
     pub constrained_model: Option<String>,
-    /// When this data was fetched
+
     pub fetched_at: Option<Instant>,
-    /// Error message if fetch failed
+
     pub error_message: Option<String>,
 }
 
@@ -35,12 +34,10 @@ impl GeminiUsage {
     }
 }
 
-/// Check if Gemini CLI is available
 pub fn is_gemini_available() -> bool {
     which::which("gemini").is_ok()
 }
 
-/// Fetch Gemini usage by running /stats command via PTY
 pub fn fetch_gemini_usage_sync() -> GeminiUsage {
     if !is_gemini_available() {
         return GeminiUsage::not_available();
@@ -52,7 +49,6 @@ pub fn fetch_gemini_usage_sync() -> GeminiUsage {
         Ok(raw_output) => {
             let output = strip_ansi_codes(&raw_output);
 
-            // Parse usage from /stats output
             let (usage_remaining, constrained_model) = parse_gemini_usage(&output);
 
             GeminiUsage {
@@ -66,7 +62,6 @@ pub fn fetch_gemini_usage_sync() -> GeminiUsage {
     }
 }
 
-/// Run Gemini CLI and execute /stats command
 fn run_gemini_stats_via_pty(command: &str, timeout: Duration) -> Result<String, String> {
     let pty_system = native_pty_system();
 
@@ -116,7 +111,6 @@ fn run_gemini_stats_via_pty(command: &str, timeout: Duration) -> Result<String, 
     let start = Instant::now();
     let prompt_timeout = Duration::from_secs(15);
 
-    // Wait for Gemini prompt (look for ">" or input box)
     loop {
         if start.elapsed() > prompt_timeout {
             let _ = child.kill();
@@ -132,7 +126,6 @@ fn run_gemini_stats_via_pty(command: &str, timeout: Duration) -> Result<String, 
         let len = data.len();
         drop(data);
 
-        // Look for prompt indicator
         let has_prompt = stripped.contains("Type your message") || stripped.contains(">>>");
 
         if has_prompt && len > 500 {
@@ -150,7 +143,6 @@ fn run_gemini_stats_via_pty(command: &str, timeout: Duration) -> Result<String, 
         return Err("Timeout".to_string());
     }
 
-    // Send /stats command
     for c in "/stats".chars() {
         writer.write_all(&[c as u8]).map_err(|e| format!("Failed to send: {}", e))?;
         std::thread::sleep(Duration::from_millis(30));
@@ -158,7 +150,6 @@ fn run_gemini_stats_via_pty(command: &str, timeout: Duration) -> Result<String, 
     std::thread::sleep(Duration::from_millis(200));
     writer.write_all(b"\r").map_err(|e| format!("Failed to send Enter: {}", e))?;
 
-    // Wait for stats output
     let stats_start = Instant::now();
     let stats_timeout = Duration::from_secs(5);
 
@@ -172,16 +163,14 @@ fn run_gemini_stats_via_pty(command: &str, timeout: Duration) -> Result<String, 
         let stripped = strip_ansi_codes(&text);
         drop(data);
 
-        // Check if we have usage stats
         if stripped.contains("Usage left") || stripped.contains("Model Usage") {
-            std::thread::sleep(Duration::from_millis(500)); // Let it finish
+            std::thread::sleep(Duration::from_millis(500)); 
             break;
         }
 
         std::thread::sleep(Duration::from_millis(100));
     }
 
-    // Exit
     for c in "/quit".chars() {
         let _ = writer.write_all(&[c as u8]);
         std::thread::sleep(Duration::from_millis(30));
@@ -214,7 +203,6 @@ fn run_gemini_stats_via_pty(command: &str, timeout: Duration) -> Result<String, 
     Ok(String::from_utf8_lossy(&output).into_owned())
 }
 
-/// Strip ANSI escape sequences
 fn strip_ansi_codes(text: &str) -> String {
     let mut result = String::with_capacity(text.len());
     let mut chars = text.chars().peekable();
@@ -236,34 +224,29 @@ fn strip_ansi_codes(text: &str) -> String {
     result
 }
 
-/// Parse Gemini usage from /stats output
-/// Looks for lines like: "gemini-2.5-flash    -   99.3% (Resets in 23h 18m)"
 fn parse_gemini_usage(text: &str) -> (Option<u8>, Option<String>) {
     let mut lowest_usage: Option<f32> = None;
     let mut constrained_model: Option<String> = None;
 
     for line in text.lines() {
-        // Look for lines with "%" and "Resets"
+
         if line.contains('%') && line.contains("Resets") {
-            // Try to extract model name and percentage
-            // Format: "gemini-2.5-flash    -   99.3% (Resets in 23h 18m)"
+
             let parts: Vec<&str> = line.split_whitespace().collect();
 
-            // Find the model name (starts with "gemini")
             let model_name = parts.iter().find(|p| p.starts_with("gemini")).map(|s| s.to_string());
 
-            // Find the percentage
             for part in parts.iter() {
                 if part.ends_with('%') {
                     let pct_str = part.trim_end_matches('%');
                     if let Ok(pct) = pct_str.parse::<f32>() {
-                        // Check if this is lower than current lowest
+
                         if lowest_usage.is_none() || pct < lowest_usage.unwrap() {
                             lowest_usage = Some(pct);
                             constrained_model = model_name.clone();
                         }
                     }
-                    break; // Only one percentage per line
+                    break; 
                 }
             }
         }
@@ -288,7 +271,7 @@ mod tests {
   gemini-3-pro-preview           -      100.0% (Resets in 24h)
 "#;
         let (usage, model) = parse_gemini_usage(output);
-        assert_eq!(usage, Some(99)); // 99.3 rounds to 99
+        assert_eq!(usage, Some(99)); 
         assert_eq!(model, Some("gemini-2.5-flash".to_string()));
     }
 
@@ -299,11 +282,10 @@ mod tests {
   gemini-2.5-pro                 -   25.5% (Resets in 6h)
 "#;
         let (usage, model) = parse_gemini_usage(output);
-        assert_eq!(usage, Some(26)); // 25.5 rounds to 26
+        assert_eq!(usage, Some(26)); 
         assert_eq!(model, Some("gemini-2.5-pro".to_string()));
     }
 
-    /// Integration test - run with: cargo test test_fetch_gemini_usage_real -- --ignored --nocapture
     #[test]
     #[ignore]
     fn test_fetch_gemini_usage_real() {

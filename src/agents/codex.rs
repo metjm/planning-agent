@@ -11,16 +11,12 @@ use tokio::process::Command;
 use tokio::sync::mpsc;
 use tokio::time::Instant;
 
-/// Default activity timeout: 5 minutes
 const DEFAULT_ACTIVITY_TIMEOUT: Duration = Duration::from_secs(300);
 
-/// Default overall timeout: 30 minutes
 const DEFAULT_OVERALL_TIMEOUT: Duration = Duration::from_secs(1800);
 
-/// Timeout for waiting for process exit after streams close
 const PROCESS_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// OpenAI Codex CLI agent implementation
 #[derive(Debug, Clone)]
 pub struct CodexAgent {
     name: String,
@@ -57,12 +53,11 @@ impl CodexAgent {
         self
     }
 
-    /// Execute with streaming output
-    #[allow(dead_code)] // Provides simpler API for non-context use cases
+    #[allow(dead_code)] 
     pub async fn execute_streaming(
         &self,
         prompt: String,
-        _system_prompt: Option<String>, // Codex doesn't support separate system prompt
+        _system_prompt: Option<String>, 
         _max_turns: Option<u32>,
         output_tx: mpsc::UnboundedSender<Event>,
     ) -> Result<AgentResult> {
@@ -85,12 +80,10 @@ impl CodexAgent {
 
         let mut cmd = Command::new(&self.config.command);
 
-        // Add base args (typically ["exec", "--json"])
         for arg in &self.config.args {
             cmd.arg(arg);
         }
 
-        // Add prompt
         cmd.arg(&prompt);
 
         cmd.current_dir(&self.working_dir);
@@ -109,12 +102,11 @@ impl CodexAgent {
         let mut final_output = String::new();
         let mut is_error = false;
 
-        // Timeout tracking
         let start_time = Instant::now();
         let mut last_activity = Instant::now();
 
         loop {
-            // Check overall timeout
+
             if start_time.elapsed() > self.overall_timeout {
                 let _ = output_tx.send(Event::Output(format!(
                     "[agent:codex] ERROR: Exceeded overall timeout of {:?}",
@@ -139,9 +131,8 @@ impl CodexAgent {
                             }
                             let _ = output_tx.send(Event::BytesReceived(line.len()));
 
-                            // Try to parse as JSON (Codex outputs NDJSON events)
                             if let Ok(json) = serde_json::from_str::<serde_json::Value>(&line) {
-                                // Codex outputs state change events
+
                                 if let Some(event_type) = json.get("type").and_then(|v| v.as_str()) {
                                     match event_type {
                                         "message" | "content" | "text" => {
@@ -201,7 +192,7 @@ impl CodexAgent {
                                             let _ = output_tx.send(Event::ToolFinished(tool_id));
                                         }
                                         "done" | "complete" | "finished" => {
-                                            // Final event - extract complete message
+
                                             if let Some(message) = json.get("message")
                                                 .or_else(|| json.get("result"))
                                                 .or_else(|| json.get("output"))
@@ -223,7 +214,7 @@ impl CodexAgent {
                                             }
                                         }
                                         _ => {
-                                            // Stream any content we find
+
                                             if let Some(content) = json.get("content")
                                                 .or_else(|| json.get("text"))
                                                 .and_then(|c| c.as_str())
@@ -234,7 +225,7 @@ impl CodexAgent {
                                         }
                                     }
                                 } else {
-                                    // Not a typed event - try to extract content directly
+
                                     if let Some(content) = json.get("content")
                                         .or_else(|| json.get("text"))
                                         .or_else(|| json.get("output"))
@@ -245,7 +236,7 @@ impl CodexAgent {
                                     }
                                 }
                             } else {
-                                // Plain text output
+
                                 let _ = output_tx.send(Event::Streaming(line.clone()));
                                 final_output.push_str(&line);
                                 final_output.push('\n');
@@ -297,7 +288,6 @@ impl CodexAgent {
             }
         }
 
-        // Wait for process exit with timeout
         let status = match tokio::time::timeout(PROCESS_WAIT_TIMEOUT, child.wait()).await {
             Ok(Ok(status)) => status,
             Ok(Err(e)) => {
@@ -341,11 +331,10 @@ impl CodexAgent {
         Ok(AgentResult {
             output: final_output,
             is_error,
-            cost_usd: None, // Codex CLI doesn't report cost
+            cost_usd: None, 
         })
     }
 
-    /// Execute with session-aware context for chat message routing
     pub async fn execute_streaming_with_context(
         &self,
         prompt: String,

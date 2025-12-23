@@ -2,10 +2,8 @@ use anyhow::{Context, Result};
 use std::process::Command;
 use std::time::Duration;
 
-/// The embedded git SHA from compile time
 pub const BUILD_SHA: &str = env!("PLANNING_AGENT_GIT_SHA");
 
-/// Information about an available update
 #[derive(Debug, Clone)]
 pub struct UpdateInfo {
     pub latest_sha: String,
@@ -13,7 +11,6 @@ pub struct UpdateInfo {
     pub commit_date: String,
 }
 
-/// Status of the update check
 #[derive(Debug, Clone)]
 pub enum UpdateStatus {
     Checking,
@@ -33,7 +30,6 @@ impl Default for UpdateStatus {
     }
 }
 
-/// Check GitHub for the latest commit and compare with current build
 pub fn check_for_update() -> UpdateStatus {
     if BUILD_SHA == "unknown" {
         return UpdateStatus::VersionUnknown;
@@ -51,9 +47,8 @@ pub fn check_for_update() -> UpdateStatus {
     }
 }
 
-/// Fetch the latest commit info from GitHub
 fn fetch_latest_commit() -> Result<UpdateInfo> {
-    // Create agent with timeout
+
     let config = ureq::Agent::config_builder()
         .timeout_global(Some(Duration::from_secs(10)))
         .build();
@@ -65,7 +60,6 @@ fn fetch_latest_commit() -> Result<UpdateInfo> {
         .header("User-Agent", format!("planning-agent/{}", env!("CARGO_PKG_VERSION")))
         .header("Accept", "application/vnd.github+json");
 
-    // Support GITHUB_TOKEN for higher rate limits
     if let Ok(token) = std::env::var("GITHUB_TOKEN") {
         request = request.header("Authorization", format!("Bearer {}", token));
     }
@@ -107,9 +101,8 @@ fn fetch_latest_commit() -> Result<UpdateInfo> {
     })
 }
 
-/// Format ISO date to human-readable format (e.g., "Dec 20")
 fn format_commit_date(iso_date: &str) -> String {
-    // Parse ISO 8601 date like "2024-12-20T10:30:00Z"
+
     if let Some(date_part) = iso_date.split('T').next() {
         let parts: Vec<&str> = date_part.split('-').collect();
         if parts.len() == 3 {
@@ -135,7 +128,6 @@ fn format_commit_date(iso_date: &str) -> String {
     iso_date.to_string()
 }
 
-/// Result of attempting to perform an update
 #[derive(Debug, Clone)]
 pub enum UpdateResult {
     Success(std::path::PathBuf),
@@ -145,26 +137,21 @@ pub enum UpdateResult {
     BinaryNotFound,
 }
 
-/// Name of the marker file used to signal a successful update
 const UPDATE_MARKER_FILE: &str = "update-installed";
 
-/// Write a marker file to indicate an update was installed.
-/// Call this before exec/spawn to show a notice on next startup.
 pub fn write_update_marker(working_dir: &std::path::Path) -> std::io::Result<()> {
     let marker_path = working_dir.join(".planning-agent").join(UPDATE_MARKER_FILE);
-    // Ensure parent directory exists
+
     if let Some(parent) = marker_path.parent() {
         std::fs::create_dir_all(parent)?;
     }
     std::fs::write(&marker_path, "")
 }
 
-/// Check for and consume the update marker file.
-/// Returns true if the marker existed (update was just installed), and removes it.
 pub fn consume_update_marker(working_dir: &std::path::Path) -> bool {
     let marker_path = working_dir.join(".planning-agent").join(UPDATE_MARKER_FILE);
     if marker_path.exists() {
-        // Remove the marker file (ignore errors - it's non-fatal)
+
         let _ = std::fs::remove_file(&marker_path);
         true
     } else {
@@ -172,19 +159,16 @@ pub fn consume_update_marker(working_dir: &std::path::Path) -> bool {
     }
 }
 
-/// Perform the update by running cargo install
 pub fn perform_update() -> UpdateResult {
-    // Pre-flight check: verify git is available
+
     if which::which("git").is_err() {
         return UpdateResult::GitNotFound;
     }
 
-    // Pre-flight check: verify cargo is available
     if which::which("cargo").is_err() {
         return UpdateResult::CargoNotFound;
     }
 
-    // Run cargo install
     let output = Command::new("cargo")
         .args([
             "install",
@@ -197,11 +181,11 @@ pub fn perform_update() -> UpdateResult {
     match output {
         Ok(result) => {
             if result.status.success() {
-                // Find the installed binary
+
                 match which::which("planning") {
                     Ok(path) => UpdateResult::Success(path),
                     Err(_) => {
-                        // Fallback to ~/.cargo/bin/planning
+
                         if let Some(home) = dirs::home_dir() {
                             let fallback = home.join(".cargo/bin/planning");
                             if fallback.exists() {
@@ -238,7 +222,7 @@ mod tests {
 
     #[test]
     fn test_build_sha_is_set() {
-        // BUILD_SHA should be set by build.rs
+
         assert!(!BUILD_SHA.is_empty());
     }
 
@@ -253,31 +237,25 @@ mod tests {
 
     #[test]
     fn test_write_and_consume_update_marker() {
-        // Use a unique temp directory for this test
+
         let temp_dir = std::env::temp_dir().join(format!(
             "planning-agent-test-{}",
             std::process::id()
         ));
         fs::create_dir_all(&temp_dir).unwrap();
 
-        // Initially no marker
         assert!(!consume_update_marker(&temp_dir));
 
-        // Write marker
         write_update_marker(&temp_dir).unwrap();
 
-        // Marker should exist
         let marker_path = temp_dir.join(".planning-agent").join(UPDATE_MARKER_FILE);
         assert!(marker_path.exists());
 
-        // Consume should return true and remove marker
         assert!(consume_update_marker(&temp_dir));
         assert!(!marker_path.exists());
 
-        // Second consume should return false
         assert!(!consume_update_marker(&temp_dir));
 
-        // Cleanup
         let _ = fs::remove_dir_all(&temp_dir);
     }
 }
