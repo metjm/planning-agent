@@ -8,7 +8,10 @@ use std::path::Path;
 const PLANNING_SYSTEM_PROMPT: &str = r#"You are a technical planning agent.
 Create a detailed implementation plan for the given objective.
 Use the available tools to read the codebase and understand the existing structure.
-Write your plan to the specified file path."#;
+
+Use the "planning" skill to create the plan.
+Before finalizing your plan, perform a self-review against the "plan-review" skill criteria, so you can be confident that it will pass review.
+Your plan should be structured to pass review without requiring revision cycles."#;
 
 /// Run planning phase with a configured agent
 pub async fn run_planning_phase_with_context(
