@@ -1,7 +1,7 @@
-
 use super::log::AgentLogger;
-use super::parser::{parse_json_line, ParsedEvent};
+use super::parser::ClaudeParser;
 use super::{AgentContext, AgentResult};
+use crate::agents::protocol::{AgentEvent, AgentStreamParser};
 use crate::config::AgentConfig;
 use crate::state::ResumeStrategy;
 use crate::tui::Event;
@@ -107,7 +107,7 @@ impl ClaudeAgent {
         let mut final_result: Option<String> = None;
         let mut total_cost: Option<f64> = None;
         let mut is_error = false;
-        let mut last_message_type: Option<String> = None;
+        let mut parser = ClaudeParser::new();
 
         let start_time = Instant::now();
         let mut last_activity = Instant::now();
@@ -132,22 +132,22 @@ impl ClaudeAgent {
                             }
                             sender.send_bytes_received(line.len());
 
-                            let events = parse_json_line(&line, &mut last_message_type);
+                            let events = parser.parse_line_multi(&line).unwrap_or_default();
                             for event in events {
                                 match event {
-                                    ParsedEvent::TurnCompleted => sender.send_turn_completed(),
-                                    ParsedEvent::ModelDetected(m) => sender.send_model_detected(m),
-                                    ParsedEvent::StopReason(r) => sender.send_stop_reason(r),
-                                    ParsedEvent::TokenUsage(u) => sender.send_token_usage(u),
-                                    ParsedEvent::TextContent(t) => {
+                                    AgentEvent::TurnCompleted => sender.send_turn_completed(),
+                                    AgentEvent::ModelDetected(m) => sender.send_model_detected(m),
+                                    AgentEvent::StopReason(r) => sender.send_stop_reason(r),
+                                    AgentEvent::TokenUsage(u) => sender.send_token_usage(u.into()),
+                                    AgentEvent::TextContent(t) => {
                                         sender.send_streaming(t.clone());
                                         sender.send_agent_message(t);
                                     }
-                                    ParsedEvent::ToolStarted { display_name, input_preview, .. } => {
+                                    AgentEvent::ToolStarted { display_name, input_preview, .. } => {
                                         sender.send_tool_started(display_name.clone());
                                         sender.send_streaming(format!("[Tool: {}] {}", display_name, input_preview));
                                     }
-                                    ParsedEvent::ToolResult { tool_use_id, is_error: is_err, content_lines, has_more } => {
+                                    AgentEvent::ToolResult { tool_use_id, is_error: is_err, content_lines, has_more } => {
                                         sender.send_tool_result_received(tool_use_id.clone(), is_err);
                                         sender.send_tool_finished(tool_use_id);
                                         for (i, line) in content_lines.iter().enumerate() {
@@ -158,19 +158,22 @@ impl ClaudeAgent {
                                             sender.send_streaming("         ...".to_string());
                                         }
                                     }
-                                    ParsedEvent::TodosUpdate(items) => sender.send_todos_update(items),
-                                    ParsedEvent::ContentBlockStart { name } => {
+                                    AgentEvent::TodosUpdate(items) => sender.send_todos_update(items),
+                                    AgentEvent::ContentBlockStart { name } => {
                                         sender.send_tool_started(name.clone());
                                         sender.send_streaming(format!("[Tool: {}] starting...", name));
                                     }
-                                    ParsedEvent::ContentDelta(t) => {
+                                    AgentEvent::ContentDelta(t) => {
                                         sender.send_streaming(t.clone());
                                         sender.send_agent_message(t);
                                     }
-                                    ParsedEvent::Result { output, cost, is_error: is_err } => {
+                                    AgentEvent::Result { output, cost, is_error: is_err } => {
                                         final_result = output;
                                         total_cost = cost;
                                         is_error = is_err;
+                                    }
+                                    AgentEvent::Error(msg) => {
+                                        sender.send_streaming(format!("[error] {}", msg));
                                     }
                                 }
                             }
