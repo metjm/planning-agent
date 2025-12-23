@@ -59,71 +59,14 @@ impl WorkflowConfig {
         Ok(config)
     }
 
-    /// Returns the default configuration for multi-agent workflows
+    /// Returns the default configuration compiled from workflow.yaml
     pub fn default_config() -> Self {
-        let mut agents = HashMap::new();
-        agents.insert(
-            "claude".to_string(),
-            AgentConfig {
-                command: "claude".to_string(),
-                args: vec![
-                    "-p".to_string(),
-                    "--output-format".to_string(),
-                    "stream-json".to_string(),
-                    "--verbose".to_string(),
-                    "--dangerously-skip-permissions".to_string(),
-                ],
-                allowed_tools: vec![
-                    "Read".to_string(),
-                    "Glob".to_string(),
-                    "Grep".to_string(),
-                    "Write".to_string(),
-                    "Edit".to_string(),
-                    "WebSearch".to_string(),
-                    "WebFetch".to_string(),
-                    "Skill".to_string(),
-                    "Task".to_string(),
-                ],
-            },
-        );
-        agents.insert(
-            "codex".to_string(),
-            AgentConfig {
-                command: "codex".to_string(),
-                args: vec!["exec".to_string(), "--json".to_string()],
-                allowed_tools: vec![],
-            },
-        );
-        agents.insert(
-            "gemini".to_string(),
-            AgentConfig {
-                command: "gemini".to_string(),
-                args: vec![
-                    "-p".to_string(),
-                    "--output-format".to_string(),
-                    "json".to_string(),
-                ],
-                allowed_tools: vec![],
-            },
-        );
+        // Embed workflow.yaml at compile time
+        const DEFAULT_WORKFLOW_YAML: &str = include_str!("../workflow.yaml");
 
-        Self {
-            agents,
-            workflow: PhaseConfigs {
-                planning: SingleAgentPhase {
-                    agent: "claude".to_string(),
-                    max_turns: Some(50),
-                },
-                reviewing: MultiAgentPhase {
-                    agents: vec!["claude".to_string(), "codex".to_string()],
-                    aggregation: AggregationMode::AnyRejects,
-                },
-                revising: SingleAgentPhase {
-                    agent: "claude".to_string(),
-                    max_turns: None,
-                },
-            },
-        }
+        // Parse the embedded YAML - panic if it's invalid since this is a compile-time constant
+        serde_yaml::from_str(DEFAULT_WORKFLOW_YAML)
+            .expect("Failed to parse embedded workflow.yaml - this is a bug in the workflow.yaml file")
     }
 
     /// Validate the configuration
@@ -175,15 +118,16 @@ mod tests {
     #[test]
     fn test_default_config() {
         let config = WorkflowConfig::default_config();
+        // Verify agents are defined (from workflow.yaml)
         assert!(config.agents.contains_key("claude"));
         assert!(config.agents.contains_key("codex"));
         assert!(config.agents.contains_key("gemini"));
-        assert_eq!(config.workflow.planning.agent, "claude");
-        assert_eq!(
-            config.workflow.reviewing.agents,
-            vec!["claude", "codex"]
-        );
-        assert_eq!(config.workflow.revising.agent, "claude");
+        // Verify workflow phases reference valid agents
+        assert!(config.agents.contains_key(&config.workflow.planning.agent));
+        assert!(config.agents.contains_key(&config.workflow.revising.agent));
+        for agent in &config.workflow.reviewing.agents {
+            assert!(config.agents.contains_key(agent));
+        }
     }
 
     #[test]
