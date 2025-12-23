@@ -4,7 +4,7 @@ use futures::StreamExt;
 use std::time::Duration;
 use tokio::sync::mpsc;
 
-use crate::claude_usage::ClaudeUsage;
+use crate::cli_usage::AccountUsage;
 use crate::state::State;
 
 /// Token usage statistics from Claude API
@@ -73,8 +73,8 @@ pub enum Event {
         message: String,
     },
 
-    /// Claude usage update (global, not per-session since usage is account-wide)
-    ClaudeUsageUpdate(ClaudeUsage),
+    /// Account usage update for all providers (global, not per-session)
+    AccountUsageUpdate(AccountUsage),
 }
 
 /// User's response to approval request

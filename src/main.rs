@@ -1,5 +1,6 @@
 mod agents;
 mod claude_usage;
+mod cli_usage;
 mod config;
 mod phases;
 mod skills;
@@ -354,20 +355,20 @@ async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
     debug_log(start, "event handler created");
     let output_tx = event_handler.sender();
 
-    // Spawn background task to fetch Claude usage periodically
+    // Spawn background task to fetch account usage for all providers periodically
     {
         let usage_tx = event_handler.sender();
         tokio::spawn(async move {
             loop {
-                let usage = tokio::task::spawn_blocking(claude_usage::fetch_claude_usage_sync)
+                let usage = tokio::task::spawn_blocking(cli_usage::fetch_all_provider_usage_sync)
                     .await
-                    .unwrap_or_else(|_| claude_usage::ClaudeUsage::default());
-                let _ = usage_tx.send(Event::ClaudeUsageUpdate(usage));
+                    .unwrap_or_else(|_| cli_usage::AccountUsage::default());
+                let _ = usage_tx.send(Event::AccountUsageUpdate(usage));
                 tokio::time::sleep(Duration::from_secs(300)).await;
             }
         });
     }
-    debug_log(start, "claude usage fetch task spawned");
+    debug_log(start, "account usage fetch task spawned");
 
     let working_dir = cli
         .working_dir
@@ -1260,10 +1261,10 @@ async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                     session.add_chat_message(&agent_name, &phase, message);
                 }
             }
-            Event::ClaudeUsageUpdate(usage) => {
+            Event::AccountUsageUpdate(usage) => {
                 // Update all sessions (usage is global/account-wide)
                 for session in tab_manager.sessions_mut() {
-                    session.claude_usage = usage.clone();
+                    session.account_usage = usage.clone();
                 }
             }
         }
