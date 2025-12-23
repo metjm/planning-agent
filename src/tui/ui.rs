@@ -610,8 +610,10 @@ fn draw_stats(frame: &mut Frame, session: &Session, area: Rect) {
                     let color = if session_pct >= 90 { Color::Red }
                                else if session_pct >= 70 { Color::Yellow }
                                else { Color::Green };
+                    // Codex uses "5h" limit, others use "Session"
+                    let label = if provider.provider == "codex" { "  5h: " } else { "  Session: " };
                     stats_text.push(Line::from(vec![
-                        Span::styled("  Session: ", Style::default().fg(Color::White)),
+                        Span::styled(label, Style::default().fg(Color::White)),
                         Span::styled(format!("{}% used", session_pct), Style::default().fg(color)),
                     ]));
                 }

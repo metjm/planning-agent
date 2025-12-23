@@ -1,15 +1,16 @@
 //! CLI Usage tracking for all supported providers (Claude, Gemini, Codex)
 //!
 //! This module provides a unified interface for fetching account usage information
-//! from various AI CLI tools. Currently:
-//! - Claude: Supports /usage command with session and weekly limits
-//! - Gemini: Supports /stats command with per-model usage limits
-//! - Codex: No usage command available (shows N/A)
+//! from various AI CLI tools:
+//! - Claude: /usage command with session and weekly limits
+//! - Gemini: /stats command with per-model daily limits
+//! - Codex: /status command with 5h and weekly limits
 
 use std::collections::HashMap;
 use std::time::Instant;
 
 use crate::claude_usage::{self, ClaudeUsage};
+use crate::codex_usage::{self, CodexUsage};
 use crate::gemini_usage::{self, GeminiUsage};
 
 /// A provider's usage information (generalized for multi-provider support)
@@ -35,6 +36,7 @@ pub struct ProviderUsage {
 
 impl ProviderUsage {
     /// Create a "not available" status for providers that don't support usage queries
+    #[allow(dead_code)]
     pub fn not_available(provider: &str, display_name: &str) -> Self {
         Self {
             provider: provider.to_string(),
@@ -74,6 +76,26 @@ impl ProviderUsage {
             session_used: None, // Gemini doesn't have session limits
             weekly_used: daily_used, // Daily limit shown as "weekly" slot
             plan_type: usage.constrained_model, // Show the most constrained model
+            fetched_at: usage.fetched_at,
+            status_message: usage.error_message,
+            supports_usage: true,
+        }
+    }
+
+    /// Create from a CodexUsage result
+    /// Note: Codex shows "remaining" so we convert to "used" for consistency
+    pub fn from_codex_usage(usage: CodexUsage) -> Self {
+        // Convert "remaining" to "used" (100 - remaining)
+        // Use 5h limit as "session" and weekly as "weekly"
+        let session_used = usage.hourly_remaining.map(|r| 100u8.saturating_sub(r));
+        let weekly_used = usage.weekly_remaining.map(|r| 100u8.saturating_sub(r));
+
+        Self {
+            provider: "codex".to_string(),
+            display_name: "Codex".to_string(),
+            session_used, // 5h limit as session
+            weekly_used,
+            plan_type: usage.plan_type,
             fetched_at: usage.fetched_at,
             status_message: usage.error_message,
             supports_usage: true,
@@ -124,7 +146,7 @@ impl AccountUsage {
 pub fn fetch_all_provider_usage_sync() -> AccountUsage {
     let mut account_usage = AccountUsage::new();
 
-    // Fetch Claude usage
+    // Fetch Claude usage via /usage command
     let claude_usage = claude_usage::fetch_claude_usage_sync();
     account_usage.update(ProviderUsage::from_claude_usage(claude_usage));
 
@@ -134,9 +156,10 @@ pub fn fetch_all_provider_usage_sync() -> AccountUsage {
         account_usage.update(ProviderUsage::from_gemini_usage(gemini));
     }
 
-    // Codex: No usage command available
-    if which::which("codex").is_ok() {
-        account_usage.update(ProviderUsage::not_available("codex", "Codex"));
+    // Fetch Codex usage via /status command
+    if codex_usage::is_codex_available() {
+        let codex = codex_usage::fetch_codex_usage_sync();
+        account_usage.update(ProviderUsage::from_codex_usage(codex));
     }
 
     account_usage
@@ -261,12 +284,25 @@ mod tests {
         if let Some(codex) = account.get("codex") {
             eprintln!("\nCodex:");
             eprintln!("  supports_usage: {}", codex.supports_usage);
+            eprintln!("  session_used (5h): {:?}", codex.session_used);
+            eprintln!("  weekly_used: {:?}", codex.weekly_used);
+            eprintln!("  plan_type: {:?}", codex.plan_type);
             eprintln!("  status_message: {:?}", codex.status_message);
 
-            assert!(!codex.supports_usage, "Codex should NOT support usage");
-            assert!(codex.status_message.is_some(), "Codex should have status message");
-            assert!(codex.session_used.is_none(), "Codex should not have session data");
-            assert!(codex.weekly_used.is_none(), "Codex should not have weekly data");
+            assert!(codex.supports_usage, "Codex should support usage via /status");
+            if codex.status_message.is_none() {
+                // Note: Codex may show "data not available yet" for fresh sessions
+                // so usage data might be None even without an error
+                if let Some(session) = codex.session_used {
+                    eprintln!("  5h used: {}%", session);
+                }
+                if let Some(weekly) = codex.weekly_used {
+                    eprintln!("  Weekly used: {}%", weekly);
+                }
+                if codex.session_used.is_none() && codex.weekly_used.is_none() {
+                    eprintln!("  (usage data not available yet - normal for fresh sessions)");
+                }
+            }
         } else {
             eprintln!("\nCodex: not found (CLI not installed)");
         }
