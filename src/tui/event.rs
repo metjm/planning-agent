@@ -58,6 +58,13 @@ pub enum Event {
     SessionWorkflowError { session_id: usize, error: String },
     SessionGeneratingSummary { session_id: usize },
 
+    /// Plan generation failed, user can retry
+    SessionPlanGenerationFailed { session_id: usize, error: String },
+    /// Max iterations reached, user can proceed or continue
+    SessionMaxIterationsReached { session_id: usize, summary: String },
+    /// User chose to proceed without AI approval, now awaiting final confirmation
+    SessionUserOverrideApproval { session_id: usize, summary: String },
+
     /// Agent chat message for display in chat tabs (session-routed)
     SessionAgentMessage {
         session_id: usize,
@@ -77,6 +84,11 @@ pub enum UserApprovalResponse {
     Decline(String), // Contains user's feedback for changes
     ReviewRetry,
     ReviewContinue,
+    // Failure recovery variants
+    PlanGenerationRetry,    // Retry plan generation after failure
+    AbortWorkflow,          // Explicit abort (ends session, not app)
+    ProceedWithoutApproval, // User wants to proceed despite max iterations
+    ContinueReviewing,      // User wants another review cycle (adds to max_iterations)
 }
 
 pub struct EventHandler {
@@ -285,6 +297,27 @@ impl SessionEventSender {
     pub fn send_generating_summary(&self) {
         let _ = self.inner.send(Event::SessionGeneratingSummary {
             session_id: self.session_id,
+        });
+    }
+
+    pub fn send_plan_generation_failed(&self, error: String) {
+        let _ = self.inner.send(Event::SessionPlanGenerationFailed {
+            session_id: self.session_id,
+            error,
+        });
+    }
+
+    pub fn send_max_iterations_reached(&self, summary: String) {
+        let _ = self.inner.send(Event::SessionMaxIterationsReached {
+            session_id: self.session_id,
+            summary,
+        });
+    }
+
+    pub fn send_user_override_approval(&self, summary: String) {
+        let _ = self.inner.send(Event::SessionUserOverrideApproval {
+            session_id: self.session_id,
+            summary,
         });
     }
 

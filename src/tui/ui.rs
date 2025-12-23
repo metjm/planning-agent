@@ -130,11 +130,20 @@ fn draw_tab_bar(frame: &mut Frame, tab_manager: &TabManager, area: Rect) {
     // Add new tab button hint
     spans.push(Span::styled("[Ctrl++]", Style::default().fg(Color::Green).dim()));
 
+    // Build title with plan file path if available
+    let active_session = tab_manager.active();
+    let title = if let Some(ref state) = active_session.workflow_state {
+        let plan_path = state.plan_file.display().to_string();
+        format!(" Planning Agent - {} ", plan_path)
+    } else {
+        " Planning Agent ".to_string()
+    };
+
     let tabs = Paragraph::new(Line::from(spans)).block(
         Block::default()
             .borders(Borders::BOTTOM)
             .border_style(Style::default().fg(Color::DarkGray))
-            .title(" Planning Agent ")
+            .title(title)
             .title_alignment(Alignment::Center),
     );
 
@@ -1030,6 +1039,27 @@ fn draw_choice_popup(frame: &mut Frame, session: &Session, area: Rect) {
                 " Review Decision ",
                 " Review Failure Details (j/k to scroll) ",
             ),
+            ApprovalContext::PlanGenerationFailed => (
+                " ✗ Plan Generation Failed ",
+                Color::Red,
+                Color::Red,
+                " Recovery Options ",
+                " Error Details (j/k to scroll) ",
+            ),
+            ApprovalContext::MaxIterationsReached => (
+                " ⚠ Max Review Iterations Reached ",
+                Color::Yellow,
+                Color::Yellow,
+                " Workflow Decision ",
+                " Status Summary (j/k to scroll) ",
+            ),
+            ApprovalContext::UserOverrideApproval => (
+                " ⚠ Proceeding Without AI Approval ",
+                Color::Magenta,
+                Color::Magenta,
+                " Final Confirmation ",
+                " Override Summary (j/k to scroll) ",
+            ),
         };
 
     // Title block
@@ -1094,6 +1124,32 @@ fn draw_choice_popup(frame: &mut Frame, session: &Session, area: Rect) {
             Span::raw("Continue  "),
             Span::styled("  [r] ", Style::default().fg(Color::Yellow).bold()),
             Span::raw("Retry Failed  "),
+            Span::styled("  [j/k] ", Style::default().fg(Color::Cyan).bold()),
+            Span::raw("Scroll"),
+        ])]),
+        ApprovalContext::PlanGenerationFailed => Paragraph::new(vec![Line::from(vec![
+            Span::styled("  [r] ", Style::default().fg(Color::Yellow).bold()),
+            Span::raw("Retry  "),
+            Span::styled("  [a] ", Style::default().fg(Color::Red).bold()),
+            Span::raw("Abort  "),
+            Span::styled("  [j/k] ", Style::default().fg(Color::Cyan).bold()),
+            Span::raw("Scroll"),
+        ])]),
+        ApprovalContext::MaxIterationsReached => Paragraph::new(vec![Line::from(vec![
+            Span::styled("  [p] ", Style::default().fg(Color::Green).bold()),
+            Span::raw("Proceed  "),
+            Span::styled("  [c] ", Style::default().fg(Color::Yellow).bold()),
+            Span::raw("Continue Review  "),
+            Span::styled("  [d] ", Style::default().fg(Color::Cyan).bold()),
+            Span::raw("Decline/Restart  "),
+            Span::styled("  [a] ", Style::default().fg(Color::Red).bold()),
+            Span::raw("Abort"),
+        ])]),
+        ApprovalContext::UserOverrideApproval => Paragraph::new(vec![Line::from(vec![
+            Span::styled("  [a] ", Style::default().fg(Color::Green).bold()),
+            Span::raw("Accept  "),
+            Span::styled("  [d] ", Style::default().fg(Color::Yellow).bold()),
+            Span::raw("Decline  "),
             Span::styled("  [j/k] ", Style::default().fg(Color::Cyan).bold()),
             Span::raw("Scroll"),
         ])]),

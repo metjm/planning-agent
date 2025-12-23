@@ -105,6 +105,7 @@ mod tests {
             plan_file: PathBuf::from("docs/plans/test.md"),
             feedback_file: PathBuf::from("docs/plans/test_feedback.md"),
             last_feedback_status: None,
+            approval_overridden: false,
         };
 
         let reviews = vec![

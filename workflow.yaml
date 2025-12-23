@@ -16,6 +16,7 @@ agents:
     args:
       - "exec"
       - "--json"
+      - "--dangerously-bypass-approvals-and-sandbox"
     allowed_tools: []
 
   gemini:
@@ -28,8 +29,8 @@ agents:
 
 workflow:
   planning:
-    agent: claude
-    max_turns: 100
+    agent: codex
+    max_turns: 200
 
   # All three agents review in parallel
   reviewing:

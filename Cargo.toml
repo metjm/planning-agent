@@ -24,6 +24,11 @@ futures = "0.3"
 dirs = "6"
 unicode-width = "0.2"
 
+# PTY for Claude usage (removes expect dependency)
+portable-pty = "0.9"
+which = "7"
+
 # Multi-agent orchestration
 serde_yaml = "0.9"
 async-trait = "0.1"
+regex = "1.12.2"
