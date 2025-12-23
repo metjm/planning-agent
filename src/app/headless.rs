@@ -73,11 +73,16 @@ pub async fn run_headless_with_config(
     let sender = SessionEventSender::new(0, output_tx.clone());
     let mut last_reviews: Vec<phases::ReviewResult> = Vec::new();
 
+    sender.send_output(format!(
+        "[session] Workflow session ID: {}",
+        state.workflow_session_id
+    ));
+
     while state.should_continue() {
         match state.phase {
             Phase::Planning => {
                 sender.send_output("\n=== PLANNING PHASE ===".to_string());
-                run_planning_phase_with_context(&state, &working_dir, &config, sender.clone())
+                run_planning_phase_with_context(&mut state, &working_dir, &config, sender.clone(), &state_path)
                     .await?;
 
                 let plan_path = working_dir.join(&state.plan_file);
@@ -100,13 +105,15 @@ pub async fn run_headless_with_config(
                 let mut retry_attempts = 0usize;
 
                 loop {
+                    let iteration = state.iteration;
                     let batch = run_multi_agent_review_with_context(
-                        &state,
+                        &mut state,
                         &working_dir,
                         &config,
                         &pending_reviewers,
                         sender.clone(),
-                        state.iteration,
+                        iteration,
+                        &state_path,
                     )
                     .await?;
 
@@ -187,13 +194,15 @@ pub async fn run_headless_with_config(
                     "\n=== REVISION PHASE (Iteration {}) ===",
                     state.iteration
                 ));
+                let iteration = state.iteration;
                 run_revision_phase_with_context(
-                    &state,
+                    &mut state,
                     &working_dir,
                     &config,
                     &last_reviews,
                     sender.clone(),
-                    state.iteration,
+                    iteration,
+                    &state_path,
                 )
                 .await?;
                 last_reviews.clear();

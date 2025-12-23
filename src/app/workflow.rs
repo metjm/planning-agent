@@ -53,6 +53,10 @@ pub async fn run_workflow_with_config(
             config.workflow.revising.agent
         ),
     );
+    log_workflow(
+        &working_dir,
+        &format!("Workflow session ID: {}", state.workflow_session_id),
+    );
 
     let sender = SessionEventSender::new(session_id, output_tx.clone());
     let mut last_reviews: Vec<phases::ReviewResult> = Vec::new();
@@ -150,7 +154,7 @@ async fn run_planning_phase(
     sender.send_output(format!("Plan file: {}", state.plan_file.display()));
 
     log_workflow(working_dir, "Calling run_planning_phase_with_context...");
-    run_planning_phase_with_context(state, working_dir, config, sender.clone()).await?;
+    run_planning_phase_with_context(state, working_dir, config, sender.clone(), state_path).await?;
     log_workflow(working_dir, "run_planning_phase_with_context completed");
 
     let plan_path = working_dir.join(&state.plan_file);
@@ -221,6 +225,7 @@ async fn run_reviewing_phase(
             &pending_reviewers,
             sender.clone(),
             state.iteration,
+            state_path,
         )
         .await?;
 
@@ -489,6 +494,7 @@ async fn run_revising_phase(
         last_reviews,
         sender.clone(),
         state.iteration,
+        state_path,
     )
     .await?;
     last_reviews.clear();

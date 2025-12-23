@@ -1,6 +1,6 @@
 use crate::agents::{AgentContext, AgentType};
 use crate::config::WorkflowConfig;
-use crate::state::State;
+use crate::state::{ResumeStrategy, State};
 use crate::tui::SessionEventSender;
 use anyhow::Result;
 use std::path::Path;
@@ -14,10 +14,11 @@ Before finalizing your plan, perform a self-review against the "plan-review" ski
 Your plan should be structured to pass review without requiring revision cycles."#;
 
 pub async fn run_planning_phase_with_context(
-    state: &State,
+    state: &mut State,
     working_dir: &Path,
     config: &WorkflowConfig,
     session_sender: SessionEventSender,
+    state_path: &Path,
 ) -> Result<()> {
     let planning_config = &config.workflow.planning;
     let agent_name = &planning_config.agent;
@@ -33,9 +34,18 @@ pub async fn run_planning_phase_with_context(
 
     let prompt = build_planning_prompt(state);
 
+    let agent_session = state.get_or_create_agent_session(agent_name, ResumeStrategy::Stateless);
+    let session_key = agent_session.session_key.clone();
+    let resume_strategy = agent_session.resume_strategy.clone();
+
+    state.record_invocation(agent_name, "Planning");
+    state.save_atomic(state_path)?;
+
     let context = AgentContext {
         session_sender: session_sender.clone(),
         phase: "Planning".to_string(),
+        session_key,
+        resume_strategy,
     };
 
     let result = agent

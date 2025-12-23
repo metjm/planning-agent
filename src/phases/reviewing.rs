@@ -1,6 +1,6 @@
 use crate::agents::{AgentContext, AgentType};
 use crate::config::{AggregationMode, WorkflowConfig};
-use crate::state::{FeedbackStatus, State};
+use crate::state::{FeedbackStatus, ResumeStrategy, State};
 use crate::tui::SessionEventSender;
 use anyhow::Result;
 use regex::Regex;
@@ -73,12 +73,13 @@ Use the "plan-review" skill to review.
 "#;
 
 pub async fn run_multi_agent_review_with_context(
-    state: &State,
+    state: &mut State,
     working_dir: &Path,
     config: &WorkflowConfig,
     agent_names: &[String],
     session_sender: SessionEventSender,
     iteration: u32,
+    state_path: &Path,
 ) -> Result<ReviewBatchResult> {
     if agent_names.is_empty() {
         anyhow::bail!("No reviewers configured");
@@ -91,28 +92,45 @@ pub async fn run_multi_agent_review_with_context(
     ));
 
     let total_reviewers = agent_names.len();
-    let base_feedback_path = state.feedback_file.as_path();
+    let base_feedback_path = state.feedback_file.clone();
     let base_feedback_path_abs = working_dir.join(&state.feedback_file);
 
-    let agents: Vec<(String, AgentType, PathBuf)> = agent_names
+    let phase_name = format!("Reviewing #{}", iteration);
+
+    let mut agent_contexts: Vec<(String, Option<String>, ResumeStrategy)> = Vec::new();
+    for agent_name in agent_names {
+        let agent_session = state.get_or_create_agent_session(agent_name, ResumeStrategy::Stateless);
+        agent_contexts.push((
+            agent_name.clone(),
+            agent_session.session_key.clone(),
+            agent_session.resume_strategy.clone(),
+        ));
+        state.record_invocation(agent_name, &phase_name);
+    }
+    state.save_atomic(state_path)?;
+
+    let agents: Vec<(String, AgentType, PathBuf, Option<String>, ResumeStrategy)> = agent_names
         .iter()
-        .map(|name| {
+        .zip(agent_contexts.into_iter())
+        .map(|(name, (_, session_key, resume_strategy))| {
             let agent_config = config
                 .get_agent(name)
                 .ok_or_else(|| anyhow::anyhow!("Review agent '{}' not found in config", name))?;
             let feedback_path =
-                feedback_path_for_agent(base_feedback_path, name, total_reviewers);
+                feedback_path_for_agent(&base_feedback_path, name, total_reviewers);
             Ok((
                 name.to_string(),
                 AgentType::from_config(name, agent_config, working_dir.to_path_buf())?,
                 working_dir.join(feedback_path),
+                session_key,
+                resume_strategy,
             ))
         })
         .collect::<Result<Vec<_>>>()?;
 
     let futures: Vec<_> = agents
         .into_iter()
-        .map(|(agent_name, agent, feedback_path_abs)| {
+        .map(|(agent_name, agent, feedback_path_abs, session_key, resume_strategy)| {
             let p = build_review_prompt(state);
             let sender = session_sender.clone();
             let phase = format!("Reviewing #{}", iteration);
@@ -124,6 +142,8 @@ pub async fn run_multi_agent_review_with_context(
                 let context = AgentContext {
                     session_sender: sender.clone(),
                     phase,
+                    session_key,
+                    resume_strategy,
                 };
 
                 let result = agent

@@ -1,7 +1,9 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -19,6 +21,31 @@ pub enum FeedbackStatus {
     NeedsRevision,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ResumeStrategy {
+    #[default]
+    Stateless,
+    SessionId,
+    ResumeLatest,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentSessionState {
+    pub resume_strategy: ResumeStrategy,
+    pub session_key: Option<String>,
+    pub last_used_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InvocationRecord {
+    pub agent: String,
+    pub phase: String,
+    pub timestamp: String,
+    pub session_key: Option<String>,
+    pub resume_strategy: ResumeStrategy,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct State {
     pub phase: Phase,
@@ -32,6 +59,15 @@ pub struct State {
 
     #[serde(default)]
     pub approval_overridden: bool,
+
+    #[serde(default)]
+    pub workflow_session_id: String,
+
+    #[serde(default)]
+    pub agent_sessions: HashMap<String, AgentSessionState>,
+
+    #[serde(default)]
+    pub invocations: Vec<InvocationRecord>,
 }
 
 impl State {
@@ -53,14 +89,67 @@ impl State {
             feedback_file: PathBuf::from(format!("docs/plans/{}_feedback.md", sanitized_name)),
             last_feedback_status: None,
             approval_overridden: false,
+            workflow_session_id: Uuid::new_v4().to_string(),
+            agent_sessions: HashMap::new(),
+            invocations: Vec::new(),
+        }
+    }
+
+    pub fn get_or_create_agent_session(
+        &mut self,
+        agent: &str,
+        strategy: ResumeStrategy,
+    ) -> &AgentSessionState {
+        let now = chrono::Utc::now().to_rfc3339();
+
+        if !self.agent_sessions.contains_key(agent) {
+            let session_key = match strategy {
+                ResumeStrategy::SessionId => Some(Uuid::new_v4().to_string()),
+                _ => None,
+            };
+
+            self.agent_sessions.insert(
+                agent.to_string(),
+                AgentSessionState {
+                    resume_strategy: strategy,
+                    session_key,
+                    last_used_at: now.clone(),
+                },
+            );
+        }
+
+        let session = self.agent_sessions.get_mut(agent).unwrap();
+        session.last_used_at = now;
+        session
+    }
+
+    pub fn record_invocation(&mut self, agent: &str, phase: &str) {
+        let session = self.agent_sessions.get(agent);
+        let (session_key, resume_strategy) = session
+            .map(|s| (s.session_key.clone(), s.resume_strategy.clone()))
+            .unwrap_or((None, ResumeStrategy::Stateless));
+
+        self.invocations.push(InvocationRecord {
+            agent: agent.to_string(),
+            phase: phase.to_string(),
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            session_key,
+            resume_strategy,
+        });
+    }
+
+    pub fn ensure_workflow_session_id(&mut self) {
+        if self.workflow_session_id.is_empty() {
+            self.workflow_session_id = Uuid::new_v4().to_string();
         }
     }
 
     pub fn load(path: &Path) -> Result<Self> {
         let content = fs::read_to_string(path)
             .with_context(|| format!("Failed to read state file: {}", path.display()))?;
-        let state: State = serde_json::from_str(&content)
+        let mut state: State = serde_json::from_str(&content)
             .with_context(|| "Failed to parse state file as JSON")?;
+        state.ensure_workflow_session_id();
         Ok(state)
     }
 
@@ -73,6 +162,22 @@ impl State {
             .with_context(|| "Failed to serialize state to JSON")?;
         fs::write(path, content)
             .with_context(|| format!("Failed to write state file: {}", path.display()))?;
+        Ok(())
+    }
+
+    pub fn save_atomic(&self, path: &Path) -> Result<()> {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)
+                .with_context(|| format!("Failed to create directory: {}", parent.display()))?;
+        }
+        let content = serde_json::to_string_pretty(self)
+            .with_context(|| "Failed to serialize state to JSON")?;
+
+        let temp_path = path.with_extension("json.tmp");
+        fs::write(&temp_path, &content)
+            .with_context(|| format!("Failed to write temp state file: {}", temp_path.display()))?;
+        fs::rename(&temp_path, path)
+            .with_context(|| format!("Failed to rename temp file to: {}", path.display()))?;
         Ok(())
     }
 
@@ -148,5 +253,115 @@ mod tests {
         state.iteration = 1;
         state.phase = Phase::Complete;
         assert!(!state.should_continue());
+    }
+
+    #[test]
+    fn test_new_state_has_workflow_session_id() {
+        let state = State::new("test", "test objective", 3);
+        assert!(!state.workflow_session_id.is_empty());
+        assert!(state.agent_sessions.is_empty());
+        assert!(state.invocations.is_empty());
+    }
+
+    #[test]
+    fn test_workflow_session_id_is_stable() {
+        let state = State::new("test", "test objective", 3);
+        let session_id = state.workflow_session_id.clone();
+        assert_eq!(state.workflow_session_id, session_id);
+    }
+
+    #[test]
+    fn test_get_or_create_agent_session_stateless() {
+        let mut state = State::new("test", "test objective", 3);
+        let session = state.get_or_create_agent_session("claude", ResumeStrategy::Stateless);
+
+        assert_eq!(session.resume_strategy, ResumeStrategy::Stateless);
+        assert!(session.session_key.is_none());
+        assert!(!session.last_used_at.is_empty());
+    }
+
+    #[test]
+    fn test_get_or_create_agent_session_with_session_id() {
+        let mut state = State::new("test", "test objective", 3);
+        let session = state.get_or_create_agent_session("claude", ResumeStrategy::SessionId);
+
+        assert_eq!(session.resume_strategy, ResumeStrategy::SessionId);
+        assert!(session.session_key.is_some());
+        let session_key = session.session_key.clone().unwrap();
+        assert!(!session_key.is_empty());
+    }
+
+    #[test]
+    fn test_agent_session_is_reused() {
+        let mut state = State::new("test", "test objective", 3);
+
+        let session1 = state.get_or_create_agent_session("claude", ResumeStrategy::SessionId);
+        let key1 = session1.session_key.clone();
+
+        let session2 = state.get_or_create_agent_session("claude", ResumeStrategy::SessionId);
+        let key2 = session2.session_key.clone();
+
+        assert_eq!(key1, key2);
+    }
+
+    #[test]
+    fn test_record_invocation() {
+        let mut state = State::new("test", "test objective", 3);
+        state.get_or_create_agent_session("claude", ResumeStrategy::SessionId);
+        state.record_invocation("claude", "Planning");
+
+        assert_eq!(state.invocations.len(), 1);
+        let inv = &state.invocations[0];
+        assert_eq!(inv.agent, "claude");
+        assert_eq!(inv.phase, "Planning");
+        assert!(!inv.timestamp.is_empty());
+        assert!(inv.session_key.is_some());
+        assert_eq!(inv.resume_strategy, ResumeStrategy::SessionId);
+    }
+
+    #[test]
+    fn test_ensure_workflow_session_id() {
+        let mut state = State::new("test", "test objective", 3);
+        state.workflow_session_id = String::new();
+        assert!(state.workflow_session_id.is_empty());
+
+        state.ensure_workflow_session_id();
+        assert!(!state.workflow_session_id.is_empty());
+    }
+
+    #[test]
+    fn test_backward_compatibility_with_existing_state() {
+        let old_state_json = r#"{
+            "phase": "reviewing",
+            "iteration": 2,
+            "max_iterations": 3,
+            "feature_name": "existing-feature",
+            "objective": "Some objective",
+            "plan_file": "docs/plans/existing-feature.md",
+            "feedback_file": "docs/plans/existing-feature_feedback.md",
+            "last_feedback_status": "needs_revision",
+            "approval_overridden": false
+        }"#;
+
+        let state: State = serde_json::from_str(old_state_json).unwrap();
+        assert_eq!(state.feature_name, "existing-feature");
+        assert!(state.workflow_session_id.is_empty());
+        assert!(state.agent_sessions.is_empty());
+        assert!(state.invocations.is_empty());
+    }
+
+    #[test]
+    fn test_state_serialization_with_session_data() {
+        let mut state = State::new("test", "test objective", 3);
+        state.get_or_create_agent_session("claude", ResumeStrategy::SessionId);
+        state.record_invocation("claude", "Planning");
+
+        let json = serde_json::to_string(&state).unwrap();
+        let loaded: State = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(loaded.workflow_session_id, state.workflow_session_id);
+        assert_eq!(loaded.agent_sessions.len(), 1);
+        assert!(loaded.agent_sessions.contains_key("claude"));
+        assert_eq!(loaded.invocations.len(), 1);
     }
 }

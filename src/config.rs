@@ -1,3 +1,4 @@
+use crate::state::ResumeStrategy;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -9,6 +10,14 @@ pub struct WorkflowConfig {
     pub workflow: PhaseConfigs,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct SessionPersistenceConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub strategy: ResumeStrategy,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct AgentConfig {
     pub command: String,
@@ -16,6 +25,8 @@ pub struct AgentConfig {
     pub args: Vec<String>,
     #[serde(default)]
     pub allowed_tools: Vec<String>,
+    #[serde(default)]
+    pub session_persistence: SessionPersistenceConfig,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
