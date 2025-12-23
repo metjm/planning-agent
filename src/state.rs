@@ -101,24 +101,6 @@ impl State {
     }
 }
 
-pub fn parse_feedback_status(feedback_file: &Path) -> Result<FeedbackStatus> {
-    let content = fs::read_to_string(feedback_file)
-        .with_context(|| format!("Failed to read feedback file: {}", feedback_file.display()))?;
-
-    // Check for APPROVED (but not if NEEDS REVISION is also present)
-    let has_approved = content.contains("APPROVED");
-    let has_needs_revision = content.contains("NEEDS REVISION")
-        || content.contains("NEEDS_REVISION")
-        || content.contains("MAJOR ISSUES");
-
-    if has_approved && !has_needs_revision {
-        Ok(FeedbackStatus::Approved)
-    } else {
-        // Default to needs revision if unclear or explicitly stated
-        Ok(FeedbackStatus::NeedsRevision)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

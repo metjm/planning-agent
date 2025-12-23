@@ -135,18 +135,15 @@ pub async fn run_multi_agent_review_with_context(
                         }
                         Ok(None) | Err(_) => {
                             if feedback_path != base_feedback_path_abs {
-                                match read_recent(&base_feedback_path_abs) {
-                                    Ok(Some(content)) => {
-                                        output = content;
-                                        feedback_source = Some(base_feedback_path_abs.clone());
-                                        session_sender.send_output(format!(
-                                            "[review:{}] WARNING: feedback written to {} (expected {})",
-                                            agent_name,
-                                            base_feedback_path_abs.display(),
-                                            feedback_path.display()
-                                        ));
-                                    }
-                                    _ => {}
+                                if let Ok(Some(content)) = read_recent(&base_feedback_path_abs) {
+                                    output = content;
+                                    feedback_source = Some(base_feedback_path_abs.clone());
+                                    session_sender.send_output(format!(
+                                        "[review:{}] WARNING: feedback written to {} (expected {})",
+                                        agent_name,
+                                        base_feedback_path_abs.display(),
+                                        feedback_path.display()
+                                    ));
                                 }
                             }
                         }

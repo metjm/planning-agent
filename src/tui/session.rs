@@ -16,6 +16,7 @@ use super::event::UserApprovalResponse;
 pub struct ChatMessage {
     pub agent_name: String,
     pub message: String,
+    #[allow(dead_code)] // Reserved for future message time display
     pub timestamp: Instant,
 }
 
