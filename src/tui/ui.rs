@@ -616,13 +616,15 @@ fn draw_stats(frame: &mut Frame, session: &Session, area: Rect) {
                     ]));
                 }
 
-                // Show weekly usage (percentage used, color inverted - higher is worse)
+                // Show weekly/daily usage (percentage used, color inverted - higher is worse)
                 if let Some(weekly_pct) = provider.weekly_used {
                     let color = if weekly_pct >= 90 { Color::Red }
                                else if weekly_pct >= 70 { Color::Yellow }
                                else { Color::Green };
+                    // Gemini uses daily limits, others use weekly
+                    let label = if provider.provider == "gemini" { "  Daily: " } else { "  Weekly: " };
                     stats_text.push(Line::from(vec![
-                        Span::styled("  Weekly: ", Style::default().fg(Color::White)),
+                        Span::styled(label, Style::default().fg(Color::White)),
                         Span::styled(format!("{}% used", weekly_pct), Style::default().fg(color)),
                     ]));
                 }

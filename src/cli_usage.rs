@@ -3,13 +3,14 @@
 //! This module provides a unified interface for fetching account usage information
 //! from various AI CLI tools. Currently:
 //! - Claude: Supports /usage command with session and weekly limits
-//! - Gemini: No usage command available (shows N/A)
+//! - Gemini: Supports /stats command with per-model usage limits
 //! - Codex: No usage command available (shows N/A)
 
 use std::collections::HashMap;
 use std::time::Instant;
 
 use crate::claude_usage::{self, ClaudeUsage};
+use crate::gemini_usage::{self, GeminiUsage};
 
 /// A provider's usage information (generalized for multi-provider support)
 #[derive(Debug, Clone, Default)]
@@ -61,6 +62,24 @@ impl ProviderUsage {
         }
     }
 
+    /// Create from a GeminiUsage result
+    /// Note: Gemini shows "usage remaining" so we convert to "used" for consistency
+    pub fn from_gemini_usage(usage: GeminiUsage) -> Self {
+        // Convert "remaining" to "used" (100 - remaining)
+        let daily_used = usage.usage_remaining.map(|r| 100u8.saturating_sub(r));
+
+        Self {
+            provider: "gemini".to_string(),
+            display_name: "Gemini".to_string(),
+            session_used: None, // Gemini doesn't have session limits
+            weekly_used: daily_used, // Daily limit shown as "weekly" slot
+            plan_type: usage.constrained_model, // Show the most constrained model
+            fetched_at: usage.fetched_at,
+            status_message: usage.error_message,
+            supports_usage: true,
+        }
+    }
+
     /// Check if this provider has an error status
     pub fn has_error(&self) -> bool {
         self.status_message.is_some() && self.session_used.is_none() && self.weekly_used.is_none()
@@ -105,13 +124,14 @@ impl AccountUsage {
 pub fn fetch_all_provider_usage_sync() -> AccountUsage {
     let mut account_usage = AccountUsage::new();
 
-    // Fetch Claude usage (the only provider with usage support)
+    // Fetch Claude usage
     let claude_usage = claude_usage::fetch_claude_usage_sync();
     account_usage.update(ProviderUsage::from_claude_usage(claude_usage));
 
-    // Gemini: No usage command available
-    if which::which("gemini").is_ok() {
-        account_usage.update(ProviderUsage::not_available("gemini", "Gemini"));
+    // Fetch Gemini usage via /stats command
+    if gemini_usage::is_gemini_available() {
+        let gemini = gemini_usage::fetch_gemini_usage_sync();
+        account_usage.update(ProviderUsage::from_gemini_usage(gemini));
     }
 
     // Codex: No usage command available
@@ -190,5 +210,67 @@ mod tests {
             supports_usage: true,
         };
         assert!(!ok_usage.has_error());
+    }
+
+    /// Integration test that fetches usage from all providers
+    /// Run with: cargo test test_fetch_all_providers_real -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn test_fetch_all_providers_real() {
+        eprintln!("Fetching usage from all providers...\n");
+        let account = fetch_all_provider_usage_sync();
+
+        eprintln!("Found {} providers\n", account.providers.len());
+
+        // Check Claude
+        if let Some(claude) = account.get("claude") {
+            eprintln!("Claude:");
+            eprintln!("  supports_usage: {}", claude.supports_usage);
+            eprintln!("  session_used: {:?}", claude.session_used);
+            eprintln!("  weekly_used: {:?}", claude.weekly_used);
+            eprintln!("  plan_type: {:?}", claude.plan_type);
+            eprintln!("  status_message: {:?}", claude.status_message);
+
+            assert!(claude.supports_usage, "Claude should support usage");
+            if claude.status_message.is_none() {
+                assert!(claude.session_used.is_some() || claude.weekly_used.is_some(),
+                    "Claude should have usage data");
+            }
+        } else {
+            eprintln!("Claude: not found (CLI not installed?)");
+        }
+
+        // Check Gemini
+        if let Some(gemini) = account.get("gemini") {
+            eprintln!("\nGemini:");
+            eprintln!("  supports_usage: {}", gemini.supports_usage);
+            eprintln!("  daily_used (as weekly): {:?}", gemini.weekly_used);
+            eprintln!("  plan_type (model): {:?}", gemini.plan_type);
+            eprintln!("  status_message: {:?}", gemini.status_message);
+
+            assert!(gemini.supports_usage, "Gemini should support usage via /stats");
+            if gemini.status_message.is_none() {
+                assert!(gemini.weekly_used.is_some(), "Gemini should have daily usage data");
+                eprintln!("  Daily used: {}%", gemini.weekly_used.unwrap());
+            }
+        } else {
+            eprintln!("\nGemini: not found (CLI not installed)");
+        }
+
+        // Check Codex
+        if let Some(codex) = account.get("codex") {
+            eprintln!("\nCodex:");
+            eprintln!("  supports_usage: {}", codex.supports_usage);
+            eprintln!("  status_message: {:?}", codex.status_message);
+
+            assert!(!codex.supports_usage, "Codex should NOT support usage");
+            assert!(codex.status_message.is_some(), "Codex should have status message");
+            assert!(codex.session_used.is_none(), "Codex should not have session data");
+            assert!(codex.weekly_used.is_none(), "Codex should not have weekly data");
+        } else {
+            eprintln!("\nCodex: not found (CLI not installed)");
+        }
+
+        eprintln!("\nAll provider checks passed!");
     }
 }
