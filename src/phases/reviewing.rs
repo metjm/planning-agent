@@ -19,6 +19,35 @@ fn extract_plan_feedback(output: &str) -> String {
     output.to_string()
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum VerdictParseResult {
+    Approved,
+    NeedsRevision,
+    ParseFailure(String),
+}
+
+pub fn parse_verdict(feedback: &str) -> VerdictParseResult {
+    let re = Regex::new(r"(?i)overall\s+assessment[:\*\s]*\**\s*(APPROVED|NEEDS\s*_?\s*REVISION|MAJOR\s+ISSUES)")
+        .unwrap();
+
+    if let Some(captures) = re.captures(feedback) {
+        if let Some(verdict_match) = captures.get(1) {
+            let verdict = verdict_match.as_str().to_uppercase();
+            let normalized = verdict.replace('_', " ").replace("  ", " ");
+
+            if normalized == "APPROVED" {
+                return VerdictParseResult::Approved;
+            } else if normalized.contains("NEEDS") && normalized.contains("REVISION") {
+                return VerdictParseResult::NeedsRevision;
+            } else if normalized.contains("MAJOR") && normalized.contains("ISSUES") {
+                return VerdictParseResult::NeedsRevision;
+            }
+        }
+    }
+
+    VerdictParseResult::ParseFailure("No valid Overall Assessment found".to_string())
+}
+
 #[derive(Debug, Clone)]
 pub struct ReviewResult {
     pub agent_name: String,
@@ -196,25 +225,41 @@ pub async fn run_multi_agent_review_with_context(
                     ));
                 }
 
-                let needs_revision = feedback.contains("NEEDS REVISION")
-                    || feedback.contains("NEEDS_REVISION")
-                    || feedback.contains("MAJOR ISSUES");
-
-                session_sender.send_output(format!(
-                    "[review:{}] Verdict: {}",
-                    agent_name,
-                    if needs_revision {
-                        "NEEDS REVISION"
-                    } else {
-                        "APPROVED"
+                let verdict = parse_verdict(&feedback);
+                match verdict {
+                    VerdictParseResult::Approved => {
+                        session_sender.send_output(format!(
+                            "[review:{}] Verdict: APPROVED",
+                            agent_name
+                        ));
+                        reviews.push(ReviewResult {
+                            agent_name,
+                            needs_revision: false,
+                            feedback,
+                        });
                     }
-                ));
-
-                reviews.push(ReviewResult {
-                    agent_name,
-                    needs_revision,
-                    feedback,
-                });
+                    VerdictParseResult::NeedsRevision => {
+                        session_sender.send_output(format!(
+                            "[review:{}] Verdict: NEEDS REVISION",
+                            agent_name
+                        ));
+                        reviews.push(ReviewResult {
+                            agent_name,
+                            needs_revision: true,
+                            feedback,
+                        });
+                    }
+                    VerdictParseResult::ParseFailure(ref err) => {
+                        session_sender.send_output(format!(
+                            "[review:{}] WARNING: Could not parse verdict from feedback: {}",
+                            agent_name, err
+                        ));
+                        failures.push(ReviewFailure {
+                            agent_name,
+                            error: format!("Verdict parse failure: {}", err),
+                        });
+                    }
+                }
             }
             Err(e) => {
 
@@ -514,5 +559,71 @@ mod tests {
             aggregate_reviews(&reviews, &AggregationMode::AnyRejects),
             FeedbackStatus::NeedsRevision
         );
+    }
+
+    #[test]
+    fn test_parse_verdict_approved() {
+        let feedback = "## Review Summary\nLooks good!\n\n## Overall Assessment:** APPROVED";
+        assert_eq!(parse_verdict(feedback), VerdictParseResult::Approved);
+    }
+
+    #[test]
+    fn test_parse_verdict_needs_revision() {
+        let feedback = "## Issues Found\nSome problems.\n\n## Overall Assessment:** NEEDS REVISION";
+        assert_eq!(parse_verdict(feedback), VerdictParseResult::NeedsRevision);
+    }
+
+    #[test]
+    fn test_parse_verdict_needs_revision_underscore() {
+        let feedback = "## Overall Assessment:** NEEDS_REVISION";
+        assert_eq!(parse_verdict(feedback), VerdictParseResult::NeedsRevision);
+    }
+
+    #[test]
+    fn test_parse_verdict_major_issues() {
+        let feedback = "## Overall Assessment: MAJOR ISSUES\n\nSevere problems found.";
+        assert_eq!(parse_verdict(feedback), VerdictParseResult::NeedsRevision);
+    }
+
+    #[test]
+    fn test_parse_verdict_case_insensitive() {
+        let feedback = "overall assessment: approved";
+        assert_eq!(parse_verdict(feedback), VerdictParseResult::Approved);
+    }
+
+    #[test]
+    fn test_parse_verdict_malformed_no_verdict() {
+        let feedback = "## Overall Assessment:\nSome text but no verdict keyword.";
+        assert!(matches!(
+            parse_verdict(feedback),
+            VerdictParseResult::ParseFailure(_)
+        ));
+    }
+
+    #[test]
+    fn test_parse_verdict_missing_overall_assessment() {
+        let feedback = "This feedback has no overall assessment line at all.\nJust random content.";
+        assert!(matches!(
+            parse_verdict(feedback),
+            VerdictParseResult::ParseFailure(_)
+        ));
+    }
+
+    #[test]
+    fn test_parse_verdict_conflicting_content() {
+        let feedback = "The plan is APPROVED in some areas but has issues.\n\n## Overall Assessment:** NEEDS REVISION";
+        assert_eq!(parse_verdict(feedback), VerdictParseResult::NeedsRevision);
+    }
+
+    #[test]
+    fn test_parse_verdict_no_major_issues_in_body() {
+        let feedback = "I found no major issues in this plan.\n\n## Overall Assessment:** APPROVED";
+        assert_eq!(parse_verdict(feedback), VerdictParseResult::Approved);
+    }
+
+    #[test]
+    fn test_parse_verdict_with_markdown_formatting() {
+        let feedback = "### Overall Assessment: **APPROVED**\n\nReady for implementation.";
+        assert_eq!(parse_verdict(feedback), VerdictParseResult::Approved);
     }
 }

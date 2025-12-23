@@ -39,3 +39,6 @@ regex = "1.12.2"
 
 # Auto-update
 ureq = "3"
+
+[dev-dependencies]
+tempfile = "3"

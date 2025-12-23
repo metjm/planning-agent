@@ -1,5 +1,6 @@
 
 use crate::app::util::{build_max_iterations_summary, build_review_failure_summary, log_workflow};
+use crate::app::workflow_common::{cleanup_merged_feedback, REVIEW_FAILURE_RETRY_LIMIT};
 use crate::config::WorkflowConfig;
 use crate::phases::{
     self, aggregate_reviews, merge_feedback, run_multi_agent_review_with_context,
@@ -11,8 +12,6 @@ use anyhow::Result;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use tokio::sync::mpsc;
-
-const REVIEW_FAILURE_RETRY_LIMIT: usize = 1;
 
 pub enum WorkflowResult {
 
@@ -496,15 +495,13 @@ async fn run_revising_phase(
     log_workflow(working_dir, "run_revision_phase_with_context completed");
 
     let feedback_path = working_dir.join(&state.feedback_file);
-    if feedback_path.exists() {
-        if let Err(e) = std::fs::remove_file(&feedback_path) {
-            log_workflow(
-                working_dir,
-                &format!("Warning: Failed to delete feedback file: {}", e),
-            );
-        } else {
-            log_workflow(working_dir, "Deleted old feedback file");
-        }
+    match cleanup_merged_feedback(&feedback_path) {
+        Ok(true) => log_workflow(working_dir, "Deleted old feedback file"),
+        Ok(false) => {}
+        Err(e) => log_workflow(
+            working_dir,
+            &format!("Warning: Failed to delete feedback file: {}", e),
+        ),
     }
 
     let revision_phase_name = format!("Revising #{}", state.iteration);
