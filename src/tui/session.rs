@@ -1,4 +1,4 @@
-use crate::claude_usage::ClaudeUsage;
+use crate::cli_usage::AccountUsage;
 use crate::state::{Phase, State};
 use crate::tui::event::TokenUsage;
 use crate::WorkflowResult;
@@ -161,8 +161,8 @@ pub struct Session {
     pub workflow_handle: Option<JoinHandle<Result<WorkflowResult>>>,
     pub approval_tx: Option<mpsc::Sender<UserApprovalResponse>>,
 
-    // Claude account usage (shared across sessions)
-    pub claude_usage: ClaudeUsage,
+    // Account usage for all providers (shared across sessions)
+    pub account_usage: AccountUsage,
 
     /// Spinner frame counter for generating summary animation
     pub spinner_frame: u8,
@@ -233,7 +233,7 @@ impl Session {
             workflow_handle: None,
             approval_tx: None,
 
-            claude_usage: ClaudeUsage::default(),
+            account_usage: AccountUsage::default(),
 
             spinner_frame: 0,
 

@@ -550,54 +550,82 @@ fn draw_stats(frame: &mut Frame, session: &Session, area: Rect) {
         ]),
     ];
 
-    // Claude account usage section
-    let show_usage_section = session.claude_usage.fetched_at.is_some()
-        || session.claude_usage.error_message.is_some();
+    // Account usage section - show all providers
+    let has_any_usage = !session.account_usage.providers.is_empty();
 
-    if show_usage_section {
+    if has_any_usage {
         stats_text.push(Line::from(""));
         stats_text.push(Line::from(vec![Span::styled(
             "── Account ──",
             Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
         )]));
 
-        if let Some(ref error) = session.claude_usage.error_message {
-            stats_text.push(Line::from(vec![
-                Span::styled(" Status: ", Style::default().fg(Color::White)),
-                Span::styled("N/A", Style::default().fg(Color::DarkGray)),
-            ]));
-            stats_text.push(Line::from(vec![
-                Span::styled(format!(" ({})", error), Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC)),
-            ]));
-        } else {
-            // Show plan type
-            if let Some(ref plan) = session.claude_usage.plan_type {
-                stats_text.push(Line::from(vec![
-                    Span::styled(" Plan: ", Style::default().fg(Color::White)),
-                    Span::styled(plan.clone(), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-                ]));
+        // Sort providers for consistent display order: claude first, then alphabetically
+        let mut providers: Vec<_> = session.account_usage.providers.values().collect();
+        providers.sort_by(|a, b| {
+            if a.provider == "claude" { std::cmp::Ordering::Less }
+            else if b.provider == "claude" { std::cmp::Ordering::Greater }
+            else { a.provider.cmp(&b.provider) }
+        });
+
+        for provider in providers {
+            // Skip providers that don't have usage AND don't have errors
+            // (i.e., haven't been fetched yet)
+            if provider.fetched_at.is_none() {
+                continue;
             }
 
-            // Show session usage remaining
-            if let Some(session_pct) = session.claude_usage.session_remaining {
-                let color = if session_pct <= 10 { Color::Red }
-                           else if session_pct <= 30 { Color::Yellow }
-                           else { Color::Green };
-                stats_text.push(Line::from(vec![
-                    Span::styled(" Session: ", Style::default().fg(Color::White)),
-                    Span::styled(format!("{}% left", session_pct), Style::default().fg(color)),
-                ]));
-            }
+            // Show provider header with display name
+            let header_style = if provider.supports_usage {
+                Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::DarkGray)
+            };
 
-            // Show weekly usage remaining
-            if let Some(weekly_pct) = session.claude_usage.weekly_remaining {
-                let color = if weekly_pct <= 10 { Color::Red }
-                           else if weekly_pct <= 30 { Color::Yellow }
-                           else { Color::Green };
+            // Check if this provider has an error/N/A status
+            if provider.has_error() || !provider.supports_usage {
+                // Show compact "Provider: N/A (reason)" format
+                let reason = provider.status_message.as_deref().unwrap_or("N/A");
                 stats_text.push(Line::from(vec![
-                    Span::styled(" Weekly: ", Style::default().fg(Color::White)),
-                    Span::styled(format!("{}% left", weekly_pct), Style::default().fg(color)),
+                    Span::styled(format!(" {}: ", provider.display_name), Style::default().fg(Color::White)),
+                    Span::styled("N/A", Style::default().fg(Color::DarkGray)),
+                    Span::styled(format!(" ({})", reason), Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC)),
                 ]));
+            } else {
+                // Show provider name as header
+                stats_text.push(Line::from(vec![
+                    Span::styled(format!(" {}", provider.display_name), header_style),
+                ]));
+
+                // Show plan type if available
+                if let Some(ref plan) = provider.plan_type {
+                    stats_text.push(Line::from(vec![
+                        Span::styled("  Plan: ", Style::default().fg(Color::White)),
+                        Span::styled(plan.clone(), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+                    ]));
+                }
+
+                // Show session usage (percentage used, color inverted - higher is worse)
+                if let Some(session_pct) = provider.session_used {
+                    let color = if session_pct >= 90 { Color::Red }
+                               else if session_pct >= 70 { Color::Yellow }
+                               else { Color::Green };
+                    stats_text.push(Line::from(vec![
+                        Span::styled("  Session: ", Style::default().fg(Color::White)),
+                        Span::styled(format!("{}% used", session_pct), Style::default().fg(color)),
+                    ]));
+                }
+
+                // Show weekly usage (percentage used, color inverted - higher is worse)
+                if let Some(weekly_pct) = provider.weekly_used {
+                    let color = if weekly_pct >= 90 { Color::Red }
+                               else if weekly_pct >= 70 { Color::Yellow }
+                               else { Color::Green };
+                    stats_text.push(Line::from(vec![
+                        Span::styled("  Weekly: ", Style::default().fg(Color::White)),
+                        Span::styled(format!("{}% used", weekly_pct), Style::default().fg(color)),
+                    ]));
+                }
             }
         }
     }
