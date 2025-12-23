@@ -1,7 +1,7 @@
 use super::log::AgentLogger;
 use super::{AgentContext, AgentResult};
 use crate::config::AgentConfig;
-use crate::tui::{Event, TokenUsage};
+use crate::tui::{Event, TodoItem, TodoStatus, TokenUsage};
 use anyhow::{Context, Result};
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -743,6 +743,27 @@ impl ClaudeAgent {
                                                                         .get("name")
                                                                         .and_then(|n| n.as_str())
                                                                     {
+                                                                        // Detect TodoWrite and emit update
+                                                                        if name == "TodoWrite" {
+                                                                            if let Some(input) = item.get("input") {
+                                                                                if let Some(todos) = input.get("todos").and_then(|t| t.as_array()) {
+                                                                                    let items: Vec<TodoItem> = todos.iter().filter_map(|t| {
+                                                                                        Some(TodoItem {
+                                                                                            content: t.get("content")?.as_str()?.to_string(),
+                                                                                            status: match t.get("status")?.as_str()? {
+                                                                                                "pending" => TodoStatus::Pending,
+                                                                                                "in_progress" => TodoStatus::InProgress,
+                                                                                                "completed" => TodoStatus::Completed,
+                                                                                                _ => return None,
+                                                                                            },
+                                                                                            active_form: t.get("activeForm")?.as_str()?.to_string(),
+                                                                                        })
+                                                                                    }).collect();
+                                                                                    context.session_sender.send_todos_update("claude".to_string(), items);
+                                                                                }
+                                                                            }
+                                                                        }
+
                                                                         let display_name = if name == "Bash"
                                                                         {
                                                                             item.get("input")

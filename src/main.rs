@@ -435,6 +435,12 @@ async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
         .clone()
         .unwrap_or_else(|| std::env::current_dir().expect("Failed to get current directory"));
 
+    // Check for update-installed marker from previous update
+    if update::consume_update_marker(&working_dir) {
+        tab_manager.update_notice = Some("Update installed successfully!".to_string());
+        debug_log(start, "update-installed marker consumed");
+    }
+
     // Load workflow config if provided, otherwise use defaults
     let workflow_config = if let Some(config_path) = &cli.config {
         let full_path = if config_path.is_absolute() {
@@ -646,61 +652,21 @@ async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
 
                                 // Check if update is available
                                 if let update::UpdateStatus::UpdateAvailable(_) = &tab_manager.update_status {
-                                    // Clear any previous error
+                                    // Clear any previous error and start install
                                     tab_manager.update_error = None;
                                     tab_manager.update_in_progress = true;
+                                    tab_manager.update_spinner_frame = 0;
 
-                                    // Run update in a blocking task
-                                    let result = update::perform_update();
-                                    tab_manager.update_in_progress = false;
-
-                                    match result {
-                                        update::UpdateResult::Success(binary_path) => {
-                                            // Restore terminal before exec
-                                            restore_terminal(&mut terminal)?;
-
-                                            // Preserve CLI args and exec the new binary
-                                            let args: Vec<String> = std::env::args().skip(1).collect();
-
-                                            #[cfg(unix)]
-                                            {
-                                                use std::os::unix::process::CommandExt;
-                                                let err = std::process::Command::new(&binary_path)
-                                                    .args(&args)
-                                                    .exec();
-                                                // If exec returns, it failed
-                                                eprintln!("Failed to exec new binary: {}", err);
-                                                std::process::exit(1);
-                                            }
-
-                                            #[cfg(not(unix))]
-                                            {
-                                                // On Windows, spawn and exit
-                                                let _ = std::process::Command::new(&binary_path)
-                                                    .args(&args)
-                                                    .spawn();
-                                                std::process::exit(0);
-                                            }
-                                        }
-                                        update::UpdateResult::GitNotFound => {
-                                            tab_manager.update_error = Some("Update requires git. Please install git and try again.".to_string());
-                                        }
-                                        update::UpdateResult::CargoNotFound => {
-                                            tab_manager.update_error = Some("Update requires cargo. Please install Rust and try again.".to_string());
-                                        }
-                                        update::UpdateResult::InstallFailed(err) => {
-                                            // Truncate long error messages
-                                            let short_err = if err.len() > 60 {
-                                                format!("{}...", &err[..57])
-                                            } else {
-                                                err
-                                            };
-                                            tab_manager.update_error = Some(short_err);
-                                        }
-                                        update::UpdateResult::BinaryNotFound => {
-                                            tab_manager.update_error = Some("Update installed but binary not found".to_string());
-                                        }
-                                    }
+                                    // Run update in a background task to avoid blocking UI
+                                    let update_tx = output_tx.clone();
+                                    tokio::spawn(async move {
+                                        let result = tokio::task::spawn_blocking(update::perform_update)
+                                            .await
+                                            .unwrap_or_else(|_| {
+                                                update::UpdateResult::InstallFailed("Update task panicked".to_string())
+                                            });
+                                        let _ = update_tx.send(Event::UpdateInstallFinished(result));
+                                    });
                                 } else {
                                     tab_manager.update_error = Some("No update available".to_string());
                                 }
@@ -1097,10 +1063,12 @@ async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                         KeyCode::Char('j') | KeyCode::Down => match session.focused_panel {
                             tui::FocusedPanel::Output => session.scroll_down(),
                             tui::FocusedPanel::Chat => session.chat_scroll_down(),
+                            tui::FocusedPanel::Summary => session.summary_scroll_down(),
                         },
                         KeyCode::Char('k') | KeyCode::Up => match session.focused_panel {
                             tui::FocusedPanel::Output => session.scroll_up(),
                             tui::FocusedPanel::Chat => session.chat_scroll_up(),
+                            tui::FocusedPanel::Summary => session.summary_scroll_up(),
                         },
                         KeyCode::Char('g') => match session.focused_panel {
                             tui::FocusedPanel::Output => session.scroll_to_top(),
@@ -1110,19 +1078,25 @@ async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                                     tab.scroll_position = 0;
                                 }
                             }
+                            tui::FocusedPanel::Summary => session.summary_scroll_to_top(),
                         },
                         KeyCode::Char('G') => match session.focused_panel {
                             tui::FocusedPanel::Output => session.scroll_to_bottom(),
                             tui::FocusedPanel::Chat => session.chat_scroll_to_bottom(),
+                            tui::FocusedPanel::Summary => session.summary_scroll_to_bottom(100), // Use reasonable max
                         },
-                        // Left/Right arrow keys navigate run tabs when Chat panel is focused
+                        // Left/Right arrow keys navigate run tabs when Chat or Summary panel is focused
                         KeyCode::Left => {
-                            if session.focused_panel == tui::FocusedPanel::Chat {
+                            if session.focused_panel == tui::FocusedPanel::Chat
+                                || session.focused_panel == tui::FocusedPanel::Summary
+                            {
                                 session.prev_run_tab();
                             }
                         }
                         KeyCode::Right => {
-                            if session.focused_panel == tui::FocusedPanel::Chat {
+                            if session.focused_panel == tui::FocusedPanel::Chat
+                                || session.focused_panel == tui::FocusedPanel::Summary
+                            {
                                 session.next_run_tab();
                             }
                         }
@@ -1137,6 +1111,12 @@ async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                     if session.status == SessionStatus::GeneratingSummary {
                         session.spinner_frame = session.spinner_frame.wrapping_add(1);
                     }
+                    // Advance per-tab summary spinners
+                    session.advance_summary_spinners();
+                }
+                // Update spinner for update installation
+                if tab_manager.update_in_progress {
+                    tab_manager.update_spinner_frame = tab_manager.update_spinner_frame.wrapping_add(1);
                 }
             }
             Event::Resize => {
@@ -1381,6 +1361,41 @@ async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                     session.add_chat_message(&agent_name, &phase, message);
                 }
             }
+            Event::SessionTodosUpdate {
+                session_id,
+                agent_name,
+                todos,
+            } => {
+                if let Some(session) = tab_manager.session_by_id_mut(session_id) {
+                    session.update_todos(agent_name, todos);
+                }
+            }
+            Event::SessionRunTabSummaryGenerating {
+                session_id,
+                phase,
+            } => {
+                if let Some(session) = tab_manager.session_by_id_mut(session_id) {
+                    session.set_summary_generating(&phase);
+                }
+            }
+            Event::SessionRunTabSummaryReady {
+                session_id,
+                phase,
+                summary,
+            } => {
+                if let Some(session) = tab_manager.session_by_id_mut(session_id) {
+                    session.set_summary_ready(&phase, summary);
+                }
+            }
+            Event::SessionRunTabSummaryError {
+                session_id,
+                phase,
+                error,
+            } => {
+                if let Some(session) = tab_manager.session_by_id_mut(session_id) {
+                    session.set_summary_error(&phase, error);
+                }
+            }
             Event::AccountUsageUpdate(usage) => {
                 // Update all sessions (usage is global/account-wide)
                 for session in tab_manager.sessions_mut() {
@@ -1390,6 +1405,60 @@ async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
             Event::UpdateStatusReceived(status) => {
                 // Update global update status
                 tab_manager.update_status = status;
+            }
+            Event::UpdateInstallFinished(result) => {
+                tab_manager.update_in_progress = false;
+
+                match result {
+                    update::UpdateResult::Success(binary_path) => {
+                        // Write marker file before restart so we can show notice
+                        let _ = update::write_update_marker(&working_dir);
+
+                        // Restore terminal before exec
+                        restore_terminal(&mut terminal)?;
+
+                        // Preserve CLI args and exec the new binary
+                        let args: Vec<String> = std::env::args().skip(1).collect();
+
+                        #[cfg(unix)]
+                        {
+                            use std::os::unix::process::CommandExt;
+                            let err = std::process::Command::new(&binary_path)
+                                .args(&args)
+                                .exec();
+                            // If exec returns, it failed
+                            eprintln!("Failed to exec new binary: {}", err);
+                            std::process::exit(1);
+                        }
+
+                        #[cfg(not(unix))]
+                        {
+                            // On Windows, spawn and exit
+                            let _ = std::process::Command::new(&binary_path)
+                                .args(&args)
+                                .spawn();
+                            std::process::exit(0);
+                        }
+                    }
+                    update::UpdateResult::GitNotFound => {
+                        tab_manager.update_error = Some("Update requires git. Please install git and try again.".to_string());
+                    }
+                    update::UpdateResult::CargoNotFound => {
+                        tab_manager.update_error = Some("Update requires cargo. Please install Rust and try again.".to_string());
+                    }
+                    update::UpdateResult::InstallFailed(err) => {
+                        // Truncate long error messages
+                        let short_err = if err.len() > 60 {
+                            format!("{}...", &err[..57])
+                        } else {
+                            err
+                        };
+                        tab_manager.update_error = Some(short_err);
+                    }
+                    update::UpdateResult::BinaryNotFound => {
+                        tab_manager.update_error = Some("Update installed but binary not found".to_string());
+                    }
+                }
             }
         }
         } // End of for event in events_to_process
@@ -1478,6 +1547,11 @@ async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                             session.add_output("=== RESTARTING WITH YOUR FEEDBACK ===".to_string());
                             session.add_output(format!("Changes requested: {}", user_feedback));
 
+                            // Clear stale data from previous run (before borrowing workflow_state)
+                            session.streaming_lines.clear();
+                            session.clear_todos();
+                            session.status = SessionStatus::Planning;
+
                             if let Some(ref mut state) = session.workflow_state {
                                 // Reset state for new iteration
                                 state.phase = Phase::Planning;
@@ -1493,8 +1567,6 @@ async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                                     state.feature_name
                                 ));
                                 let _ = state.save(&state_path);
-                                session.streaming_lines.clear();
-                                session.status = SessionStatus::Planning;
 
                                 // Create new approval channel
                                 let (new_approval_tx, new_approval_rx) =
@@ -1794,6 +1866,16 @@ async fn run_workflow_with_config(
                 state.save(&state_path)?;
                 sender.send_state_update(state.clone());
                 sender.send_output("[planning] Transitioning to review phase...".to_string());
+
+                // Spawn async summary generation for the planning phase
+                phases::spawn_summary_generation(
+                    "Planning".to_string(),
+                    &state,
+                    &working_dir,
+                    &config,
+                    sender.clone(),
+                    None,
+                );
             }
 
             Phase::Reviewing => {
@@ -1955,6 +2037,21 @@ async fn run_workflow_with_config(
                 last_reviews = reviews;
                 state.last_feedback_status = Some(status.clone());
 
+                // Spawn async summary generation for the review phase
+                let review_phase_name = if state.iteration > 1 {
+                    format!("Reviewing #{}", state.iteration)
+                } else {
+                    "Reviewing".to_string()
+                };
+                phases::spawn_summary_generation(
+                    review_phase_name,
+                    &state,
+                    &working_dir,
+                    &config,
+                    sender.clone(),
+                    Some(&last_reviews),
+                );
+
                 match status {
                     FeedbackStatus::Approved => {
                         log_workflow(&working_dir, "Plan APPROVED! Transitioning to Complete");
@@ -2075,6 +2172,17 @@ async fn run_workflow_with_config(
                         log_workflow(&working_dir, "Deleted old feedback file");
                     }
                 }
+
+                // Spawn async summary generation for the revision phase
+                let revision_phase_name = format!("Revising #{}", state.iteration);
+                phases::spawn_summary_generation(
+                    revision_phase_name,
+                    &state,
+                    &working_dir,
+                    &config,
+                    sender.clone(),
+                    None,
+                );
 
                 state.iteration += 1;
                 log_workflow(

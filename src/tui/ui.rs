@@ -1,6 +1,6 @@
 use crate::state::Phase;
 use crate::tui::{
-    ApprovalContext, ApprovalMode, FocusedPanel, InputMode, Session, SessionStatus, TabManager,
+    ApprovalContext, ApprovalMode, FocusedPanel, InputMode, Session, SessionStatus, SummaryState, TabManager,
 };
 use crate::update::UpdateStatus;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
@@ -170,6 +170,25 @@ fn draw_main(frame: &mut Frame, session: &Session, area: Rect) {
 }
 
 fn draw_output(frame: &mut Frame, session: &Session, area: Rect) {
+    // Check if we should show todos panel (need minimum width of 80 columns)
+    let show_todos = area.width >= 80 && !session.todos.is_empty();
+
+    if show_todos {
+        // Split horizontally: Output 65% | Todos 35%
+        let chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(65), Constraint::Percentage(35)])
+            .split(area);
+
+        draw_output_panel(frame, session, chunks[0]);
+        draw_todos(frame, session, chunks[1]);
+    } else {
+        // No todos or too narrow - show output only
+        draw_output_panel(frame, session, area);
+    }
+}
+
+fn draw_output_panel(frame: &mut Frame, session: &Session, area: Rect) {
     // Build title with scroll indicator and focus indicator
     let is_focused = session.focused_panel == FocusedPanel::Output;
     let title = if session.output_follow_mode {
@@ -246,6 +265,94 @@ fn draw_output(frame: &mut Frame, session: &Session, area: Rect) {
             area,
             &mut scrollbar_state,
         );
+    }
+}
+
+/// Draw the todos panel showing live agent todos
+fn draw_todos(frame: &mut Frame, session: &Session, area: Rect) {
+    let todos_block = Block::default()
+        .borders(Borders::ALL)
+        .title(" Todos ")
+        .border_style(Style::default().fg(Color::Magenta));
+
+    let inner_area = todos_block.inner(area);
+    let visible_height = inner_area.height as usize;
+
+    // Get formatted todo lines grouped by agent
+    let todo_lines = session.get_todos_display();
+
+    let lines: Vec<Line> = todo_lines
+        .iter()
+        .map(|line| {
+            // Agent headers (lines ending with :)
+            if line.ends_with(':') && !line.starts_with(' ') {
+                Line::from(Span::styled(
+                    line.clone(),
+                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                ))
+            // In-progress todos
+            } else if line.contains("[~]") {
+                Line::from(vec![
+                    Span::styled("  [", Style::default().fg(Color::DarkGray)),
+                    Span::styled("~", Style::default().fg(Color::Yellow)),
+                    Span::styled("] ", Style::default().fg(Color::DarkGray)),
+                    Span::styled(
+                        line.trim_start().strip_prefix("[~] ").unwrap_or(line).to_string(),
+                        Style::default().fg(Color::Yellow),
+                    ),
+                ])
+            // Completed todos
+            } else if line.contains("[x]") {
+                Line::from(vec![
+                    Span::styled("  [", Style::default().fg(Color::DarkGray)),
+                    Span::styled("x", Style::default().fg(Color::Green)),
+                    Span::styled("] ", Style::default().fg(Color::DarkGray)),
+                    Span::styled(
+                        line.trim_start().strip_prefix("[x] ").unwrap_or(line).to_string(),
+                        Style::default().fg(Color::Green).add_modifier(Modifier::DIM),
+                    ),
+                ])
+            // Pending todos
+            } else if line.contains("[ ]") {
+                Line::from(vec![
+                    Span::styled("  [ ] ", Style::default().fg(Color::DarkGray)),
+                    Span::styled(
+                        line.trim_start().strip_prefix("[ ] ").unwrap_or(line).to_string(),
+                        Style::default().fg(Color::White),
+                    ),
+                ])
+            // Empty lines or "No todos"
+            } else if line.is_empty() {
+                Line::from("")
+            } else {
+                Line::from(Span::styled(line.clone(), Style::default().fg(Color::DarkGray)))
+            }
+        })
+        .collect();
+
+    let total_lines = lines.len();
+
+    // Simple scroll: show from top, truncate if too many
+    let display_lines: Vec<Line> = lines.into_iter().take(visible_height).collect();
+
+    let paragraph = Paragraph::new(display_lines).block(todos_block);
+    frame.render_widget(paragraph, area);
+
+    // Show "+N more" indicator if there are more todos than visible
+    if total_lines > visible_height {
+        let more_count = total_lines - visible_height;
+        let indicator = format!("+{} more", more_count);
+        let indicator_area = Rect::new(
+            area.x + area.width - indicator.len() as u16 - 2,
+            area.y + area.height - 1,
+            indicator.len() as u16 + 1,
+            1,
+        );
+        let indicator_widget = Paragraph::new(Span::styled(
+            indicator,
+            Style::default().fg(Color::DarkGray),
+        ));
+        frame.render_widget(indicator_widget, indicator_area);
     }
 }
 
@@ -337,9 +444,6 @@ fn draw_streaming(frame: &mut Frame, session: &Session, area: Rect) {
 
 /// Draw the chat panel with run tabs (replaces streaming panel when tabs exist)
 fn draw_chat(frame: &mut Frame, session: &Session, area: Rect) {
-    let is_focused = session.focused_panel == FocusedPanel::Chat;
-    let border_color = if is_focused { Color::Yellow } else { Color::Green };
-
     // If no run tabs, fall back to legacy streaming view
     if session.run_tabs.is_empty() {
         draw_streaming(frame, session, area);
@@ -355,8 +459,31 @@ fn draw_chat(frame: &mut Frame, session: &Session, area: Rect) {
     // Draw run tabs
     draw_run_tabs(frame, session, chunks[0]);
 
-    // Draw active tab content
+    // Get active tab and check if it has a summary
     let active_tab = session.run_tabs.get(session.active_run_tab);
+    let has_summary = active_tab
+        .map(|tab| tab.summary_state != SummaryState::None)
+        .unwrap_or(false);
+
+    if has_summary {
+        // Split content area: chat (50%) | summary (50%)
+        let split_chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .split(chunks[1]);
+
+        draw_chat_content(frame, session, active_tab, split_chunks[0]);
+        draw_summary_panel(frame, session, active_tab, split_chunks[1]);
+    } else {
+        // No summary - render chat content full width
+        draw_chat_content(frame, session, active_tab, chunks[1]);
+    }
+}
+
+/// Draw the chat content portion (left side when split, full width otherwise)
+fn draw_chat_content(frame: &mut Frame, session: &Session, active_tab: Option<&crate::tui::RunTab>, area: Rect) {
+    let is_focused = session.focused_panel == FocusedPanel::Chat;
+    let border_color = if is_focused { Color::Yellow } else { Color::Green };
 
     let title = if let Some(tab) = active_tab {
         if session.chat_follow_mode {
@@ -379,7 +506,7 @@ fn draw_chat(frame: &mut Frame, session: &Session, area: Rect) {
         .title(title)
         .border_style(Style::default().fg(border_color));
 
-    let inner_area = chat_block.inner(chunks[1]);
+    let inner_area = chat_block.inner(area);
     let visible_height = inner_area.height as usize;
     let inner_width = inner_area.width;
 
@@ -436,7 +563,7 @@ fn draw_chat(frame: &mut Frame, session: &Session, area: Rect) {
         .block(chat_block)
         .wrap(Wrap { trim: false })
         .scroll((scroll_offset, 0));
-    frame.render_widget(paragraph, chunks[1]);
+    frame.render_widget(paragraph, area);
 
     // Scrollbar
     if wrapped_line_count > visible_height {
@@ -446,7 +573,110 @@ fn draw_chat(frame: &mut Frame, session: &Session, area: Rect) {
             Scrollbar::new(ScrollbarOrientation::VerticalRight)
                 .begin_symbol(Some("↑"))
                 .end_symbol(Some("↓")),
-            chunks[1],
+            area,
+            &mut scrollbar_state,
+        );
+    }
+}
+
+/// Draw the summary panel (right side of split view)
+fn draw_summary_panel(frame: &mut Frame, session: &Session, active_tab: Option<&crate::tui::RunTab>, area: Rect) {
+    let is_focused = session.focused_panel == FocusedPanel::Summary;
+    let border_color = if is_focused { Color::Yellow } else { Color::Magenta };
+
+    let (title, lines): (String, Vec<Line>) = if let Some(tab) = active_tab {
+        match tab.summary_state {
+            SummaryState::None => {
+                // Should not happen, but handle gracefully
+                (" Summary ".to_string(), vec![Line::from(Span::styled(
+                    "No summary available",
+                    Style::default().fg(Color::DarkGray),
+                ))])
+            }
+            SummaryState::Generating => {
+                // Show spinner animation
+                let spinner_chars = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+                let spinner = spinner_chars[(tab.summary_spinner_frame as usize) % spinner_chars.len()];
+                let title = if is_focused {
+                    format!(" {} Summary [*] ", spinner)
+                } else {
+                    format!(" {} Summary ", spinner)
+                };
+                (title, vec![
+                    Line::from(""),
+                    Line::from(vec![
+                        Span::styled(format!("  {} ", spinner), Style::default().fg(Color::Yellow)),
+                        Span::styled("Generating summary...", Style::default().fg(Color::Cyan)),
+                    ]),
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        "  This may take a moment.",
+                        Style::default().fg(Color::DarkGray),
+                    )),
+                ])
+            }
+            SummaryState::Ready => {
+                let title = if is_focused {
+                    " Summary [*] ".to_string()
+                } else {
+                    " Summary ".to_string()
+                };
+                // Parse summary as markdown
+                let lines: Vec<Line> = tab.summary_text.lines().map(parse_markdown_line).collect();
+                (title, lines)
+            }
+            SummaryState::Error => {
+                let title = if is_focused {
+                    " Summary Error [*] ".to_string()
+                } else {
+                    " Summary Error ".to_string()
+                };
+                (title, vec![
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        "  Failed to generate summary:",
+                        Style::default().fg(Color::Red),
+                    )),
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        format!("  {}", tab.summary_text),
+                        Style::default().fg(Color::Red),
+                    )),
+                ])
+            }
+        }
+    } else {
+        (" Summary ".to_string(), vec![Line::from(Span::styled(
+            "No active tab",
+            Style::default().fg(Color::DarkGray),
+        ))])
+    };
+
+    let summary_block = Block::default()
+        .borders(Borders::ALL)
+        .title(title)
+        .border_style(Style::default().fg(border_color));
+
+    let inner_area = summary_block.inner(area);
+    let visible_height = inner_area.height as usize;
+
+    let total_lines = lines.len();
+    let max_scroll = total_lines.saturating_sub(visible_height);
+    let scroll_pos = active_tab.map(|t| t.summary_scroll.min(max_scroll)).unwrap_or(0);
+
+    let paragraph = Paragraph::new(lines)
+        .block(summary_block)
+        .scroll((scroll_pos as u16, 0));
+    frame.render_widget(paragraph, area);
+
+    // Scrollbar
+    if total_lines > visible_height {
+        let mut scrollbar_state = ScrollbarState::new(total_lines).position(scroll_pos);
+        frame.render_stateful_widget(
+            Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                .begin_symbol(Some("↑"))
+                .end_symbol(Some("↓")),
+            area,
             &mut scrollbar_state,
         );
     }

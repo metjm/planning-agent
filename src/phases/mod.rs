@@ -1,6 +1,7 @@
 pub mod planning;
 pub mod reviewing;
 pub mod revising;
+pub mod summary;
 
 pub use planning::run_planning_phase_with_context;
 pub use reviewing::{
@@ -8,3 +9,4 @@ pub use reviewing::{
     ReviewFailure, ReviewResult,
 };
 pub use revising::run_revision_phase_with_context;
+pub use summary::spawn_summary_generation;

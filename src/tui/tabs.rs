@@ -13,6 +13,10 @@ pub struct TabManager {
     pub update_in_progress: bool,
     /// Error message from failed update attempt
     pub update_error: Option<String>,
+    /// Spinner frame for update install animation
+    pub update_spinner_frame: u8,
+    /// One-time notice shown after update installed (cleared after display)
+    pub update_notice: Option<String>,
 }
 
 #[allow(dead_code)]
@@ -25,6 +29,8 @@ impl TabManager {
             update_status: UpdateStatus::default(),
             update_in_progress: false,
             update_error: None,
+            update_spinner_frame: 0,
+            update_notice: None,
         };
         // Start with one session
         manager.add_session();

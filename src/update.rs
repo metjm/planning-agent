@@ -136,13 +136,40 @@ fn format_commit_date(iso_date: &str) -> String {
 }
 
 /// Result of attempting to perform an update
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum UpdateResult {
     Success(std::path::PathBuf),
     GitNotFound,
     CargoNotFound,
     InstallFailed(String),
     BinaryNotFound,
+}
+
+/// Name of the marker file used to signal a successful update
+const UPDATE_MARKER_FILE: &str = "update-installed";
+
+/// Write a marker file to indicate an update was installed.
+/// Call this before exec/spawn to show a notice on next startup.
+pub fn write_update_marker(working_dir: &std::path::Path) -> std::io::Result<()> {
+    let marker_path = working_dir.join(".planning-agent").join(UPDATE_MARKER_FILE);
+    // Ensure parent directory exists
+    if let Some(parent) = marker_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&marker_path, "")
+}
+
+/// Check for and consume the update marker file.
+/// Returns true if the marker existed (update was just installed), and removes it.
+pub fn consume_update_marker(working_dir: &std::path::Path) -> bool {
+    let marker_path = working_dir.join(".planning-agent").join(UPDATE_MARKER_FILE);
+    if marker_path.exists() {
+        // Remove the marker file (ignore errors - it's non-fatal)
+        let _ = std::fs::remove_file(&marker_path);
+        true
+    } else {
+        false
+    }
 }
 
 /// Perform the update by running cargo install
@@ -200,6 +227,7 @@ pub fn perform_update() -> UpdateResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     #[test]
     fn test_format_commit_date() {
@@ -221,5 +249,35 @@ mod tests {
             UpdateStatus::Checking | UpdateStatus::VersionUnknown => {}
             _ => panic!("Unexpected default status"),
         }
+    }
+
+    #[test]
+    fn test_write_and_consume_update_marker() {
+        // Use a unique temp directory for this test
+        let temp_dir = std::env::temp_dir().join(format!(
+            "planning-agent-test-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        // Initially no marker
+        assert!(!consume_update_marker(&temp_dir));
+
+        // Write marker
+        write_update_marker(&temp_dir).unwrap();
+
+        // Marker should exist
+        let marker_path = temp_dir.join(".planning-agent").join(UPDATE_MARKER_FILE);
+        assert!(marker_path.exists());
+
+        // Consume should return true and remove marker
+        assert!(consume_update_marker(&temp_dir));
+        assert!(!marker_path.exists());
+
+        // Second consume should return false
+        assert!(!consume_update_marker(&temp_dir));
+
+        // Cleanup
+        let _ = fs::remove_dir_all(&temp_dir);
     }
 }

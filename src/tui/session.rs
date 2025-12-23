@@ -11,6 +11,22 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use super::event::UserApprovalResponse;
 
+/// Status of a todo item
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TodoStatus {
+    Pending,
+    InProgress,
+    Completed,
+}
+
+/// A single todo item from an agent's TodoWrite
+#[derive(Debug, Clone)]
+pub struct TodoItem {
+    pub content: String,
+    pub status: TodoStatus,
+    pub active_form: String,
+}
+
 /// A single chat message from an agent
 #[derive(Debug, Clone)]
 pub struct ChatMessage {
@@ -20,12 +36,28 @@ pub struct ChatMessage {
     pub timestamp: Instant,
 }
 
+/// Status of summary generation for a run tab
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SummaryState {
+    #[default]
+    None,
+    Generating,
+    Ready,
+    Error,
+}
+
 /// A run tab containing messages for a specific phase
 #[derive(Debug, Clone)]
 pub struct RunTab {
     pub phase: String,           // "Planning", "Reviewing #1", "Revising #1", etc.
     pub messages: Vec<ChatMessage>,
     pub scroll_position: usize,  // Per-tab scroll state
+
+    // Summary state (shown in right split panel when present)
+    pub summary_text: String,
+    pub summary_scroll: usize,
+    pub summary_state: SummaryState,
+    pub summary_spinner_frame: u8,
 }
 
 /// Mode for user approval interaction
@@ -56,6 +88,7 @@ pub enum FocusedPanel {
     #[default]
     Output,
     Chat,  // Renamed from Streaming
+    Summary,  // Summary panel (right side of chat split)
 }
 
 /// Input mode for the session
@@ -171,6 +204,9 @@ pub struct Session {
     pub run_tabs: Vec<RunTab>,
     pub active_run_tab: usize,
     pub chat_follow_mode: bool,  // Auto-scroll to bottom on new messages
+
+    // Live todos from agents (keyed by agent name)
+    pub todos: HashMap<String, Vec<TodoItem>>,
 }
 
 #[allow(dead_code)]
@@ -240,6 +276,8 @@ impl Session {
             run_tabs: Vec::new(),
             active_run_tab: 0,
             chat_follow_mode: true,
+
+            todos: HashMap::new(),
         }
     }
 
@@ -475,9 +513,22 @@ impl Session {
     }
 
     pub fn toggle_focus(&mut self) {
+        // Check if the active run tab has a summary (generating or ready)
+        let has_summary = self.run_tabs
+            .get(self.active_run_tab)
+            .map(|tab| tab.summary_state != SummaryState::None)
+            .unwrap_or(false);
+
         self.focused_panel = match self.focused_panel {
             FocusedPanel::Output => FocusedPanel::Chat,
-            FocusedPanel::Chat => FocusedPanel::Output,
+            FocusedPanel::Chat => {
+                if has_summary {
+                    FocusedPanel::Summary
+                } else {
+                    FocusedPanel::Output
+                }
+            }
+            FocusedPanel::Summary => FocusedPanel::Output,
         };
     }
 
@@ -536,6 +587,10 @@ impl Session {
             phase,
             messages: Vec::new(),
             scroll_position: 0,
+            summary_text: String::new(),
+            summary_scroll: 0,
+            summary_state: SummaryState::None,
+            summary_spinner_frame: 0,
         });
         // Auto-switch to newest tab
         self.active_run_tab = self.run_tabs.len().saturating_sub(1);
@@ -587,6 +642,62 @@ impl Session {
         self.chat_follow_mode = true;
     }
 
+    // ===== Todo methods =====
+
+    /// Update the todo list for a specific agent (full list replacement)
+    pub fn update_todos(&mut self, agent_name: String, todos: Vec<TodoItem>) {
+        self.todos.insert(agent_name, todos);
+    }
+
+    /// Clear all todos (call on workflow restart)
+    pub fn clear_todos(&mut self) {
+        self.todos.clear();
+    }
+
+    /// Get formatted todo lines for UI rendering, grouped by agent
+    pub fn get_todos_display(&self) -> Vec<String> {
+        let mut lines = Vec::new();
+
+        // Sort agent names for consistent display (alphabetically)
+        let mut agent_names: Vec<_> = self.todos.keys().collect();
+        agent_names.sort();
+
+        for agent_name in agent_names {
+            if let Some(todos) = self.todos.get(agent_name) {
+                if todos.is_empty() {
+                    continue;
+                }
+                // Capitalize first letter of agent name
+                let display_name = agent_name
+                    .chars()
+                    .next()
+                    .map(|c| c.to_uppercase().to_string() + &agent_name[1..])
+                    .unwrap_or_else(|| agent_name.clone());
+                lines.push(format!("{}:", display_name));
+                for todo in todos {
+                    let status = match todo.status {
+                        TodoStatus::Pending => "[ ]",
+                        TodoStatus::InProgress => "[~]",
+                        TodoStatus::Completed => "[x]",
+                    };
+                    lines.push(format!("  {} {}", status, todo.active_form));
+                }
+                lines.push(String::new()); // Blank line between agents
+            }
+        }
+
+        if lines.is_empty() {
+            lines.push("No todos".to_string());
+        }
+
+        // Remove trailing blank line if present
+        if lines.last().map(|s| s.is_empty()).unwrap_or(false) {
+            lines.pop();
+        }
+
+        lines
+    }
+
     /// Scroll the active chat tab up
     pub fn chat_scroll_up(&mut self) {
         if let Some(tab) = self.run_tabs.get_mut(self.active_run_tab) {
@@ -605,6 +716,74 @@ impl Session {
     /// Scroll to bottom and enable follow mode for chat
     pub fn chat_scroll_to_bottom(&mut self) {
         self.chat_follow_mode = true;
+    }
+
+    /// Scroll the active tab's summary up
+    pub fn summary_scroll_up(&mut self) {
+        if let Some(tab) = self.run_tabs.get_mut(self.active_run_tab) {
+            tab.summary_scroll = tab.summary_scroll.saturating_sub(1);
+        }
+    }
+
+    /// Scroll the active tab's summary down
+    pub fn summary_scroll_down(&mut self) {
+        if let Some(tab) = self.run_tabs.get_mut(self.active_run_tab) {
+            tab.summary_scroll = tab.summary_scroll.saturating_add(1);
+        }
+    }
+
+    /// Scroll the active tab's summary to top
+    pub fn summary_scroll_to_top(&mut self) {
+        if let Some(tab) = self.run_tabs.get_mut(self.active_run_tab) {
+            tab.summary_scroll = 0;
+        }
+    }
+
+    /// Scroll the active tab's summary to bottom (requires max_scroll param)
+    pub fn summary_scroll_to_bottom(&mut self, max_scroll: usize) {
+        if let Some(tab) = self.run_tabs.get_mut(self.active_run_tab) {
+            tab.summary_scroll = max_scroll;
+        }
+    }
+
+    /// Set summary state to generating for a specific phase tab
+    pub fn set_summary_generating(&mut self, phase: &str) {
+        if let Some(tab) = self.run_tabs.iter_mut().find(|t| t.phase == phase) {
+            tab.summary_state = SummaryState::Generating;
+            tab.summary_spinner_frame = 0;
+            tab.summary_text.clear();
+        }
+    }
+
+    /// Set summary text and mark as ready for a specific phase tab
+    pub fn set_summary_ready(&mut self, phase: &str, summary: String) {
+        if let Some(tab) = self.run_tabs.iter_mut().find(|t| t.phase == phase) {
+            tab.summary_text = summary;
+            tab.summary_state = SummaryState::Ready;
+            tab.summary_scroll = 0;
+        }
+    }
+
+    /// Set summary error state for a specific phase tab
+    pub fn set_summary_error(&mut self, phase: &str, error: String) {
+        if let Some(tab) = self.run_tabs.iter_mut().find(|t| t.phase == phase) {
+            tab.summary_text = error;
+            tab.summary_state = SummaryState::Error;
+        }
+    }
+
+    /// Check if any run tab has a generating summary (for spinner animation)
+    pub fn has_generating_summary(&self) -> bool {
+        self.run_tabs.iter().any(|tab| tab.summary_state == SummaryState::Generating)
+    }
+
+    /// Advance spinner frames for all generating summaries
+    pub fn advance_summary_spinners(&mut self) {
+        for tab in &mut self.run_tabs {
+            if tab.summary_state == SummaryState::Generating {
+                tab.summary_spinner_frame = tab.summary_spinner_frame.wrapping_add(1);
+            }
+        }
     }
 
     /// Insert a character into the tab input buffer
