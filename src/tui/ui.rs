@@ -1509,11 +1509,13 @@ fn draw_feedback_popup(frame: &mut Frame, session: &Session, area: Rect) {
 fn draw_tab_input_overlay(frame: &mut Frame, session: &Session, tab_manager: &TabManager) {
     let area = frame.area();
 
-    // Determine if we need extra height for update notification or error
+    // Determine if we need extra height for update notification, error, or notice
     let has_update_line = matches!(
         &tab_manager.update_status,
         UpdateStatus::UpdateAvailable(_) | UpdateStatus::CheckFailed(_)
-    ) || tab_manager.update_error.is_some() || tab_manager.update_in_progress;
+    ) || tab_manager.update_error.is_some()
+      || tab_manager.update_in_progress
+      || tab_manager.update_notice.is_some();
 
     // Create a centered popup - increased height for multiline input
     let popup_width = (area.width as f32 * 0.6).min(80.0) as u16;
@@ -1562,11 +1564,20 @@ fn draw_tab_input_overlay(frame: &mut Frame, session: &Session, tab_manager: &Ta
 
     // Update notification (if applicable)
     let (input_chunk_idx, instructions_chunk_idx) = if has_update_line {
-        // Render update/error notification
+        // Render update/error/notice notification
         let update_line = if tab_manager.update_in_progress {
+            // Spinner characters for update animation
+            const SPINNER_CHARS: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+            let spinner = SPINNER_CHARS[tab_manager.update_spinner_frame as usize % SPINNER_CHARS.len()];
             Line::from(vec![
-                Span::styled(" Installing update... ", Style::default().fg(Color::Yellow).bold()),
+                Span::styled(format!(" {} ", spinner), Style::default().fg(Color::Yellow).bold()),
+                Span::styled("Installing update... ", Style::default().fg(Color::Yellow).bold()),
                 Span::styled("(this may take a moment)", Style::default().fg(Color::DarkGray)),
+            ])
+        } else if let Some(ref notice) = tab_manager.update_notice {
+            Line::from(vec![
+                Span::styled(" ✓ ", Style::default().fg(Color::Green).bold()),
+                Span::styled(notice.as_str(), Style::default().fg(Color::Green)),
             ])
         } else if let Some(ref error) = tab_manager.update_error {
             Line::from(vec![

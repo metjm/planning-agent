@@ -591,6 +591,10 @@ async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
             Event::Key(key) => {
                 // Check update_in_progress before borrowing session
                 let update_in_progress = tab_manager.update_in_progress;
+                // Clear update notice on any key in NamingTab mode (before mutable borrow)
+                if tab_manager.active().input_mode == InputMode::NamingTab {
+                    tab_manager.update_notice = None;
+                }
                 let session = tab_manager.active_mut();
 
                 // Handle error state first - Esc clears error
