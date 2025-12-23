@@ -8,6 +8,7 @@ mod phases;
 mod skills;
 mod state;
 mod tui;
+mod update;
 
 use anyhow::{Context, Result};
 use clap::Parser;
@@ -417,6 +418,18 @@ async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
     }
     debug_log(start, "account usage fetch task spawned");
 
+    // Spawn background task to check for updates (only if version is known)
+    if update::BUILD_SHA != "unknown" {
+        let update_tx = event_handler.sender();
+        tokio::spawn(async move {
+            let status = tokio::task::spawn_blocking(update::check_for_update)
+                .await
+                .unwrap_or_else(|_| update::UpdateStatus::CheckFailed("Task panicked".to_string()));
+            let _ = update_tx.send(Event::UpdateStatusReceived(status));
+        });
+        debug_log(start, "update check task spawned");
+    }
+
     let working_dir = cli
         .working_dir
         .clone()
@@ -570,6 +583,8 @@ async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
         for event in events_to_process {
         match event {
             Event::Key(key) => {
+                // Check update_in_progress before borrowing session
+                let update_in_progress = tab_manager.update_in_progress;
                 let session = tab_manager.active_mut();
 
                 // Handle error state first - Esc clears error
@@ -580,6 +595,7 @@ async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                             continue;
                         }
                         KeyCode::Char('w') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            // session not used after this - borrow ends
                             tab_manager.close_tab(tab_manager.active_tab);
                             continue;
                         }
@@ -589,6 +605,14 @@ async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
 
                 // Handle tab naming input mode
                 if session.input_mode == InputMode::NamingTab {
+                    // Block all input except Ctrl+C during update
+                    if update_in_progress {
+                        if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+                            should_quit = true;
+                        }
+                        continue;
+                    }
+
                     match key.code {
                         // Quit with Ctrl+C
                         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -612,6 +636,77 @@ async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                         // Plain Enter submits
                         KeyCode::Enter => {
                             let has_content = !session.tab_input.trim().is_empty() || session.has_tab_input_pastes();
+                            let input_text = session.tab_input.trim().to_string();
+
+                            // Check for /update command
+                            if input_text == "/update" {
+                                session.tab_input.clear();
+                                session.tab_input_cursor = 0;
+                                session.tab_input_scroll = 0;
+
+                                // Check if update is available
+                                if let update::UpdateStatus::UpdateAvailable(_) = &tab_manager.update_status {
+                                    // Clear any previous error
+                                    tab_manager.update_error = None;
+                                    tab_manager.update_in_progress = true;
+
+                                    // Run update in a blocking task
+                                    let result = update::perform_update();
+                                    tab_manager.update_in_progress = false;
+
+                                    match result {
+                                        update::UpdateResult::Success(binary_path) => {
+                                            // Restore terminal before exec
+                                            restore_terminal(&mut terminal)?;
+
+                                            // Preserve CLI args and exec the new binary
+                                            let args: Vec<String> = std::env::args().skip(1).collect();
+
+                                            #[cfg(unix)]
+                                            {
+                                                use std::os::unix::process::CommandExt;
+                                                let err = std::process::Command::new(&binary_path)
+                                                    .args(&args)
+                                                    .exec();
+                                                // If exec returns, it failed
+                                                eprintln!("Failed to exec new binary: {}", err);
+                                                std::process::exit(1);
+                                            }
+
+                                            #[cfg(not(unix))]
+                                            {
+                                                // On Windows, spawn and exit
+                                                let _ = std::process::Command::new(&binary_path)
+                                                    .args(&args)
+                                                    .spawn();
+                                                std::process::exit(0);
+                                            }
+                                        }
+                                        update::UpdateResult::GitNotFound => {
+                                            tab_manager.update_error = Some("Update requires git. Please install git and try again.".to_string());
+                                        }
+                                        update::UpdateResult::CargoNotFound => {
+                                            tab_manager.update_error = Some("Update requires cargo. Please install Rust and try again.".to_string());
+                                        }
+                                        update::UpdateResult::InstallFailed(err) => {
+                                            // Truncate long error messages
+                                            let short_err = if err.len() > 60 {
+                                                format!("{}...", &err[..57])
+                                            } else {
+                                                err
+                                            };
+                                            tab_manager.update_error = Some(short_err);
+                                        }
+                                        update::UpdateResult::BinaryNotFound => {
+                                            tab_manager.update_error = Some("Update installed but binary not found".to_string());
+                                        }
+                                    }
+                                } else {
+                                    tab_manager.update_error = Some("No update available".to_string());
+                                }
+                                continue;
+                            }
+
                             if has_content {
                                 // Start workflow with entered objective (expand any pastes)
                                 let objective = session.get_submit_text_tab();
@@ -672,13 +767,18 @@ async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                             }
                         }
                         KeyCode::Esc => {
-                            // Cancel - remove empty tab
+                            // Clear update error and cancel - remove empty tab
+                            // (session not used after this point - borrow ends)
+                            tab_manager.update_error = None;
                             tab_manager.close_current_if_empty();
                         }
                         KeyCode::Char(c) => {
                             session.insert_tab_input_char(c);
                             // Track backslash for Shift+Enter detection (terminals may send \+Enter)
                             session.last_key_was_backslash = c == '\\';
+                            // Clear update error when user starts typing
+                            // (session not used after this point - borrow ends)
+                            tab_manager.update_error = None;
                         }
                         KeyCode::Backspace => {
                             session.last_key_was_backslash = false;
@@ -1286,6 +1386,10 @@ async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                 for session in tab_manager.sessions_mut() {
                     session.account_usage = usage.clone();
                 }
+            }
+            Event::UpdateStatusReceived(status) => {
+                // Update global update status
+                tab_manager.update_status = status;
             }
         }
         } // End of for event in events_to_process

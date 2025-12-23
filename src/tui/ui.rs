@@ -2,6 +2,7 @@ use crate::state::Phase;
 use crate::tui::{
     ApprovalContext, ApprovalMode, FocusedPanel, InputMode, Session, SessionStatus, TabManager,
 };
+use crate::update::UpdateStatus;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -70,7 +71,7 @@ pub fn draw(frame: &mut Frame, tab_manager: &TabManager) {
         draw_approval_overlay(frame, session);
     }
     if session.input_mode == InputMode::NamingTab {
-        draw_tab_input_overlay(frame, session);
+        draw_tab_input_overlay(frame, session, tab_manager);
     }
     if session.error_state.is_some() {
         draw_error_overlay(frame, session);
@@ -1275,12 +1276,18 @@ fn draw_feedback_popup(frame: &mut Frame, session: &Session, area: Rect) {
 }
 
 /// Draw the tab input overlay for entering a new tab's objective
-fn draw_tab_input_overlay(frame: &mut Frame, session: &Session) {
+fn draw_tab_input_overlay(frame: &mut Frame, session: &Session, tab_manager: &TabManager) {
     let area = frame.area();
+
+    // Determine if we need extra height for update notification or error
+    let has_update_line = matches!(
+        &tab_manager.update_status,
+        UpdateStatus::UpdateAvailable(_) | UpdateStatus::CheckFailed(_)
+    ) || tab_manager.update_error.is_some() || tab_manager.update_in_progress;
 
     // Create a centered popup - increased height for multiline input
     let popup_width = (area.width as f32 * 0.6).min(80.0) as u16;
-    let popup_height = 15;
+    let popup_height = if has_update_line { 17 } else { 15 };
     let popup_x = (area.width.saturating_sub(popup_width)) / 2;
     let popup_y = (area.height.saturating_sub(popup_height)) / 2;
 
@@ -1289,14 +1296,26 @@ fn draw_tab_input_overlay(frame: &mut Frame, session: &Session) {
     // Clear the background
     frame.render_widget(Clear, popup_area);
 
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3), // Title
-            Constraint::Min(5),    // Input - more space for multiline
-            Constraint::Length(2), // Instructions
-        ])
-        .split(popup_area);
+    let chunks = if has_update_line {
+        Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(3), // Title
+                Constraint::Length(1), // Update notification
+                Constraint::Min(5),    // Input - more space for multiline
+                Constraint::Length(2), // Instructions
+            ])
+            .split(popup_area)
+    } else {
+        Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(3), // Title
+                Constraint::Min(5),    // Input - more space for multiline
+                Constraint::Length(2), // Instructions
+            ])
+            .split(popup_area)
+    };
 
     // Title
     let title = Paragraph::new(Line::from(vec![Span::styled(
@@ -1310,6 +1329,49 @@ fn draw_tab_input_overlay(frame: &mut Frame, session: &Session) {
             .title(" New Tab "),
     );
     frame.render_widget(title, chunks[0]);
+
+    // Update notification (if applicable)
+    let (input_chunk_idx, instructions_chunk_idx) = if has_update_line {
+        // Render update/error notification
+        let update_line = if tab_manager.update_in_progress {
+            Line::from(vec![
+                Span::styled(" Installing update... ", Style::default().fg(Color::Yellow).bold()),
+                Span::styled("(this may take a moment)", Style::default().fg(Color::DarkGray)),
+            ])
+        } else if let Some(ref error) = tab_manager.update_error {
+            Line::from(vec![
+                Span::styled(" Update failed: ", Style::default().fg(Color::Red)),
+                Span::styled(error.as_str(), Style::default().fg(Color::Red)),
+            ])
+        } else {
+            match &tab_manager.update_status {
+                UpdateStatus::UpdateAvailable(info) => {
+                    Line::from(vec![
+                        Span::styled(" Update available ", Style::default().fg(Color::Green).bold()),
+                        Span::styled(
+                            format!("({}, {}) ", info.short_sha, info.commit_date),
+                            Style::default().fg(Color::Green),
+                        ),
+                        Span::styled("Enter ", Style::default().fg(Color::DarkGray)),
+                        Span::styled("/update", Style::default().fg(Color::Yellow)),
+                        Span::styled(" to install", Style::default().fg(Color::DarkGray)),
+                    ])
+                }
+                UpdateStatus::CheckFailed(err) => {
+                    Line::from(vec![
+                        Span::styled(" Update check failed: ", Style::default().fg(Color::Yellow)),
+                        Span::styled(err.as_str(), Style::default().fg(Color::DarkGray)),
+                    ])
+                }
+                _ => Line::from(""),
+            }
+        };
+        let update_para = Paragraph::new(update_line);
+        frame.render_widget(update_para, chunks[1]);
+        (2, 3)
+    } else {
+        (1, 2)
+    };
 
     // Input with cursor - now supports multiline with wrapping
     let has_content = !session.tab_input.is_empty() || session.has_tab_input_pastes();
@@ -1329,7 +1391,7 @@ fn draw_tab_input_overlay(frame: &mut Frame, session: &Session) {
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Yellow));
 
-    let inner = input_block.inner(chunks[1]);
+    let inner = input_block.inner(chunks[input_chunk_idx]);
     let input_width = inner.width as usize;
     let input_height = inner.height as usize;
 
@@ -1374,7 +1436,7 @@ fn draw_tab_input_overlay(frame: &mut Frame, session: &Session) {
         .style(input_style)
         .block(input_block)
         .scroll((scroll as u16, 0));
-    frame.render_widget(input, chunks[1]);
+    frame.render_widget(input, chunks[input_chunk_idx]);
 
     // Show cursor - now with proper 2D positioning
     if has_content {
@@ -1397,7 +1459,7 @@ fn draw_tab_input_overlay(frame: &mut Frame, session: &Session) {
         Span::raw(" Quit"),
     ]))
     .style(Style::default().fg(Color::DarkGray));
-    frame.render_widget(help, chunks[2]);
+    frame.render_widget(help, chunks[instructions_chunk_idx]);
 }
 
 /// Draw an error overlay for the session

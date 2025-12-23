@@ -2,8 +2,10 @@
 
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use std::io::{Read, Write};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+
 
 #[derive(Debug, Clone, Default)]
 pub struct CodexUsage {
@@ -55,18 +57,73 @@ pub fn fetch_codex_usage_sync() -> CodexUsage {
             let output = strip_ansi_codes(&raw_output);
 
             // Parse usage from /status output
-            let (hourly, weekly, plan) = parse_codex_usage(&output);
-
-            CodexUsage {
-                hourly_remaining: hourly,
-                weekly_remaining: weekly,
-                plan_type: plan,
-                fetched_at: Some(Instant::now()),
-                error_message: None,
+            match parse_codex_usage(&output) {
+                ParseResult::Success {
+                    hourly,
+                    weekly,
+                    plan,
+                } => CodexUsage {
+                    hourly_remaining: hourly,
+                    weekly_remaining: weekly,
+                    plan_type: plan,
+                    fetched_at: Some(Instant::now()),
+                    error_message: None,
+                },
+                ParseResult::UsageLimitHit => CodexUsage {
+                    error_message: Some("Usage limit hit".to_string()),
+                    fetched_at: Some(Instant::now()),
+                    ..Default::default()
+                },
+                ParseResult::DataNotAvailable => CodexUsage {
+                    error_message: Some("Data not available yet".to_string()),
+                    fetched_at: Some(Instant::now()),
+                    ..Default::default()
+                },
+                ParseResult::UnrecognizedFormat => CodexUsage {
+                    error_message: Some("Could not parse status".to_string()),
+                    fetched_at: Some(Instant::now()),
+                    ..Default::default()
+                },
             }
         }
         Err(e) => CodexUsage::with_error(e),
     }
+}
+
+/// Poll-based read with timeout for Unix systems
+/// Returns true if data is available, false on timeout
+/// If fd is None (non-Unix or unavailable), returns true (no timeout support)
+#[cfg(unix)]
+fn poll_read_ready(fd: Option<i32>, timeout_ms: i32) -> Result<bool, String> {
+    use nix::poll::{poll, PollFd, PollFlags, PollTimeout};
+    use std::os::unix::io::BorrowedFd;
+
+    let Some(raw_fd) = fd else {
+        // No fd available, skip poll and proceed with read
+        return Ok(true);
+    };
+
+    // SAFETY: The fd is valid for the duration of this call as it comes from an open PTY
+    let borrowed_fd = unsafe { BorrowedFd::borrow_raw(raw_fd) };
+    let mut poll_fds = [PollFd::new(borrowed_fd, PollFlags::POLLIN)];
+
+    let timeout = if timeout_ms < 0 {
+        PollTimeout::NONE
+    } else {
+        PollTimeout::try_from(timeout_ms as u16).unwrap_or(PollTimeout::MAX)
+    };
+
+    match poll(&mut poll_fds, timeout) {
+        Ok(0) => Ok(false), // Timeout - no data available
+        Ok(_) => Ok(true),  // Data available
+        Err(e) => Err(format!("Poll error: {}", e)),
+    }
+}
+
+/// Fallback for non-Unix: always returns true (no timeout support)
+#[cfg(not(unix))]
+fn poll_read_ready(_fd: Option<i32>, _timeout_ms: i32) -> Result<bool, String> {
+    Ok(true)
 }
 
 /// Run Codex CLI and execute /status command
@@ -91,6 +148,13 @@ fn run_codex_status_via_pty(command: &str, timeout: Duration) -> Result<String, 
 
     drop(pair.slave);
 
+    // Get the raw fd from master BEFORE cloning reader (Unix only)
+    // portable-pty's as_raw_fd() returns Option<RawFd>
+    #[cfg(unix)]
+    let master_fd: Option<i32> = pair.master.as_raw_fd();
+    #[cfg(not(unix))]
+    let master_fd: Option<i32> = None;
+
     let reader = pair
         .master
         .try_clone_reader()
@@ -107,10 +171,37 @@ fn run_codex_status_via_pty(command: &str, timeout: Duration) -> Result<String, 
     let needs_cursor_response = Arc::new(Mutex::new(false));
     let needs_cursor_clone = needs_cursor_response.clone();
 
+    // Flag to signal reader thread to stop
+    let stop_reader = Arc::new(AtomicBool::new(false));
+    let stop_reader_clone = stop_reader.clone();
+
+    // Per-read timeout for the reader thread (500ms between poll checks)
+    let read_poll_timeout_ms = 500i32;
+
     let reader_handle = std::thread::spawn(move || {
         let mut reader = reader;
         let mut chunk = [0u8; 1024];
         loop {
+            // Check if we should stop
+            if stop_reader_clone.load(Ordering::Relaxed) {
+                break;
+            }
+
+            // Poll for data availability with timeout
+            match poll_read_ready(master_fd, read_poll_timeout_ms) {
+                Ok(false) => {
+                    // Timeout - no data available, check stop flag and continue
+                    continue;
+                }
+                Ok(true) => {
+                    // Data available, proceed with read
+                }
+                Err(_) => {
+                    // Poll error, exit loop
+                    break;
+                }
+            }
+
             match reader.read(&mut chunk) {
                 Ok(0) => break,
                 Ok(n) => {
@@ -146,6 +237,7 @@ fn run_codex_status_via_pty(command: &str, timeout: Duration) -> Result<String, 
     loop {
         if start.elapsed() > prompt_timeout {
             let _ = child.kill();
+            stop_reader.store(true, Ordering::Relaxed);
             drop(writer);
             drop(pair.master);
             let _ = reader_handle.join();
@@ -177,6 +269,7 @@ fn run_codex_status_via_pty(command: &str, timeout: Duration) -> Result<String, 
 
     if start.elapsed() > timeout {
         let _ = child.kill();
+        stop_reader.store(true, Ordering::Relaxed);
         drop(writer);
         drop(pair.master);
         let _ = reader_handle.join();
@@ -243,6 +336,8 @@ fn run_codex_status_via_pty(command: &str, timeout: Duration) -> Result<String, 
         }
     }
 
+    // Signal reader thread to stop and wait for it
+    stop_reader.store(true, Ordering::Relaxed);
     drop(writer);
     drop(pair.master);
     let _ = reader_handle.join();
@@ -273,13 +368,49 @@ fn strip_ansi_codes(text: &str) -> String {
     result
 }
 
+/// Result of parsing Codex /status output
+#[derive(Debug, Clone, PartialEq)]
+pub enum ParseResult {
+    /// Successfully parsed usage data
+    Success {
+        hourly: Option<u8>,
+        weekly: Option<u8>,
+        plan: Option<String>,
+    },
+    /// Usage limit hit - no data available
+    UsageLimitHit,
+    /// Data not available yet (Codex shows this on fresh accounts)
+    DataNotAvailable,
+    /// No recognizable format found
+    UnrecognizedFormat,
+}
+
 /// Parse Codex usage from /status output
 /// Looks for lines like:
 ///   "5h limit:         [█████████████████░░░] 84% left (resets 07:09)"
 ///   "Weekly limit:     [██████████████████░░] 89% left (resets 09:37 on 28 Dec)"
 ///   "Account:          email@example.com (Pro)"
 ///   "Limits:           data not available yet"
-fn parse_codex_usage(text: &str) -> (Option<u8>, Option<u8>, Option<String>) {
+///   "You've hit your usage limit..."
+pub fn parse_codex_usage(text: &str) -> ParseResult {
+    let text_lower = text.to_lowercase();
+
+    // Check for "usage limit hit" message first
+    if text_lower.contains("hit your usage limit")
+        || text_lower.contains("you've hit your")
+        || text_lower.contains("usage limit reached")
+    {
+        return ParseResult::UsageLimitHit;
+    }
+
+    // Check for "data not available yet" message
+    if text_lower.contains("data not available yet")
+        || text_lower.contains("not available yet")
+        || (text_lower.contains("limits:") && text_lower.contains("not available"))
+    {
+        return ParseResult::DataNotAvailable;
+    }
+
     let mut hourly: Option<u8> = None;
     let mut weekly: Option<u8> = None;
     let mut plan: Option<String> = None;
@@ -321,7 +452,16 @@ fn parse_codex_usage(text: &str) -> (Option<u8>, Option<u8>, Option<String>) {
         }
     }
 
-    (hourly, weekly, plan)
+    // If we found any data, return Success; otherwise UnrecognizedFormat
+    if hourly.is_some() || weekly.is_some() {
+        ParseResult::Success {
+            hourly,
+            weekly,
+            plan,
+        }
+    } else {
+        ParseResult::UnrecognizedFormat
+    }
 }
 
 /// Extract percentage from "X% left" pattern
@@ -356,10 +496,15 @@ mod tests {
 │  Weekly limit:     [██████████████████░░] 89% left (resets 09:37 on 28 Dec) │
 │  Account:          r8b9dzx8qv@privaterelay.appleid.com (Pro)                │
 "#;
-        let (hourly, weekly, plan) = parse_codex_usage(output);
-        assert_eq!(hourly, Some(84));
-        assert_eq!(weekly, Some(89));
-        assert_eq!(plan, Some("Pro".to_string()));
+        let result = parse_codex_usage(output);
+        assert_eq!(
+            result,
+            ParseResult::Success {
+                hourly: Some(84),
+                weekly: Some(89),
+                plan: Some("Pro".to_string()),
+            }
+        );
     }
 
     #[test]
@@ -369,10 +514,56 @@ mod tests {
   Weekly limit:     [█░░░░░░░░░░░░░░░░░░░] 5% left (resets tomorrow)
   Account:          user@example.com (Plus)
 "#;
-        let (hourly, weekly, plan) = parse_codex_usage(output);
-        assert_eq!(hourly, Some(10));
-        assert_eq!(weekly, Some(5));
-        assert_eq!(plan, Some("Plus".to_string()));
+        let result = parse_codex_usage(output);
+        assert_eq!(
+            result,
+            ParseResult::Success {
+                hourly: Some(10),
+                weekly: Some(5),
+                plan: Some("Plus".to_string()),
+            }
+        );
+    }
+
+    #[test]
+    fn test_parse_codex_usage_limit_hit() {
+        let output = "You've hit your usage limit. Upgrade to Pro for more.";
+        assert_eq!(parse_codex_usage(output), ParseResult::UsageLimitHit);
+
+        let output2 = "Usage limit reached. Please try again later.";
+        assert_eq!(parse_codex_usage(output2), ParseResult::UsageLimitHit);
+    }
+
+    #[test]
+    fn test_parse_codex_usage_data_not_available() {
+        let output = "Limits: data not available yet";
+        assert_eq!(parse_codex_usage(output), ParseResult::DataNotAvailable);
+
+        let output2 = "Your usage data is not available yet.";
+        assert_eq!(parse_codex_usage(output2), ParseResult::DataNotAvailable);
+    }
+
+    #[test]
+    fn test_parse_codex_usage_unrecognized_format() {
+        let output = "Some random output that doesn't match any pattern";
+        assert_eq!(parse_codex_usage(output), ParseResult::UnrecognizedFormat);
+    }
+
+    #[test]
+    fn test_codex_usage_with_error_sets_fetched_at() {
+        let usage = CodexUsage::with_error("Test error".to_string());
+        assert!(usage.fetched_at.is_some(), "with_error should set fetched_at");
+        assert_eq!(usage.error_message, Some("Test error".to_string()));
+    }
+
+    #[test]
+    fn test_codex_usage_not_available_sets_fetched_at() {
+        let usage = CodexUsage::not_available();
+        assert!(
+            usage.fetched_at.is_some(),
+            "not_available should set fetched_at"
+        );
+        assert_eq!(usage.error_message, Some("CLI not found".to_string()));
     }
 
     #[test]
