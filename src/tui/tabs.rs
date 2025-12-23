@@ -1,4 +1,5 @@
 use super::session::Session;
+use crate::update::UpdateStatus;
 
 /// Manages multiple session tabs
 #[allow(dead_code)]
@@ -6,6 +7,12 @@ pub struct TabManager {
     pub sessions: Vec<Session>,
     pub active_tab: usize,
     next_id: usize,
+    /// Global update status (shared across all tabs)
+    pub update_status: UpdateStatus,
+    /// Whether an update is currently being installed
+    pub update_in_progress: bool,
+    /// Error message from failed update attempt
+    pub update_error: Option<String>,
 }
 
 #[allow(dead_code)]
@@ -15,6 +22,9 @@ impl TabManager {
             sessions: Vec::new(),
             active_tab: 0,
             next_id: 0,
+            update_status: UpdateStatus::default(),
+            update_in_progress: false,
+            update_error: None,
         };
         // Start with one session
         manager.add_session();

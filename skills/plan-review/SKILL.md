@@ -318,3 +318,32 @@ Use sub-agents extensively for parallel verification tasks. You can use up to 20
 - VERIFY all technical claims by reading actual source code or documentation
 - BE SPECIFIC - cite exact files, lines, and evidence for all findings
 - BE CONSTRUCTIVE - provide actionable recommendations, not just criticism
+
+## Approval Criteria
+
+Use the following guidelines to determine the overall assessment:
+
+### APPROVED
+
+Use this when the plan will work and the approach is reasonable. Minor issues do NOT block approval:
+
+- Incorrect line number references (these drift as code changes)
+- Small inaccuracies in file descriptions
+- Missing edge cases that can be addressed during implementation
+- Stylistic suggestions or "nice to have" improvements
+- Alternative approaches that are roughly equivalent (not clearly better)
+
+If the plan will accomplish its goal and the approach is sound, **approve it** and note any minor issues in the feedback.
+
+### NEEDS REVISION
+
+Use this **only** when:
+
+- The plan fundamentally won't work (e.g., relies on APIs that don't exist, logic errors)
+- There's a clearly superior alternative that would significantly improve the outcome
+- Critical steps are missing that would cause implementation to fail
+- The approach has serious flaws (security issues, major performance problems, architectural violations)
+
+### MAJOR ISSUES
+
+Reserve for plans that are fundamentally broken or would cause significant harm if implemented.

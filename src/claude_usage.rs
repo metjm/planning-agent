@@ -31,13 +31,15 @@ impl ClaudeUsage {
     pub fn claude_not_available() -> Self {
         Self {
             error_message: Some("Claude CLI not found".to_string()),
+            fetched_at: Some(Instant::now()),
             ..Default::default()
         }
     }
 
-    fn with_error(msg: String) -> Self {
+    pub fn with_error(msg: String) -> Self {
         Self {
             error_message: Some(msg),
+            fetched_at: Some(Instant::now()),
             ..Default::default()
         }
     }
@@ -477,6 +479,29 @@ mod tests {
                 "Error message should not mention expect"
             );
         }
+    }
+
+    #[test]
+    fn test_claude_usage_with_error_sets_fetched_at() {
+        let usage = ClaudeUsage::with_error("Test error".to_string());
+        assert!(
+            usage.fetched_at.is_some(),
+            "with_error should set fetched_at"
+        );
+        assert_eq!(usage.error_message, Some("Test error".to_string()));
+    }
+
+    #[test]
+    fn test_claude_usage_not_available_sets_fetched_at() {
+        let usage = ClaudeUsage::claude_not_available();
+        assert!(
+            usage.fetched_at.is_some(),
+            "claude_not_available should set fetched_at"
+        );
+        assert_eq!(
+            usage.error_message,
+            Some("Claude CLI not found".to_string())
+        );
     }
 
     /// Integration test that actually calls the Claude CLI

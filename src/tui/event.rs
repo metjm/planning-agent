@@ -6,6 +6,7 @@ use tokio::sync::mpsc;
 
 use crate::cli_usage::AccountUsage;
 use crate::state::State;
+use crate::update::UpdateStatus;
 
 /// Token usage statistics from Claude API
 #[derive(Debug, Clone, Default)]
@@ -75,6 +76,9 @@ pub enum Event {
 
     /// Account usage update for all providers (global, not per-session)
     AccountUsageUpdate(AccountUsage),
+
+    /// Update check status (global, not per-session)
+    UpdateStatusReceived(UpdateStatus),
 }
 
 /// User's response to approval request
