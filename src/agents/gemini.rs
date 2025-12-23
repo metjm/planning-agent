@@ -11,16 +11,12 @@ use tokio::process::Command;
 use tokio::sync::mpsc;
 use tokio::time::Instant;
 
-/// Default activity timeout: 5 minutes
 const DEFAULT_ACTIVITY_TIMEOUT: Duration = Duration::from_secs(300);
 
-/// Default overall timeout: 30 minutes
 const DEFAULT_OVERALL_TIMEOUT: Duration = Duration::from_secs(1800);
 
-/// Timeout for waiting for process exit after streams close
 const PROCESS_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Google Gemini CLI agent implementation
 #[derive(Debug, Clone)]
 pub struct GeminiAgent {
     name: String,
@@ -57,12 +53,11 @@ impl GeminiAgent {
         self
     }
 
-    /// Execute with streaming output
-    #[allow(dead_code)] // Provides simpler API for non-context use cases
+    #[allow(dead_code)] 
     pub async fn execute_streaming(
         &self,
         prompt: String,
-        _system_prompt: Option<String>, // Gemini CLI may use different mechanism
+        _system_prompt: Option<String>, 
         _max_turns: Option<u32>,
         output_tx: mpsc::UnboundedSender<Event>,
     ) -> Result<AgentResult> {
@@ -85,12 +80,10 @@ impl GeminiAgent {
 
         let mut cmd = Command::new(&self.config.command);
 
-        // Add base args from config
         for arg in &self.config.args {
             cmd.arg(arg);
         }
 
-        // Add prompt
         cmd.arg(&prompt);
 
         cmd.current_dir(&self.working_dir);
@@ -109,12 +102,11 @@ impl GeminiAgent {
         let mut final_output = String::new();
         let mut is_error = false;
 
-        // Timeout tracking
         let start_time = Instant::now();
         let mut last_activity = Instant::now();
 
         loop {
-            // Check overall timeout
+
             if start_time.elapsed() > self.overall_timeout {
                 let _ = output_tx.send(Event::Output(format!(
                     "[agent:gemini] ERROR: Exceeded overall timeout of {:?}",
@@ -139,9 +131,8 @@ impl GeminiAgent {
                             }
                             let _ = output_tx.send(Event::BytesReceived(line.len()));
 
-                            // Try to parse as JSON (Gemini may output single JSON or NDJSON)
                             if let Ok(json) = serde_json::from_str::<serde_json::Value>(&line) {
-                                // Extract response content - Gemini may use various field names
+
                                 if let Some(response) = json.get("response")
                                     .or_else(|| json.get("text"))
                                     .or_else(|| json.get("content"))
@@ -153,7 +144,6 @@ impl GeminiAgent {
                                     final_output.push_str(response);
                                 }
 
-                                // Check for candidates array (common in Gemini responses)
                                 if let Some(candidates) = json.get("candidates").and_then(|c| c.as_array()) {
                                     for candidate in candidates {
                                         if let Some(content) = candidate.get("content") {
@@ -169,7 +159,6 @@ impl GeminiAgent {
                                     }
                                 }
 
-                                // Check for function calls
                                 if let Some(function_call) = json.get("functionCall")
                                     .or_else(|| json.get("function_call"))
                                 {
@@ -179,7 +168,6 @@ impl GeminiAgent {
                                     }
                                 }
 
-                                // Check for function response
                                 if let Some(function_response) = json.get("functionResponse")
                                     .or_else(|| json.get("function_response"))
                                 {
@@ -190,7 +178,6 @@ impl GeminiAgent {
                                     let _ = output_tx.send(Event::ToolFinished(id));
                                 }
 
-                                // Check for error
                                 if let Some(error) = json.get("error") {
                                     is_error = true;
                                     if let Some(message) = error.get("message").and_then(|m| m.as_str()) {
@@ -199,7 +186,7 @@ impl GeminiAgent {
                                     }
                                 }
                             } else {
-                                // Plain text output
+
                                 let _ = output_tx.send(Event::Streaming(line.clone()));
                                 final_output.push_str(&line);
                                 final_output.push('\n');
@@ -251,7 +238,6 @@ impl GeminiAgent {
             }
         }
 
-        // Wait for process exit with timeout
         let status = match tokio::time::timeout(PROCESS_WAIT_TIMEOUT, child.wait()).await {
             Ok(Ok(status)) => status,
             Ok(Err(e)) => {
@@ -295,11 +281,10 @@ impl GeminiAgent {
         Ok(AgentResult {
             output: final_output,
             is_error,
-            cost_usd: None, // Gemini CLI doesn't report cost
+            cost_usd: None, 
         })
     }
 
-    /// Execute with session-aware context for chat message routing
     pub async fn execute_streaming_with_context(
         &self,
         prompt: String,

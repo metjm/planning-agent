@@ -1,0 +1,132 @@
+
+use std::time::Instant;
+
+use super::model::{ChatMessage, RunTab, SummaryState};
+use super::Session;
+
+impl Session {
+
+    pub fn add_run_tab(&mut self, phase: String) {
+        self.run_tabs.push(RunTab::new(phase));
+
+        self.active_run_tab = self.run_tabs.len().saturating_sub(1);
+    }
+
+    pub fn add_chat_message(&mut self, agent_name: &str, phase: &str, message: String) {
+
+        if message.trim().is_empty() {
+            return;
+        }
+
+        let tab_idx = self.run_tabs.iter().position(|t| t.phase == phase);
+        let idx = match tab_idx {
+            Some(i) => i,
+            None => {
+                self.add_run_tab(phase.to_string());
+                self.run_tabs.len() - 1
+            }
+        };
+
+        self.run_tabs[idx].messages.push(ChatMessage {
+            agent_name: agent_name.to_string(),
+            message,
+            timestamp: Instant::now(),
+        });
+
+        if self.chat_follow_mode {
+
+        }
+    }
+
+    pub fn next_run_tab(&mut self) {
+        if self.active_run_tab < self.run_tabs.len().saturating_sub(1) {
+            self.active_run_tab += 1;
+        }
+    }
+
+    pub fn prev_run_tab(&mut self) {
+        self.active_run_tab = self.active_run_tab.saturating_sub(1);
+    }
+
+    pub fn clear_chat_tabs(&mut self) {
+        self.run_tabs.clear();
+        self.active_run_tab = 0;
+        self.chat_follow_mode = true;
+    }
+
+    pub fn chat_scroll_up(&mut self) {
+        if let Some(tab) = self.run_tabs.get_mut(self.active_run_tab) {
+            tab.scroll_position = tab.scroll_position.saturating_sub(1);
+            self.chat_follow_mode = false;
+        }
+    }
+
+    pub fn chat_scroll_down(&mut self) {
+        if let Some(tab) = self.run_tabs.get_mut(self.active_run_tab) {
+            tab.scroll_position = tab.scroll_position.saturating_add(1);
+        }
+    }
+
+    pub fn chat_scroll_to_bottom(&mut self) {
+        self.chat_follow_mode = true;
+    }
+
+    pub fn summary_scroll_up(&mut self) {
+        if let Some(tab) = self.run_tabs.get_mut(self.active_run_tab) {
+            tab.summary_scroll = tab.summary_scroll.saturating_sub(1);
+        }
+    }
+
+    pub fn summary_scroll_down(&mut self) {
+        if let Some(tab) = self.run_tabs.get_mut(self.active_run_tab) {
+            tab.summary_scroll = tab.summary_scroll.saturating_add(1);
+        }
+    }
+
+    pub fn summary_scroll_to_top(&mut self) {
+        if let Some(tab) = self.run_tabs.get_mut(self.active_run_tab) {
+            tab.summary_scroll = 0;
+        }
+    }
+
+    pub fn summary_scroll_to_bottom(&mut self, max_scroll: usize) {
+        if let Some(tab) = self.run_tabs.get_mut(self.active_run_tab) {
+            tab.summary_scroll = max_scroll;
+        }
+    }
+
+    pub fn set_summary_generating(&mut self, phase: &str) {
+        if let Some(tab) = self.run_tabs.iter_mut().find(|t| t.phase == phase) {
+            tab.summary_state = SummaryState::Generating;
+            tab.summary_spinner_frame = 0;
+            tab.summary_text.clear();
+        }
+    }
+
+    pub fn set_summary_ready(&mut self, phase: &str, summary: String) {
+        if let Some(tab) = self.run_tabs.iter_mut().find(|t| t.phase == phase) {
+            tab.summary_text = summary;
+            tab.summary_state = SummaryState::Ready;
+            tab.summary_scroll = 0;
+        }
+    }
+
+    pub fn set_summary_error(&mut self, phase: &str, error: String) {
+        if let Some(tab) = self.run_tabs.iter_mut().find(|t| t.phase == phase) {
+            tab.summary_text = error;
+            tab.summary_state = SummaryState::Error;
+        }
+    }
+
+    pub fn has_generating_summary(&self) -> bool {
+        self.run_tabs.iter().any(|tab| tab.summary_state == SummaryState::Generating)
+    }
+
+    pub fn advance_summary_spinners(&mut self) {
+        for tab in &mut self.run_tabs {
+            if tab.summary_state == SummaryState::Generating {
+                tab.summary_spinner_frame = tab.summary_spinner_frame.wrapping_add(1);
+            }
+        }
+    }
+}

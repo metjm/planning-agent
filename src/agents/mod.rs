@@ -9,26 +9,23 @@ use anyhow::Result;
 use std::path::PathBuf;
 use tokio::sync::mpsc;
 
-/// Agent execution context with session routing for chat messages
 #[derive(Clone)]
 pub struct AgentContext {
     pub session_sender: SessionEventSender,
-    pub phase: String,  // "Planning", "Reviewing #1", etc.
+    pub phase: String,  
 }
 
-/// Result from an agent execution
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct AgentResult {
-    /// The final output/result text from the agent
+
     pub output: String,
-    /// Whether the execution resulted in an error
+
     pub is_error: bool,
-    /// Cost in USD if available (Claude reports this)
+
     pub cost_usd: Option<f64>,
 }
 
-/// Agent types - using enum for known CLI tools
 #[derive(Debug, Clone)]
 pub enum AgentType {
     Claude(claude::ClaudeAgent),
@@ -37,7 +34,7 @@ pub enum AgentType {
 }
 
 impl AgentType {
-    /// Create an agent from configuration
+
     pub fn from_config(
         name: &str,
         config: &AgentConfig,
@@ -63,7 +60,6 @@ impl AgentType {
         }
     }
 
-    /// Get the agent's name
     #[allow(dead_code)]
     pub fn name(&self) -> &str {
         match self {
@@ -73,8 +69,7 @@ impl AgentType {
         }
     }
 
-    /// Execute the agent with streaming output
-    #[allow(dead_code)] // Provides simpler API for non-context use cases
+    #[allow(dead_code)] 
     pub async fn execute_streaming(
         &self,
         prompt: String,
@@ -101,7 +96,6 @@ impl AgentType {
         }
     }
 
-    /// Execute the agent with session-aware event routing (for chat messages)
     pub async fn execute_streaming_with_context(
         &self,
         prompt: String,

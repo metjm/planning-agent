@@ -9,7 +9,6 @@ use crate::state::State;
 use crate::tui::session::TodoItem;
 use crate::update::{UpdateResult, UpdateStatus};
 
-/// Token usage statistics from Claude API
 #[derive(Debug, Clone, Default)]
 pub struct TokenUsage {
     pub input_tokens: u64,
@@ -26,7 +25,6 @@ pub enum Event {
     Tick,
     Resize,
 
-    // Events without session routing (global)
     Output(String),
     Streaming(String),
     ToolStarted(String),
@@ -41,7 +39,6 @@ pub enum Event {
     ToolResultReceived { tool_id: String, is_error: bool },
     StopReason(String),
 
-    // Session-routed events (for multi-tab support)
     SessionOutput { session_id: usize, line: String },
     SessionStreaming { session_id: usize, line: String },
     SessionStateUpdate { session_id: usize, state: State },
@@ -60,70 +57,60 @@ pub enum Event {
     SessionWorkflowError { session_id: usize, error: String },
     SessionGeneratingSummary { session_id: usize },
 
-    /// Plan generation failed, user can retry
     SessionPlanGenerationFailed { session_id: usize, error: String },
-    /// Max iterations reached, user can proceed or continue
+
     SessionMaxIterationsReached { session_id: usize, summary: String },
-    /// User chose to proceed without AI approval, now awaiting final confirmation
+
     SessionUserOverrideApproval { session_id: usize, summary: String },
 
-    /// Agent chat message for display in chat tabs (session-routed)
     SessionAgentMessage {
         session_id: usize,
         agent_name: String,
-        phase: String,   // "Planning", "Reviewing #1", "Revising #1", etc.
+        phase: String,   
         message: String,
     },
 
-    /// Agent todo list update (session-routed)
     SessionTodosUpdate {
         session_id: usize,
-        agent_name: String,  // e.g., "claude", "codex", "gemini"
+        agent_name: String,  
         todos: Vec<TodoItem>,
     },
 
-    /// Run tab summary generation started (session-routed)
     SessionRunTabSummaryGenerating {
         session_id: usize,
-        phase: String,  // "Planning", "Reviewing #1", etc.
+        phase: String,  
     },
 
-    /// Run tab summary generation completed (session-routed)
     SessionRunTabSummaryReady {
         session_id: usize,
         phase: String,
         summary: String,
     },
 
-    /// Run tab summary generation failed (session-routed)
     SessionRunTabSummaryError {
         session_id: usize,
         phase: String,
         error: String,
     },
 
-    /// Account usage update for all providers (global, not per-session)
     AccountUsageUpdate(AccountUsage),
 
-    /// Update check status (global, not per-session)
     UpdateStatusReceived(UpdateStatus),
 
-    /// Update install completed (success or failure)
     UpdateInstallFinished(UpdateResult),
 }
 
-/// User's response to approval request
 #[derive(Debug, Clone)]
 pub enum UserApprovalResponse {
     Accept,
-    Decline(String), // Contains user's feedback for changes
+    Decline(String), 
     ReviewRetry,
     ReviewContinue,
-    // Failure recovery variants
-    PlanGenerationRetry,    // Retry plan generation after failure
-    AbortWorkflow,          // Explicit abort (ends session, not app)
-    ProceedWithoutApproval, // User wants to proceed despite max iterations
-    ContinueReviewing,      // User wants another review cycle (adds to max_iterations)
+
+    PlanGenerationRetry,    
+    AbortWorkflow,          
+    ProceedWithoutApproval, 
+    ContinueReviewing,      
 }
 
 pub struct EventHandler {
@@ -136,7 +123,6 @@ impl EventHandler {
         let (tx, rx) = mpsc::unbounded_channel();
         let event_tx = tx.clone();
 
-        // Spawn keyboard/tick event handler
         tokio::spawn(async move {
             let mut event_stream = crossterm::event::EventStream::new();
             let mut tick_interval = tokio::time::interval(tick_rate);
@@ -189,15 +175,11 @@ impl EventHandler {
             .ok_or_else(|| anyhow::anyhow!("Event channel closed"))
     }
 
-    /// Try to receive an event without blocking
-    /// Returns None if no event is available
     pub fn try_next(&mut self) -> Option<Event> {
         self.rx.try_recv().ok()
     }
 }
 
-/// A sender that automatically tags events with a session ID
-/// This is passed to workflow tasks to ensure events are routed correctly
 #[derive(Clone)]
 #[allow(dead_code)]
 pub struct SessionEventSender {
@@ -356,7 +338,6 @@ impl SessionEventSender {
         });
     }
 
-    /// Send an agent chat message for display in the chat tabs
     pub fn send_agent_message(&self, agent_name: String, phase: String, message: String) {
         let _ = self.inner.send(Event::SessionAgentMessage {
             session_id: self.session_id,
@@ -366,7 +347,6 @@ impl SessionEventSender {
         });
     }
 
-    /// Send an agent todo list update
     pub fn send_todos_update(&self, agent_name: String, todos: Vec<TodoItem>) {
         let _ = self.inner.send(Event::SessionTodosUpdate {
             session_id: self.session_id,
@@ -375,7 +355,6 @@ impl SessionEventSender {
         });
     }
 
-    /// Send run tab summary generating event
     pub fn send_run_tab_summary_generating(&self, phase: String) {
         let _ = self.inner.send(Event::SessionRunTabSummaryGenerating {
             session_id: self.session_id,
@@ -383,7 +362,6 @@ impl SessionEventSender {
         });
     }
 
-    /// Send run tab summary ready event
     pub fn send_run_tab_summary_ready(&self, phase: String, summary: String) {
         let _ = self.inner.send(Event::SessionRunTabSummaryReady {
             session_id: self.session_id,
@@ -392,7 +370,6 @@ impl SessionEventSender {
         });
     }
 
-    /// Send run tab summary error event
     pub fn send_run_tab_summary_error(&self, phase: String, error: String) {
         let _ = self.inner.send(Event::SessionRunTabSummaryError {
             session_id: self.session_id,
@@ -401,7 +378,6 @@ impl SessionEventSender {
         });
     }
 
-    /// Get the raw sender for compatibility with code that expects UnboundedSender<Event>
     pub fn raw_sender(&self) -> mpsc::UnboundedSender<Event> {
         self.inner.clone()
     }

@@ -11,8 +11,6 @@ Your task is to provide a brief, focused summary of the content provided.
 Keep summaries short (3-5 bullet points max) and highlight only the most important aspects.
 Do not include code blocks or lengthy explanations - be succinct."#;
 
-/// Run asynchronous summary generation for a completed phase
-/// This spawns a task that doesn't block the main workflow
 pub fn spawn_summary_generation(
     phase: String,
     state: &State,
@@ -21,29 +19,27 @@ pub fn spawn_summary_generation(
     sender: SessionEventSender,
     reviews: Option<&[ReviewResult]>,
 ) {
-    // Clone what we need for the async task
+
     let plan_path = working_dir.join(&state.plan_file);
     let working_dir = working_dir.to_path_buf();
     let config = config.clone();
     let phase_clone = phase.clone();
 
-    // Build the summary input based on phase type
     let summary_input = if phase.starts_with("Reviewing") {
-        // For reviewing phase, summarize review results
+
         if let Some(reviews) = reviews {
             build_review_summary_input(reviews)
         } else {
             "No review data available.".to_string()
         }
     } else {
-        // For planning/revising, summarize the plan file
+
         match std::fs::read_to_string(&plan_path) {
             Ok(content) => build_plan_summary_input(&content, &phase),
             Err(e) => format!("Failed to read plan file: {}", e),
         }
     };
 
-    // Notify that summary generation is starting
     sender.send_run_tab_summary_generating(phase.clone());
 
     tokio::spawn(async move {
@@ -58,9 +54,8 @@ pub fn spawn_summary_generation(
     });
 }
 
-/// Build summary input for plan content
 fn build_plan_summary_input(plan_content: &str, phase: &str) -> String {
-    // Truncate very long plans to avoid overwhelming the summarizer
+
     let max_len = 8000;
     let content = if plan_content.len() > max_len {
         format!("{}...\n\n[Content truncated, {} characters total]",
@@ -82,7 +77,6 @@ Plan content:
     )
 }
 
-/// Build summary input for review results
 fn build_review_summary_input(reviews: &[ReviewResult]) -> String {
     let mut input = String::from("Summarize these code review results. Highlight:\n");
     input.push_str("- Overall verdict (approved/rejected)\n");
@@ -100,7 +94,6 @@ fn build_review_summary_input(reviews: &[ReviewResult]) -> String {
     input
 }
 
-/// Run the actual summary generation
 async fn run_summary_generation(
     phase: &str,
     input: &str,
@@ -108,8 +101,7 @@ async fn run_summary_generation(
     config: &WorkflowConfig,
     sender: SessionEventSender,
 ) -> Result<String> {
-    // Use the planning agent for summaries (it's typically the most capable)
-    // In the future, we could add a dedicated summary agent config
+
     let agent_name = &config.workflow.planning.agent;
 
     let agent_config = config
@@ -118,11 +110,8 @@ async fn run_summary_generation(
 
     let agent = AgentType::from_config(agent_name, agent_config, working_dir.to_path_buf())?;
 
-    // Use a minimal max_turns for summaries (they should be quick)
     let max_turns = Some(1);
 
-    // Create context that won't spam the chat panel
-    // Use a different phase name to avoid polluting the main chat
     let context = AgentContext {
         session_sender: sender,
         phase: format!("{} Summary", phase),

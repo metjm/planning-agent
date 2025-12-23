@@ -5,25 +5,24 @@ use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, Default)]
 pub struct ClaudeUsage {
-    /// Weekly usage used as percentage (e.g., 45 means 45% used)
+
     pub weekly_used: Option<u8>,
-    /// Session/daily usage used as percentage
+
     pub session_used: Option<u8>,
-    /// User's plan type (e.g., "Max", "Pro", "Free")
+
     pub plan_type: Option<String>,
-    /// When this data was fetched
+
     pub fetched_at: Option<Instant>,
-    /// Error message if fetch failed
+
     pub error_message: Option<String>,
 }
 
 impl ClaudeUsage {
-    /// Check if the usage data is stale (older than 5 minutes)
-    /// Reserved for future use (manual refresh keybind)
+
     #[allow(dead_code)]
     pub fn is_stale(&self) -> bool {
         match self.fetched_at {
-            Some(t) => t.elapsed() > Duration::from_secs(300), // 5 minutes
+            Some(t) => t.elapsed() > Duration::from_secs(300), 
             None => true,
         }
     }
@@ -45,20 +44,17 @@ impl ClaudeUsage {
     }
 }
 
-/// Check if the `claude` CLI is available using the `which` crate (cross-platform)
 pub fn is_claude_available() -> bool {
     which::which("claude").is_ok()
 }
 
-/// Run Claude CLI in a PTY and execute /usage command
-/// Uses a shared buffer approach with prompt detection for reliable timing
 fn run_claude_usage_via_pty(command: &str, timeout: Duration) -> Result<String, String> {
     let pty_system = native_pty_system();
 
     let pair = pty_system
         .openpty(PtySize {
             rows: 40,
-            cols: 120, // Wider to avoid line wrapping
+            cols: 120, 
             pixel_width: 0,
             pixel_height: 0,
         })
@@ -70,7 +66,6 @@ fn run_claude_usage_via_pty(command: &str, timeout: Duration) -> Result<String, 
         .spawn_command(cmd)
         .map_err(|e| format!("Failed to spawn Claude: {}", e))?;
 
-    // Drop the slave to avoid blocking
     drop(pair.slave);
 
     let reader = pair
@@ -82,11 +77,9 @@ fn run_claude_usage_via_pty(command: &str, timeout: Duration) -> Result<String, 
         .take_writer()
         .map_err(|e| format!("Failed to get PTY writer: {}", e))?;
 
-    // Shared buffer for incremental reads
     let output_buffer = Arc::new(Mutex::new(Vec::new()));
     let buffer_clone = output_buffer.clone();
 
-    // Spawn reader thread to collect output incrementally
     let reader_handle = std::thread::spawn(move || {
         let mut reader = reader;
         let mut chunk = [0u8; 1024];
@@ -104,7 +97,6 @@ fn run_claude_usage_via_pty(command: &str, timeout: Duration) -> Result<String, 
     let start = Instant::now();
     let prompt_timeout = Duration::from_secs(10);
 
-    // Wait for initial prompt (detect > character)
     loop {
         if start.elapsed() > prompt_timeout {
             let _ = child.kill();
@@ -120,7 +112,6 @@ fn run_claude_usage_via_pty(command: &str, timeout: Duration) -> Result<String, 
         let len = data.len();
         drop(data);
 
-        // Look for prompt indicator (> character) and sufficient output
         let has_prompt = stripped.lines().any(|line| {
             let trimmed = line.trim();
             trimmed.ends_with('>') || trimmed.contains('>')
@@ -133,7 +124,6 @@ fn run_claude_usage_via_pty(command: &str, timeout: Duration) -> Result<String, 
         std::thread::sleep(Duration::from_millis(100));
     }
 
-    // Check overall timeout
     if start.elapsed() > timeout {
         let _ = child.kill();
         drop(writer);
@@ -142,18 +132,15 @@ fn run_claude_usage_via_pty(command: &str, timeout: Duration) -> Result<String, 
         return Err("Timeout waiting for Claude CLI".to_string());
     }
 
-    // Send /usage command character by character with small delays
-    // This allows autocomplete to settle properly
     for c in "/usage".chars() {
         writer.write_all(&[c as u8]).map_err(|e| format!("Failed to send char: {}", e))?;
         std::thread::sleep(Duration::from_millis(50));
     }
-    // Small pause before enter to let autocomplete settle
+
     std::thread::sleep(Duration::from_millis(200));
-    // Send Enter key
+
     writer.write_all(b"\r").map_err(|e| format!("Failed to send Enter: {}", e))?;
 
-    // Wait for usage output to stabilize
     let usage_start = Instant::now();
     let usage_timeout = Duration::from_secs(8);
     let mut last_len = 0;
@@ -168,7 +155,6 @@ fn run_claude_usage_via_pty(command: &str, timeout: Duration) -> Result<String, 
         let text = String::from_utf8_lossy(&data);
         let stripped = strip_ansi_codes(&text);
 
-        // Check if we have usage output (look for % or limit-related text)
         let has_usage_output = stripped.contains('%')
             || stripped.to_lowercase().contains("limit")
             || stripped.to_lowercase().contains("used");
@@ -177,21 +163,19 @@ fn run_claude_usage_via_pty(command: &str, timeout: Duration) -> Result<String, 
         if len > last_len {
             last_len = len;
         } else if has_usage_output && usage_start.elapsed() > Duration::from_millis(1500) {
-            // Output has stabilized
+
             break;
         }
 
         std::thread::sleep(Duration::from_millis(100));
     }
 
-    // Request graceful exit
     for c in "/exit".chars() {
         let _ = writer.write_all(&[c as u8]);
         std::thread::sleep(Duration::from_millis(30));
     }
     let _ = writer.write_all(b"\r");
 
-    // Wait for child to exit, with timeout
     let exit_deadline = Instant::now() + Duration::from_secs(3);
     loop {
         match child.try_wait() {
@@ -210,29 +194,24 @@ fn run_claude_usage_via_pty(command: &str, timeout: Duration) -> Result<String, 
         }
     }
 
-    // Drop writer to signal EOF to reader
     drop(writer);
 
-    // Drop the master to clean up PTY
     drop(pair.master);
 
-    // Wait for reader thread to finish
     let _ = reader_handle.join();
 
-    // Get final output
     let output = output_buffer.lock().unwrap().clone();
     Ok(String::from_utf8_lossy(&output).into_owned())
 }
 
-/// Strip ANSI escape sequences from text
 fn strip_ansi_codes(text: &str) -> String {
     let mut result = String::with_capacity(text.len());
     let mut chars = text.chars().peekable();
     while let Some(c) = chars.next() {
         if c == '\x1b' {
-            // Skip escape sequence
+
             if chars.peek() == Some(&'[') {
-                chars.next(); // consume '['
+                chars.next(); 
                 while let Some(&next) = chars.peek() {
                     chars.next();
                     if next.is_ascii_alphabetic() {
@@ -247,7 +226,6 @@ fn strip_ansi_codes(text: &str) -> String {
     result
 }
 
-/// Fetch Claude usage by running /usage command via PTY
 pub fn fetch_claude_usage_sync() -> ClaudeUsage {
     if !is_claude_available() {
         return ClaudeUsage::claude_not_available();
@@ -259,13 +237,10 @@ pub fn fetch_claude_usage_sync() -> ClaudeUsage {
         Ok(raw_output) => {
             let output = strip_ansi_codes(&raw_output);
 
-            // Parse usage percentages - look for "X% used" format
-            // The output shows "Current session" and "Current week (all models)" sections
             let session = parse_usage_used_percent(&output, "current session");
             let weekly = parse_usage_used_percent(&output, "current week")
                 .or_else(|| parse_usage_used_percent(&output, "week"));
 
-            // Parse plan type from the initial welcome screen (e.g., "Claude Max")
             let plan = parse_plan_type(&output);
 
             ClaudeUsage {
@@ -280,10 +255,6 @@ pub fn fetch_claude_usage_sync() -> ClaudeUsage {
     }
 }
 
-/// Parse usage percentage from text looking for "X% used" format
-/// The Claude /usage output shows sections like:
-///   "Current session"
-///   "██▌                                                5% used"
 fn parse_usage_used_percent(text: &str, section_keyword: &str) -> Option<u8> {
     let lines: Vec<&str> = text.lines().collect();
     let section_keyword_lower = section_keyword.to_lowercase();
@@ -291,13 +262,12 @@ fn parse_usage_used_percent(text: &str, section_keyword: &str) -> Option<u8> {
     for (i, line) in lines.iter().enumerate() {
         let line_lower = line.to_lowercase();
 
-        // Look for the section header
         if line_lower.contains(&section_keyword_lower) {
-            // Search the next few lines for "X% used"
+
             for j in i..std::cmp::min(i + 5, lines.len()) {
                 let candidate = lines[j];
                 if candidate.to_lowercase().contains("used") {
-                    // Find the percentage before "used"
+
                     if let Some(pct_pos) = candidate.find('%') {
                         let before = &candidate[..pct_pos];
                         let digits: String = before
@@ -319,12 +289,9 @@ fn parse_usage_used_percent(text: &str, section_keyword: &str) -> Option<u8> {
     None
 }
 
-/// Parse plan type from output
-/// Looks for "Claude Max" or "Claude Pro" in the welcome banner
 fn parse_plan_type(text: &str) -> Option<String> {
     let text_lower = text.to_lowercase();
 
-    // First try: look for "Claude Max" or "Claude Pro" patterns
     for plan_name in &["Max", "Pro", "Free"] {
         let pattern = format!("claude {}", plan_name.to_lowercase());
         if text_lower.contains(&pattern) {
@@ -332,7 +299,6 @@ fn parse_plan_type(text: &str) -> Option<String> {
         }
     }
 
-    // Fallback: look for "Plan: X" pattern
     for line in text.lines() {
         let line_lower = line.to_lowercase();
         if line_lower.contains("plan") {
@@ -355,7 +321,7 @@ mod tests {
 
     #[test]
     fn test_parse_usage_used_percent() {
-        // Test actual Claude /usage output format
+
         let output = r#"
  Current session
  ██▌                                                5% used
@@ -386,7 +352,7 @@ mod tests {
 
     #[test]
     fn test_parse_plan_type_claude_max() {
-        // Test the welcome banner format
+
         let output = "Opus 4.5 · Claude Max · gabe.b.azevedo@gmail.com's Organization";
         assert_eq!(parse_plan_type(output), Some("Max".to_string()));
     }
@@ -399,7 +365,7 @@ mod tests {
 
     #[test]
     fn test_parse_plan_type_fallback() {
-        // Test fallback "Plan: X" format
+
         assert_eq!(parse_plan_type("Plan: Max"), Some("Max".to_string()));
         assert_eq!(
             parse_plan_type("Your plan: Pro tier"),
@@ -426,29 +392,26 @@ mod tests {
 
     #[test]
     fn test_strip_ansi_codes() {
-        // Basic ANSI color codes
+
         assert_eq!(strip_ansi_codes("\x1b[32mHello\x1b[0m"), "Hello");
         assert_eq!(
             strip_ansi_codes("\x1b[1;31mBold Red\x1b[0m Text"),
             "Bold Red Text"
         );
 
-        // No ANSI codes
         assert_eq!(strip_ansi_codes("Plain text"), "Plain text");
 
-        // Multiple sequences
         assert_eq!(
             strip_ansi_codes("\x1b[33mYellow\x1b[0m \x1b[34mBlue\x1b[0m"),
             "Yellow Blue"
         );
 
-        // Complex sequences with cursor movements
         assert_eq!(strip_ansi_codes("\x1b[2K\x1b[1GLine"), "Line");
     }
 
     #[test]
     fn test_parse_usage_with_ansi_codes() {
-        // Test that ANSI stripping works with new parsing
+
         let raw = "\x1b[32mCurrent session\x1b[0m\n██ 80% used";
         let stripped = strip_ansi_codes(raw);
         assert_eq!(parse_usage_used_percent(&stripped, "current session"), Some(80));
@@ -463,7 +426,7 @@ mod tests {
 
     #[test]
     fn test_no_expect_in_error_messages() {
-        // Regression test: ensure no error messages mention "expect"
+
         let error_usage = ClaudeUsage::with_error("Some error".to_string());
         if let Some(msg) = &error_usage.error_message {
             assert!(
@@ -504,8 +467,6 @@ mod tests {
         );
     }
 
-    /// Integration test that actually calls the Claude CLI
-    /// Run with: cargo test test_fetch_claude_usage_real -- --ignored --nocapture
     #[test]
     #[ignore]
     fn test_fetch_claude_usage_real() {
@@ -519,18 +480,15 @@ mod tests {
 
         eprintln!("Result: {:?}", usage);
 
-        // Should have fetched_at set
         assert!(usage.fetched_at.is_some(), "fetched_at should be set");
 
-        // If no error, should have at least some usage data
         if usage.error_message.is_none() {
-            // At least one of these should be present
+
             let has_data = usage.session_used.is_some()
                 || usage.weekly_used.is_some()
                 || usage.plan_type.is_some();
             assert!(has_data, "Should have at least some usage data: {:?}", usage);
 
-            // Log the values for manual verification
             if let Some(session) = usage.session_used {
                 eprintln!("Session used: {}%", session);
                 assert!(session <= 100, "Session percentage should be <= 100");

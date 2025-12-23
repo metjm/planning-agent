@@ -43,13 +43,13 @@ pub struct MultiAgentPhase {
 #[serde(rename_all = "snake_case")]
 pub enum AggregationMode {
     #[default]
-    AnyRejects, // If any reviewer rejects, needs revision
-    AllReject,  // Only if all reviewers reject
-    Majority,   // If majority rejects
+    AnyRejects, 
+    AllReject,  
+    Majority,   
 }
 
 impl WorkflowConfig {
-    /// Load configuration from a YAML file
+
     pub fn load(path: &Path) -> Result<Self> {
         let content = std::fs::read_to_string(path)
             .with_context(|| format!("Failed to read config file: {}", path.display()))?;
@@ -59,19 +59,16 @@ impl WorkflowConfig {
         Ok(config)
     }
 
-    /// Returns the default configuration compiled from workflow.yaml
     pub fn default_config() -> Self {
-        // Embed workflow.yaml at compile time
+
         const DEFAULT_WORKFLOW_YAML: &str = include_str!("../workflow.yaml");
 
-        // Parse the embedded YAML - panic if it's invalid since this is a compile-time constant
         serde_yaml::from_str(DEFAULT_WORKFLOW_YAML)
             .expect("Failed to parse embedded workflow.yaml - this is a bug in the workflow.yaml file")
     }
 
-    /// Validate the configuration
     fn validate(&self) -> Result<()> {
-        // Verify planning agent exists
+
         if !self.agents.contains_key(&self.workflow.planning.agent) {
             anyhow::bail!(
                 "Planning agent '{}' not found in agents configuration",
@@ -79,7 +76,6 @@ impl WorkflowConfig {
             );
         }
 
-        // Verify all review agents exist
         for agent in &self.workflow.reviewing.agents {
             if !self.agents.contains_key(agent) {
                 anyhow::bail!(
@@ -89,7 +85,6 @@ impl WorkflowConfig {
             }
         }
 
-        // Verify revising agent exists
         if !self.agents.contains_key(&self.workflow.revising.agent) {
             anyhow::bail!(
                 "Revising agent '{}' not found in agents configuration",
@@ -97,7 +92,6 @@ impl WorkflowConfig {
             );
         }
 
-        // Verify at least one review agent is configured
         if self.workflow.reviewing.agents.is_empty() {
             anyhow::bail!("At least one review agent must be configured");
         }
@@ -105,7 +99,6 @@ impl WorkflowConfig {
         Ok(())
     }
 
-    /// Get agent config by name
     pub fn get_agent(&self, name: &str) -> Option<&AgentConfig> {
         self.agents.get(name)
     }
@@ -118,11 +111,11 @@ mod tests {
     #[test]
     fn test_default_config() {
         let config = WorkflowConfig::default_config();
-        // Verify agents are defined (from workflow.yaml)
+
         assert!(config.agents.contains_key("claude"));
         assert!(config.agents.contains_key("codex"));
         assert!(config.agents.contains_key("gemini"));
-        // Verify workflow phases reference valid agents
+
         assert!(config.agents.contains_key(&config.workflow.planning.agent));
         assert!(config.agents.contains_key(&config.workflow.revising.agent));
         for agent in &config.workflow.reviewing.agents {

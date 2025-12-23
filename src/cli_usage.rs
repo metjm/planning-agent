@@ -1,10 +1,3 @@
-//! CLI Usage tracking for all supported providers (Claude, Gemini, Codex)
-//!
-//! This module provides a unified interface for fetching account usage information
-//! from various AI CLI tools:
-//! - Claude: /usage command with session and weekly limits
-//! - Gemini: /stats command with per-model daily limits
-//! - Codex: /status command with 5h and weekly limits
 
 use std::collections::HashMap;
 use std::time::Instant;
@@ -13,29 +6,28 @@ use crate::claude_usage::{self, ClaudeUsage};
 use crate::codex_usage::{self, CodexUsage};
 use crate::gemini_usage::{self, GeminiUsage};
 
-/// A provider's usage information (generalized for multi-provider support)
 #[derive(Debug, Clone, Default)]
 pub struct ProviderUsage {
-    /// Provider name (e.g., "claude", "gemini", "codex")
+
     pub provider: String,
-    /// Display name (e.g., "Claude", "Gemini", "Codex")
+
     pub display_name: String,
-    /// Session/daily usage as percentage used (0-100)
+
     pub session_used: Option<u8>,
-    /// Weekly usage as percentage used (0-100)
+
     pub weekly_used: Option<u8>,
-    /// Plan type if available
+
     pub plan_type: Option<String>,
-    /// When this data was fetched
+
     pub fetched_at: Option<Instant>,
-    /// Error or status message (e.g., "Not available", "CLI not found")
+
     pub status_message: Option<String>,
-    /// Whether this provider supports usage queries
+
     pub supports_usage: bool,
 }
 
 impl ProviderUsage {
-    /// Create a "not available" status for providers that don't support usage queries
+
     #[allow(dead_code)]
     pub fn not_available(provider: &str, display_name: &str) -> Self {
         Self {
@@ -50,7 +42,6 @@ impl ProviderUsage {
         }
     }
 
-    /// Create from a ClaudeUsage result
     pub fn from_claude_usage(usage: ClaudeUsage) -> Self {
         Self {
             provider: "claude".to_string(),
@@ -64,36 +55,31 @@ impl ProviderUsage {
         }
     }
 
-    /// Create from a GeminiUsage result
-    /// Note: Gemini shows "usage remaining" so we convert to "used" for consistency
     pub fn from_gemini_usage(usage: GeminiUsage) -> Self {
-        // Convert "remaining" to "used" (100 - remaining)
+
         let daily_used = usage.usage_remaining.map(|r| 100u8.saturating_sub(r));
 
         Self {
             provider: "gemini".to_string(),
             display_name: "Gemini".to_string(),
-            session_used: None, // Gemini doesn't have session limits
-            weekly_used: daily_used, // Daily limit shown as "weekly" slot
-            plan_type: usage.constrained_model, // Show the most constrained model
+            session_used: None, 
+            weekly_used: daily_used, 
+            plan_type: usage.constrained_model, 
             fetched_at: usage.fetched_at,
             status_message: usage.error_message,
             supports_usage: true,
         }
     }
 
-    /// Create from a CodexUsage result
-    /// Note: Codex shows "remaining" so we convert to "used" for consistency
     pub fn from_codex_usage(usage: CodexUsage) -> Self {
-        // Convert "remaining" to "used" (100 - remaining)
-        // Use 5h limit as "session" and weekly as "weekly"
+
         let session_used = usage.hourly_remaining.map(|r| 100u8.saturating_sub(r));
         let weekly_used = usage.weekly_remaining.map(|r| 100u8.saturating_sub(r));
 
         Self {
             provider: "codex".to_string(),
             display_name: "Codex".to_string(),
-            session_used, // 5h limit as session
+            session_used, 
             weekly_used,
             plan_type: usage.plan_type,
             fetched_at: usage.fetched_at,
@@ -102,61 +88,51 @@ impl ProviderUsage {
         }
     }
 
-    /// Check if this provider has an error status
     pub fn has_error(&self) -> bool {
         self.status_message.is_some() && self.session_used.is_none() && self.weekly_used.is_none()
     }
 }
 
-/// Container for all provider usages
 #[derive(Debug, Clone, Default)]
 pub struct AccountUsage {
-    /// Map of provider name to usage data
+
     pub providers: HashMap<String, ProviderUsage>,
 }
 
 impl AccountUsage {
-    /// Create a new AccountUsage with empty provider map
+
     pub fn new() -> Self {
         Self {
             providers: HashMap::new(),
         }
     }
 
-    /// Update usage for a specific provider
     pub fn update(&mut self, usage: ProviderUsage) {
         self.providers.insert(usage.provider.clone(), usage);
     }
 
-    /// Get usage for a specific provider
     #[allow(dead_code)]
     pub fn get(&self, provider: &str) -> Option<&ProviderUsage> {
         self.providers.get(provider)
     }
 
-    /// Get Claude usage specifically (for backwards compatibility)
     #[allow(dead_code)]
     pub fn claude(&self) -> Option<&ProviderUsage> {
         self.providers.get("claude")
     }
 }
 
-/// Fetch usage for all supported providers
-/// Returns a map of provider name to ProviderUsage
 pub fn fetch_all_provider_usage_sync() -> AccountUsage {
     let mut account_usage = AccountUsage::new();
 
-    // Fetch Claude usage via /usage command
     let claude_usage = claude_usage::fetch_claude_usage_sync();
     account_usage.update(ProviderUsage::from_claude_usage(claude_usage));
 
-    // Fetch Gemini usage via /stats command
     if gemini_usage::is_gemini_available() {
         let gemini = gemini_usage::fetch_gemini_usage_sync();
         account_usage.update(ProviderUsage::from_gemini_usage(gemini));
     }
 
-    // Fetch Codex usage via /status command
     if codex_usage::is_codex_available() {
         let codex = codex_usage::fetch_codex_usage_sync();
         account_usage.update(ProviderUsage::from_codex_usage(codex));
@@ -235,8 +211,6 @@ mod tests {
         assert!(!ok_usage.has_error());
     }
 
-    /// Integration test that fetches usage from all providers
-    /// Run with: cargo test test_fetch_all_providers_real -- --ignored --nocapture
     #[test]
     #[ignore]
     fn test_fetch_all_providers_real() {
@@ -245,7 +219,6 @@ mod tests {
 
         eprintln!("Found {} providers\n", account.providers.len());
 
-        // Check Claude
         if let Some(claude) = account.get("claude") {
             eprintln!("Claude:");
             eprintln!("  supports_usage: {}", claude.supports_usage);
@@ -263,7 +236,6 @@ mod tests {
             eprintln!("Claude: not found (CLI not installed?)");
         }
 
-        // Check Gemini
         if let Some(gemini) = account.get("gemini") {
             eprintln!("\nGemini:");
             eprintln!("  supports_usage: {}", gemini.supports_usage);
@@ -280,7 +252,6 @@ mod tests {
             eprintln!("\nGemini: not found (CLI not installed)");
         }
 
-        // Check Codex
         if let Some(codex) = account.get("codex") {
             eprintln!("\nCodex:");
             eprintln!("  supports_usage: {}", codex.supports_usage);
@@ -291,8 +262,7 @@ mod tests {
 
             assert!(codex.supports_usage, "Codex should support usage via /status");
             if codex.status_message.is_none() {
-                // Note: Codex may show "data not available yet" for fresh sessions
-                // so usage data might be None even without an error
+
                 if let Some(session) = codex.session_used {
                     eprintln!("  5h used: {}%", session);
                 }

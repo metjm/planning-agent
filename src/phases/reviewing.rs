@@ -8,8 +8,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-/// Extract content from <plan-feedback> tags.
-/// Returns the extracted content, or the original string if no tags found.
 fn extract_plan_feedback(output: &str) -> String {
     let re = Regex::new(r"(?s)<plan-feedback>\s*(.*?)\s*</plan-feedback>").unwrap();
     if let Some(captures) = re.captures(output) {
@@ -17,11 +15,10 @@ fn extract_plan_feedback(output: &str) -> String {
             return content.as_str().to_string();
         }
     }
-    // Fallback: return original output if no tags found
+
     output.to_string()
 }
 
-/// Result from a single reviewer
 #[derive(Debug, Clone)]
 pub struct ReviewResult {
     pub agent_name: String,
@@ -29,14 +26,12 @@ pub struct ReviewResult {
     pub feedback: String,
 }
 
-/// Result when a reviewer fails to produce a usable review
 #[derive(Debug, Clone)]
 pub struct ReviewFailure {
     pub agent_name: String,
     pub error: String,
 }
 
-/// Batch results for a multi-agent review run
 #[derive(Debug, Clone)]
 pub struct ReviewBatchResult {
     pub reviews: Vec<ReviewResult>,
@@ -48,7 +43,6 @@ Review the plan for correctness, completeness, and technical accuracy.
 Use the "plan-review" skill to review.
 "#;
 
-/// Run review phase with multiple agents in parallel
 pub async fn run_multi_agent_review_with_context(
     state: &State,
     working_dir: &Path,
@@ -71,7 +65,6 @@ pub async fn run_multi_agent_review_with_context(
     let base_feedback_path = state.feedback_file.as_path();
     let base_feedback_path_abs = working_dir.join(&state.feedback_file);
 
-    // Build agents from config
     let agents: Vec<(String, AgentType, PathBuf)> = agent_names
         .iter()
         .map(|name| {
@@ -88,7 +81,6 @@ pub async fn run_multi_agent_review_with_context(
         })
         .collect::<Result<Vec<_>>>()?;
 
-    // Execute all reviewers in parallel using futures::future::join_all
     let futures: Vec<_> = agents
         .into_iter()
         .map(|(agent_name, agent, feedback_path_abs)| {
@@ -100,7 +92,6 @@ pub async fn run_multi_agent_review_with_context(
                 sender.send_output(format!("[review:{}] Starting review...", agent_name));
                 let started_at = SystemTime::now();
 
-                // Create agent context for chat message routing
                 let context = AgentContext {
                     session_sender: sender.clone(),
                     phase,
@@ -123,7 +114,6 @@ pub async fn run_multi_agent_review_with_context(
 
     let results = futures::future::join_all(futures).await;
 
-    // Parse each result for APPROVED/NEEDS_REVISION
     let mut reviews = Vec::new();
     let mut failures = Vec::new();
     for (agent_name, feedback_path, started_at, result) in results {
@@ -165,7 +155,6 @@ pub async fn run_multi_agent_review_with_context(
                     }
                 }
 
-                // Extract only the <plan-feedback> tagged content for clean feedback
                 let extracted = extract_plan_feedback(&output);
                 let feedback = if extracted != output {
                     session_sender.send_output(format!(
@@ -228,7 +217,7 @@ pub async fn run_multi_agent_review_with_context(
                 });
             }
             Err(e) => {
-                // Log error but continue with other reviewers
+
                 session_sender.send_output(format!(
                     "[error] {} review failed: {}",
                     agent_name, e
@@ -244,7 +233,6 @@ pub async fn run_multi_agent_review_with_context(
     Ok(ReviewBatchResult { reviews, failures })
 }
 
-/// Build the review prompt for multi-agent review
 fn build_review_prompt(state: &State) -> String {
     format!(
         r###"User objective (used to create the plan):
@@ -283,10 +271,9 @@ Example format:
     )
 }
 
-/// Aggregate reviews based on configured aggregation mode
 pub fn aggregate_reviews(reviews: &[ReviewResult], mode: &AggregationMode) -> FeedbackStatus {
     if reviews.is_empty() {
-        return FeedbackStatus::NeedsRevision; // No reviews = problem
+        return FeedbackStatus::NeedsRevision; 
     }
 
     let rejections = reviews.iter().filter(|r| r.needs_revision).count();
@@ -341,7 +328,6 @@ fn feedback_path_for_agent(
         .join(format!("{}_{}.{}", stem, agent_name, ext))
 }
 
-/// Write individual feedback files for each reviewer
 pub fn write_feedback_files(
     reviews: &[ReviewResult],
     base_feedback_path: &Path,
@@ -358,7 +344,6 @@ pub fn write_feedback_files(
     Ok(paths)
 }
 
-/// Merge multiple reviewer feedback into a single file
 pub fn merge_feedback(reviews: &[ReviewResult], output_path: &Path) -> Result<()> {
     let merged = reviews
         .iter()
@@ -489,7 +474,7 @@ mod tests {
                 feedback: "NEEDS REVISION".to_string(),
             },
         ];
-        // 1 of 3 rejects = 33%, not majority
+
         assert_eq!(
             aggregate_reviews(&reviews, &AggregationMode::Majority),
             FeedbackStatus::Approved
@@ -515,7 +500,7 @@ mod tests {
                 feedback: "APPROVED".to_string(),
             },
         ];
-        // 2 of 3 rejects = 66%, majority
+
         assert_eq!(
             aggregate_reviews(&reviews, &AggregationMode::Majority),
             FeedbackStatus::NeedsRevision
