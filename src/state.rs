@@ -29,6 +29,9 @@ pub struct State {
     pub plan_file: PathBuf,
     pub feedback_file: PathBuf,
     pub last_feedback_status: Option<FeedbackStatus>,
+    /// Set to true when user proceeds without AI approval at max iterations
+    #[serde(default)]
+    pub approval_overridden: bool,
 }
 
 impl State {
@@ -49,6 +52,7 @@ impl State {
             plan_file: PathBuf::from(format!("docs/plans/{}.md", sanitized_name)),
             feedback_file: PathBuf::from(format!("docs/plans/{}_feedback.md", sanitized_name)),
             last_feedback_status: None,
+            approval_overridden: false,
         }
     }
 

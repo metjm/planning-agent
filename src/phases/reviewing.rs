@@ -3,9 +3,23 @@ use crate::config::{AggregationMode, WorkflowConfig};
 use crate::state::{FeedbackStatus, State};
 use crate::tui::SessionEventSender;
 use anyhow::Result;
+use regex::Regex;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
+
+/// Extract content from <plan-feedback> tags.
+/// Returns the extracted content, or the original string if no tags found.
+fn extract_plan_feedback(output: &str) -> String {
+    let re = Regex::new(r"(?s)<plan-feedback>\s*(.*?)\s*</plan-feedback>").unwrap();
+    if let Some(captures) = re.captures(output) {
+        if let Some(content) = captures.get(1) {
+            return content.as_str().to_string();
+        }
+    }
+    // Fallback: return original output if no tags found
+    output.to_string()
+}
 
 /// Result from a single reviewer
 #[derive(Debug, Clone)]
@@ -150,9 +164,25 @@ pub async fn run_multi_agent_review_with_context(
                     }
                 }
 
-                let trimmed_output = output.trim();
-                if trimmed_output.is_empty() {
-                    let error = "No output produced".to_string();
+                // Extract only the <plan-feedback> tagged content for clean feedback
+                let extracted = extract_plan_feedback(&output);
+                let feedback = if extracted != output {
+                    session_sender.send_output(format!(
+                        "[review:{}] Extracted feedback from <plan-feedback> tags",
+                        agent_name
+                    ));
+                    extracted
+                } else {
+                    session_sender.send_output(format!(
+                        "[review:{}] WARNING: No <plan-feedback> tags found, using raw output",
+                        agent_name
+                    ));
+                    output
+                };
+
+                let trimmed_feedback = feedback.trim();
+                if trimmed_feedback.is_empty() {
+                    let error = "No feedback produced".to_string();
                     session_sender.send_output(format!(
                         "[review:{}] ERROR: {}",
                         agent_name, error
@@ -176,9 +206,9 @@ pub async fn run_multi_agent_review_with_context(
                     ));
                 }
 
-                let needs_revision = output.contains("NEEDS REVISION")
-                    || output.contains("NEEDS_REVISION")
-                    || output.contains("MAJOR ISSUES");
+                let needs_revision = feedback.contains("NEEDS REVISION")
+                    || feedback.contains("NEEDS_REVISION")
+                    || feedback.contains("MAJOR ISSUES");
 
                 session_sender.send_output(format!(
                     "[review:{}] Verdict: {}",
@@ -193,7 +223,7 @@ pub async fn run_multi_agent_review_with_context(
                 reviews.push(ReviewResult {
                     agent_name,
                     needs_revision,
-                    feedback: output,
+                    feedback,
                 });
             }
             Err(e) => {
@@ -233,9 +263,20 @@ Provide your assessment with one of these verdicts:
 
 Include specific feedback about any issues found.
 
-Return the full feedback as markdown in your final response. Do not write files.
+Read the plan file first, then provide your detailed review.
 
-Read the plan file first, then provide your detailed review."###,
+CRITICAL: You MUST wrap your final feedback in <plan-feedback> tags. Only the content inside these tags will be saved as the review feedback. Everything outside these tags (thinking, tool calls, intermediate steps) will be ignored.
+
+Example format:
+<plan-feedback>
+## Review Summary
+...your assessment here...
+
+## Issues Found
+...specific issues...
+
+## Overall Assessment: APPROVED/NEEDS REVISION
+</plan-feedback>"###,
         state.objective,
         state.plan_file.display()
     )

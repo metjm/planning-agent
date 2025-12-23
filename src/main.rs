@@ -143,6 +143,46 @@ fn build_review_failure_summary(
     summary
 }
 
+fn build_max_iterations_summary(
+    state: &State,
+    working_dir: &Path,
+    last_reviews: &[phases::ReviewResult],
+) -> String {
+    let plan_path = working_dir.join(&state.plan_file);
+
+    // Use SAME base format as approved plan summary
+    let mut summary = format!(
+        "The plan has been reviewed {} times but has not been approved by AI.\n\nPlan file: {}\n\n",
+        state.iteration,
+        plan_path.display()
+    );
+
+    // Add review status context
+    if let Some(ref status) = state.last_feedback_status {
+        summary.push_str(&format!("Last review verdict: {:?}\n\n", status));
+    }
+
+    // Summarize last review feedback (optional context)
+    if !last_reviews.is_empty() {
+        summary.push_str("---\n\n## Latest Review Feedback\n\n");
+        for review in last_reviews {
+            let verdict = if review.needs_revision { "NEEDS REVISION" } else { "APPROVED" };
+            summary.push_str(&format!("### {} ({})\n\n", review.agent_name.to_uppercase(), verdict));
+            // Truncate feedback for summary
+            let preview: String = review.feedback.lines().take(5).collect::<Vec<_>>().join("\n");
+            summary.push_str(&format!("{}\n\n", truncate_for_summary(&preview, 300)));
+        }
+    }
+
+    summary.push_str("---\n\n");
+    summary.push_str("Choose an action:\n");
+    summary.push_str("- **[p] Proceed**: Accept the current plan and continue to implementation\n");
+    summary.push_str("- **[c] Continue Review**: Run another review cycle (adds 1 to max iterations)\n");
+    summary.push_str("- **[d] Restart with Feedback**: Provide feedback to restart the entire workflow\n");
+
+    summary
+}
+
 /// Shorten Claude model name for display
 fn shorten_model_name(full_name: &str) -> String {
     if full_name.contains("opus") {
@@ -773,6 +813,101 @@ async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                             }
                             _ => {}
                         },
+                        ApprovalContext::PlanGenerationFailed => match key.code {
+                            KeyCode::Char('r') | KeyCode::Char('R') => {
+                                if let Some(tx) = session.approval_tx.clone() {
+                                    let _ = tx.send(UserApprovalResponse::PlanGenerationRetry).await;
+                                }
+                                session.approval_mode = ApprovalMode::None;
+                                session.status = SessionStatus::Planning;
+                                session.approval_context = ApprovalContext::PlanApproval;
+                            }
+                            KeyCode::Char('a') | KeyCode::Char('A') | KeyCode::Esc => {
+                                if let Some(tx) = session.approval_tx.clone() {
+                                    let _ = tx.send(UserApprovalResponse::AbortWorkflow).await;
+                                }
+                                session.approval_mode = ApprovalMode::None;
+                                session.status = SessionStatus::Error;
+                                session.error_state = Some("Plan generation failed".to_string());
+                            }
+                            KeyCode::Char('j') | KeyCode::Down => {
+                                let max_scroll =
+                                    session.plan_summary.lines().count().saturating_sub(10);
+                                session.scroll_summary_down(max_scroll);
+                            }
+                            KeyCode::Char('k') | KeyCode::Up => {
+                                session.scroll_summary_up();
+                            }
+                            KeyCode::Char('q') => {
+                                should_quit = true;
+                            }
+                            _ => {}
+                        },
+                        ApprovalContext::MaxIterationsReached => match key.code {
+                            KeyCode::Char('p') | KeyCode::Char('P') => {
+                                if let Some(tx) = session.approval_tx.clone() {
+                                    let _ = tx.send(UserApprovalResponse::ProceedWithoutApproval).await;
+                                }
+                                session.approval_mode = ApprovalMode::None;
+                                session.status = SessionStatus::Planning;
+                                session.approval_context = ApprovalContext::PlanApproval;
+                            }
+                            KeyCode::Char('c') | KeyCode::Char('C') => {
+                                if let Some(tx) = session.approval_tx.clone() {
+                                    let _ = tx.send(UserApprovalResponse::ContinueReviewing).await;
+                                }
+                                session.approval_mode = ApprovalMode::None;
+                                session.status = SessionStatus::Planning;
+                                session.approval_context = ApprovalContext::PlanApproval;
+                            }
+                            KeyCode::Char('d') | KeyCode::Char('D') => {
+                                session.start_feedback_input();
+                            }
+                            KeyCode::Char('a') | KeyCode::Char('A') => {
+                                if let Some(tx) = session.approval_tx.clone() {
+                                    let _ = tx.send(UserApprovalResponse::AbortWorkflow).await;
+                                }
+                                session.approval_mode = ApprovalMode::None;
+                                session.status = SessionStatus::Error;
+                                session.error_state = Some("Aborted at max iterations".to_string());
+                            }
+                            KeyCode::Char('j') | KeyCode::Down => {
+                                let max_scroll =
+                                    session.plan_summary.lines().count().saturating_sub(10);
+                                session.scroll_summary_down(max_scroll);
+                            }
+                            KeyCode::Char('k') | KeyCode::Up => {
+                                session.scroll_summary_up();
+                            }
+                            KeyCode::Char('q') | KeyCode::Esc => {
+                                should_quit = true;
+                            }
+                            _ => {}
+                        },
+                        ApprovalContext::UserOverrideApproval => match key.code {
+                            KeyCode::Char('a') | KeyCode::Char('A') => {
+                                if let Some(tx) = session.approval_tx.take() {
+                                    let _ = tx.send(UserApprovalResponse::Accept).await;
+                                }
+                                session.approval_mode = ApprovalMode::None;
+                                session.status = SessionStatus::Complete;
+                            }
+                            KeyCode::Char('d') | KeyCode::Char('D') => {
+                                session.start_feedback_input();
+                            }
+                            KeyCode::Char('j') | KeyCode::Down => {
+                                let max_scroll =
+                                    session.plan_summary.lines().count().saturating_sub(10);
+                                session.scroll_summary_down(max_scroll);
+                            }
+                            KeyCode::Char('k') | KeyCode::Up => {
+                                session.scroll_summary_up();
+                            }
+                            KeyCode::Char('q') | KeyCode::Esc => {
+                                should_quit = true;
+                            }
+                            _ => {}
+                        },
                     },
                     ApprovalMode::EnteringFeedback => match key.code {
                         // Shift+Enter inserts a newline (detected via SHIFT modifier)
@@ -1100,6 +1235,21 @@ async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                     session.spinner_frame = 0;
                 }
             }
+            Event::SessionPlanGenerationFailed { session_id, error } => {
+                if let Some(session) = tab_manager.session_by_id_mut(session_id) {
+                    session.start_plan_generation_failed(error);
+                }
+            }
+            Event::SessionMaxIterationsReached { session_id, summary } => {
+                if let Some(session) = tab_manager.session_by_id_mut(session_id) {
+                    session.start_max_iterations_prompt(summary);
+                }
+            }
+            Event::SessionUserOverrideApproval { session_id, summary } => {
+                if let Some(session) = tab_manager.session_by_id_mut(session_id) {
+                    session.start_user_override_approval(summary);
+                }
+            }
             Event::SessionAgentMessage {
                 session_id,
                 agent_name,
@@ -1192,6 +1342,11 @@ async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                             session.status = SessionStatus::Complete;
                             session.running = false;
                         }
+                        Ok(Ok(WorkflowResult::Aborted { reason })) => {
+                            session.status = SessionStatus::Error;
+                            session.running = false;
+                            session.error_state = Some(reason);
+                        }
                         Ok(Ok(WorkflowResult::NeedsRestart { user_feedback })) => {
                             // Restart the workflow with updated objective
                             session.add_output("".to_string());
@@ -1202,6 +1357,7 @@ async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                                 // Reset state for new iteration
                                 state.phase = Phase::Planning;
                                 state.iteration = 1;
+                                state.approval_overridden = false; // Reset override flag on restart
                                 state.objective = format!(
                                     "{}\n\nUSER FEEDBACK: The previous plan was reviewed and needs changes:\n{}",
                                     state.objective,
@@ -1452,6 +1608,7 @@ fn restore_terminal(
 pub enum WorkflowResult {
     Accepted,
     NeedsRestart { user_feedback: String },
+    Aborted { reason: String }, // User explicitly aborted the workflow
 }
 
 /// Run workflow with multi-agent configuration
@@ -1605,6 +1762,35 @@ async fn run_workflow_with_config(
                             );
                             ReviewDecision::Retry
                         }
+                        // Handle new variants explicitly
+                        Some(UserApprovalResponse::PlanGenerationRetry) => {
+                            log_workflow(
+                                &working_dir,
+                                "Received PlanGenerationRetry while awaiting review decision, treating as retry",
+                            );
+                            ReviewDecision::Retry
+                        }
+                        Some(UserApprovalResponse::AbortWorkflow) => {
+                            log_workflow(
+                                &working_dir,
+                                "Received AbortWorkflow while awaiting review decision, treating as continue",
+                            );
+                            ReviewDecision::Continue
+                        }
+                        Some(UserApprovalResponse::ProceedWithoutApproval) => {
+                            log_workflow(
+                                &working_dir,
+                                "Received ProceedWithoutApproval while awaiting review decision, treating as continue",
+                            );
+                            ReviewDecision::Continue
+                        }
+                        Some(UserApprovalResponse::ContinueReviewing) => {
+                            log_workflow(
+                                &working_dir,
+                                "Received ContinueReviewing while awaiting review decision, treating as continue",
+                            );
+                            ReviewDecision::Continue
+                        }
                         None => {
                             log_workflow(
                                 &working_dir,
@@ -1653,12 +1839,70 @@ async fn run_workflow_with_config(
                     FeedbackStatus::NeedsRevision => {
                         sender.send_output("[planning] Plan needs revision".to_string());
                         if state.iteration >= state.max_iterations {
-                            log_workflow(&working_dir, "Max iterations reached, stopping");
+                            log_workflow(&working_dir, "Max iterations reached - prompting user");
                             sender.send_output("[planning] Max iterations reached".to_string());
-                            break;
+                            sender.send_output("[planning] Awaiting your decision...".to_string());
+
+                            // Build summary and request user decision
+                            let summary = build_max_iterations_summary(&state, &working_dir, &last_reviews);
+                            sender.send_max_iterations_reached(summary);
+
+                            // Wait for user decision
+                            loop {
+                                match approval_rx.recv().await {
+                                    Some(UserApprovalResponse::ProceedWithoutApproval) => {
+                                        log_workflow(&working_dir, "User chose to proceed without AI approval");
+                                        sender.send_output("[planning] Proceeding without AI approval...".to_string());
+                                        state.approval_overridden = true;
+                                        state.transition(Phase::Complete)?;
+                                        state.save(&state_path)?;
+                                        break;
+                                    }
+                                    Some(UserApprovalResponse::ContinueReviewing) => {
+                                        log_workflow(&working_dir, "User chose to continue reviewing");
+                                        sender.send_output("[planning] Continuing with another review cycle...".to_string());
+                                        state.max_iterations += 1;
+                                        state.transition(Phase::Revising)?;
+                                        state.save(&state_path)?;
+                                        break;
+                                    }
+                                    Some(UserApprovalResponse::Decline(feedback)) => {
+                                        log_workflow(&working_dir, &format!("User declined with feedback: {}", feedback));
+                                        sender.send_output(format!("[planning] Restarting with feedback: {}", feedback));
+                                        return Ok(WorkflowResult::NeedsRestart { user_feedback: feedback });
+                                    }
+                                    Some(UserApprovalResponse::AbortWorkflow) => {
+                                        log_workflow(&working_dir, "User chose to abort workflow");
+                                        sender.send_output("[planning] Workflow aborted by user".to_string());
+                                        return Ok(WorkflowResult::Aborted {
+                                            reason: "User aborted workflow at max iterations".to_string(),
+                                        });
+                                    }
+                                    Some(other) => {
+                                        log_workflow(
+                                            &working_dir,
+                                            &format!("Ignoring unexpected response {:?} during max iterations prompt", other),
+                                        );
+                                        continue;
+                                    }
+                                    None => {
+                                        log_workflow(&working_dir, "Approval channel closed - aborting");
+                                        return Ok(WorkflowResult::Aborted {
+                                            reason: "Approval channel closed".to_string(),
+                                        });
+                                    }
+                                }
+                            }
+
+                            // If we broke out to Continue, the loop continues
+                            // If we broke out to Proceed, state is Complete and will exit main loop
+                            if state.phase == Phase::Complete {
+                                break;
+                            }
+                        } else {
+                            log_workflow(&working_dir, "Transitioning: Reviewing -> Revising");
+                            state.transition(Phase::Revising)?;
                         }
-                        log_workflow(&working_dir, "Transitioning: Reviewing -> Revising");
-                        state.transition(Phase::Revising)?;
                     }
                 }
                 state.save(&state_path)?;
@@ -1740,17 +1984,36 @@ async fn run_workflow_with_config(
         log_workflow(&working_dir, ">>> Plan complete - requesting user approval");
 
         sender.send_output("".to_string());
-        sender.send_output("=== PLAN APPROVED BY AI ===".to_string());
-        sender.send_output(format!("Completed after {} iteration(s)", state.iteration));
-        sender.send_output("Waiting for your approval...".to_string());
 
-        // Request user approval (plan file path as summary)
         let plan_path = working_dir.join(&state.plan_file);
-        let summary = format!(
-            "The plan has been approved by AI review.\n\nPlan file: {}",
-            plan_path.display()
-        );
-        sender.send_approval_request(summary);
+
+        // Use different messaging and context based on how we got here
+        if state.approval_overridden {
+            sender.send_output("=== PROCEEDING WITHOUT AI APPROVAL ===".to_string());
+            sender.send_output("User chose to proceed after max iterations".to_string());
+            sender.send_output("Waiting for your final decision...".to_string());
+
+            let summary = format!(
+                "You chose to proceed without AI approval after {} review iterations.\n\n\
+                 Plan file: {}\n\n\
+                 Choose an action to continue.",
+                state.iteration,
+                plan_path.display()
+            );
+            // Use UserOverrideApproval context for accurate UI title
+            sender.send_user_override_approval(summary);
+        } else {
+            sender.send_output("=== PLAN APPROVED BY AI ===".to_string());
+            sender.send_output(format!("Completed after {} iteration(s)", state.iteration));
+            sender.send_output("Waiting for your approval...".to_string());
+
+            let summary = format!(
+                "The plan has been approved by AI review.\n\nPlan file: {}",
+                plan_path.display()
+            );
+            // Use standard PlanApproval context
+            sender.send_approval_request(summary);
+        };
 
         // Wait for user response
         log_workflow(&working_dir, "Waiting for user approval response...");
@@ -1779,6 +2042,35 @@ async fn run_workflow_with_config(
                     );
                     continue;
                 }
+                // Handle new variants explicitly
+                Some(UserApprovalResponse::PlanGenerationRetry) => {
+                    log_workflow(
+                        &working_dir,
+                        "Received PlanGenerationRetry while awaiting plan approval, ignoring",
+                    );
+                    continue;
+                }
+                Some(UserApprovalResponse::AbortWorkflow) => {
+                    log_workflow(
+                        &working_dir,
+                        "Received AbortWorkflow while awaiting plan approval, ignoring",
+                    );
+                    continue;
+                }
+                Some(UserApprovalResponse::ProceedWithoutApproval) => {
+                    log_workflow(
+                        &working_dir,
+                        "Received ProceedWithoutApproval while awaiting plan approval, ignoring",
+                    );
+                    continue;
+                }
+                Some(UserApprovalResponse::ContinueReviewing) => {
+                    log_workflow(
+                        &working_dir,
+                        "Received ContinueReviewing while awaiting plan approval, ignoring",
+                    );
+                    continue;
+                }
                 None => {
                     log_workflow(&working_dir, "Approval channel closed - treating as accept");
                     return Ok(WorkflowResult::Accepted);
@@ -1787,7 +2079,8 @@ async fn run_workflow_with_config(
         }
     }
 
-    // Max iterations reached without approval
+    // Max iterations reached without approval - this should no longer be reached
+    // as the max iterations handling now prompts the user
     sender.send_output("".to_string());
     sender.send_output("=== WORKFLOW COMPLETE ===".to_string());
     sender.send_output("Max iterations reached. Manual review recommended.".to_string());

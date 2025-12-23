@@ -45,6 +45,9 @@ pub enum ApprovalContext {
     #[default]
     PlanApproval,
     ReviewDecision,
+    PlanGenerationFailed,   // Plan generation failed
+    MaxIterationsReached,   // Max review iterations exhausted
+    UserOverrideApproval,   // User chose to proceed without AI approval
 }
 
 /// Which panel is focused for scrolling
@@ -309,6 +312,39 @@ impl Session {
         self.status = SessionStatus::AwaitingApproval;
     }
 
+    /// Start max iterations reached prompt
+    pub fn start_max_iterations_prompt(&mut self, summary: String) {
+        self.plan_summary = summary;
+        self.plan_summary_scroll = 0;
+        self.approval_mode = ApprovalMode::AwaitingChoice;
+        self.approval_context = ApprovalContext::MaxIterationsReached;
+        self.user_feedback.clear();
+        self.cursor_position = 0;
+        self.status = SessionStatus::AwaitingApproval;
+    }
+
+    /// Start plan generation failed prompt
+    pub fn start_plan_generation_failed(&mut self, error: String) {
+        self.plan_summary = error;
+        self.plan_summary_scroll = 0;
+        self.approval_mode = ApprovalMode::AwaitingChoice;
+        self.approval_context = ApprovalContext::PlanGenerationFailed;
+        self.user_feedback.clear();
+        self.cursor_position = 0;
+        self.status = SessionStatus::AwaitingApproval;
+    }
+
+    /// Start user override approval prompt (after proceeding without AI approval)
+    pub fn start_user_override_approval(&mut self, summary: String) {
+        self.plan_summary = summary;
+        self.plan_summary_scroll = 0;
+        self.approval_mode = ApprovalMode::AwaitingChoice;
+        self.approval_context = ApprovalContext::UserOverrideApproval;
+        self.user_feedback.clear();
+        self.cursor_position = 0;
+        self.status = SessionStatus::AwaitingApproval;
+    }
+
     pub fn scroll_summary_up(&mut self) {
         self.plan_summary_scroll = self.plan_summary_scroll.saturating_sub(1);
     }
@@ -483,6 +519,11 @@ impl Session {
             }
             WorkflowResult::NeedsRestart { .. } => {
                 self.status = SessionStatus::Planning;
+            }
+            WorkflowResult::Aborted { reason } => {
+                self.status = SessionStatus::Error;
+                self.running = false;
+                self.error_state = Some(reason);
             }
         }
     }
