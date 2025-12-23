@@ -53,7 +53,7 @@ This uses --dangerously-skip-permissions by default, so I do **NOT** recommend u
 ### Quick Install
 
 ```bash
-cargo install --git ssh://git@github.com/metjm/planning-agent.git --force
+cargo install --git https://github.com/metjm/planning-agent.git --force
 ```
 
 ### From Source
