@@ -6,7 +6,8 @@ use tokio::sync::mpsc;
 
 use crate::cli_usage::AccountUsage;
 use crate::state::State;
-use crate::update::UpdateStatus;
+use crate::tui::session::TodoItem;
+use crate::update::{UpdateResult, UpdateStatus};
 
 /// Token usage statistics from Claude API
 #[derive(Debug, Clone, Default)]
@@ -74,11 +75,41 @@ pub enum Event {
         message: String,
     },
 
+    /// Agent todo list update (session-routed)
+    SessionTodosUpdate {
+        session_id: usize,
+        agent_name: String,  // e.g., "claude", "codex", "gemini"
+        todos: Vec<TodoItem>,
+    },
+
+    /// Run tab summary generation started (session-routed)
+    SessionRunTabSummaryGenerating {
+        session_id: usize,
+        phase: String,  // "Planning", "Reviewing #1", etc.
+    },
+
+    /// Run tab summary generation completed (session-routed)
+    SessionRunTabSummaryReady {
+        session_id: usize,
+        phase: String,
+        summary: String,
+    },
+
+    /// Run tab summary generation failed (session-routed)
+    SessionRunTabSummaryError {
+        session_id: usize,
+        phase: String,
+        error: String,
+    },
+
     /// Account usage update for all providers (global, not per-session)
     AccountUsageUpdate(AccountUsage),
 
     /// Update check status (global, not per-session)
     UpdateStatusReceived(UpdateStatus),
+
+    /// Update install completed (success or failure)
+    UpdateInstallFinished(UpdateResult),
 }
 
 /// User's response to approval request
@@ -332,6 +363,41 @@ impl SessionEventSender {
             agent_name,
             phase,
             message,
+        });
+    }
+
+    /// Send an agent todo list update
+    pub fn send_todos_update(&self, agent_name: String, todos: Vec<TodoItem>) {
+        let _ = self.inner.send(Event::SessionTodosUpdate {
+            session_id: self.session_id,
+            agent_name,
+            todos,
+        });
+    }
+
+    /// Send run tab summary generating event
+    pub fn send_run_tab_summary_generating(&self, phase: String) {
+        let _ = self.inner.send(Event::SessionRunTabSummaryGenerating {
+            session_id: self.session_id,
+            phase,
+        });
+    }
+
+    /// Send run tab summary ready event
+    pub fn send_run_tab_summary_ready(&self, phase: String, summary: String) {
+        let _ = self.inner.send(Event::SessionRunTabSummaryReady {
+            session_id: self.session_id,
+            phase,
+            summary,
+        });
+    }
+
+    /// Send run tab summary error event
+    pub fn send_run_tab_summary_error(&self, phase: String, error: String) {
+        let _ = self.inner.send(Event::SessionRunTabSummaryError {
+            session_id: self.session_id,
+            phase,
+            error,
         });
     }
 
