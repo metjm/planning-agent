@@ -1,6 +1,7 @@
 mod agents;
 mod claude_usage;
 mod cli_usage;
+mod codex_usage;
 mod config;
 mod gemini_usage;
 mod phases;
