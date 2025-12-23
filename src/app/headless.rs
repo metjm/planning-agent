@@ -1,6 +1,7 @@
 
 use crate::app::cli::Cli;
 use crate::app::util::truncate_for_summary;
+use crate::app::workflow_common::{cleanup_merged_feedback, REVIEW_FAILURE_RETRY_LIMIT};
 use crate::config::WorkflowConfig;
 use crate::phases::{
     self, aggregate_reviews, merge_feedback, run_multi_agent_review_with_context,
@@ -12,8 +13,6 @@ use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use tokio::sync::mpsc;
-
-const REVIEW_FAILURE_RETRY_LIMIT: usize = 1;
 
 pub async fn extract_feature_name(
     objective: &str,
@@ -200,9 +199,7 @@ pub async fn run_headless_with_config(
                 last_reviews.clear();
 
                 let feedback_path = working_dir.join(&state.feedback_file);
-                if feedback_path.exists() {
-                    let _ = std::fs::remove_file(&feedback_path);
-                }
+                let _ = cleanup_merged_feedback(&feedback_path);
 
                 state.iteration += 1;
                 state.transition(Phase::Reviewing)?;

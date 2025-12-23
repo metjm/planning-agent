@@ -474,7 +474,7 @@ impl EventSender for ContextEventSender {
     fn send_todos_update(&self, items: Vec<crate::tui::TodoItem>) {
         self.context
             .session_sender
-            .send_todos_update("claude".to_string(), items);
+            .send_todos_update(self.agent_name.clone(), items);
     }
 }
 
