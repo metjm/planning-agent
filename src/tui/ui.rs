@@ -1178,8 +1178,8 @@ fn draw_choice_popup(frame: &mut Frame, session: &Session, area: Rect) {
             Span::raw("Abort"),
         ])]),
         ApprovalContext::UserOverrideApproval => Paragraph::new(vec![Line::from(vec![
-            Span::styled("  [a] ", Style::default().fg(Color::Green).bold()),
-            Span::raw("Accept  "),
+            Span::styled("  [i] ", Style::default().fg(Color::Green).bold()),
+            Span::raw("Implement  "),
             Span::styled("  [d] ", Style::default().fg(Color::Yellow).bold()),
             Span::raw("Decline  "),
             Span::styled("  [j/k] ", Style::default().fg(Color::Cyan).bold()),

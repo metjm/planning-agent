@@ -146,6 +146,51 @@ fn build_review_failure_summary(
     summary
 }
 
+/// Launches Claude implementation with the plan file.
+/// This function restores the terminal and exec()s Claude - it does not return on success.
+fn launch_claude_implementation(
+    terminal: &mut ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io::Stdout>>,
+    plan_path: PathBuf,
+) -> Result<()> {
+    // Restore terminal before exec
+    restore_terminal(terminal)?;
+
+    let prompt = format!(
+        "Please implement the following plan fully: {}",
+        plan_path.display()
+    );
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        let err = std::process::Command::new("claude")
+            .arg("--dangerously-skip-permissions")
+            .arg(&prompt)
+            .exec();
+        eprintln!("Failed to launch Claude: {}", err);
+        std::process::exit(1);
+    }
+
+    #[cfg(not(unix))]
+    {
+        let status = std::process::Command::new("claude")
+            .arg("--dangerously-skip-permissions")
+            .arg(&prompt)
+            .stdin(std::process::Stdio::inherit())
+            .stdout(std::process::Stdio::inherit())
+            .stderr(std::process::Stdio::inherit())
+            .status();
+
+        match status {
+            Ok(s) => std::process::exit(s.code().unwrap_or(0)),
+            Err(e) => {
+                eprintln!("Failed to launch Claude: {}", e);
+                std::process::exit(1);
+            }
+        }
+    }
+}
+
 fn build_max_iterations_summary(
     state: &State,
     working_dir: &Path,
@@ -732,43 +777,8 @@ async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                                 session.approval_tx.take();
                                 session.approval_mode = ApprovalMode::None;
 
-                                // Restore terminal and exec() Claude
-                                restore_terminal(&mut terminal)?;
-
-                                let prompt = format!(
-                                    "Please implement the following plan fully: {}",
-                                    plan_path.display()
-                                );
-
-                                #[cfg(unix)]
-                                {
-                                    use std::os::unix::process::CommandExt;
-                                    let err = std::process::Command::new("claude")
-                                        .arg("--dangerously-skip-permissions")
-                                        .arg(&prompt)
-                                        .exec();
-                                    eprintln!("Failed to launch Claude: {}", err);
-                                    std::process::exit(1);
-                                }
-
-                                #[cfg(not(unix))]
-                                {
-                                    let status = std::process::Command::new("claude")
-                                        .arg("--dangerously-skip-permissions")
-                                        .arg(&prompt)
-                                        .stdin(std::process::Stdio::inherit())
-                                        .stdout(std::process::Stdio::inherit())
-                                        .stderr(std::process::Stdio::inherit())
-                                        .status();
-
-                                    match status {
-                                        Ok(s) => std::process::exit(s.code().unwrap_or(0)),
-                                        Err(e) => {
-                                            eprintln!("Failed to launch Claude: {}", e);
-                                            std::process::exit(1);
-                                        }
-                                    }
-                                }
+                                // Launch Claude implementation (does not return on success)
+                                launch_claude_implementation(&mut terminal, plan_path)?;
                             }
                             KeyCode::Char('d') | KeyCode::Char('D') => {
                                 session.start_feedback_input();
@@ -888,12 +898,20 @@ async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                             _ => {}
                         },
                         ApprovalContext::UserOverrideApproval => match key.code {
-                            KeyCode::Char('a') | KeyCode::Char('A') => {
-                                if let Some(tx) = session.approval_tx.take() {
-                                    let _ = tx.send(UserApprovalResponse::Accept).await;
-                                }
+                            KeyCode::Char('i') | KeyCode::Char('I') => {
+                                // Get plan path before we lose access to session
+                                let plan_path = session
+                                    .workflow_state
+                                    .as_ref()
+                                    .map(|s| working_dir.join(&s.plan_file))
+                                    .unwrap_or_default();
+
+                                // Cancel the approval channel since we're exiting
+                                session.approval_tx.take();
                                 session.approval_mode = ApprovalMode::None;
-                                session.status = SessionStatus::Complete;
+
+                                // Launch Claude implementation (does not return on success)
+                                launch_claude_implementation(&mut terminal, plan_path)?;
                             }
                             KeyCode::Char('d') | KeyCode::Char('D') => {
                                 session.start_feedback_input();
@@ -1999,7 +2017,9 @@ async fn run_workflow_with_config(
             let summary = format!(
                 "You chose to proceed without AI approval after {} review iterations.\n\n\
                  Plan file: {}\n\n\
-                 Choose an action to continue.",
+                 Available actions:\n\
+                 - **[i] Implement**: Launch Claude to implement the unapproved plan\n\
+                 - **[d] Decline**: Provide feedback and restart the workflow",
                 state.iteration,
                 plan_path.display()
             );
