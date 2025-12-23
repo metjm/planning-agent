@@ -478,4 +478,47 @@ mod tests {
             );
         }
     }
+
+    /// Integration test that actually calls the Claude CLI
+    /// Run with: cargo test test_fetch_claude_usage_real -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn test_fetch_claude_usage_real() {
+        if !is_claude_available() {
+            eprintln!("Claude CLI not found, skipping integration test");
+            return;
+        }
+
+        eprintln!("Fetching real Claude usage (this may take 15-20 seconds)...");
+        let usage = fetch_claude_usage_sync();
+
+        eprintln!("Result: {:?}", usage);
+
+        // Should have fetched_at set
+        assert!(usage.fetched_at.is_some(), "fetched_at should be set");
+
+        // If no error, should have at least some usage data
+        if usage.error_message.is_none() {
+            // At least one of these should be present
+            let has_data = usage.session_used.is_some()
+                || usage.weekly_used.is_some()
+                || usage.plan_type.is_some();
+            assert!(has_data, "Should have at least some usage data: {:?}", usage);
+
+            // Log the values for manual verification
+            if let Some(session) = usage.session_used {
+                eprintln!("Session used: {}%", session);
+                assert!(session <= 100, "Session percentage should be <= 100");
+            }
+            if let Some(weekly) = usage.weekly_used {
+                eprintln!("Weekly used: {}%", weekly);
+                assert!(weekly <= 100, "Weekly percentage should be <= 100");
+            }
+            if let Some(ref plan) = usage.plan_type {
+                eprintln!("Plan type: {}", plan);
+            }
+        } else {
+            eprintln!("Got error (may be expected): {:?}", usage.error_message);
+        }
+    }
 }
