@@ -4,6 +4,7 @@ pub mod gemini;
 mod log;
 
 use crate::config::AgentConfig;
+use crate::state::ResumeStrategy;
 use crate::tui::{Event, SessionEventSender};
 use anyhow::Result;
 use std::path::PathBuf;
@@ -12,7 +13,9 @@ use tokio::sync::mpsc;
 #[derive(Clone)]
 pub struct AgentContext {
     pub session_sender: SessionEventSender,
-    pub phase: String,  
+    pub phase: String,
+    pub session_key: Option<String>,
+    pub resume_strategy: ResumeStrategy,
 }
 
 #[derive(Debug, Clone)]
@@ -126,6 +129,7 @@ impl AgentType {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::SessionPersistenceConfig;
 
     #[test]
     fn test_agent_type_from_config_claude() {
@@ -133,6 +137,7 @@ mod tests {
             command: "claude".to_string(),
             args: vec!["-p".to_string()],
             allowed_tools: vec![],
+            session_persistence: SessionPersistenceConfig::default(),
         };
         let agent = AgentType::from_config("claude", &config, PathBuf::from(".")).unwrap();
         assert_eq!(agent.name(), "claude");
@@ -144,6 +149,7 @@ mod tests {
             command: "codex".to_string(),
             args: vec!["exec".to_string()],
             allowed_tools: vec![],
+            session_persistence: SessionPersistenceConfig::default(),
         };
         let agent = AgentType::from_config("codex", &config, PathBuf::from(".")).unwrap();
         assert_eq!(agent.name(), "codex");
@@ -155,6 +161,7 @@ mod tests {
             command: "gemini".to_string(),
             args: vec!["-p".to_string()],
             allowed_tools: vec![],
+            session_persistence: SessionPersistenceConfig::default(),
         };
         let agent = AgentType::from_config("gemini", &config, PathBuf::from(".")).unwrap();
         assert_eq!(agent.name(), "gemini");
@@ -166,6 +173,7 @@ mod tests {
             command: "unknown".to_string(),
             args: vec![],
             allowed_tools: vec![],
+            session_persistence: SessionPersistenceConfig::default(),
         };
         let result = AgentType::from_config("unknown", &config, PathBuf::from("."));
         assert!(result.is_err());

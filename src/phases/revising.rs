@@ -1,7 +1,7 @@
 use crate::agents::{AgentContext, AgentType};
 use crate::config::WorkflowConfig;
 use crate::phases::ReviewResult;
-use crate::state::State;
+use crate::state::{ResumeStrategy, State};
 use crate::tui::SessionEventSender;
 use anyhow::Result;
 use std::path::Path;
@@ -12,12 +12,13 @@ Verify each finding before making changes. Only address those that require revis
 "#;
 
 pub async fn run_revision_phase_with_context(
-    state: &State,
+    state: &mut State,
     working_dir: &Path,
     config: &WorkflowConfig,
     reviews: &[ReviewResult],
     session_sender: SessionEventSender,
     iteration: u32,
+    state_path: &Path,
 ) -> Result<()> {
     let revising_config = &config.workflow.revising;
     let agent_name = &revising_config.agent;
@@ -37,9 +38,19 @@ pub async fn run_revision_phase_with_context(
 
     let prompt = build_revision_prompt_with_reviews(state, reviews);
 
+    let phase_name = format!("Revising #{}", iteration);
+    let agent_session = state.get_or_create_agent_session(agent_name, ResumeStrategy::Stateless);
+    let session_key = agent_session.session_key.clone();
+    let resume_strategy = agent_session.resume_strategy.clone();
+
+    state.record_invocation(agent_name, &phase_name);
+    state.save_atomic(state_path)?;
+
     let context = AgentContext {
         session_sender: session_sender.clone(),
-        phase: format!("Revising #{}", iteration),
+        phase: phase_name,
+        session_key,
+        resume_strategy,
     };
 
     let result = agent
@@ -90,21 +101,12 @@ Update the plan file with your revisions."#,
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
+    use crate::state::Phase;
 
     #[test]
     fn test_build_revision_prompt_with_reviews() {
-        let state = State {
-            phase: crate::state::Phase::Revising,
-            iteration: 1,
-            max_iterations: 3,
-            feature_name: "test".to_string(),
-            objective: "test objective".to_string(),
-            plan_file: PathBuf::from("docs/plans/test.md"),
-            feedback_file: PathBuf::from("docs/plans/test_feedback.md"),
-            last_feedback_status: None,
-            approval_overridden: false,
-        };
+        let mut state = State::new("test", "test objective", 3);
+        state.phase = Phase::Revising;
 
         let reviews = vec![
             ReviewResult {

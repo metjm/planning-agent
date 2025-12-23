@@ -3,6 +3,7 @@ use super::log::AgentLogger;
 use super::parser::{parse_json_line, ParsedEvent};
 use super::{AgentContext, AgentResult};
 use crate::config::AgentConfig;
+use crate::state::ResumeStrategy;
 use crate::tui::Event;
 use anyhow::{Context, Result};
 use std::path::PathBuf;
@@ -64,7 +65,7 @@ impl ClaudeAgent {
         output_tx: mpsc::UnboundedSender<Event>,
     ) -> Result<AgentResult> {
         let sender = LegacyEventSender { tx: output_tx };
-        self.execute_streaming_internal(prompt, system_prompt, max_turns, &sender, None)
+        self.execute_streaming_internal(prompt, system_prompt, max_turns, &sender, None::<&AgentContext>)
             .await
     }
 
@@ -94,7 +95,7 @@ impl ClaudeAgent {
         let logger = AgentLogger::new(&self.name, &self.working_dir);
         self.log_start(&logger, &prompt, &system_prompt, context.is_some());
 
-        let mut cmd = self.build_command(&prompt, &system_prompt, max_turns);
+        let mut cmd = self.build_command(&prompt, &system_prompt, max_turns, context);
         let mut child = cmd.spawn().context("Failed to spawn claude process")?;
 
         let stdout = child.stdout.take().context("Failed to get stdout")?;
@@ -222,6 +223,7 @@ impl ClaudeAgent {
         prompt: &str,
         system_prompt: &Option<String>,
         max_turns: Option<u32>,
+        context: Option<&AgentContext>,
     ) -> Command {
         let mut cmd = Command::new(&self.config.command);
 
@@ -242,6 +244,16 @@ impl ClaudeAgent {
 
         if let Some(turns) = max_turns {
             cmd.arg("--max-turns").arg(turns.to_string());
+        }
+
+        if self.config.session_persistence.enabled {
+            if let Some(ctx) = context {
+                if ctx.resume_strategy == ResumeStrategy::SessionId {
+                    if let Some(ref session_id) = ctx.session_key {
+                        cmd.arg("--session-id").arg(session_id);
+                    }
+                }
+            }
         }
 
         cmd.current_dir(&self.working_dir);
@@ -481,6 +493,7 @@ impl EventSender for ContextEventSender {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::SessionPersistenceConfig;
 
     #[test]
     fn test_claude_agent_new() {
@@ -488,6 +501,7 @@ mod tests {
             command: "claude".to_string(),
             args: vec!["-p".to_string()],
             allowed_tools: vec!["Read".to_string()],
+            session_persistence: SessionPersistenceConfig::default(),
         };
         let agent = ClaudeAgent::new("claude".to_string(), config, PathBuf::from("."));
         assert_eq!(agent.activity_timeout, DEFAULT_ACTIVITY_TIMEOUT);

@@ -601,6 +601,7 @@ impl CodexAgent {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::SessionPersistenceConfig;
 
     #[test]
     fn test_codex_agent_new() {
@@ -608,6 +609,7 @@ mod tests {
             command: "codex".to_string(),
             args: vec!["exec".to_string(), "--json".to_string()],
             allowed_tools: vec![],
+            session_persistence: SessionPersistenceConfig::default(),
         };
         let agent = CodexAgent::new("codex".to_string(), config, PathBuf::from("."));
         assert_eq!(agent.activity_timeout, DEFAULT_ACTIVITY_TIMEOUT);

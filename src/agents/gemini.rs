@@ -502,6 +502,7 @@ impl GeminiAgent {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::SessionPersistenceConfig;
 
     #[test]
     fn test_gemini_agent_new() {
@@ -509,6 +510,7 @@ mod tests {
             command: "gemini".to_string(),
             args: vec!["-p".to_string(), "--output-format".to_string(), "json".to_string()],
             allowed_tools: vec![],
+            session_persistence: SessionPersistenceConfig::default(),
         };
         let agent = GeminiAgent::new("gemini".to_string(), config, PathBuf::from("."));
         assert_eq!(agent.activity_timeout, DEFAULT_ACTIVITY_TIMEOUT);

@@ -1,7 +1,7 @@
 use crate::agents::{AgentContext, AgentType};
 use crate::config::WorkflowConfig;
 use crate::phases::ReviewResult;
-use crate::state::State;
+use crate::state::{ResumeStrategy, State};
 use crate::tui::SessionEventSender;
 use anyhow::Result;
 use std::path::Path;
@@ -115,6 +115,8 @@ async fn run_summary_generation(
     let context = AgentContext {
         session_sender: sender,
         phase: format!("{} Summary", phase),
+        session_key: None,
+        resume_strategy: ResumeStrategy::Stateless,
     };
 
     let result = agent
