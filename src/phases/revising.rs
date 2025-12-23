@@ -8,7 +8,8 @@ use std::path::Path;
 
 const REVISION_SYSTEM_PROMPT: &str = r#"You are revising an implementation plan based on reviewer feedback.
 Focus on addressing all blocking issues first, then important improvements.
-Preserve the structure and good parts of the existing plan."#;
+Verify each finding before making changes. Only address those that require revision.
+"#;
 
 /// Run revision phase with merged multi-agent feedback
 pub async fn run_revision_phase_with_context(
