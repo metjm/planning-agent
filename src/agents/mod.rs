@@ -1,7 +1,12 @@
 pub mod claude;
 pub mod codex;
 pub mod gemini;
-mod log;
+pub(crate) mod log;
+pub mod protocol;
+pub mod runner;
+
+pub use protocol::{AgentEvent, AgentOutput, AgentStreamParser, AgentTokenUsage, ParseError};
+pub use runner::{ContextEmitter, EventEmitter, LegacyEmitter, RunnerConfig, run_agent_process};
 
 use crate::config::AgentConfig;
 use crate::state::ResumeStrategy;

@@ -14,6 +14,67 @@ pub enum Phase {
     Complete,
 }
 
+impl Phase {
+    /// Get a UI-friendly label for the phase.
+    pub fn label(&self) -> PhaseLabel {
+        match self {
+            Phase::Planning => PhaseLabel::Planning,
+            Phase::Reviewing => PhaseLabel::Reviewing,
+            Phase::Revising => PhaseLabel::Revising,
+            Phase::Complete => PhaseLabel::Complete,
+        }
+    }
+}
+
+/// Human-readable phase labels for UI/logging purposes.
+///
+/// Unlike `Phase`, which is used for state machine transitions,
+/// `PhaseLabel` provides display-friendly formatting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PhaseLabel {
+    Planning,
+    Reviewing,
+    Revising,
+    Complete,
+}
+
+impl PhaseLabel {
+    /// Short label for compact display (e.g., status bars).
+    pub fn short(&self) -> &'static str {
+        match self {
+            PhaseLabel::Planning => "Plan",
+            PhaseLabel::Reviewing => "Review",
+            PhaseLabel::Revising => "Revise",
+            PhaseLabel::Complete => "Done",
+        }
+    }
+
+    /// Full label for verbose display.
+    pub fn full(&self) -> &'static str {
+        match self {
+            PhaseLabel::Planning => "Planning",
+            PhaseLabel::Reviewing => "Reviewing",
+            PhaseLabel::Revising => "Revising",
+            PhaseLabel::Complete => "Complete",
+        }
+    }
+
+    /// Label with iteration number for review/revise phases.
+    pub fn with_iteration(&self, iteration: u32) -> String {
+        match self {
+            PhaseLabel::Reviewing if iteration > 1 => format!("Reviewing #{}", iteration),
+            PhaseLabel::Revising => format!("Revising #{}", iteration),
+            _ => self.full().to_string(),
+        }
+    }
+}
+
+impl std::fmt::Display for PhaseLabel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.full())
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum FeedbackStatus {
@@ -363,5 +424,45 @@ mod tests {
         assert_eq!(loaded.agent_sessions.len(), 1);
         assert!(loaded.agent_sessions.contains_key("claude"));
         assert_eq!(loaded.invocations.len(), 1);
+    }
+
+    #[test]
+    fn test_phase_label_short() {
+        assert_eq!(PhaseLabel::Planning.short(), "Plan");
+        assert_eq!(PhaseLabel::Reviewing.short(), "Review");
+        assert_eq!(PhaseLabel::Revising.short(), "Revise");
+        assert_eq!(PhaseLabel::Complete.short(), "Done");
+    }
+
+    #[test]
+    fn test_phase_label_full() {
+        assert_eq!(PhaseLabel::Planning.full(), "Planning");
+        assert_eq!(PhaseLabel::Reviewing.full(), "Reviewing");
+        assert_eq!(PhaseLabel::Revising.full(), "Revising");
+        assert_eq!(PhaseLabel::Complete.full(), "Complete");
+    }
+
+    #[test]
+    fn test_phase_label_with_iteration() {
+        assert_eq!(PhaseLabel::Planning.with_iteration(1), "Planning");
+        assert_eq!(PhaseLabel::Reviewing.with_iteration(1), "Reviewing");
+        assert_eq!(PhaseLabel::Reviewing.with_iteration(2), "Reviewing #2");
+        assert_eq!(PhaseLabel::Revising.with_iteration(1), "Revising #1");
+        assert_eq!(PhaseLabel::Revising.with_iteration(3), "Revising #3");
+        assert_eq!(PhaseLabel::Complete.with_iteration(5), "Complete");
+    }
+
+    #[test]
+    fn test_phase_label_display() {
+        assert_eq!(format!("{}", PhaseLabel::Planning), "Planning");
+        assert_eq!(format!("{}", PhaseLabel::Reviewing), "Reviewing");
+    }
+
+    #[test]
+    fn test_phase_to_label() {
+        assert_eq!(Phase::Planning.label(), PhaseLabel::Planning);
+        assert_eq!(Phase::Reviewing.label(), PhaseLabel::Reviewing);
+        assert_eq!(Phase::Revising.label(), PhaseLabel::Revising);
+        assert_eq!(Phase::Complete.label(), PhaseLabel::Complete);
     }
 }

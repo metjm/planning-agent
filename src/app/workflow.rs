@@ -166,7 +166,7 @@ async fn run_planning_phase(
 
     log_workflow(working_dir, "Transitioning: Planning -> Reviewing");
     state.transition(Phase::Reviewing)?;
-    state.save(state_path)?;
+    state.save_atomic(state_path)?;
     sender.send_state_update(state.clone());
     sender.send_output("[planning] Transitioning to review phase...".to_string());
 
@@ -328,7 +328,7 @@ async fn run_reviewing_phase(
             }
         }
     }
-    state.save(state_path)?;
+    state.save_atomic(state_path)?;
     sender.send_state_update(state.clone());
 
     Ok(None)
@@ -529,7 +529,7 @@ async fn run_revising_phase(
         ),
     );
     state.transition(Phase::Reviewing)?;
-    state.save(state_path)?;
+    state.save_atomic(state_path)?;
     sender.send_state_update(state.clone());
     sender.send_output("[planning] Transitioning to review phase...".to_string());
 
