@@ -1,5 +1,4 @@
 mod agents;
-mod claude;
 mod claude_usage;
 mod config;
 mod phases;
@@ -1589,35 +1588,29 @@ async fn run_workflow_with_config(
                     let summary = build_review_failure_summary(&reviews_by_agent, &batch.failures);
                     sender.send_review_decision_request(summary);
 
-                    let decision = loop {
-                        match approval_rx.recv().await {
-                            Some(UserApprovalResponse::ReviewRetry) => {
-                                break ReviewDecision::Retry
-                            }
-                            Some(UserApprovalResponse::ReviewContinue) => {
-                                break ReviewDecision::Continue
-                            }
-                            Some(UserApprovalResponse::Accept) => {
-                                log_workflow(
-                                    &working_dir,
-                                    "Received plan approval while awaiting review decision, treating as continue",
-                                );
-                                break ReviewDecision::Continue;
-                            }
-                            Some(UserApprovalResponse::Decline(_)) => {
-                                log_workflow(
-                                    &working_dir,
-                                    "Received plan decline while awaiting review decision, treating as retry",
-                                );
-                                break ReviewDecision::Retry;
-                            }
-                            None => {
-                                log_workflow(
-                                    &working_dir,
-                                    "Review decision channel closed, treating as continue",
-                                );
-                                break ReviewDecision::Continue;
-                            }
+                    let decision = match approval_rx.recv().await {
+                        Some(UserApprovalResponse::ReviewRetry) => ReviewDecision::Retry,
+                        Some(UserApprovalResponse::ReviewContinue) => ReviewDecision::Continue,
+                        Some(UserApprovalResponse::Accept) => {
+                            log_workflow(
+                                &working_dir,
+                                "Received plan approval while awaiting review decision, treating as continue",
+                            );
+                            ReviewDecision::Continue
+                        }
+                        Some(UserApprovalResponse::Decline(_)) => {
+                            log_workflow(
+                                &working_dir,
+                                "Received plan decline while awaiting review decision, treating as retry",
+                            );
+                            ReviewDecision::Retry
+                        }
+                        None => {
+                            log_workflow(
+                                &working_dir,
+                                "Review decision channel closed, treating as continue",
+                            );
+                            ReviewDecision::Continue
                         }
                     };
 

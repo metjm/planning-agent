@@ -98,6 +98,7 @@ impl ClaudeAgent {
     }
 
     /// Execute with streaming output
+    #[allow(dead_code)] // Provides simpler API for non-context use cases
     pub async fn execute_streaming(
         &self,
         prompt: String,

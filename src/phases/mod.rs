@@ -5,6 +5,6 @@ pub mod revising;
 pub use planning::run_planning_phase_with_context;
 pub use reviewing::{
     aggregate_reviews, merge_feedback, run_multi_agent_review_with_context, write_feedback_files,
-    ReviewBatchResult, ReviewFailure, ReviewResult,
+    ReviewFailure, ReviewResult,
 };
 pub use revising::run_revision_phase_with_context;
