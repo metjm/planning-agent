@@ -6,14 +6,13 @@
 use crate::agents::log::AgentLogger;
 use crate::agents::protocol::{AgentEvent, AgentOutput, AgentStreamParser};
 use crate::agents::{AgentContext, AgentResult};
-use crate::tui::{Event, TokenUsage};
+use crate::tui::TokenUsage;
 use anyhow::{Context, Result};
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
-use tokio::sync::mpsc;
 use tokio::time::Instant;
 
 /// Default timeout for activity (no output) before killing the process.
@@ -61,9 +60,7 @@ impl RunnerConfig {
 
 /// Trait for sending events during agent execution.
 ///
-/// This abstracts over the two modes of event sending:
-/// - Legacy mode: sends to a raw `mpsc::UnboundedSender<Event>`
-/// - Context mode: sends via `AgentContext` with session tracking
+/// This abstracts over the event emission targets used by the runner.
 pub trait EventEmitter: Send + Sync {
     fn send_output(&self, msg: String);
     fn send_streaming(&self, msg: String);
@@ -77,59 +74,6 @@ pub trait EventEmitter: Send + Sync {
     fn send_tool_result_received(&self, id: String, is_error: bool);
     fn send_agent_message(&self, msg: String);
     fn send_todos_update(&self, items: Vec<crate::tui::TodoItem>);
-}
-
-/// Event emitter for legacy mode (raw channel sender).
-pub struct LegacyEmitter {
-    tx: mpsc::UnboundedSender<Event>,
-}
-
-impl LegacyEmitter {
-    pub fn new(tx: mpsc::UnboundedSender<Event>) -> Self {
-        Self { tx }
-    }
-}
-
-impl EventEmitter for LegacyEmitter {
-    fn send_output(&self, msg: String) {
-        let _ = self.tx.send(Event::Output(msg));
-    }
-    fn send_streaming(&self, msg: String) {
-        let _ = self.tx.send(Event::Streaming(msg));
-    }
-    fn send_bytes_received(&self, bytes: usize) {
-        let _ = self.tx.send(Event::BytesReceived(bytes));
-    }
-    fn send_turn_completed(&self) {
-        let _ = self.tx.send(Event::TurnCompleted);
-    }
-    fn send_model_detected(&self, model: String) {
-        let _ = self.tx.send(Event::ModelDetected(model));
-    }
-    fn send_stop_reason(&self, reason: String) {
-        let _ = self.tx.send(Event::StopReason(reason));
-    }
-    fn send_token_usage(&self, usage: TokenUsage) {
-        let _ = self.tx.send(Event::TokenUsage(usage));
-    }
-    fn send_tool_started(&self, name: String) {
-        let _ = self.tx.send(Event::ToolStarted(name));
-    }
-    fn send_tool_finished(&self, id: String) {
-        let _ = self.tx.send(Event::ToolFinished(id));
-    }
-    fn send_tool_result_received(&self, id: String, is_error: bool) {
-        let _ = self.tx.send(Event::ToolResultReceived {
-            tool_id: id,
-            is_error,
-        });
-    }
-    fn send_agent_message(&self, _msg: String) {
-        // Legacy mode doesn't send agent messages
-    }
-    fn send_todos_update(&self, _items: Vec<crate::tui::TodoItem>) {
-        // Legacy mode doesn't send todos updates
-    }
 }
 
 /// Event emitter for context mode (session-aware).

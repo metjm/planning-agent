@@ -147,7 +147,6 @@ impl ClaudeParser {
                                         .iter()
                                         .filter_map(|t| {
                                             Some(TodoItem {
-                                                content: t.get("content")?.as_str()?.to_string(),
                                                 status: match t.get("status")?.as_str()? {
                                                     "pending" => TodoStatus::Pending,
                                                     "in_progress" => TodoStatus::InProgress,
