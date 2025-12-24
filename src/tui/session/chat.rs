@@ -1,6 +1,4 @@
 
-use std::time::Instant;
-
 use super::model::{ChatMessage, RunTab, SummaryState};
 use super::Session;
 
@@ -30,7 +28,6 @@ impl Session {
         self.run_tabs[idx].messages.push(ChatMessage {
             agent_name: agent_name.to_string(),
             message,
-            timestamp: Instant::now(),
         });
 
         if self.chat_follow_mode {
@@ -116,10 +113,6 @@ impl Session {
             tab.summary_text = error;
             tab.summary_state = SummaryState::Error;
         }
-    }
-
-    pub fn has_generating_summary(&self) -> bool {
-        self.run_tabs.iter().any(|tab| tab.summary_state == SummaryState::Generating)
     }
 
     pub fn advance_summary_spinners(&mut self) {

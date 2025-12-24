@@ -21,7 +21,6 @@ pub use model::{
     SummaryState, TodoItem, TodoStatus,
 };
 
-pub use model::ChatMessage;
 
 #[allow(dead_code)]
 pub struct Session {

@@ -5,15 +5,12 @@ pub(crate) mod log;
 pub mod protocol;
 pub mod runner;
 
-pub use protocol::{AgentEvent, AgentOutput, AgentStreamParser, AgentTokenUsage, ParseError};
-pub use runner::{ContextEmitter, EventEmitter, LegacyEmitter, RunnerConfig, run_agent_process};
 
 use crate::config::AgentConfig;
 use crate::state::ResumeStrategy;
-use crate::tui::{Event, SessionEventSender};
+use crate::tui::SessionEventSender;
 use anyhow::Result;
 use std::path::PathBuf;
-use tokio::sync::mpsc;
 
 #[derive(Clone)]
 pub struct AgentContext {
@@ -24,7 +21,6 @@ pub struct AgentContext {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct AgentResult {
 
     pub output: String,
@@ -68,39 +64,11 @@ impl AgentType {
         }
     }
 
-    #[allow(dead_code)]
     pub fn name(&self) -> &str {
         match self {
             Self::Claude(agent) => agent.name(),
             Self::Codex(agent) => agent.name(),
             Self::Gemini(agent) => agent.name(),
-        }
-    }
-
-    #[allow(dead_code)] 
-    pub async fn execute_streaming(
-        &self,
-        prompt: String,
-        system_prompt: Option<String>,
-        max_turns: Option<u32>,
-        output_tx: mpsc::UnboundedSender<Event>,
-    ) -> Result<AgentResult> {
-        match self {
-            Self::Claude(agent) => {
-                agent
-                    .execute_streaming(prompt, system_prompt, max_turns, output_tx)
-                    .await
-            }
-            Self::Codex(agent) => {
-                agent
-                    .execute_streaming(prompt, system_prompt, max_turns, output_tx)
-                    .await
-            }
-            Self::Gemini(agent) => {
-                agent
-                    .execute_streaming(prompt, system_prompt, max_turns, output_tx)
-                    .await
-            }
         }
     }
 

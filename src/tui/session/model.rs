@@ -1,6 +1,4 @@
 
-use std::time::Instant;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TodoStatus {
     Pending,
@@ -10,7 +8,6 @@ pub enum TodoStatus {
 
 #[derive(Debug, Clone)]
 pub struct TodoItem {
-    pub content: String,
     pub status: TodoStatus,
     pub active_form: String,
 }
@@ -19,8 +16,6 @@ pub struct TodoItem {
 pub struct ChatMessage {
     pub agent_name: String,
     pub message: String,
-    #[allow(dead_code)] 
-    pub timestamp: Instant,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
