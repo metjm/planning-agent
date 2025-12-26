@@ -213,6 +213,8 @@ fn draw_choice_popup(frame: &mut Frame, session: &Session, area: Rect) {
         ApprovalContext::PlanGenerationFailed => Paragraph::new(vec![Line::from(vec![
             Span::styled("  [r] ", Style::default().fg(Color::Yellow).bold()),
             Span::raw("Retry  "),
+            Span::styled("  [c] ", Style::default().fg(Color::Green).bold()),
+            Span::raw("Continue  "),
             Span::styled("  [a] ", Style::default().fg(Color::Red).bold()),
             Span::raw("Abort  "),
             Span::styled("  [j/k] ", Style::default().fg(Color::Cyan).bold()),

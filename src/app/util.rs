@@ -120,6 +120,35 @@ pub fn build_max_iterations_summary(
     summary
 }
 
+pub fn build_plan_failure_summary(
+    error: &str,
+    plan_path: &Path,
+    plan_exists: bool,
+) -> String {
+    let mut summary = String::new();
+    summary.push_str("# Plan Generation Failed\n\n");
+    summary.push_str(&format!("**Error:** {}\n\n", truncate_for_summary(error, 300)));
+    summary.push_str(&format!("**Plan file:** {}\n\n", plan_path.display()));
+
+    if plan_exists {
+        summary.push_str("An existing plan file was found from a previous attempt.\n\n");
+        summary.push_str("---\n\n");
+        summary.push_str("Choose an action:\n");
+        summary.push_str("- **[r] Retry**: Re-run plan generation from scratch\n");
+        summary.push_str("- **[c] Continue**: Use the existing plan file and proceed to review\n");
+        summary.push_str("- **[a] Abort**: End the workflow\n");
+    } else {
+        summary.push_str("No existing plan file found.\n\n");
+        summary.push_str("---\n\n");
+        summary.push_str("Choose an action:\n");
+        summary.push_str("- **[r] Retry**: Re-run plan generation\n");
+        summary.push_str("- **[a] Abort**: End the workflow\n");
+        summary.push_str("\n_Note: [c] Continue is only available when an existing plan file exists._\n");
+    }
+
+    summary
+}
+
 pub fn shorten_model_name(full_name: &str) -> String {
     if full_name.contains("opus") {
         if full_name.contains("4-5") || full_name.contains("4.5") {

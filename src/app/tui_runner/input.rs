@@ -399,6 +399,14 @@ async fn handle_plan_generation_failed_input(
             session.status = SessionStatus::Planning;
             session.approval_context = ApprovalContext::PlanApproval;
         }
+        KeyCode::Char('c') | KeyCode::Char('C') => {
+            if let Some(tx) = session.approval_tx.clone() {
+                let _ = tx.send(UserApprovalResponse::PlanGenerationContinue).await;
+            }
+            session.approval_mode = ApprovalMode::None;
+            session.status = SessionStatus::Planning;
+            session.approval_context = ApprovalContext::PlanApproval;
+        }
         KeyCode::Char('a') | KeyCode::Char('A') | KeyCode::Esc => {
             if let Some(tx) = session.approval_tx.clone() {
                 let _ = tx.send(UserApprovalResponse::AbortWorkflow).await;
