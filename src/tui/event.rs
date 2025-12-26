@@ -103,14 +103,15 @@ pub enum Event {
 #[derive(Debug, Clone)]
 pub enum UserApprovalResponse {
     Accept,
-    Decline(String), 
+    Decline(String),
     ReviewRetry,
     ReviewContinue,
 
-    PlanGenerationRetry,    
-    AbortWorkflow,          
-    ProceedWithoutApproval, 
-    ContinueReviewing,      
+    PlanGenerationRetry,
+    PlanGenerationContinue,  // Continue with existing plan file if available
+    AbortWorkflow,
+    ProceedWithoutApproval,
+    ContinueReviewing,
 }
 
 pub struct EventHandler {

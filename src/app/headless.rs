@@ -1,7 +1,7 @@
 
 use crate::app::cli::Cli;
 use crate::app::util::truncate_for_summary;
-use crate::app::workflow_common::{cleanup_merged_feedback, REVIEW_FAILURE_RETRY_LIMIT};
+use crate::app::workflow_common::{cleanup_merged_feedback, REVIEW_FAILURE_RETRY_LIMIT, PLANNING_FAILURE_RETRY_LIMIT};
 use crate::config::WorkflowConfig;
 use crate::phases::{
     self, aggregate_reviews, merge_feedback, run_multi_agent_review_with_context,
@@ -82,12 +82,71 @@ pub async fn run_headless_with_config(
         match state.phase {
             Phase::Planning => {
                 sender.send_output("\n=== PLANNING PHASE ===".to_string());
-                run_planning_phase_with_context(&mut state, &working_dir, &config, sender.clone(), &state_path)
-                    .await?;
 
                 let plan_path = working_dir.join(&state.plan_file);
-                if !plan_path.exists() {
-                    anyhow::bail!("Plan file not created: {}", plan_path.display());
+                let mut planning_attempts = 0usize;
+
+                loop {
+                    let planning_result = run_planning_phase_with_context(
+                        &mut state,
+                        &working_dir,
+                        &config,
+                        sender.clone(),
+                        &state_path,
+                    )
+                    .await;
+
+                    match planning_result {
+                        Ok(()) => {
+                            if plan_path.exists() {
+                                // Success - plan file was created
+                                break;
+                            } else {
+                                sender.send_output(
+                                    "[error] Plan file was not created by the planning agent"
+                                        .to_string(),
+                                );
+                                planning_attempts += 1;
+                                if planning_attempts > PLANNING_FAILURE_RETRY_LIMIT {
+                                    anyhow::bail!(
+                                        "Plan file not created after {} attempts (headless mode does not support interactive recovery)",
+                                        planning_attempts
+                                    );
+                                }
+                                sender.send_output(format!(
+                                    "[planning] Retrying plan generation ({}/{})...",
+                                    planning_attempts, PLANNING_FAILURE_RETRY_LIMIT
+                                ));
+                                continue;
+                            }
+                        }
+                        Err(e) => {
+                            let error_msg = format!("{}", e);
+                            sender.send_output(format!("[error] Planning failed: {}", error_msg));
+
+                            // Check if we can continue with an existing plan file
+                            if plan_path.exists() {
+                                sender.send_output(
+                                    "[planning] Continuing with existing plan file...".to_string(),
+                                );
+                                break;
+                            }
+
+                            planning_attempts += 1;
+                            if planning_attempts > PLANNING_FAILURE_RETRY_LIMIT {
+                                anyhow::bail!(
+                                    "Planning failed after {} attempts: {} (headless mode does not support interactive recovery)",
+                                    planning_attempts,
+                                    error_msg
+                                );
+                            }
+                            sender.send_output(format!(
+                                "[planning] Retrying plan generation ({}/{})...",
+                                planning_attempts, PLANNING_FAILURE_RETRY_LIMIT
+                            ));
+                            continue;
+                        }
+                    }
                 }
 
                 state.transition(Phase::Reviewing)?;

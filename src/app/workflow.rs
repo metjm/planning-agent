@@ -1,5 +1,5 @@
 
-use crate::app::util::{build_max_iterations_summary, build_review_failure_summary, log_workflow};
+use crate::app::util::{build_max_iterations_summary, build_plan_failure_summary, build_review_failure_summary, log_workflow};
 use crate::app::workflow_common::{cleanup_merged_feedback, REVIEW_FAILURE_RETRY_LIMIT};
 use crate::config::WorkflowConfig;
 use crate::phases::{
@@ -26,6 +26,13 @@ pub enum WorkflowResult {
 enum ReviewDecision {
     Retry,
     Continue,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum PlanFailureDecision {
+    Retry,
+    Continue,
+    Abort,
 }
 
 pub async fn run_workflow_with_config(
@@ -64,14 +71,19 @@ pub async fn run_workflow_with_config(
     while state.should_continue() {
         match state.phase {
             Phase::Planning => {
-                run_planning_phase(
+                let result = run_planning_phase(
                     &mut state,
                     &working_dir,
                     &state_path,
                     &config,
                     &sender,
+                    &mut approval_rx,
                 )
                 .await?;
+
+                if let Some(workflow_result) = result {
+                    return Ok(workflow_result);
+                }
             }
 
             Phase::Reviewing => {
@@ -144,7 +156,8 @@ async fn run_planning_phase(
     state_path: &PathBuf,
     config: &WorkflowConfig,
     sender: &SessionEventSender,
-) -> Result<()> {
+    approval_rx: &mut mpsc::Receiver<UserApprovalResponse>,
+) -> Result<Option<WorkflowResult>> {
     log_workflow(working_dir, ">>> ENTERING Planning phase");
     sender.send_phase_started("Planning".to_string());
     sender.send_output("".to_string());
@@ -153,15 +166,89 @@ async fn run_planning_phase(
     sender.send_output(format!("Agent: {}", config.workflow.planning.agent));
     sender.send_output(format!("Plan file: {}", state.plan_file.display()));
 
-    log_workflow(working_dir, "Calling run_planning_phase_with_context...");
-    run_planning_phase_with_context(state, working_dir, config, sender.clone(), state_path).await?;
-    log_workflow(working_dir, "run_planning_phase_with_context completed");
-
     let plan_path = working_dir.join(&state.plan_file);
-    if !plan_path.exists() {
-        log_workflow(working_dir, "ERROR: Plan file was not created!");
-        sender.send_output("[error] Plan file was not created!".to_string());
-        anyhow::bail!("Plan file not created");
+
+    loop {
+        log_workflow(working_dir, "Calling run_planning_phase_with_context...");
+        let planning_result =
+            run_planning_phase_with_context(state, working_dir, config, sender.clone(), state_path)
+                .await;
+
+        match planning_result {
+            Ok(()) => {
+                log_workflow(working_dir, "run_planning_phase_with_context completed");
+
+                if !plan_path.exists() {
+                    log_workflow(working_dir, "ERROR: Plan file was not created!");
+                    sender.send_output("[error] Plan file was not created!".to_string());
+
+                    // Prompt user for decision
+                    let summary = build_plan_failure_summary(
+                        "Plan file was not created by the planning agent",
+                        &plan_path,
+                        false,
+                    );
+                    sender.send_plan_generation_failed(summary);
+
+                    match wait_for_plan_failure_decision(working_dir, approval_rx, false).await {
+                        PlanFailureDecision::Retry => {
+                            sender.send_output("[planning] Retrying plan generation...".to_string());
+                            continue;
+                        }
+                        PlanFailureDecision::Continue => {
+                            // This shouldn't happen since plan doesn't exist, but handle it
+                            sender.send_output("[planning] No plan file exists to continue with. Retrying...".to_string());
+                            continue;
+                        }
+                        PlanFailureDecision::Abort => {
+                            log_workflow(working_dir, "User aborted after plan file not created");
+                            return Ok(Some(WorkflowResult::Aborted {
+                                reason: "User aborted: plan file was not created".to_string(),
+                            }));
+                        }
+                    }
+                }
+
+                // Plan file exists and planning succeeded
+                break;
+            }
+            Err(e) => {
+                let error_msg = format!("{}", e);
+                log_workflow(
+                    working_dir,
+                    &format!("Planning phase error: {}", error_msg),
+                );
+                sender.send_output(format!("[error] Planning failed: {}", error_msg));
+
+                let plan_exists = plan_path.exists();
+                let summary = build_plan_failure_summary(&error_msg, &plan_path, plan_exists);
+                sender.send_plan_generation_failed(summary);
+
+                match wait_for_plan_failure_decision(working_dir, approval_rx, plan_exists).await {
+                    PlanFailureDecision::Retry => {
+                        sender.send_output("[planning] Retrying plan generation...".to_string());
+                        continue;
+                    }
+                    PlanFailureDecision::Continue => {
+                        if plan_exists {
+                            sender.send_output(
+                                "[planning] Continuing with existing plan file...".to_string(),
+                            );
+                            break;
+                        } else {
+                            sender.send_output("[planning] No plan file exists to continue with. Retrying...".to_string());
+                            continue;
+                        }
+                    }
+                    PlanFailureDecision::Abort => {
+                        log_workflow(working_dir, "User aborted after planning error");
+                        return Ok(Some(WorkflowResult::Aborted {
+                            reason: format!("User aborted: {}", error_msg),
+                        }));
+                    }
+                }
+            }
+        }
     }
 
     log_workflow(working_dir, "Transitioning: Planning -> Reviewing");
@@ -179,7 +266,7 @@ async fn run_planning_phase(
         None,
     );
 
-    Ok(())
+    Ok(None)
 }
 
 async fn run_reviewing_phase(
@@ -362,6 +449,13 @@ async fn wait_for_review_decision(
             );
             ReviewDecision::Retry
         }
+        Some(UserApprovalResponse::PlanGenerationContinue) => {
+            log_workflow(
+                working_dir,
+                "Received PlanGenerationContinue while awaiting review decision, treating as continue",
+            );
+            ReviewDecision::Continue
+        }
         Some(UserApprovalResponse::AbortWorkflow) => {
             log_workflow(
                 working_dir,
@@ -389,6 +483,54 @@ async fn wait_for_review_decision(
                 "Review decision channel closed, treating as continue",
             );
             ReviewDecision::Continue
+        }
+    }
+}
+
+async fn wait_for_plan_failure_decision(
+    working_dir: &PathBuf,
+    approval_rx: &mut mpsc::Receiver<UserApprovalResponse>,
+    plan_exists: bool,
+) -> PlanFailureDecision {
+    loop {
+        match approval_rx.recv().await {
+            Some(UserApprovalResponse::PlanGenerationRetry) => {
+                log_workflow(working_dir, "User chose to retry plan generation");
+                return PlanFailureDecision::Retry;
+            }
+            Some(UserApprovalResponse::PlanGenerationContinue) => {
+                if plan_exists {
+                    log_workflow(working_dir, "User chose to continue with existing plan");
+                    return PlanFailureDecision::Continue;
+                } else {
+                    log_workflow(
+                        working_dir,
+                        "User chose continue but no plan exists, treating as retry",
+                    );
+                    return PlanFailureDecision::Retry;
+                }
+            }
+            Some(UserApprovalResponse::AbortWorkflow) => {
+                log_workflow(working_dir, "User chose to abort workflow");
+                return PlanFailureDecision::Abort;
+            }
+            Some(other) => {
+                log_workflow(
+                    working_dir,
+                    &format!(
+                        "Ignoring unexpected response {:?} during plan failure prompt",
+                        other
+                    ),
+                );
+                continue;
+            }
+            None => {
+                log_workflow(
+                    working_dir,
+                    "Approval channel closed during plan failure prompt - aborting",
+                );
+                return PlanFailureDecision::Abort;
+            }
         }
     }
 }
@@ -605,6 +747,13 @@ async fn handle_completion(
                 log_workflow(
                     working_dir,
                     "Received PlanGenerationRetry while awaiting plan approval, ignoring",
+                );
+                continue;
+            }
+            Some(UserApprovalResponse::PlanGenerationContinue) => {
+                log_workflow(
+                    working_dir,
+                    "Received PlanGenerationContinue while awaiting plan approval, ignoring",
                 );
                 continue;
             }

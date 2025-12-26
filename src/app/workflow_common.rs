@@ -2,6 +2,7 @@ use crate::phases::{ReviewFailure, ReviewResult};
 use std::path::Path;
 
 pub const REVIEW_FAILURE_RETRY_LIMIT: usize = 1;
+pub const PLANNING_FAILURE_RETRY_LIMIT: usize = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[allow(dead_code)]
