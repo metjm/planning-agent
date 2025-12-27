@@ -10,7 +10,7 @@ use ratatui::{
     Frame,
 };
 
-pub fn draw_stats(frame: &mut Frame, session: &Session, area: Rect) {
+pub fn draw_stats(frame: &mut Frame, session: &Session, area: Rect, show_live_tools: bool) {
     let elapsed = session.elapsed();
     let minutes = elapsed.as_secs() / 60;
     let seconds = elapsed.as_secs() % 60;
@@ -98,7 +98,7 @@ pub fn draw_stats(frame: &mut Frame, session: &Session, area: Rect) {
 
     stats_text.extend(build_stream_stats(session));
 
-    stats_text.extend(build_tool_stats(session));
+    stats_text.extend(build_tool_stats(session, show_live_tools));
 
     stats_text.extend(build_timing_stats(session));
 
@@ -279,7 +279,7 @@ fn build_stream_stats(session: &Session) -> Vec<Line<'static>> {
     ]
 }
 
-fn build_tool_stats(session: &Session) -> Vec<Line<'static>> {
+fn build_tool_stats(session: &Session, show_live_tools: bool) -> Vec<Line<'static>> {
     let mut lines = vec![
         Line::from(vec![Span::styled(
             " Tools",
@@ -294,7 +294,8 @@ fn build_tool_stats(session: &Session) -> Vec<Line<'static>> {
         ]),
     ];
 
-    if !session.active_tools.is_empty() {
+    // Only show live tools in Stats when the tool panel is NOT visible (narrow terminals)
+    if show_live_tools && !session.active_tools.is_empty() {
         for (name, start_time) in session.active_tools.iter().take(10) {
             let elapsed = start_time.elapsed().as_secs();
             lines.push(Line::from(vec![
