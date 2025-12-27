@@ -11,7 +11,6 @@ use ratatui::{
 };
 
 pub fn draw_main(frame: &mut Frame, session: &Session, area: Rect) {
-
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(70), Constraint::Percentage(30)])
@@ -22,9 +21,13 @@ pub fn draw_main(frame: &mut Frame, session: &Session, area: Rect) {
         .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
         .split(chunks[0]);
 
+    // Compute tool panel visibility based on chat area width
+    let show_tool_panel = left_chunks[1].width >= 70;
+
     draw_output(frame, session, left_chunks[0]);
-    draw_chat(frame, session, left_chunks[1]);
-    draw_stats(frame, session, chunks[1]);
+    draw_chat(frame, session, left_chunks[1], show_tool_panel);
+    // Show live tools in Stats only when tool panel is NOT visible (narrow terminals)
+    draw_stats(frame, session, chunks[1], !show_tool_panel);
 }
 
 fn draw_output(frame: &mut Frame, session: &Session, area: Rect) {
@@ -274,16 +277,32 @@ pub fn draw_streaming(frame: &mut Frame, session: &Session, area: Rect) {
     }
 }
 
-pub fn draw_chat(frame: &mut Frame, session: &Session, area: Rect) {
+pub fn draw_chat(frame: &mut Frame, session: &Session, area: Rect, show_tool_panel: bool) {
+    // First, apply the tool-calls split at the outermost level
+    let (content_area, tool_area) = if show_tool_panel {
+        let chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(70), Constraint::Percentage(30)])
+            .split(area);
+        (chunks[0], Some(chunks[1]))
+    } else {
+        (area, None)
+    };
+
+    if let Some(tool_area) = tool_area {
+        draw_tool_calls_panel(frame, session, tool_area);
+    }
+
+    // Now render the content in content_area
     if session.run_tabs.is_empty() {
-        draw_streaming(frame, session, area);
+        draw_streaming(frame, session, content_area);
         return;
     }
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(1), Constraint::Min(0)])
-        .split(area);
+        .split(content_area);
 
     draw_run_tabs(frame, session, chunks[0]);
 
@@ -537,4 +556,50 @@ fn draw_run_tabs(frame: &mut Frame, session: &Session, area: Rect) {
 
     let tabs = Paragraph::new(Line::from(spans));
     frame.render_widget(tabs, area);
+}
+
+fn draw_tool_calls_panel(frame: &mut Frame, session: &Session, area: Rect) {
+    let tool_block = Block::default()
+        .borders(Borders::ALL)
+        .title(" Tool Calls ")
+        .border_style(Style::default().fg(Color::Yellow));
+
+    let inner_area = tool_block.inner(area);
+    let visible_height = inner_area.height as usize;
+
+    let lines: Vec<Line> = if session.active_tools.is_empty() {
+        vec![Line::from(Span::styled(
+            "No active tools",
+            Style::default().fg(Color::DarkGray),
+        ))]
+    } else {
+        let mut tool_lines: Vec<Line> = session
+            .active_tools
+            .iter()
+            .take(visible_height.saturating_sub(1))
+            .map(|(name, start_time)| {
+                let elapsed = start_time.elapsed().as_secs();
+                Line::from(vec![
+                    Span::styled("▶ ", Style::default().fg(Color::Yellow)),
+                    Span::styled(
+                        format!("{} ({}s)", name, elapsed),
+                        Style::default().fg(Color::Yellow),
+                    ),
+                ])
+            })
+            .collect();
+
+        if session.active_tools.len() > visible_height.saturating_sub(1) {
+            let more_count = session.active_tools.len() - (visible_height.saturating_sub(1));
+            tool_lines.push(Line::from(Span::styled(
+                format!("+{} more", more_count),
+                Style::default().fg(Color::DarkGray),
+            )));
+        }
+
+        tool_lines
+    };
+
+    let paragraph = Paragraph::new(lines).block(tool_block);
+    frame.render_widget(paragraph, area);
 }
