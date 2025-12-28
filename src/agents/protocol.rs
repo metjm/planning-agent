@@ -56,6 +56,9 @@ pub enum AgentEvent {
         name: String,
         display_name: String,
         input_preview: String,
+        /// Optional unique identifier for correlating with ToolResult.
+        /// Required for agents that execute tools in parallel (e.g., Codex).
+        tool_use_id: Option<String>,
     },
 
     /// Tool execution result (maps from ParsedEvent::ToolResult)

@@ -376,11 +376,11 @@ pub async fn run_headless(cli: Cli) -> Result<()> {
                 Event::Output(line) | Event::Streaming(line) => {
                     eprintln!("{}", line);
                 }
-                Event::ToolStarted(name) => {
-                    eprintln!("[tool started] {}", name);
+                Event::ToolStarted { name, agent_name } => {
+                    eprintln!("[tool started] [{}] {}", agent_name, name);
                 }
-                Event::ToolFinished(id) => {
-                    eprintln!("[tool finished] {}", id);
+                Event::ToolFinished { id, agent_name } => {
+                    eprintln!("[tool finished] [{}] {}", agent_name, id);
                 }
                 Event::StateUpdate(state) => {
                     eprintln!(
@@ -394,9 +394,9 @@ pub async fn run_headless(cli: Cli) -> Result<()> {
                 Event::ModelDetected(name) => {
                     eprintln!("[model] {}", name);
                 }
-                Event::ToolResultReceived { tool_id, is_error } => {
+                Event::ToolResultReceived { tool_id, is_error, agent_name } => {
                     if is_error {
-                        eprintln!("[tool error] {}", tool_id);
+                        eprintln!("[tool error] [{}] {}", agent_name, tool_id);
                     }
                 }
                 Event::StopReason(reason) => {

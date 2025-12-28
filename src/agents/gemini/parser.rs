@@ -76,10 +76,13 @@ impl GeminiParser {
                     })
                     .unwrap_or_default();
 
+                // Gemini doesn't provide a tool_use_id in function calls,
+                // so we leave it as None (FIFO matching will be used)
                 events.push(AgentEvent::ToolStarted {
                     name: name.to_string(),
                     display_name: name.to_string(),
                     input_preview,
+                    tool_use_id: None,
                 });
             }
         }

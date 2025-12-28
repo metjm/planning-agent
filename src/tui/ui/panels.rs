@@ -567,32 +567,66 @@ fn draw_tool_calls_panel(frame: &mut Frame, session: &Session, area: Rect) {
     let inner_area = tool_block.inner(area);
     let visible_height = inner_area.height as usize;
 
-    let lines: Vec<Line> = if session.active_tools.is_empty() {
+    let lines: Vec<Line> = if session.active_tools_by_agent.is_empty() {
         vec![Line::from(Span::styled(
             "No active tools",
             Style::default().fg(Color::DarkGray),
         ))]
     } else {
-        let mut tool_lines: Vec<Line> = session
-            .active_tools
-            .iter()
-            .take(visible_height.saturating_sub(1))
-            .map(|(name, start_time)| {
-                let elapsed = start_time.elapsed().as_secs();
-                Line::from(vec![
-                    Span::styled("▶ ", Style::default().fg(Color::Yellow)),
-                    Span::styled(
-                        format!("{} ({}s)", name, elapsed),
-                        Style::default().fg(Color::Yellow),
-                    ),
-                ])
-            })
-            .collect();
+        // Sort agent names alphabetically for stable ordering
+        let mut agent_names: Vec<_> = session.active_tools_by_agent.keys().collect();
+        agent_names.sort();
 
-        if session.active_tools.len() > visible_height.saturating_sub(1) {
-            let more_count = session.active_tools.len() - (visible_height.saturating_sub(1));
+        let mut tool_lines: Vec<Line> = Vec::new();
+        let mut lines_remaining = visible_height.saturating_sub(1); // Reserve 1 line for "more" indicator
+        let mut total_remaining_tools = 0;
+
+        for agent_name in agent_names {
+            if lines_remaining == 0 {
+                // Count remaining tools for the "+N more" message
+                if let Some(tools) = session.active_tools_by_agent.get(agent_name) {
+                    total_remaining_tools += tools.len();
+                }
+                continue;
+            }
+
+            if let Some(tools) = session.active_tools_by_agent.get(agent_name) {
+                if tools.is_empty() {
+                    continue;
+                }
+
+                // Add agent header
+                if lines_remaining > 0 {
+                    tool_lines.push(Line::from(Span::styled(
+                        format!("{}:", agent_name),
+                        Style::default().fg(Color::Cyan).add_modifier(ratatui::style::Modifier::BOLD),
+                    )));
+                    lines_remaining = lines_remaining.saturating_sub(1);
+                }
+
+                // Add tool entries for this agent
+                for tool in tools {
+                    if lines_remaining == 0 {
+                        total_remaining_tools += 1;
+                        continue;
+                    }
+                    let elapsed = tool.started_at.elapsed().as_secs();
+                    tool_lines.push(Line::from(vec![
+                        Span::styled("  ▶ ", Style::default().fg(Color::Yellow)),
+                        Span::styled(
+                            format!("{} ({}s)", tool.name, elapsed),
+                            Style::default().fg(Color::Yellow),
+                        ),
+                    ]));
+                    lines_remaining = lines_remaining.saturating_sub(1);
+                }
+            }
+        }
+
+        // Add "+N more" indicator if there are truncated tools
+        if total_remaining_tools > 0 {
             tool_lines.push(Line::from(Span::styled(
-                format!("+{} more", more_count),
+                format!("+{} more", total_remaining_tools),
                 Style::default().fg(Color::DarkGray),
             )));
         }
