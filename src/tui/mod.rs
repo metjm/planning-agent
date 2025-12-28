@@ -4,7 +4,7 @@ mod tabs;
 mod title;
 pub mod ui;
 
-pub use session::{ApprovalContext, ApprovalMode, FocusedPanel, InputMode, RunTab, Session, SessionStatus, SummaryState, TodoItem, TodoStatus};
+pub use session::{ApprovalContext, ApprovalMode, FeedbackTarget, FocusedPanel, InputMode, RunTab, Session, SessionStatus, SummaryState, TodoItem, TodoStatus};
 pub use tabs::TabManager;
-pub use event::{Event, EventHandler, SessionEventSender, TokenUsage, UserApprovalResponse};
+pub use event::{CancellationError, Event, EventHandler, SessionEventSender, TokenUsage, UserApprovalResponse, WorkflowCommand};
 pub use title::TerminalTitleManager;

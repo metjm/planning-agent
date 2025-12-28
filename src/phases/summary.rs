@@ -114,7 +114,7 @@ async fn run_summary_generation(
 
     let context = AgentContext {
         session_sender: sender,
-        phase: format!("{} Summary", phase),
+        phase: phase.to_string(),
         session_key: None,
         resume_strategy: ResumeStrategy::Stateless,
     };

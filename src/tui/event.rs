@@ -9,6 +9,27 @@ use crate::state::State;
 use crate::tui::session::TodoItem;
 use crate::update::{UpdateResult, UpdateStatus};
 
+/// Command sent from UI to workflow to control execution.
+#[derive(Debug, Clone)]
+pub enum WorkflowCommand {
+    /// Interrupt the current workflow with user feedback.
+    Interrupt { feedback: String },
+}
+
+/// Custom error type for cancellation - avoids fragile string matching.
+#[derive(Debug, Clone)]
+pub struct CancellationError {
+    pub feedback: String,
+}
+
+impl std::fmt::Display for CancellationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Cancelled by user interrupt")
+    }
+}
+
+impl std::error::Error for CancellationError {}
+
 #[derive(Debug, Clone, Default)]
 pub struct TokenUsage {
     pub input_tokens: u64,
@@ -78,19 +99,22 @@ pub enum Event {
 
     SessionRunTabSummaryGenerating {
         session_id: usize,
-        phase: String,  
+        phase: String,
+        run_id: u64,
     },
 
     SessionRunTabSummaryReady {
         session_id: usize,
         phase: String,
         summary: String,
+        run_id: u64,
     },
 
     SessionRunTabSummaryError {
         session_id: usize,
         phase: String,
         error: String,
+        run_id: u64,
     },
 
     AccountUsageUpdate(AccountUsage),
@@ -185,14 +209,16 @@ impl EventHandler {
 #[allow(dead_code)]
 pub struct SessionEventSender {
     session_id: usize,
+    run_id: u64,
     inner: mpsc::UnboundedSender<Event>,
 }
 
 #[allow(dead_code)]
 impl SessionEventSender {
-    pub fn new(session_id: usize, sender: mpsc::UnboundedSender<Event>) -> Self {
+    pub fn new(session_id: usize, run_id: u64, sender: mpsc::UnboundedSender<Event>) -> Self {
         Self {
             session_id,
+            run_id,
             inner: sender,
         }
     }
@@ -363,6 +389,7 @@ impl SessionEventSender {
         let _ = self.inner.send(Event::SessionRunTabSummaryGenerating {
             session_id: self.session_id,
             phase,
+            run_id: self.run_id,
         });
     }
 
@@ -371,6 +398,7 @@ impl SessionEventSender {
             session_id: self.session_id,
             phase,
             summary,
+            run_id: self.run_id,
         });
     }
 
@@ -379,6 +407,7 @@ impl SessionEventSender {
             session_id: self.session_id,
             phase,
             error,
+            run_id: self.run_id,
         });
     }
 
@@ -394,7 +423,7 @@ mod tests {
     #[test]
     fn test_event_includes_session_id() {
         let (tx, mut rx) = mpsc::unbounded_channel();
-        let sender = SessionEventSender::new(42, tx);
+        let sender = SessionEventSender::new(42, 0, tx);
 
         sender.send_output("test line".to_string());
 
@@ -412,8 +441,8 @@ mod tests {
     fn test_multiple_senders() {
         let (tx, mut rx) = mpsc::unbounded_channel();
 
-        let sender1 = SessionEventSender::new(1, tx.clone());
-        let sender2 = SessionEventSender::new(2, tx);
+        let sender1 = SessionEventSender::new(1, 0, tx.clone());
+        let sender2 = SessionEventSender::new(2, 0, tx);
 
         sender1.send_output("from session 1".to_string());
         sender2.send_output("from session 2".to_string());
@@ -429,6 +458,45 @@ mod tests {
         match event2 {
             Event::SessionOutput { session_id, .. } => assert_eq!(session_id, 2),
             _ => panic!("Expected SessionOutput event"),
+        }
+    }
+
+    #[test]
+    fn test_summary_events_include_run_id() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let sender = SessionEventSender::new(1, 42, tx);
+
+        sender.send_run_tab_summary_generating("Planning".to_string());
+        sender.send_run_tab_summary_ready("Planning".to_string(), "Summary content".to_string());
+        sender.send_run_tab_summary_error("Planning".to_string(), "Error message".to_string());
+
+        match rx.try_recv().unwrap() {
+            Event::SessionRunTabSummaryGenerating { session_id, phase, run_id } => {
+                assert_eq!(session_id, 1);
+                assert_eq!(phase, "Planning");
+                assert_eq!(run_id, 42);
+            }
+            _ => panic!("Expected SessionRunTabSummaryGenerating event"),
+        }
+
+        match rx.try_recv().unwrap() {
+            Event::SessionRunTabSummaryReady { session_id, phase, summary, run_id } => {
+                assert_eq!(session_id, 1);
+                assert_eq!(phase, "Planning");
+                assert_eq!(summary, "Summary content");
+                assert_eq!(run_id, 42);
+            }
+            _ => panic!("Expected SessionRunTabSummaryReady event"),
+        }
+
+        match rx.try_recv().unwrap() {
+            Event::SessionRunTabSummaryError { session_id, phase, error, run_id } => {
+                assert_eq!(session_id, 1);
+                assert_eq!(phase, "Planning");
+                assert_eq!(error, "Error message");
+                assert_eq!(run_id, 42);
+            }
+            _ => panic!("Expected SessionRunTabSummaryError event"),
         }
     }
 }

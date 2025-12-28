@@ -7,7 +7,7 @@ mod paste;
 use crate::app::WorkflowResult;
 use crate::cli_usage::AccountUsage;
 use crate::state::{Phase, State};
-use crate::tui::event::TokenUsage;
+use crate::tui::event::{TokenUsage, WorkflowCommand};
 use anyhow::Result;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -17,8 +17,8 @@ use tokio::task::JoinHandle;
 use super::event::UserApprovalResponse;
 
 pub use model::{
-    ApprovalContext, ApprovalMode, FocusedPanel, InputMode, PasteBlock, RunTab, SessionStatus,
-    SummaryState, TodoItem, TodoStatus,
+    ApprovalContext, ApprovalMode, FeedbackTarget, FocusedPanel, InputMode, PasteBlock, RunTab,
+    SessionStatus, SummaryState, TodoItem, TodoStatus,
 };
 
 /// Represents an active tool call with optional ID for correlation
@@ -62,6 +62,7 @@ pub struct Session {
     pub plan_summary_scroll: usize,
     pub user_feedback: String,
     pub cursor_position: usize,
+    pub feedback_scroll: usize,
 
     pub input_mode: InputMode,
     pub tab_input: String,
@@ -75,6 +76,7 @@ pub struct Session {
     pub feedback_pastes: Vec<PasteBlock>,
 
     pub error_state: Option<String>,
+    pub error_scroll: usize,
 
     pub bytes_received: usize,
     pub total_input_tokens: u64,
@@ -95,6 +97,12 @@ pub struct Session {
 
     pub workflow_handle: Option<JoinHandle<Result<WorkflowResult>>>,
     pub approval_tx: Option<mpsc::Sender<UserApprovalResponse>>,
+    /// Channel to send commands (like interrupt) to the running workflow.
+    pub workflow_control_tx: Option<mpsc::Sender<WorkflowCommand>>,
+    /// Tracks the target of the current feedback entry mode.
+    pub feedback_target: FeedbackTarget,
+    /// Tracks the current run ID for scoping summary events.
+    pub current_run_id: u64,
 
     pub account_usage: AccountUsage,
 
@@ -135,6 +143,7 @@ impl Session {
             plan_summary_scroll: 0,
             user_feedback: String::new(),
             cursor_position: 0,
+            feedback_scroll: 0,
 
             input_mode: InputMode::Normal,
             tab_input: String::new(),
@@ -146,6 +155,7 @@ impl Session {
             feedback_pastes: Vec::new(),
 
             error_state: None,
+            error_scroll: 0,
 
             bytes_received: 0,
             total_input_tokens: 0,
@@ -166,6 +176,9 @@ impl Session {
 
             workflow_handle: None,
             approval_tx: None,
+            workflow_control_tx: None,
+            feedback_target: FeedbackTarget::default(),
+            current_run_id: 0,
 
             account_usage: AccountUsage::default(),
 
@@ -189,12 +202,24 @@ impl Session {
 
     pub fn handle_error(&mut self, error: &str) {
         self.error_state = Some(error.to_string());
+        self.error_scroll = 0;
         self.workflow_handle = None;
         self.status = SessionStatus::Error;
     }
 
     pub fn clear_error(&mut self) {
         self.error_state = None;
+        self.error_scroll = 0;
+    }
+
+    pub fn error_scroll_up(&mut self) {
+        self.error_scroll = self.error_scroll.saturating_sub(1);
+    }
+
+    pub fn error_scroll_down(&mut self, max_scroll: usize) {
+        if self.error_scroll < max_scroll {
+            self.error_scroll += 1;
+        }
     }
 
     pub fn add_bytes(&mut self, bytes: usize) {
@@ -288,9 +313,15 @@ impl Session {
     }
 
     pub fn start_feedback_input(&mut self) {
+        self.start_feedback_input_for(FeedbackTarget::ApprovalDecline);
+    }
+
+    pub fn start_feedback_input_for(&mut self, target: FeedbackTarget) {
         self.approval_mode = ApprovalMode::EnteringFeedback;
+        self.feedback_target = target;
         self.user_feedback.clear();
         self.cursor_position = 0;
+        self.feedback_scroll = 0;
     }
 
     /// Record that a tool has started for a specific agent

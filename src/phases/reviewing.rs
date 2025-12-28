@@ -7,6 +7,7 @@ use regex::Regex;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
+use tokio::sync::watch;
 
 fn extract_plan_feedback(output: &str) -> String {
     let re = Regex::new(r"(?s)<plan-feedback>\s*(.*?)\s*</plan-feedback>").unwrap();
@@ -80,6 +81,7 @@ pub async fn run_multi_agent_review_with_context(
     session_sender: SessionEventSender,
     iteration: u32,
     state_path: &Path,
+    cancel_rx: watch::Receiver<bool>,
 ) -> Result<ReviewBatchResult> {
     if agent_names.is_empty() {
         anyhow::bail!("No reviewers configured");
