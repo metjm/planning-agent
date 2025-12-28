@@ -20,6 +20,7 @@ pub struct CodexUsage {
 }
 
 impl CodexUsage {
+    #[cfg(test)]
     pub fn with_error(error: String) -> Self {
         Self {
             error_message: Some(error),

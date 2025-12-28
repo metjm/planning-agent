@@ -74,8 +74,6 @@ pub trait EventEmitter: Send + Sync {
     fn send_tool_result_received(&self, id: String, is_error: bool);
     fn send_agent_message(&self, msg: String);
     fn send_todos_update(&self, items: Vec<crate::tui::TodoItem>);
-    /// Returns the agent name for tool attribution
-    fn agent_name(&self) -> &str;
 }
 
 /// Event emitter for context mode (session-aware).
@@ -137,9 +135,6 @@ impl EventEmitter for ContextEmitter {
         self.context
             .session_sender
             .send_todos_update(self.agent_name.clone(), items);
-    }
-    fn agent_name(&self) -> &str {
-        &self.agent_name
     }
 }
 

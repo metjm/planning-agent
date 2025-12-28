@@ -32,6 +32,7 @@ impl ClaudeAgent {
         }
     }
 
+    #[cfg(test)]
     pub fn name(&self) -> &str {
         &self.name
     }

@@ -22,11 +22,9 @@ pub struct AgentContext {
 
 #[derive(Debug, Clone)]
 pub struct AgentResult {
-
     pub output: String,
-
     pub is_error: bool,
-
+    #[allow(dead_code)]
     pub cost_usd: Option<f64>,
 }
 
@@ -64,6 +62,7 @@ impl AgentType {
         }
     }
 
+    #[cfg(test)]
     pub fn name(&self) -> &str {
         match self {
             Self::Claude(agent) => agent.name(),

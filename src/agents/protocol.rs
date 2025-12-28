@@ -9,6 +9,7 @@ use std::fmt;
 
 /// Errors that can occur during agent output parsing.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum ParseError {
     /// Invalid JSON encountered
     InvalidJson(String),
@@ -53,6 +54,8 @@ pub enum AgentEvent {
 
     /// Tool execution start (maps from ParsedEvent::ToolStarted)
     ToolStarted {
+        /// Internal tool name (may differ from display_name for some agents)
+        #[allow(dead_code)]
         name: String,
         display_name: String,
         input_preview: String,
@@ -167,6 +170,7 @@ pub trait AgentStreamParser {
     /// Reset any internal parser state.
     ///
     /// Call this between agent invocations if reusing a parser instance.
+    #[allow(dead_code)]
     fn reset(&mut self);
 }
 
