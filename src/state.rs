@@ -1,10 +1,69 @@
 use crate::planning_dir::ensure_planning_agent_dir;
 use anyhow::{Context, Result};
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
+
+/// Generates a unique prefix for plan/feedback filenames using timestamp and UUID.
+/// Format: YYYYMMDD-HHMMSS-xxxxxxxx (where xxxxxxxx is first 8 chars of UUID)
+fn generate_unique_prefix() -> String {
+    let timestamp = Utc::now().format("%Y%m%d-%H%M%S");
+    let uuid_suffix = &Uuid::new_v4().to_string()[..8];
+    format!("{}-{}", timestamp, uuid_suffix)
+}
+
+/// Generates a unique plan filename with timestamp prefix.
+/// Format: YYYYMMDD-HHMMSS-xxxxxxxx_<sanitized_name>.md
+fn generate_plan_filename(prefix: &str, sanitized_name: &str) -> PathBuf {
+    PathBuf::from(format!("docs/plans/{}_{}.md", prefix, sanitized_name))
+}
+
+/// Generates a unique feedback filename with timestamp prefix and round number.
+/// Format: YYYYMMDD-HHMMSS-xxxxxxxx_<sanitized_name>_feedback_<round>.md
+fn generate_feedback_filename(prefix: &str, sanitized_name: &str, round: u32) -> PathBuf {
+    PathBuf::from(format!(
+        "docs/plans/{}_{}_feedback_{}.md",
+        prefix, sanitized_name, round
+    ))
+}
+
+/// Extracts the unique prefix from a plan filename (new format).
+/// Returns None for legacy filenames without timestamp prefix.
+fn extract_unique_prefix(plan_file: &Path) -> Option<String> {
+    let filename = plan_file.file_stem()?.to_str()?;
+    // New format: "YYYYMMDD-HHMMSS-xxxxxxxx_feature-name"
+    // Split on first underscore to get prefix
+    if let Some(underscore_pos) = filename.find('_') {
+        let prefix = &filename[..underscore_pos];
+        // Validate it looks like a timestamp-uuid prefix (pattern: NNNNNNNN-NNNNNN-xxxxxxxx)
+        // Length should be at least 24 chars (8 + 1 + 6 + 1 + 8)
+        if prefix.len() >= 24 && prefix.chars().nth(8) == Some('-') {
+            return Some(prefix.to_string());
+        }
+    }
+    None
+}
+
+/// Extracts the sanitized feature name from a plan filename.
+/// Works with both new format (with prefix) and legacy format (without prefix).
+fn extract_sanitized_name(plan_file: &Path) -> Option<String> {
+    let filename = plan_file.file_stem()?.to_str()?;
+
+    // Try new format first: "YYYYMMDD-HHMMSS-xxxxxxxx_feature-name"
+    if let Some(underscore_pos) = filename.find('_') {
+        let prefix = &filename[..underscore_pos];
+        // Validate it looks like a timestamp-uuid prefix
+        if prefix.len() >= 24 && prefix.chars().nth(8) == Some('-') {
+            return Some(filename[underscore_pos + 1..].to_string());
+        }
+    }
+
+    // Legacy format: just the feature name (e.g., "existing-feature")
+    Some(filename.to_string())
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -144,20 +203,46 @@ impl State {
             .filter(|c| c.is_alphanumeric() || *c == '-')
             .collect::<String>();
 
+        let prefix = generate_unique_prefix();
+        let plan_file = generate_plan_filename(&prefix, &sanitized_name);
+        let feedback_file = generate_feedback_filename(&prefix, &sanitized_name, 1);
+
         Self {
             phase: Phase::Planning,
             iteration: 1,
             max_iterations,
             feature_name: feature_name.to_string(),
             objective: objective.to_string(),
-            plan_file: PathBuf::from(format!("docs/plans/{}.md", sanitized_name)),
-            feedback_file: PathBuf::from(format!("docs/plans/{}_feedback.md", sanitized_name)),
+            plan_file,
+            feedback_file,
             last_feedback_status: None,
             approval_overridden: false,
             workflow_session_id: Uuid::new_v4().to_string(),
             agent_sessions: HashMap::new(),
             invocations: Vec::new(),
         }
+    }
+
+    /// Updates the feedback filename for a new iteration/round.
+    /// This should be called before each review phase to generate a new feedback filename.
+    pub fn update_feedback_for_iteration(&mut self, iteration: u32) {
+        // Try to extract the unique prefix from the plan file
+        let prefix = extract_unique_prefix(&self.plan_file)
+            .unwrap_or_else(generate_unique_prefix);
+
+        // Extract the sanitized name from the plan file
+        let sanitized_name = extract_sanitized_name(&self.plan_file)
+            .unwrap_or_else(|| {
+                // Fallback: sanitize feature_name
+                self.feature_name
+                    .to_lowercase()
+                    .replace(' ', "-")
+                    .chars()
+                    .filter(|c| c.is_alphanumeric() || *c == '-')
+                    .collect::<String>()
+            });
+
+        self.feedback_file = generate_feedback_filename(&prefix, &sanitized_name, iteration);
     }
 
     pub fn get_or_create_agent_session(
@@ -300,7 +385,85 @@ mod tests {
         let state = State::new("user-auth", "Implement authentication", 3);
         assert_eq!(state.phase, Phase::Planning);
         assert_eq!(state.iteration, 1);
-        assert_eq!(state.plan_file, PathBuf::from("docs/plans/user-auth.md"));
+
+        // Plan file should have timestamp prefix: YYYYMMDD-HHMMSS-xxxxxxxx_user-auth.md
+        let plan_file_str = state.plan_file.to_string_lossy();
+        assert!(plan_file_str.starts_with("docs/plans/"));
+        assert!(plan_file_str.ends_with("_user-auth.md"));
+        // Verify timestamp-uuid prefix format (at least 24 chars before underscore)
+        let filename = state.plan_file.file_name().unwrap().to_string_lossy();
+        let underscore_pos = filename.find('_').expect("should have underscore");
+        assert!(underscore_pos >= 24, "prefix should be at least 24 chars (got {})", underscore_pos);
+    }
+
+    #[test]
+    fn test_new_state_feedback_file_has_round_number() {
+        let state = State::new("user-auth", "Implement authentication", 3);
+
+        // Feedback file should have timestamp prefix and round number: ..._feedback_1.md
+        let feedback_file_str = state.feedback_file.to_string_lossy();
+        assert!(feedback_file_str.starts_with("docs/plans/"));
+        assert!(feedback_file_str.ends_with("_user-auth_feedback_1.md"));
+    }
+
+    #[test]
+    fn test_update_feedback_for_iteration() {
+        let mut state = State::new("test-feature", "Test objective", 3);
+
+        // Initial feedback file should have round 1
+        assert!(state.feedback_file.to_string_lossy().ends_with("_feedback_1.md"));
+
+        // Update to round 2
+        state.update_feedback_for_iteration(2);
+        assert!(state.feedback_file.to_string_lossy().ends_with("_feedback_2.md"));
+
+        // Update to round 3
+        state.update_feedback_for_iteration(3);
+        assert!(state.feedback_file.to_string_lossy().ends_with("_feedback_3.md"));
+    }
+
+    #[test]
+    fn test_extract_unique_prefix_new_format() {
+        let plan_file = PathBuf::from("docs/plans/20250101-120000-abcd1234_my-feature.md");
+        let prefix = extract_unique_prefix(&plan_file);
+        assert_eq!(prefix, Some("20250101-120000-abcd1234".to_string()));
+    }
+
+    #[test]
+    fn test_extract_unique_prefix_legacy_format() {
+        let plan_file = PathBuf::from("docs/plans/existing-feature.md");
+        let prefix = extract_unique_prefix(&plan_file);
+        assert_eq!(prefix, None);
+    }
+
+    #[test]
+    fn test_extract_sanitized_name_new_format() {
+        let plan_file = PathBuf::from("docs/plans/20250101-120000-abcd1234_my-feature.md");
+        let name = extract_sanitized_name(&plan_file);
+        assert_eq!(name, Some("my-feature".to_string()));
+    }
+
+    #[test]
+    fn test_extract_sanitized_name_legacy_format() {
+        let plan_file = PathBuf::from("docs/plans/existing-feature.md");
+        let name = extract_sanitized_name(&plan_file);
+        assert_eq!(name, Some("existing-feature".to_string()));
+    }
+
+    #[test]
+    fn test_update_feedback_for_iteration_with_legacy_plan_file() {
+        // Simulate loading a state with legacy plan file format
+        let mut state = State::new("test", "test", 3);
+        // Manually set to legacy format
+        state.plan_file = PathBuf::from("docs/plans/existing-feature.md");
+        state.feedback_file = PathBuf::from("docs/plans/existing-feature_feedback.md");
+
+        // Update to round 2 - should generate a new prefix
+        state.update_feedback_for_iteration(2);
+
+        // Feedback file should have a new timestamp prefix and round number
+        let feedback_str = state.feedback_file.to_string_lossy();
+        assert!(feedback_str.contains("_existing-feature_feedback_2.md"), "got: {}", feedback_str);
     }
 
     #[test]

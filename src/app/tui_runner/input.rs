@@ -1,6 +1,7 @@
 
 use crate::app::cli::Cli;
 use crate::app::headless::extract_feature_name;
+use crate::app::workflow_common::pre_create_plan_files;
 use crate::config::WorkflowConfig;
 use crate::state::State;
 use crate::tui::ui::util::{
@@ -242,9 +243,15 @@ async fn handle_naming_tab_input(
 
                     let state = State::new(&feature_name, &objective, max_iter);
 
+                    // Canonicalize working_dir for absolute paths in prompts
+                    let wd = std::fs::canonicalize(&wd).unwrap_or(wd);
+
                     let plans_dir = wd.join("docs/plans");
                     std::fs::create_dir_all(&plans_dir)
                         .context("Failed to create docs/plans directory")?;
+
+                    // Pre-create plan and feedback files after directory creation
+                    pre_create_plan_files(&wd, &state).context("Failed to pre-create plan files")?;
 
                     state.save(&state_path)?;
 
