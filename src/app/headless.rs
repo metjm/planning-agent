@@ -86,7 +86,8 @@ pub async fn run_headless_with_config(
             Phase::Planning => {
                 sender.send_output("\n=== PLANNING PHASE ===".to_string());
 
-                let plan_path = working_dir.join(&state.plan_file);
+                // state.plan_file is now an absolute path (in ~/.planning-agent/plans/)
+                let plan_path = state.plan_file.clone();
                 let mut planning_attempts = 0usize;
 
                 loop {
@@ -229,7 +230,8 @@ pub async fn run_headless_with_config(
                     reviews_by_agent.into_values().collect();
                 reviews.sort_by(|a, b| a.agent_name.cmp(&b.agent_name));
 
-                let feedback_path = working_dir.join(&state.feedback_file);
+                // state.feedback_file is now an absolute path (in ~/.planning-agent/plans/)
+                let feedback_path = state.feedback_file.clone();
                 let _ = write_feedback_files(&reviews, &feedback_path);
                 let _ = merge_feedback(&reviews, &feedback_path);
 
@@ -296,7 +298,7 @@ pub async fn run_headless_with_config(
         ));
         sender.send_output(format!(
             "Plan file: {}",
-            working_dir.join(&state.plan_file).display()
+            state.plan_file.display()
         ));
     } else {
         sender.send_output("Max iterations reached. Manual review recommended.".to_string());
@@ -376,11 +378,8 @@ pub async fn run_headless(cli: Cli) -> Result<()> {
     // Canonicalize working_dir for absolute paths in prompts
     let working_dir = std::fs::canonicalize(&working_dir).unwrap_or(working_dir);
 
-    let plans_dir = working_dir.join("docs/plans");
-    std::fs::create_dir_all(&plans_dir).context("Failed to create docs/plans directory")?;
-
-    // Pre-create plan and feedback files after directory creation
-    pre_create_plan_files(&working_dir, &state).context("Failed to pre-create plan files")?;
+    // Pre-create plan folder and files (in ~/.planning-agent/plans/)
+    pre_create_plan_files(&state).context("Failed to pre-create plan files")?;
 
     state.save_atomic(&state_path)?;
 

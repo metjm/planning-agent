@@ -94,8 +94,9 @@ pub async fn run_multi_agent_review_with_context(
     ));
 
     let total_reviewers = agent_names.len();
+    // state.feedback_file is now an absolute path (in ~/.planning-agent/plans/)
+    // Clone to avoid borrow issues with state mutations below
     let base_feedback_path = state.feedback_file.clone();
-    let base_feedback_path_abs = working_dir.join(&state.feedback_file);
 
     let phase_name = format!("Reviewing #{}", iteration);
 
@@ -118,24 +119,26 @@ pub async fn run_multi_agent_review_with_context(
             let agent_config = config
                 .get_agent(name)
                 .ok_or_else(|| anyhow::anyhow!("Review agent '{}' not found in config", name))?;
+            // feedback_path_for_agent returns an absolute path since base_feedback_path is absolute
             let feedback_path =
                 feedback_path_for_agent(&base_feedback_path, name, total_reviewers);
             Ok((
                 name.to_string(),
                 AgentType::from_config(name, agent_config, working_dir.to_path_buf())?,
-                working_dir.join(feedback_path),
+                feedback_path,
                 session_key,
                 resume_strategy,
             ))
         })
         .collect::<Result<Vec<_>>>()?;
 
-    let plan_path_abs = working_dir.join(&state.plan_file);
+    // state.plan_file is now an absolute path (in ~/.planning-agent/plans/)
+    let plan_path = state.plan_file.clone();
 
     let futures: Vec<_> = agents
         .into_iter()
-        .map(|(agent_name, agent, feedback_path_abs, session_key, resume_strategy)| {
-            let p = build_review_prompt(state, &plan_path_abs, &feedback_path_abs);
+        .map(|(agent_name, agent, feedback_path, session_key, resume_strategy)| {
+            let p = build_review_prompt(state, &plan_path, &feedback_path);
             let sender = session_sender.clone();
             let phase = format!("Reviewing #{}", iteration);
 
@@ -160,7 +163,7 @@ pub async fn run_multi_agent_review_with_context(
                     .await;
 
                 sender.send_output(format!("[review:{}] Review complete", agent_name));
-                (agent_name, feedback_path_abs, started_at, result)
+                (agent_name, feedback_path, started_at, result)
             }
         })
         .collect();
@@ -192,14 +195,14 @@ pub async fn run_multi_agent_review_with_context(
                             feedback_source = Some(feedback_path.clone());
                         }
                         Ok(None) | Err(_) => {
-                            if feedback_path != base_feedback_path_abs {
-                                if let Ok(Some(content)) = read_recent(&base_feedback_path_abs) {
+                            if feedback_path != base_feedback_path {
+                                if let Ok(Some(content)) = read_recent(&base_feedback_path) {
                                     output = content;
-                                    feedback_source = Some(base_feedback_path_abs.clone());
+                                    feedback_source = Some(base_feedback_path.clone());
                                     session_sender.send_output(format!(
                                         "[review:{}] WARNING: feedback written to {} (expected {})",
                                         agent_name,
-                                        base_feedback_path_abs.display(),
+                                        base_feedback_path.display(),
                                         feedback_path.display()
                                     ));
                                 }

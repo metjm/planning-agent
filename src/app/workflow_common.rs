@@ -1,24 +1,35 @@
 use crate::phases::{ReviewFailure, ReviewResult};
 use crate::state::State;
-use std::fs::OpenOptions;
+use std::fs::{self, OpenOptions};
 use std::io::ErrorKind;
 use std::path::Path;
 
 pub const REVIEW_FAILURE_RETRY_LIMIT: usize = 1;
 pub const PLANNING_FAILURE_RETRY_LIMIT: usize = 2;
 
-/// Pre-creates empty plan and feedback files before agent execution.
-/// This ensures unique filenames are claimed before agents start writing.
+/// Pre-creates the plan folder and empty plan/feedback files before agent execution.
+/// Plan files are stored in ~/.planning-agent/plans/<folder>/ so paths are absolute.
 /// Handles `AlreadyExists` as success for resumed workflows.
-pub fn pre_create_plan_files(working_dir: &Path, state: &State) -> anyhow::Result<()> {
-    let plan_path = working_dir.join(&state.plan_file);
-    let feedback_path = working_dir.join(&state.feedback_file);
+pub fn pre_create_plan_files(state: &State) -> anyhow::Result<()> {
+    let plan_path = &state.plan_file;
+    let feedback_path = &state.feedback_file;
+
+    // Create the plan folder (parent directory of plan file)
+    if let Some(plan_folder) = plan_path.parent() {
+        fs::create_dir_all(plan_folder).map_err(|e| {
+            anyhow::anyhow!(
+                "Failed to create plan folder {}: {}",
+                plan_folder.display(),
+                e
+            )
+        })?;
+    }
 
     // Pre-create plan file
     match OpenOptions::new()
         .create_new(true)
         .write(true)
-        .open(&plan_path)
+        .open(plan_path)
     {
         Ok(_) => {}
         Err(e) if e.kind() == ErrorKind::AlreadyExists => {}
@@ -35,7 +46,7 @@ pub fn pre_create_plan_files(working_dir: &Path, state: &State) -> anyhow::Resul
     match OpenOptions::new()
         .create_new(true)
         .write(true)
-        .open(&feedback_path)
+        .open(feedback_path)
     {
         Ok(_) => {}
         Err(e) if e.kind() == ErrorKind::AlreadyExists => {}
@@ -182,49 +193,50 @@ mod tests {
     }
 
     #[test]
-    fn test_pre_create_plan_files_creates_new_files() {
-        let dir = tempdir().unwrap();
-        let working_dir = dir.path();
-
-        // Create docs/plans directory
-        fs::create_dir_all(working_dir.join("docs/plans")).unwrap();
-
+    fn test_pre_create_plan_files_creates_folder_and_files() {
+        // State::new creates paths in ~/.planning-agent/plans/ which are absolute
         let state = State::new("test-feature", "Test objective", 3);
-        let result = pre_create_plan_files(working_dir, &state);
-        assert!(result.is_ok());
+
+        // The paths should be absolute (starting with home dir)
+        assert!(state.plan_file.is_absolute() || state.plan_file.to_string_lossy().starts_with("/"));
+
+        let result = pre_create_plan_files(&state);
+        assert!(result.is_ok(), "pre_create_plan_files should succeed: {:?}", result);
 
         // Verify files exist and are empty
-        let plan_path = working_dir.join(&state.plan_file);
-        let feedback_path = working_dir.join(&state.feedback_file);
+        assert!(state.plan_file.exists(), "Plan file should exist at {}", state.plan_file.display());
+        assert!(state.feedback_file.exists(), "Feedback file should exist at {}", state.feedback_file.display());
+        assert_eq!(fs::read_to_string(&state.plan_file).unwrap(), "");
+        assert_eq!(fs::read_to_string(&state.feedback_file).unwrap(), "");
 
-        assert!(plan_path.exists(), "Plan file should exist");
-        assert!(feedback_path.exists(), "Feedback file should exist");
-        assert_eq!(fs::read_to_string(&plan_path).unwrap(), "");
-        assert_eq!(fs::read_to_string(&feedback_path).unwrap(), "");
+        // Cleanup
+        if let Some(parent) = state.plan_file.parent() {
+            let _ = fs::remove_dir_all(parent);
+        }
     }
 
     #[test]
     fn test_pre_create_plan_files_handles_already_exists() {
-        let dir = tempdir().unwrap();
-        let working_dir = dir.path();
+        let state = State::new("test-feature-exists", "Test objective", 3);
 
-        // Create docs/plans directory
-        fs::create_dir_all(working_dir.join("docs/plans")).unwrap();
-
-        let state = State::new("test-feature", "Test objective", 3);
-
-        // Pre-create with existing content
-        let plan_path = working_dir.join(&state.plan_file);
-        let feedback_path = working_dir.join(&state.feedback_file);
-        fs::write(&plan_path, "existing plan content").unwrap();
-        fs::write(&feedback_path, "existing feedback content").unwrap();
+        // First, create the folder and files with content
+        if let Some(parent) = state.plan_file.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        fs::write(&state.plan_file, "existing plan content").unwrap();
+        fs::write(&state.feedback_file, "existing feedback content").unwrap();
 
         // Should succeed without error (AlreadyExists is handled)
-        let result = pre_create_plan_files(working_dir, &state);
+        let result = pre_create_plan_files(&state);
         assert!(result.is_ok());
 
         // Original content should be preserved (not overwritten)
-        assert_eq!(fs::read_to_string(&plan_path).unwrap(), "existing plan content");
-        assert_eq!(fs::read_to_string(&feedback_path).unwrap(), "existing feedback content");
+        assert_eq!(fs::read_to_string(&state.plan_file).unwrap(), "existing plan content");
+        assert_eq!(fs::read_to_string(&state.feedback_file).unwrap(), "existing feedback content");
+
+        // Cleanup
+        if let Some(parent) = state.plan_file.parent() {
+            let _ = fs::remove_dir_all(parent);
+        }
     }
 }

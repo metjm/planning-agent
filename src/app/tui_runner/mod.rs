@@ -192,11 +192,8 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
             // Canonicalize working_dir for absolute paths in prompts
             let init_working_dir = std::fs::canonicalize(&init_working_dir).unwrap_or(init_working_dir);
 
-            let plans_dir = init_working_dir.join("docs/plans");
-            std::fs::create_dir_all(&plans_dir).context("Failed to create docs/plans directory")?;
-
-            // Pre-create plan and feedback files after directory creation
-            pre_create_plan_files(&init_working_dir, &state).context("Failed to pre-create plan files")?;
+            // Pre-create plan folder and files (in ~/.planning-agent/plans/)
+            pre_create_plan_files(&state).context("Failed to pre-create plan files")?;
 
             state.save(&state_path)?;
 
