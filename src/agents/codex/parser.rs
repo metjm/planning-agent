@@ -38,9 +38,63 @@ impl CodexParser {
                         events.push(AgentEvent::TextContent(content));
                     }
                 }
+                "item.started" => {
+                    // Handle command_execution tool start events
+                    if let Some(item) = json.get("item") {
+                        let item_type = item.get("type").and_then(|v| v.as_str());
+                        if item_type == Some("command_execution") {
+                            // Extract command for display name
+                            let command = item.get("command").and_then(|c| c.as_str()).unwrap_or("command");
+                            let display_name = Self::truncate_command(command, 50);
+                            let input_preview = Self::truncate_command(command, 100);
+
+                            // Extract item.id for tool correlation
+                            let tool_use_id = item.get("id").and_then(|id| id.as_str()).map(|s| s.to_string());
+
+                            events.push(AgentEvent::ToolStarted {
+                                name: "command_execution".to_string(),
+                                display_name,
+                                input_preview,
+                                tool_use_id,
+                            });
+                        }
+                    }
+                }
                 "item.completed" | "item.delta" => {
                     if let Some(item) = json.get("item") {
                         let item_type = item.get("type").and_then(|v| v.as_str());
+
+                        // Handle command_execution completion events
+                        if item_type == Some("command_execution") {
+                            let tool_use_id = item.get("id").and_then(|id| id.as_str()).unwrap_or("").to_string();
+
+                            // Check for error: exit_code != 0 or status == "failed"
+                            let exit_code = item.get("exit_code").and_then(|c| c.as_i64());
+                            let status = item.get("status").and_then(|s| s.as_str());
+                            let is_error = exit_code.map(|c| c != 0).unwrap_or(false)
+                                || status == Some("failed");
+
+                            // Extract output content
+                            let content_lines = if let Some(output) = item.get("aggregated_output").and_then(|o| o.as_str()) {
+                                output.lines().take(5).map(|l| l.to_string()).collect()
+                            } else {
+                                vec![]
+                            };
+
+                            let has_more = item.get("aggregated_output")
+                                .and_then(|o| o.as_str())
+                                .map(|s| s.lines().count() > 5)
+                                .unwrap_or(false);
+
+                            events.push(AgentEvent::ToolResult {
+                                tool_use_id,
+                                is_error,
+                                content_lines,
+                                has_more,
+                            });
+                        }
+
+                        // Handle message-type items (existing logic)
                         let is_message = matches!(
                             item_type,
                             Some("agent_message")
@@ -82,10 +136,18 @@ impl CodexParser {
                             })
                             .unwrap_or_default();
 
+                        // Extract tool_use_id from call_id or id field
+                        let tool_use_id = json
+                            .get("call_id")
+                            .or_else(|| json.get("id"))
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string());
+
                         events.push(AgentEvent::ToolStarted {
                             name: name.to_string(),
                             display_name: name.to_string(),
                             input_preview,
+                            tool_use_id,
                         });
                     }
                 }
@@ -180,6 +242,26 @@ impl CodexParser {
             .or_else(|| json.get("output"))
             .and_then(|c| c.as_str())
             .map(|s| s.to_string())
+    }
+
+    /// Truncate a command string to a maximum length for display
+    /// Extracts the core command from bash wrapper if present
+    fn truncate_command(command: &str, max_len: usize) -> String {
+        // Strip common bash wrapper patterns like "/bin/bash -lc 'cmd'" or "/bin/bash -c 'cmd'"
+        let core_command = command
+            .strip_prefix("/bin/bash -lc ")
+            .or_else(|| command.strip_prefix("/bin/bash -c "))
+            .or_else(|| command.strip_prefix("bash -lc "))
+            .or_else(|| command.strip_prefix("bash -c "))
+            .unwrap_or(command)
+            .trim_matches('\'')
+            .trim_matches('"');
+
+        if core_command.len() > max_len {
+            format!("{}...", &core_command[..max_len.saturating_sub(3)])
+        } else {
+            core_command.to_string()
+        }
     }
 }
 
@@ -340,5 +422,72 @@ mod tests {
         parser.reset();
         // After reset, the parser should be in initial state
         assert_eq!(parser._event_count, 0);
+    }
+
+    #[test]
+    fn test_parse_command_execution_started() {
+        let mut parser = CodexParser::new();
+        let line = r#"{"type":"item.started","item":{"id":"item_1","type":"command_execution","command":"/bin/bash -lc ls","aggregated_output":"","exit_code":null,"status":"in_progress"}}"#;
+        let events = parser.parse_line_multi(line).unwrap();
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            AgentEvent::ToolStarted { name, display_name, input_preview, tool_use_id } => {
+                assert_eq!(name, "command_execution");
+                assert_eq!(display_name, "ls");
+                assert_eq!(input_preview, "ls");
+                assert_eq!(tool_use_id, &Some("item_1".to_string()));
+            }
+            _ => panic!("Expected ToolStarted event"),
+        }
+    }
+
+    #[test]
+    fn test_parse_command_execution_completed_success() {
+        let mut parser = CodexParser::new();
+        let line = r#"{"type":"item.completed","item":{"id":"item_1","type":"command_execution","command":"/bin/bash -lc ls","aggregated_output":"file1.txt\nfile2.txt\n","exit_code":0,"status":"completed"}}"#;
+        let events = parser.parse_line_multi(line).unwrap();
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            AgentEvent::ToolResult { tool_use_id, is_error, content_lines, has_more } => {
+                assert_eq!(tool_use_id, "item_1");
+                assert!(!is_error);
+                assert_eq!(content_lines, &["file1.txt", "file2.txt"]);
+                assert!(!has_more);
+            }
+            _ => panic!("Expected ToolResult event"),
+        }
+    }
+
+    #[test]
+    fn test_parse_command_execution_completed_error() {
+        let mut parser = CodexParser::new();
+        let line = r#"{"type":"item.completed","item":{"id":"item_2","type":"command_execution","command":"/bin/bash -lc 'cat nonexistent'","aggregated_output":"cat: nonexistent: No such file or directory","exit_code":1,"status":"completed"}}"#;
+        let events = parser.parse_line_multi(line).unwrap();
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            AgentEvent::ToolResult { tool_use_id, is_error, content_lines, .. } => {
+                assert_eq!(tool_use_id, "item_2");
+                assert!(is_error); // exit_code != 0
+                assert_eq!(content_lines, &["cat: nonexistent: No such file or directory"]);
+            }
+            _ => panic!("Expected ToolResult event"),
+        }
+    }
+
+    #[test]
+    fn test_truncate_command() {
+        // Test bash wrapper stripping
+        assert_eq!(CodexParser::truncate_command("/bin/bash -lc ls", 50), "ls");
+        assert_eq!(CodexParser::truncate_command("/bin/bash -c 'echo hello'", 50), "echo hello");
+        assert_eq!(CodexParser::truncate_command("bash -lc 'rg pattern'", 50), "rg pattern");
+
+        // Test truncation
+        let long_cmd = "rg --type rust 'very_long_pattern_that_exceeds_the_limit'";
+        let truncated = CodexParser::truncate_command(long_cmd, 20);
+        assert!(truncated.ends_with("..."));
+        assert!(truncated.len() <= 20);
+
+        // Test no truncation needed
+        assert_eq!(CodexParser::truncate_command("ls -la", 50), "ls -la");
     }
 }

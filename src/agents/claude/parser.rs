@@ -188,10 +188,14 @@ impl ClaudeParser {
                             })
                             .unwrap_or_default();
 
+                        // Extract tool_use_id from the content block if available
+                        let tool_use_id = item.get("id").and_then(|id| id.as_str()).map(|s| s.to_string());
+
                         events.push(AgentEvent::ToolStarted {
                             name: name.to_string(),
                             display_name,
                             input_preview,
+                            tool_use_id,
                         });
                     }
                 }
@@ -299,13 +303,14 @@ mod tests {
     #[test]
     fn test_parse_tool_use() {
         let mut parser = ClaudeParser::new();
-        let line = r#"{"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Read", "input": {"path": "test.txt"}}]}}"#;
+        let line = r#"{"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "toolu_123", "name": "Read", "input": {"path": "test.txt"}}]}}"#;
         let events = parser.parse_line_multi(line).unwrap();
         assert!(events.iter().any(|e| matches!(e, AgentEvent::ToolStarted {
             name,
             display_name,
+            tool_use_id,
             ..
-        } if name == "Read" && display_name == "Read")));
+        } if name == "Read" && display_name == "Read" && tool_use_id == &Some("toolu_123".to_string()))));
     }
 
     #[test]

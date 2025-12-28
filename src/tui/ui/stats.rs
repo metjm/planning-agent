@@ -295,20 +295,40 @@ fn build_tool_stats(session: &Session, show_live_tools: bool) -> Vec<Line<'stati
     ];
 
     // Only show live tools in Stats when the tool panel is NOT visible (narrow terminals)
-    if show_live_tools && !session.active_tools.is_empty() {
-        for (name, start_time) in session.active_tools.iter().take(10) {
-            let elapsed = start_time.elapsed().as_secs();
-            lines.push(Line::from(vec![
-                Span::styled(" ▶ ", Style::default().fg(Color::Yellow)),
-                Span::styled(
-                    format!("{} ({}s)", name, elapsed),
-                    Style::default().fg(Color::Yellow),
-                ),
-            ]));
+    // Group by agent for display
+    if show_live_tools && !session.active_tools_by_agent.is_empty() {
+        let mut agent_names: Vec<_> = session.active_tools_by_agent.keys().collect();
+        agent_names.sort();
+
+        let mut total_displayed = 0;
+        let max_display = 10;
+
+        for agent_name in agent_names {
+            if total_displayed >= max_display {
+                break;
+            }
+            if let Some(tools) = session.active_tools_by_agent.get(agent_name) {
+                for tool in tools {
+                    if total_displayed >= max_display {
+                        break;
+                    }
+                    let elapsed = tool.started_at.elapsed().as_secs();
+                    lines.push(Line::from(vec![
+                        Span::styled(" ▶ ", Style::default().fg(Color::Yellow)),
+                        Span::styled(
+                            format!("[{}] {} ({}s)", agent_name, tool.name, elapsed),
+                            Style::default().fg(Color::Yellow),
+                        ),
+                    ]));
+                    total_displayed += 1;
+                }
+            }
         }
-        if session.active_tools.len() > 10 {
+
+        let total_tools: usize = session.active_tools_by_agent.values().map(|v| v.len()).sum();
+        if total_tools > max_display {
             lines.push(Line::from(Span::styled(
-                format!("   +{} more", session.active_tools.len() - 10),
+                format!("   +{} more", total_tools - max_display),
                 Style::default().fg(Color::DarkGray),
             )));
         }

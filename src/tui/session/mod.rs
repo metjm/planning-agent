@@ -21,6 +21,17 @@ pub use model::{
     SummaryState, TodoItem, TodoStatus,
 };
 
+/// Represents an active tool call with optional ID for correlation
+#[derive(Debug, Clone)]
+pub struct ActiveTool {
+    /// Optional unique identifier for correlating with ToolResult
+    pub tool_id: Option<String>,
+    /// Display name of the tool
+    pub name: String,
+    /// When the tool started
+    pub started_at: Instant,
+}
+
 
 #[allow(dead_code)]
 pub struct Session {
@@ -40,7 +51,8 @@ pub struct Session {
     pub start_time: Instant,
     pub total_cost: f64,
     pub running: bool,
-    pub active_tools: Vec<(String, Instant)>,
+    /// Active tools grouped by agent name
+    pub active_tools_by_agent: HashMap<String, Vec<ActiveTool>>,
 
     pub approval_mode: ApprovalMode,
     pub approval_context: ApprovalContext,
@@ -113,7 +125,7 @@ impl Session {
             start_time: Instant::now(),
             total_cost: 0.0,
             running: true,
-            active_tools: Vec::new(),
+            active_tools_by_agent: HashMap::new(),
 
             approval_mode: ApprovalMode::None,
             approval_context: ApprovalContext::PlanApproval,
@@ -279,8 +291,58 @@ impl Session {
         self.cursor_position = 0;
     }
 
-    pub fn tool_started(&mut self, name: String) {
-        self.active_tools.push((name, Instant::now()));
+    /// Record that a tool has started for a specific agent
+    pub fn tool_started(&mut self, name: String, agent_name: String) {
+        let tool = ActiveTool {
+            tool_id: None, // Will be set when we have ID-based correlation
+            name,
+            started_at: Instant::now(),
+        };
+        self.active_tools_by_agent
+            .entry(agent_name)
+            .or_default()
+            .push(tool);
+    }
+
+    /// Remove the first tool for a specific agent (FIFO removal for ToolFinished events)
+    pub fn tool_finished_for_agent(&mut self, agent_name: &str) {
+        if let Some(tools) = self.active_tools_by_agent.get_mut(agent_name) {
+            if !tools.is_empty() {
+                tools.remove(0);
+            }
+            // Clean up empty agent entries
+            if tools.is_empty() {
+                self.active_tools_by_agent.remove(agent_name);
+            }
+        }
+    }
+
+    /// Remove a tool and return its duration (for ToolResult events)
+    /// Returns Some(duration_ms) if a tool was found and removed, None otherwise
+    pub fn tool_result_received_for_agent(&mut self, agent_name: &str) -> Option<u64> {
+        if let Some(tools) = self.active_tools_by_agent.get_mut(agent_name) {
+            if !tools.is_empty() {
+                let tool = tools.remove(0);
+                let duration_ms = tool.started_at.elapsed().as_millis() as u64;
+                // Clean up empty agent entries
+                if tools.is_empty() {
+                    self.active_tools_by_agent.remove(agent_name);
+                }
+                return Some(duration_ms);
+            }
+        }
+        None
+    }
+
+    /// Get all active tools across all agents as a flat list for compatibility
+    pub fn all_active_tools(&self) -> Vec<(&str, &str, Instant)> {
+        let mut tools = Vec::new();
+        for (agent_name, agent_tools) in &self.active_tools_by_agent {
+            for tool in agent_tools {
+                tools.push((agent_name.as_str(), tool.name.as_str(), tool.started_at));
+            }
+        }
+        tools
     }
 
     pub fn average_tool_duration_ms(&self) -> Option<u64> {

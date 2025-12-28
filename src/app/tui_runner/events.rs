@@ -60,17 +60,15 @@ pub async fn process_event(
                 session.add_streaming(line);
             }
         }
-        Event::ToolStarted(name) => {
+        Event::ToolStarted { name, agent_name } => {
             if let Some(session) = tab_manager.session_by_id_mut(first_session_id) {
-                session.tool_started(name);
+                session.tool_started(name, agent_name);
                 session.tool_call_count += 1;
             }
         }
-        Event::ToolFinished(_id) => {
+        Event::ToolFinished { id: _, agent_name } => {
             if let Some(session) = tab_manager.session_by_id_mut(first_session_id) {
-                if !session.active_tools.is_empty() {
-                    session.active_tools.remove(0);
-                }
+                session.tool_finished_for_agent(&agent_name);
             }
         }
         Event::StateUpdate(new_state) => {
@@ -114,8 +112,9 @@ pub async fn process_event(
         Event::ToolResultReceived {
             tool_id: _,
             is_error,
+            agent_name,
         } => {
-            handle_tool_result(first_session_id, is_error, tab_manager);
+            handle_tool_result(first_session_id, is_error, &agent_name, tab_manager);
         }
         Event::StopReason(reason) => {
             if let Some(session) = tab_manager.session_by_id_mut(first_session_id) {
@@ -165,14 +164,12 @@ fn handle_legacy_output(session_id: usize, line: String, tab_manager: &mut TabMa
     }
 }
 
-fn handle_tool_result(session_id: usize, is_error: bool, tab_manager: &mut TabManager) {
+fn handle_tool_result(session_id: usize, is_error: bool, agent_name: &str, tab_manager: &mut TabManager) {
     if let Some(session) = tab_manager.session_by_id_mut(session_id) {
         if is_error {
             session.tool_error_count += 1;
         }
-        if !session.active_tools.is_empty() {
-            let (_, start_time) = session.active_tools.remove(0);
-            let duration_ms = start_time.elapsed().as_millis() as u64;
+        if let Some(duration_ms) = session.tool_result_received_for_agent(agent_name) {
             session.total_tool_duration_ms += duration_ms;
             session.completed_tool_count += 1;
         }
@@ -224,17 +221,15 @@ async fn handle_session_event(
                 session.add_token_usage(&usage);
             }
         }
-        Event::SessionToolStarted { session_id, name } => {
+        Event::SessionToolStarted { session_id, name, agent_name } => {
             if let Some(session) = tab_manager.session_by_id_mut(session_id) {
-                session.tool_started(name);
+                session.tool_started(name, agent_name);
                 session.tool_call_count += 1;
             }
         }
-        Event::SessionToolFinished { session_id, id: _ } => {
+        Event::SessionToolFinished { session_id, id: _, agent_name } => {
             if let Some(session) = tab_manager.session_by_id_mut(session_id) {
-                if !session.active_tools.is_empty() {
-                    session.active_tools.remove(0);
-                }
+                session.tool_finished_for_agent(&agent_name);
             }
         }
         Event::SessionBytesReceived { session_id, bytes } => {
@@ -263,14 +258,13 @@ async fn handle_session_event(
             session_id,
             tool_id: _,
             is_error,
+            agent_name,
         } => {
             if let Some(session) = tab_manager.session_by_id_mut(session_id) {
                 if is_error {
                     session.tool_error_count += 1;
                 }
-                if !session.active_tools.is_empty() {
-                    let (_, start_time) = session.active_tools.remove(0);
-                    let duration_ms = start_time.elapsed().as_millis() as u64;
+                if let Some(duration_ms) = session.tool_result_received_for_agent(&agent_name) {
                     session.total_tool_duration_ms += duration_ms;
                     session.completed_tool_count += 1;
                 }

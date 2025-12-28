@@ -74,6 +74,8 @@ pub trait EventEmitter: Send + Sync {
     fn send_tool_result_received(&self, id: String, is_error: bool);
     fn send_agent_message(&self, msg: String);
     fn send_todos_update(&self, items: Vec<crate::tui::TodoItem>);
+    /// Returns the agent name for tool attribution
+    fn agent_name(&self) -> &str;
 }
 
 /// Event emitter for context mode (session-aware).
@@ -114,15 +116,15 @@ impl EventEmitter for ContextEmitter {
         self.context.session_sender.send_token_usage(usage);
     }
     fn send_tool_started(&self, name: String) {
-        self.context.session_sender.send_tool_started(name);
+        self.context.session_sender.send_tool_started(name, self.agent_name.clone());
     }
     fn send_tool_finished(&self, id: String) {
-        self.context.session_sender.send_tool_finished(id);
+        self.context.session_sender.send_tool_finished(id, self.agent_name.clone());
     }
     fn send_tool_result_received(&self, id: String, is_error: bool) {
         self.context
             .session_sender
-            .send_tool_result_received(id, is_error);
+            .send_tool_result_received(id, is_error, self.agent_name.clone());
     }
     fn send_agent_message(&self, msg: String) {
         self.context.session_sender.send_agent_message(
@@ -135,6 +137,9 @@ impl EventEmitter for ContextEmitter {
         self.context
             .session_sender
             .send_todos_update(self.agent_name.clone(), items);
+    }
+    fn agent_name(&self) -> &str {
+        &self.agent_name
     }
 }
 
@@ -152,9 +157,12 @@ fn emit_agent_event(event: AgentEvent, emitter: &dyn EventEmitter) {
         AgentEvent::ToolStarted {
             display_name,
             input_preview,
+            tool_use_id,
             ..
         } => {
-            emitter.send_tool_started(display_name.clone());
+            // Send the tool_use_id if available, otherwise use display_name as fallback
+            let tool_id = tool_use_id.clone().unwrap_or_else(|| display_name.clone());
+            emitter.send_tool_started(tool_id);
             emitter.send_streaming(format!("[Tool: {}] {}", display_name, input_preview));
         }
         AgentEvent::ToolResult {
