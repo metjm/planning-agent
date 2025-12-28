@@ -1,3 +1,4 @@
+use crate::planning_dir::ensure_planning_agent_dir;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -218,9 +219,17 @@ impl State {
     }
 
     pub fn save(&self, path: &Path) -> Result<()> {
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)
-                .with_context(|| format!("Failed to create directory: {}", parent.display()))?;
+        // Extract working_dir from path: .planning-agent/<feature>.json -> working_dir
+        // path.parent() gives .planning-agent, and parent of that gives working_dir
+        if let Some(planning_dir) = path.parent() {
+            if let Some(working_dir) = planning_dir.parent() {
+                ensure_planning_agent_dir(working_dir)
+                    .with_context(|| format!("Failed to create planning directory in: {}", working_dir.display()))?;
+            } else {
+                // Fallback: just create the parent directory
+                fs::create_dir_all(planning_dir)
+                    .with_context(|| format!("Failed to create directory: {}", planning_dir.display()))?;
+            }
         }
         let content = serde_json::to_string_pretty(self)
             .with_context(|| "Failed to serialize state to JSON")?;
@@ -230,9 +239,17 @@ impl State {
     }
 
     pub fn save_atomic(&self, path: &Path) -> Result<()> {
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)
-                .with_context(|| format!("Failed to create directory: {}", parent.display()))?;
+        // Extract working_dir from path: .planning-agent/<feature>.json -> working_dir
+        // path.parent() gives .planning-agent, and parent of that gives working_dir
+        if let Some(planning_dir) = path.parent() {
+            if let Some(working_dir) = planning_dir.parent() {
+                ensure_planning_agent_dir(working_dir)
+                    .with_context(|| format!("Failed to create planning directory in: {}", working_dir.display()))?;
+            } else {
+                // Fallback: just create the parent directory
+                fs::create_dir_all(planning_dir)
+                    .with_context(|| format!("Failed to create directory: {}", planning_dir.display()))?;
+            }
         }
         let content = serde_json::to_string_pretty(self)
             .with_context(|| "Failed to serialize state to JSON")?;

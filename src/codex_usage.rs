@@ -1,3 +1,4 @@
+use crate::planning_dir::ensure_planning_agent_dir;
 use serde::Deserialize;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader};
@@ -150,13 +151,15 @@ pub fn fetch_codex_usage_sync() -> CodexUsage {
             let hourly_remaining = (100.0 - primary_used).round().clamp(0.0, 100.0) as u8;
             let weekly_remaining = (100.0 - secondary_used).round().clamp(0.0, 100.0) as u8;
             if is_debug_enabled() {
-                let dir = ".planning-agent";
-                let _ = fs::create_dir_all(dir);
-                let log_path = format!("{}/codex-status.log", dir);
+                // Use current_dir since this uses hardcoded relative path
+                if let Ok(cwd) = std::env::current_dir() {
+                    let _ = ensure_planning_agent_dir(&cwd);
+                }
+                let log_path = ".planning-agent/codex-status.log";
                 if let Ok(mut file) = std::fs::OpenOptions::new()
                     .create(true)
                     .append(true)
-                    .open(&log_path)
+                    .open(log_path)
                 {
                     use std::io::Write as _;
                     let _ = writeln!(file, "\n=== Session File Parse ===");

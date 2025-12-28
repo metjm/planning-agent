@@ -1,3 +1,4 @@
+use crate::planning_dir::ensure_planning_agent_dir;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -38,9 +39,8 @@ fn get_log_file(working_dir: &Path) -> Option<Arc<Mutex<std::fs::File>>> {
         .get_or_init(|| chrono::Local::now().format("%Y%m%d-%H%M%S").to_string())
         .clone();
     let log_path = build_log_path(working_dir, &run_id);
-    if let Some(parent) = log_path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
+    // Use the centralized helper to ensure directory exists and gitignore is updated
+    let _ = ensure_planning_agent_dir(working_dir);
 
     match OpenOptions::new().create(true).append(true).open(&log_path) {
         Ok(mut file) => {
