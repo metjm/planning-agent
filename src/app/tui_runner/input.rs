@@ -246,12 +246,8 @@ async fn handle_naming_tab_input(
                     // Canonicalize working_dir for absolute paths in prompts
                     let wd = std::fs::canonicalize(&wd).unwrap_or(wd);
 
-                    let plans_dir = wd.join("docs/plans");
-                    std::fs::create_dir_all(&plans_dir)
-                        .context("Failed to create docs/plans directory")?;
-
-                    // Pre-create plan and feedback files after directory creation
-                    pre_create_plan_files(&wd, &state).context("Failed to pre-create plan files")?;
+                    // Pre-create plan folder and files (in ~/.planning-agent/plans/)
+                    pre_create_plan_files(&state).context("Failed to pre-create plan files")?;
 
                     state.save(&state_path)?;
 

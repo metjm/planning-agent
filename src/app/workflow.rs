@@ -219,7 +219,8 @@ async fn run_planning_phase(
     sender.send_output(format!("Agent: {}", config.workflow.planning.agent));
     sender.send_output(format!("Plan file: {}", state.plan_file.display()));
 
-    let plan_path = working_dir.join(&state.plan_file);
+    // state.plan_file is now an absolute path (in ~/.planning-agent/plans/)
+    let plan_path = state.plan_file.clone();
 
     loop {
         // Check for interrupt before starting planning
@@ -454,7 +455,8 @@ async fn run_reviewing_phase(
     let mut reviews: Vec<phases::ReviewResult> = reviews_by_agent.into_values().collect();
     reviews.sort_by(|a, b| a.agent_name.cmp(&b.agent_name));
 
-    let feedback_path = working_dir.join(&state.feedback_file);
+    // state.feedback_file is now an absolute path (in ~/.planning-agent/plans/)
+    let feedback_path = state.feedback_file.clone();
     let _ = write_feedback_files(&reviews, &feedback_path);
     let _ = merge_feedback(&reviews, &feedback_path);
 
@@ -607,7 +609,8 @@ async fn handle_completion(
 
     sender.send_output("".to_string());
 
-    let plan_path = working_dir.join(&state.plan_file);
+    // state.plan_file is now an absolute path (in ~/.planning-agent/plans/)
+    let plan_path = state.plan_file.clone();
 
     if state.approval_overridden {
         sender.send_output("=== PROCEEDING WITHOUT AI APPROVAL ===".to_string());
