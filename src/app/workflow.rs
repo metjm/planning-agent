@@ -1,5 +1,5 @@
 
-use crate::app::util::{build_plan_failure_summary, build_review_failure_summary, log_workflow};
+use crate::app::util::{build_approval_summary, build_plan_failure_summary, build_review_failure_summary, log_workflow};
 use crate::app::workflow_common::{cleanup_merged_feedback, REVIEW_FAILURE_RETRY_LIMIT};
 use crate::app::workflow_decisions::{
     handle_max_iterations, wait_for_plan_failure_decision, wait_for_review_decision,
@@ -616,25 +616,14 @@ async fn handle_completion(
         sender.send_output("User chose to proceed after max iterations".to_string());
         sender.send_output("Waiting for your final decision...".to_string());
 
-        let summary = format!(
-            "You chose to proceed without AI approval after {} review iterations.\n\n\
-             Plan file: {}\n\n\
-             Available actions:\n\
-             - **[i] Implement**: Launch Claude to implement the unapproved plan\n\
-             - **[d] Decline**: Provide feedback and restart the workflow",
-            state.iteration,
-            plan_path.display()
-        );
+        let summary = build_approval_summary(&plan_path, true, state.iteration);
         sender.send_user_override_approval(summary);
     } else {
         sender.send_output("=== PLAN APPROVED BY AI ===".to_string());
         sender.send_output(format!("Completed after {} iteration(s)", state.iteration));
         sender.send_output("Waiting for your approval...".to_string());
 
-        let summary = format!(
-            "The plan has been approved by AI review.\n\nPlan file: {}",
-            plan_path.display()
-        );
+        let summary = build_approval_summary(&plan_path, false, state.iteration);
         sender.send_approval_request(summary);
     };
 

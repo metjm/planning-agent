@@ -167,6 +167,45 @@ pub fn shorten_model_name(full_name: &str) -> String {
     }
 }
 
+/// Builds the approval summary for AI-approved plans, including the full plan content.
+///
+/// This summary is shown in the approval dialog when the AI has approved a plan.
+/// It includes the plan path and the full plan content for user review.
+pub fn build_approval_summary(plan_path: &Path, approval_overridden: bool, iteration: u32) -> String {
+    let mut summary = if approval_overridden {
+        format!(
+            "You chose to proceed without AI approval after {} review iterations.\n\n\
+             Plan file: {}\n",
+            iteration,
+            plan_path.display()
+        )
+    } else {
+        format!(
+            "The plan has been approved by AI review.\n\nPlan file: {}\n",
+            plan_path.display()
+        )
+    };
+
+    // Read plan content and append it to the summary
+    match std::fs::read_to_string(plan_path) {
+        Ok(content) => {
+            summary.push_str("\n---\n\n## Plan Contents\n\n");
+            summary.push_str(&content);
+        }
+        Err(e) => {
+            summary.push_str(&format!("\n---\n\n_Could not read plan file: {}_\n", e));
+        }
+    }
+
+    if approval_overridden {
+        summary.push_str("\n---\n\nAvailable actions:\n");
+        summary.push_str("- **[i] Implement**: Launch Claude to implement the unapproved plan\n");
+        summary.push_str("- **[d] Decline**: Provide feedback and restart the workflow\n");
+    }
+
+    summary
+}
+
 pub fn format_window_title(tab_manager: &TabManager) -> String {
     use crate::tui::SessionStatus;
 
@@ -186,5 +225,77 @@ pub fn format_window_title(tab_manager: &TabManager) -> String {
         "Planning Agent".to_string()
     } else {
         format!("[{}] {} - Planning Agent", status, plan_name)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::tempdir;
+
+    #[test]
+    fn test_build_approval_summary_with_plan_content() {
+        let dir = tempdir().unwrap();
+        let plan_path = dir.path().join("plan.md");
+        let plan_content = "# My Plan\n\n## Steps\n\n1. Step one\n2. Step two";
+        fs::write(&plan_path, plan_content).unwrap();
+
+        let summary = build_approval_summary(&plan_path, false, 1);
+
+        assert!(summary.contains("The plan has been approved by AI review."));
+        assert!(summary.contains(&format!("Plan file: {}", plan_path.display())));
+        assert!(summary.contains("## Plan Contents"));
+        assert!(summary.contains("# My Plan"));
+        assert!(summary.contains("1. Step one"));
+        assert!(summary.contains("2. Step two"));
+        // Should not contain override actions
+        assert!(!summary.contains("[i] Implement"));
+    }
+
+    #[test]
+    fn test_build_approval_summary_with_override() {
+        let dir = tempdir().unwrap();
+        let plan_path = dir.path().join("plan.md");
+        let plan_content = "# My Plan\n\nSome content here.";
+        fs::write(&plan_path, plan_content).unwrap();
+
+        let summary = build_approval_summary(&plan_path, true, 3);
+
+        assert!(summary.contains("You chose to proceed without AI approval after 3 review iterations."));
+        assert!(summary.contains(&format!("Plan file: {}", plan_path.display())));
+        assert!(summary.contains("## Plan Contents"));
+        assert!(summary.contains("# My Plan"));
+        // Should contain override actions
+        assert!(summary.contains("[i] Implement"));
+        assert!(summary.contains("[d] Decline"));
+    }
+
+    #[test]
+    fn test_build_approval_summary_missing_file() {
+        let dir = tempdir().unwrap();
+        let plan_path = dir.path().join("nonexistent.md");
+
+        let summary = build_approval_summary(&plan_path, false, 1);
+
+        assert!(summary.contains("The plan has been approved by AI review."));
+        assert!(summary.contains(&format!("Plan file: {}", plan_path.display())));
+        assert!(summary.contains("Could not read plan file:"));
+        // Should not contain plan contents header since file doesn't exist
+        assert!(!summary.contains("## Plan Contents"));
+    }
+
+    #[test]
+    fn test_build_approval_summary_missing_file_with_override() {
+        let dir = tempdir().unwrap();
+        let plan_path = dir.path().join("nonexistent.md");
+
+        let summary = build_approval_summary(&plan_path, true, 5);
+
+        assert!(summary.contains("You chose to proceed without AI approval after 5 review iterations."));
+        assert!(summary.contains("Could not read plan file:"));
+        // Should still contain override actions even if file is missing
+        assert!(summary.contains("[i] Implement"));
+        assert!(summary.contains("[d] Decline"));
     }
 }
