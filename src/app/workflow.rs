@@ -15,7 +15,7 @@ use crate::tui::{CancellationError, Event, SessionEventSender, UserApprovalRespo
 use anyhow::Result;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use tokio::sync::{mpsc, watch};
+use tokio::sync::mpsc;
 
 pub enum WorkflowResult {
 
@@ -58,9 +58,6 @@ pub async fn run_workflow_with_config(
         &format!("Workflow session ID: {}, run ID: {}", state.workflow_session_id, run_id),
     );
 
-    // Create cancellation signal for broadcasting to all agent tasks
-    let (cancel_tx, cancel_rx) = watch::channel(false);
-
     let sender = SessionEventSender::new(session_id, run_id, output_tx.clone());
     let mut last_reviews: Vec<phases::ReviewResult> = Vec::new();
 
@@ -82,8 +79,6 @@ pub async fn run_workflow_with_config(
                     &sender,
                     &mut approval_rx,
                     &mut control_rx,
-                    &cancel_tx,
-                    cancel_rx.clone(),
                 )
                 .await;
 
@@ -114,8 +109,6 @@ pub async fn run_workflow_with_config(
                     &sender,
                     &mut approval_rx,
                     &mut control_rx,
-                    &cancel_tx,
-                    cancel_rx.clone(),
                     &mut last_reviews,
                 )
                 .await;
@@ -148,8 +141,6 @@ pub async fn run_workflow_with_config(
                     &config,
                     &sender,
                     &mut control_rx,
-                    &cancel_tx,
-                    cancel_rx.clone(),
                     &mut last_reviews,
                 )
                 .await;
@@ -208,8 +199,6 @@ async fn run_planning_phase(
     sender: &SessionEventSender,
     approval_rx: &mut mpsc::Receiver<UserApprovalResponse>,
     control_rx: &mut mpsc::Receiver<WorkflowCommand>,
-    cancel_tx: &watch::Sender<bool>,
-    cancel_rx: watch::Receiver<bool>,
 ) -> Result<Option<WorkflowResult>> {
     log_workflow(working_dir, ">>> ENTERING Planning phase");
     sender.send_phase_started("Planning".to_string());
@@ -232,7 +221,7 @@ async fn run_planning_phase(
 
         log_workflow(working_dir, "Calling run_planning_phase_with_context...");
         let planning_result =
-            run_planning_phase_with_context(state, working_dir, config, sender.clone(), state_path, cancel_rx.clone())
+            run_planning_phase_with_context(state, working_dir, config, sender.clone(), state_path)
                 .await;
 
         match planning_result {
@@ -347,8 +336,6 @@ async fn run_reviewing_phase(
     sender: &SessionEventSender,
     approval_rx: &mut mpsc::Receiver<UserApprovalResponse>,
     control_rx: &mut mpsc::Receiver<WorkflowCommand>,
-    cancel_tx: &watch::Sender<bool>,
-    cancel_rx: watch::Receiver<bool>,
     last_reviews: &mut Vec<phases::ReviewResult>,
 ) -> Result<Option<WorkflowResult>> {
     log_workflow(
@@ -393,7 +380,6 @@ async fn run_reviewing_phase(
             sender.clone(),
             state.iteration,
             state_path,
-            cancel_rx.clone(),
         )
         .await;
 
@@ -516,8 +502,6 @@ async fn run_revising_phase(
     config: &WorkflowConfig,
     sender: &SessionEventSender,
     control_rx: &mut mpsc::Receiver<WorkflowCommand>,
-    cancel_tx: &watch::Sender<bool>,
-    cancel_rx: watch::Receiver<bool>,
     last_reviews: &mut Vec<phases::ReviewResult>,
 ) -> Result<()> {
     // Check for interrupt before starting revision
@@ -551,7 +535,6 @@ async fn run_revising_phase(
         sender.clone(),
         state.iteration,
         state_path,
-        cancel_rx.clone(),
     )
     .await;
 

@@ -5,7 +5,7 @@ use crate::tui::{ApprovalContext, ApprovalMode, FeedbackTarget, Session, TabMana
 use crate::update::UpdateStatus;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Style, Stylize},
+    style::{Color, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap},
     Frame,

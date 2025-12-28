@@ -4,7 +4,6 @@ use crate::state::{ResumeStrategy, State};
 use crate::tui::SessionEventSender;
 use anyhow::Result;
 use std::path::Path;
-use tokio::sync::watch;
 
 const PLANNING_SYSTEM_PROMPT: &str = r#"You are a technical planning agent.
 Create a detailed implementation plan for the given objective.
@@ -20,7 +19,6 @@ pub async fn run_planning_phase_with_context(
     config: &WorkflowConfig,
     session_sender: SessionEventSender,
     state_path: &Path,
-    cancel_rx: watch::Receiver<bool>,
 ) -> Result<()> {
     let planning_config = &config.workflow.planning;
     let agent_name = &planning_config.agent;

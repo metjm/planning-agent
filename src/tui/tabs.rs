@@ -1,7 +1,6 @@
 use super::session::Session;
 use crate::update::UpdateStatus;
 
-#[allow(dead_code)]
 pub struct TabManager {
     pub sessions: Vec<Session>,
     pub active_tab: usize,
@@ -18,6 +17,8 @@ pub struct TabManager {
     pub update_notice: Option<String>,
 }
 
+/// TabManager provides the full API surface for multi-tab management.
+/// Some methods may not be used in all code paths but are part of the public API.
 #[allow(dead_code)]
 impl TabManager {
     pub fn new() -> Self {

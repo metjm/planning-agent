@@ -7,7 +7,7 @@ pub mod util;
 use crate::tui::{ApprovalMode, InputMode, SessionStatus, TabManager};
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style, Stylize},
+    style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
     Frame,

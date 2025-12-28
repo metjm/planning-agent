@@ -35,7 +35,6 @@ pub struct ActiveTool {
 }
 
 
-#[allow(dead_code)]
 pub struct Session {
     pub id: usize,
     pub name: String,
@@ -115,6 +114,8 @@ pub struct Session {
     pub todos: HashMap<String, Vec<TodoItem>>,
 }
 
+/// Session provides the full API surface for session management.
+/// Some methods may not be used in all code paths but are part of the public API.
 #[allow(dead_code)]
 impl Session {
     pub fn new(id: usize) -> Self {

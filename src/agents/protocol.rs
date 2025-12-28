@@ -8,6 +8,7 @@ use crate::tui::{TokenUsage, TodoItem};
 use std::fmt;
 
 /// Errors that can occur during agent output parsing.
+/// Reserved for future structured error handling.
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub enum ParseError {
@@ -55,6 +56,7 @@ pub enum AgentEvent {
     /// Tool execution start (maps from ParsedEvent::ToolStarted)
     ToolStarted {
         /// Internal tool name (may differ from display_name for some agents)
+        /// Used in test assertions and logging.
         #[allow(dead_code)]
         name: String,
         display_name: String,

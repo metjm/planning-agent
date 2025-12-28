@@ -71,14 +71,6 @@ pub fn plan_file_has_content(path: &Path) -> bool {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-#[allow(dead_code)]
-pub enum ReviewLoopOutcome {
-    Approved,
-    NeedsRevision,
-    MaxIterationsReached,
-}
-
 #[allow(dead_code)]
 pub fn should_retry_review(
     attempt: usize,

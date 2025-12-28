@@ -17,7 +17,7 @@ chrono = "0.4"
 uuid = { version = "1", features = ["v4", "serde"] }
 
 # TUI
-ratatui = { version = "0.29", features = ["unstable-rendered-line-info"] }
+ratatui = { version = "0.30", features = ["unstable-rendered-line-info"] }
 crossterm = { version = "0.29", features = ["event-stream", "bracketed-paste"] }
 futures = "0.3"
 
@@ -27,11 +27,11 @@ unicode-width = "0.2"
 
 # PTY for Claude usage (removes expect dependency)
 portable-pty = "0.9"
-which = "7"
+which = "8"
 
 # Unix-specific poll for PTY timeout handling
 [target.'cfg(unix)'.dependencies]
-nix = { version = "0.29", features = ["poll"] }
+nix = { version = "0.30", features = ["poll"] }
 
 # Multi-agent orchestration
 serde_yaml = "0.9"
