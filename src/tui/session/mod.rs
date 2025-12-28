@@ -24,7 +24,9 @@ pub use model::{
 /// Represents an active tool call with optional ID for correlation
 #[derive(Debug, Clone)]
 pub struct ActiveTool {
-    /// Optional unique identifier for correlating with ToolResult
+    /// Optional unique identifier for correlating with ToolResult.
+    /// Reserved for future ID-based tool correlation.
+    #[allow(dead_code)]
     pub tool_id: Option<String>,
     /// Display name of the tool
     pub name: String,

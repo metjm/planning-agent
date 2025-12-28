@@ -124,6 +124,7 @@ impl Session {
         (line, col)
     }
 
+    #[cfg(test)]
     pub fn get_tab_input_line_count(&self) -> usize {
         self.tab_input.matches('\n').count() + 1
     }

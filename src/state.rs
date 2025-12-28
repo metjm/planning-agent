@@ -16,6 +16,7 @@ pub enum Phase {
 
 impl Phase {
     /// Get a UI-friendly label for the phase.
+    #[allow(dead_code)]
     pub fn label(&self) -> PhaseLabel {
         match self {
             Phase::Planning => PhaseLabel::Planning,
@@ -31,6 +32,7 @@ impl Phase {
 /// Unlike `Phase`, which is used for state machine transitions,
 /// `PhaseLabel` provides display-friendly formatting.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum PhaseLabel {
     Planning,
     Reviewing,
@@ -38,6 +40,7 @@ pub enum PhaseLabel {
     Complete,
 }
 
+#[allow(dead_code)]
 impl PhaseLabel {
     /// Short label for compact display (e.g., status bars).
     pub fn short(&self) -> &'static str {

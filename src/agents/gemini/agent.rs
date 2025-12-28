@@ -31,6 +31,7 @@ impl GeminiAgent {
         }
     }
 
+    #[cfg(test)]
     pub fn name(&self) -> &str {
         &self.name
     }

@@ -45,6 +45,7 @@ impl Session {
         self.active_run_tab = self.active_run_tab.saturating_sub(1);
     }
 
+    #[allow(dead_code)]
     pub fn clear_chat_tabs(&mut self) {
         self.run_tabs.clear();
         self.active_run_tab = 0;
