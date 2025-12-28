@@ -1,3 +1,4 @@
+use crate::planning_dir::ensure_planning_agent_dir;
 use anyhow::{Context, Result};
 use std::process::Command;
 use std::time::Duration;
@@ -140,11 +141,9 @@ pub enum UpdateResult {
 const UPDATE_MARKER_FILE: &str = "update-installed";
 
 pub fn write_update_marker(working_dir: &std::path::Path) -> std::io::Result<()> {
+    // Use the centralized helper to ensure directory exists and gitignore is updated
+    ensure_planning_agent_dir(working_dir)?;
     let marker_path = working_dir.join(".planning-agent").join(UPDATE_MARKER_FILE);
-
-    if let Some(parent) = marker_path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
     std::fs::write(&marker_path, "")
 }
 

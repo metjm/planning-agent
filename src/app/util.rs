@@ -1,5 +1,5 @@
-
 use crate::phases;
+use crate::planning_dir::ensure_planning_agent_dir;
 use crate::state::State;
 use crate::tui::TabManager;
 use std::collections::HashMap;
@@ -16,6 +16,8 @@ pub fn get_run_id() -> String {
 }
 
 pub fn log_workflow(working_dir: &Path, message: &str) {
+    // Ensure the .planning-agent directory exists before writing log
+    let _ = ensure_planning_agent_dir(working_dir);
     let run_id = get_run_id();
     let log_path = working_dir.join(format!(".planning-agent/workflow-{}.log", run_id));
     if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(&log_path) {
