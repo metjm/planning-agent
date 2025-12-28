@@ -24,6 +24,7 @@ pub struct AgentContext {
 pub struct AgentResult {
     pub output: String,
     pub is_error: bool,
+    /// Cost in USD (stored for potential display/logging, currently unused)
     #[allow(dead_code)]
     pub cost_usd: Option<f64>,
 }

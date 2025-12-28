@@ -4,7 +4,7 @@ use super::util::{compute_wrapped_line_count, parse_markdown_line};
 use crate::tui::{FocusedPanel, RunTab, Session, SummaryState};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style, Stylize},
+    style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap},
     Frame,

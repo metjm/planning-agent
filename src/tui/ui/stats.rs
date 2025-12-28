@@ -4,7 +4,7 @@ use crate::state::Phase;
 use crate::tui::{Session, SessionStatus};
 use ratatui::{
     layout::Rect,
-    style::{Color, Modifier, Style, Stylize},
+    style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
     Frame,

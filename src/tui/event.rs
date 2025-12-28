@@ -24,7 +24,7 @@ pub struct CancellationError {
 
 impl std::fmt::Display for CancellationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Cancelled by user interrupt")
+        write!(f, "Cancelled by user interrupt: {}", self.feedback)
     }
 }
 
@@ -38,6 +38,8 @@ pub struct TokenUsage {
     pub cache_read_tokens: u64,
 }
 
+/// Events for the TUI system. Some variants are for multi-session support
+/// and may not be used in all code paths.
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub enum Event {
@@ -206,13 +208,14 @@ impl EventHandler {
 }
 
 #[derive(Clone)]
-#[allow(dead_code)]
 pub struct SessionEventSender {
     session_id: usize,
     run_id: u64,
     inner: mpsc::UnboundedSender<Event>,
 }
 
+/// Some methods may not be used in all code paths but are part of the
+/// public API for workflow integration.
 #[allow(dead_code)]
 impl SessionEventSender {
     pub fn new(session_id: usize, run_id: u64, sender: mpsc::UnboundedSender<Event>) -> Self {

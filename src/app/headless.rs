@@ -12,7 +12,7 @@ use crate::tui::{Event, SessionEventSender};
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use tokio::sync::{mpsc, watch};
+use tokio::sync::mpsc;
 
 pub async fn extract_feature_name(
     objective: &str,
@@ -70,9 +70,6 @@ pub async fn run_headless_with_config(
     config: WorkflowConfig,
     output_tx: mpsc::UnboundedSender<Event>,
 ) -> Result<()> {
-    // Create cancellation signal (unused in headless mode but required by API)
-    let (_cancel_tx, cancel_rx) = watch::channel(false);
-
     let sender = SessionEventSender::new(0, 0, output_tx.clone());
     let mut last_reviews: Vec<phases::ReviewResult> = Vec::new();
 
@@ -97,7 +94,6 @@ pub async fn run_headless_with_config(
                         &config,
                         sender.clone(),
                         &state_path,
-                        cancel_rx.clone(),
                     )
                     .await;
 
@@ -179,7 +175,6 @@ pub async fn run_headless_with_config(
                         sender.clone(),
                         iteration,
                         &state_path,
-                        cancel_rx.clone(),
                     )
                     .await?;
 
@@ -270,7 +265,6 @@ pub async fn run_headless_with_config(
                     sender.clone(),
                     iteration,
                     &state_path,
-                    cancel_rx.clone(),
                 )
                 .await?;
                 last_reviews.clear();

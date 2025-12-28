@@ -243,9 +243,6 @@ async fn handle_naming_tab_input(
 
                     let state = State::new(&feature_name, &objective, max_iter);
 
-                    // Canonicalize working_dir for absolute paths in prompts
-                    let wd = std::fs::canonicalize(&wd).unwrap_or(wd);
-
                     // Pre-create plan folder and files (in ~/.planning-agent/plans/)
                     pre_create_plan_files(&state).context("Failed to pre-create plan files")?;
 
