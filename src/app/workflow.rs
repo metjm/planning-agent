@@ -1,6 +1,6 @@
 
 use crate::app::util::{build_approval_summary, build_plan_failure_summary, build_review_failure_summary, log_workflow};
-use crate::app::workflow_common::{cleanup_merged_feedback, REVIEW_FAILURE_RETRY_LIMIT};
+use crate::app::workflow_common::{plan_file_has_content, REVIEW_FAILURE_RETRY_LIMIT};
 use crate::app::workflow_decisions::{
     handle_max_iterations, wait_for_plan_failure_decision, wait_for_review_decision,
     PlanFailureDecision, ReviewDecision,
@@ -238,13 +238,14 @@ async fn run_planning_phase(
             Ok(()) => {
                 log_workflow(working_dir, "run_planning_phase_with_context completed");
 
-                if !plan_path.exists() {
-                    log_workflow(working_dir, "ERROR: Plan file was not created!");
-                    sender.send_output("[error] Plan file was not created!".to_string());
+                // Use content-based check instead of exists() for pre-created files
+                if !plan_file_has_content(&plan_path) {
+                    log_workflow(working_dir, "ERROR: Plan file has no content!");
+                    sender.send_output("[error] Plan file has no content - planning agent may have failed".to_string());
 
                     // Prompt user for decision
                     let summary = build_plan_failure_summary(
-                        "Plan file was not created by the planning agent",
+                        "Plan file has no content - planning agent may have failed",
                         &plan_path,
                         false,
                     );
@@ -256,20 +257,20 @@ async fn run_planning_phase(
                             continue;
                         }
                         PlanFailureDecision::Continue => {
-                            // This shouldn't happen since plan doesn't exist, but handle it
-                            sender.send_output("[planning] No plan file exists to continue with. Retrying...".to_string());
+                            // This shouldn't happen since plan has no content, but handle it
+                            sender.send_output("[planning] Plan file has no content to continue with. Retrying...".to_string());
                             continue;
                         }
                         PlanFailureDecision::Abort => {
-                            log_workflow(working_dir, "User aborted after plan file not created");
+                            log_workflow(working_dir, "User aborted after plan file empty");
                             return Ok(Some(WorkflowResult::Aborted {
-                                reason: "User aborted: plan file was not created".to_string(),
+                                reason: "User aborted: plan file has no content".to_string(),
                             }));
                         }
                     }
                 }
 
-                // Plan file exists and planning succeeded
+                // Plan file has content and planning succeeded
                 break;
             }
             Err(e) => {
@@ -287,23 +288,24 @@ async fn run_planning_phase(
                 );
                 sender.send_output(format!("[error] Planning failed: {}", error_msg));
 
-                let plan_exists = plan_path.exists();
-                let summary = build_plan_failure_summary(&error_msg, &plan_path, plan_exists);
+                // Use content-based check instead of exists() for pre-created files
+                let plan_has_content = plan_file_has_content(&plan_path);
+                let summary = build_plan_failure_summary(&error_msg, &plan_path, plan_has_content);
                 sender.send_plan_generation_failed(summary);
 
-                match wait_for_plan_failure_decision(working_dir, approval_rx, plan_exists).await {
+                match wait_for_plan_failure_decision(working_dir, approval_rx, plan_has_content).await {
                     PlanFailureDecision::Retry => {
                         sender.send_output("[planning] Retrying plan generation...".to_string());
                         continue;
                     }
                     PlanFailureDecision::Continue => {
-                        if plan_exists {
+                        if plan_has_content {
                             sender.send_output(
                                 "[planning] Continuing with existing plan file...".to_string(),
                             );
                             break;
                         } else {
-                            sender.send_output("[planning] No plan file exists to continue with. Retrying...".to_string());
+                            sender.send_output("[planning] Plan file has no content to continue with. Retrying...".to_string());
                             continue;
                         }
                     }
@@ -563,15 +565,9 @@ async fn run_revising_phase(
     last_reviews.clear();
     log_workflow(working_dir, "run_revision_phase_with_context completed");
 
-    let feedback_path = working_dir.join(&state.feedback_file);
-    match cleanup_merged_feedback(&feedback_path) {
-        Ok(true) => log_workflow(working_dir, "Deleted old feedback file"),
-        Ok(false) => {}
-        Err(e) => log_workflow(
-            working_dir,
-            &format!("Warning: Failed to delete feedback file: {}", e),
-        ),
-    }
+    // Keep old feedback files - don't cleanup
+    // let feedback_path = working_dir.join(&state.feedback_file);
+    // match cleanup_merged_feedback(&feedback_path) { ... }
 
     let revision_phase_name = format!("Revising #{}", state.iteration);
     phases::spawn_summary_generation(
@@ -584,6 +580,8 @@ async fn run_revising_phase(
     );
 
     state.iteration += 1;
+    // Update feedback filename for the new iteration before transitioning to review
+    state.update_feedback_for_iteration(state.iteration);
     log_workflow(
         working_dir,
         &format!(

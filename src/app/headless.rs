@@ -1,7 +1,7 @@
 
 use crate::app::cli::Cli;
 use crate::app::util::truncate_for_summary;
-use crate::app::workflow_common::{cleanup_merged_feedback, REVIEW_FAILURE_RETRY_LIMIT, PLANNING_FAILURE_RETRY_LIMIT};
+use crate::app::workflow_common::{plan_file_has_content, pre_create_plan_files, REVIEW_FAILURE_RETRY_LIMIT, PLANNING_FAILURE_RETRY_LIMIT};
 use crate::config::WorkflowConfig;
 use crate::phases::{
     self, aggregate_reviews, merge_feedback, run_multi_agent_review_with_context,
@@ -102,18 +102,19 @@ pub async fn run_headless_with_config(
 
                     match planning_result {
                         Ok(()) => {
-                            if plan_path.exists() {
-                                // Success - plan file was created
+                            // Use content-based check instead of exists() for pre-created files
+                            if plan_file_has_content(&plan_path) {
+                                // Success - plan file has content
                                 break;
                             } else {
                                 sender.send_output(
-                                    "[error] Plan file was not created by the planning agent"
+                                    "[error] Plan file has no content - planning agent may have failed"
                                         .to_string(),
                                 );
                                 planning_attempts += 1;
                                 if planning_attempts > PLANNING_FAILURE_RETRY_LIMIT {
                                     anyhow::bail!(
-                                        "Plan file not created after {} attempts (headless mode does not support interactive recovery)",
+                                        "Plan file empty after {} attempts (headless mode does not support interactive recovery)",
                                         planning_attempts
                                     );
                                 }
@@ -128,8 +129,8 @@ pub async fn run_headless_with_config(
                             let error_msg = format!("{}", e);
                             sender.send_output(format!("[error] Planning failed: {}", error_msg));
 
-                            // Check if we can continue with an existing plan file
-                            if plan_path.exists() {
+                            // Check if we can continue with an existing plan file that has content
+                            if plan_file_has_content(&plan_path) {
                                 sender.send_output(
                                     "[planning] Continuing with existing plan file...".to_string(),
                                 );
@@ -272,10 +273,13 @@ pub async fn run_headless_with_config(
                 .await?;
                 last_reviews.clear();
 
-                let feedback_path = working_dir.join(&state.feedback_file);
-                let _ = cleanup_merged_feedback(&feedback_path);
+                // Keep old feedback files - don't cleanup
+                // let feedback_path = working_dir.join(&state.feedback_file);
+                // let _ = cleanup_merged_feedback(&feedback_path);
 
                 state.iteration += 1;
+                // Update feedback filename for the new iteration before transitioning to review
+                state.update_feedback_for_iteration(state.iteration);
                 state.transition(Phase::Reviewing)?;
                 state.save_atomic(&state_path)?;
             }
@@ -369,8 +373,14 @@ pub async fn run_headless(cli: Cli) -> Result<()> {
         State::new(&feature_name, &objective, cli.max_iterations)
     };
 
+    // Canonicalize working_dir for absolute paths in prompts
+    let working_dir = std::fs::canonicalize(&working_dir).unwrap_or(working_dir);
+
     let plans_dir = working_dir.join("docs/plans");
     std::fs::create_dir_all(&plans_dir).context("Failed to create docs/plans directory")?;
+
+    // Pre-create plan and feedback files after directory creation
+    pre_create_plan_files(&working_dir, &state).context("Failed to pre-create plan files")?;
 
     state.save_atomic(&state_path)?;
 

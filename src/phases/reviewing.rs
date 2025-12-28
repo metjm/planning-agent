@@ -130,10 +130,12 @@ pub async fn run_multi_agent_review_with_context(
         })
         .collect::<Result<Vec<_>>>()?;
 
+    let plan_path_abs = working_dir.join(&state.plan_file);
+
     let futures: Vec<_> = agents
         .into_iter()
         .map(|(agent_name, agent, feedback_path_abs, session_key, resume_strategy)| {
-            let p = build_review_prompt(state);
+            let p = build_review_prompt(state, &plan_path_abs, &feedback_path_abs);
             let sender = session_sender.clone();
             let phase = format!("Reviewing #{}", iteration);
 
@@ -312,7 +314,7 @@ pub async fn run_multi_agent_review_with_context(
     Ok(ReviewBatchResult { reviews, failures })
 }
 
-fn build_review_prompt(state: &State) -> String {
+fn build_review_prompt(state: &State, plan_path_abs: &Path, feedback_path_abs: &Path) -> String {
     format!(
         r###"User objective (used to create the plan):
 ```text
@@ -320,6 +322,8 @@ fn build_review_prompt(state: &State) -> String {
 ```
 
 Review the implementation plan at: {}
+
+Write your feedback to: {}
 
 IMPORTANT: Your feedback MUST include one of these exact strings in the output:
 - "Overall Assessment:** APPROVED" - if the plan is ready for implementation
@@ -346,7 +350,8 @@ Example format:
 ## Overall Assessment: APPROVED/NEEDS REVISION
 </plan-feedback>"###,
         state.objective,
-        state.plan_file.display()
+        plan_path_abs.display(),
+        feedback_path_abs.display()
     )
 }
 

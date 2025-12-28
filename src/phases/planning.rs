@@ -34,7 +34,7 @@ pub async fn run_planning_phase_with_context(
 
     let agent = AgentType::from_config(agent_name, agent_config, working_dir.to_path_buf())?;
 
-    let prompt = build_planning_prompt(state);
+    let prompt = build_planning_prompt(state, working_dir);
 
     let agent_session = state.get_or_create_agent_session(agent_name, ResumeStrategy::Stateless);
     let session_key = agent_session.session_key.clone();
@@ -69,7 +69,8 @@ pub async fn run_planning_phase_with_context(
     Ok(())
 }
 
-fn build_planning_prompt(state: &State) -> String {
+fn build_planning_prompt(state: &State, working_dir: &Path) -> String {
+    let plan_path_abs = working_dir.join(&state.plan_file);
     format!(
         r#"Create a detailed implementation plan for the following:
 
@@ -88,6 +89,6 @@ Write your plan to: {}
 Use the Read, Glob, and Grep tools to explore the codebase as needed."#,
         state.feature_name,
         state.objective,
-        state.plan_file.display()
+        plan_path_abs.display()
     )
 }
