@@ -3,6 +3,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
+    widgets::{Paragraph, Wrap},
 };
 use unicode_width::UnicodeWidthChar;
 
@@ -179,3 +180,91 @@ pub fn parse_inline_markdown(text: &str) -> Vec<Span<'static>> {
 
     spans
 }
+
+/// Compute the wrapped line count for styled `Line` content.
+///
+/// Uses a block-less `Paragraph` with wrapping to get accurate line counts
+/// that match ratatui's rendering. The block is intentionally omitted because
+/// `Paragraph::line_count` includes block padding when a block is set.
+pub fn compute_wrapped_line_count(lines: &[Line], width: u16) -> usize {
+    if width == 0 {
+        return 0;
+    }
+    let paragraph = Paragraph::new(lines.to_vec()).wrap(Wrap { trim: false });
+    paragraph.line_count(width)
+}
+
+/// Compute the wrapped line count for plain text content.
+///
+/// Uses a block-less `Paragraph` with wrapping to get accurate line counts
+/// that match ratatui's rendering.
+pub fn compute_wrapped_line_count_text(text: &str, width: u16) -> usize {
+    if width == 0 {
+        return 0;
+    }
+    let paragraph = Paragraph::new(text).wrap(Wrap { trim: false });
+    paragraph.line_count(width)
+}
+
+/// Compute the inner size of the approval popup given terminal dimensions.
+///
+/// This replicates the layout logic used in `draw_choice_popup` to ensure
+/// input handlers compute the same dimensions as the renderer:
+/// - Popup is 80% of terminal size
+/// - Title area: 3 rows
+/// - Summary area: remaining space minus footer (4 rows)
+/// - Summary block has 1-row borders on top and bottom
+///
+/// Returns (inner_width, inner_height) of the summary area.
+pub fn compute_popup_summary_inner_size(terminal_width: u16, terminal_height: u16) -> (u16, u16) {
+    // Match draw_choice_popup layout: 80% of terminal size
+    let popup_width = (terminal_width as f32 * 0.8) as u16;
+    let popup_height = (terminal_height as f32 * 0.8) as u16;
+
+    // Layout: [Title: 3] [Summary: Min(0)] [Instructions: 4]
+    // So summary height = popup_height - 3 - 4 = popup_height - 7
+    let summary_height = popup_height.saturating_sub(7);
+
+    // Summary block has borders (1 row each for top/bottom)
+    let inner_height = summary_height.saturating_sub(2);
+
+    // Summary block has borders (1 col each for left/right)
+    let inner_width = popup_width.saturating_sub(2);
+
+    (inner_width, inner_height)
+}
+
+/// Compute the inner size of the summary panel given terminal dimensions.
+///
+/// This replicates the layout logic used in `draw_summary_panel`:
+/// - Main layout: top bar (2), main content (min 0), footer (3)
+/// - Main content split: 70%/30% horizontal
+/// - Left side split: 40%/60% vertical for output/chat
+/// - Chat area split: 50%/50% when summary is shown
+/// - Summary block has 1-row borders on top and bottom
+///
+/// Returns (inner_width, inner_height) of the summary panel inner area.
+pub fn compute_summary_panel_inner_size(terminal_width: u16, terminal_height: u16) -> (u16, u16) {
+    // Main layout: top bar (2) + footer (3) = 5 rows overhead
+    let main_content_height = terminal_height.saturating_sub(5);
+
+    // Horizontal split: 70% left, 30% right - we're in the left 70%
+    let left_width = (terminal_width as f32 * 0.70) as u16;
+
+    // Vertical split: 40% output, 60% chat
+    let chat_height = (main_content_height as f32 * 0.60) as u16;
+
+    // Chat area has run tabs (1 row)
+    let chat_content_height = chat_height.saturating_sub(1);
+
+    // Chat content split: 50% chat, 50% summary
+    let summary_width = left_width / 2;
+    let summary_height = chat_content_height;
+
+    // Summary block has borders (1 row each for top/bottom, 1 col each for left/right)
+    let inner_height = summary_height.saturating_sub(2);
+    let inner_width = summary_width.saturating_sub(2);
+
+    (inner_width, inner_height)
+}
+

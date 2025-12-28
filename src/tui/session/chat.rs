@@ -2,6 +2,13 @@
 use super::model::{ChatMessage, RunTab, SummaryState};
 use super::Session;
 
+/// Normalize a phase name by stripping trailing " Summary" suffix.
+/// This is a defensive measure to ensure summary agent output is routed
+/// to the existing phase tab rather than creating a new tab.
+fn normalize_phase(phase: &str) -> &str {
+    phase.strip_suffix(" Summary").unwrap_or(phase)
+}
+
 impl Session {
 
     pub fn add_run_tab(&mut self, phase: String) {
@@ -16,11 +23,12 @@ impl Session {
             return;
         }
 
-        let tab_idx = self.run_tabs.iter().position(|t| t.phase == phase);
+        let normalized_phase = normalize_phase(phase);
+        let tab_idx = self.run_tabs.iter().position(|t| t.phase == normalized_phase);
         let idx = match tab_idx {
             Some(i) => i,
             None => {
-                self.add_run_tab(phase.to_string());
+                self.add_run_tab(normalized_phase.to_string());
                 self.run_tabs.len() - 1
             }
         };

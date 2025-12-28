@@ -3,17 +3,71 @@ use crate::app::cli::Cli;
 use crate::app::headless::extract_feature_name;
 use crate::config::WorkflowConfig;
 use crate::state::State;
+use crate::tui::ui::util::{
+    compute_popup_summary_inner_size, compute_summary_panel_inner_size, compute_wrapped_line_count,
+    compute_wrapped_line_count_text,
+};
 use crate::tui::{
-    ApprovalContext, ApprovalMode, Event, FocusedPanel, InputMode, Session, SessionStatus,
-    TabManager, UserApprovalResponse,
+    ApprovalContext, ApprovalMode, Event, FeedbackTarget, FocusedPanel, InputMode, Session, SessionStatus,
+    TabManager, UserApprovalResponse, WorkflowCommand,
 };
 use crate::update;
 use anyhow::{Context, Result};
 use crossterm::event::{KeyCode, KeyModifiers};
+use ratatui::text::Line;
 use std::path::PathBuf;
 use tokio::sync::mpsc;
 
 use super::{restore_terminal, InitHandle};
+use crate::tui::ui::util::parse_markdown_line;
+
+/// Compute the max scroll for the plan summary popup based on wrapped lines and terminal size.
+fn compute_plan_summary_max_scroll(plan_summary: &str) -> usize {
+    let (term_width, term_height) = crossterm::terminal::size().unwrap_or((80, 24));
+    let (inner_width, visible_height) = compute_popup_summary_inner_size(term_width, term_height);
+
+    let summary_lines: Vec<Line> = plan_summary.lines().map(parse_markdown_line).collect();
+    let total_lines = compute_wrapped_line_count(&summary_lines, inner_width);
+
+    total_lines.saturating_sub(visible_height as usize)
+}
+
+/// Compute the max scroll for the run-tab summary panel based on wrapped lines and terminal size.
+fn compute_run_tab_summary_max_scroll(summary_text: &str) -> usize {
+    let (term_width, term_height) = crossterm::terminal::size().unwrap_or((80, 24));
+    let (inner_width, visible_height) = compute_summary_panel_inner_size(term_width, term_height);
+
+    let summary_lines: Vec<Line> = summary_text.lines().map(parse_markdown_line).collect();
+    let total_lines = compute_wrapped_line_count(&summary_lines, inner_width);
+
+    total_lines.saturating_sub(visible_height as usize)
+}
+
+/// Compute the max scroll for the error overlay based on wrapped lines and terminal size.
+fn compute_error_overlay_max_scroll(error: &str) -> usize {
+    let (term_width, term_height) = crossterm::terminal::size().unwrap_or((80, 24));
+
+    // Match draw_error_overlay: 60% width, max 70
+    let popup_width = (term_width as f32 * 0.6).min(70.0) as u16;
+    let inner_width = popup_width.saturating_sub(2);
+
+    // Compute wrapped line count for the error text
+    let wrapped_error_lines = compute_wrapped_line_count_text(error, inner_width);
+
+    // Popup height calculation (matching draw_error_overlay)
+    let max_popup_height = (term_height as f32 * 0.8) as u16;
+    let min_popup_height = 8u16;
+    let ideal_popup_height = (wrapped_error_lines as u16).saturating_add(5);
+    let popup_height = ideal_popup_height.clamp(min_popup_height, max_popup_height);
+
+    // Visible height = popup_height - borders (2) - instructions (1)
+    let visible_height = popup_height.saturating_sub(3) as usize;
+
+    // Total content = empty line + error text + empty line
+    let total_content_lines = wrapped_error_lines + 2;
+
+    total_content_lines.saturating_sub(visible_height)
+}
 
 #[allow(clippy::too_many_arguments)]
 pub async fn handle_key_event(
@@ -37,7 +91,7 @@ pub async fn handle_key_event(
 
     let session = tab_manager.active_mut();
 
-    if session.error_state.is_some() {
+    if let Some(ref error) = session.error_state.clone() {
         match key.code {
             KeyCode::Esc => {
                 session.clear_error();
@@ -45,6 +99,15 @@ pub async fn handle_key_event(
             }
             KeyCode::Char('w') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 tab_manager.close_tab(tab_manager.active_tab);
+                return Ok(false);
+            }
+            KeyCode::Char('j') | KeyCode::Down => {
+                let max_scroll = compute_error_overlay_max_scroll(&error);
+                session.error_scroll_down(max_scroll);
+                return Ok(false);
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                session.error_scroll_up();
                 return Ok(false);
             }
             _ => return Ok(false),
@@ -336,7 +399,7 @@ async fn handle_plan_approval_input(
             session.start_feedback_input();
         }
         KeyCode::Char('j') | KeyCode::Down => {
-            let max_scroll = session.plan_summary.lines().count().saturating_sub(10);
+            let max_scroll = compute_plan_summary_max_scroll(&session.plan_summary);
             session.scroll_summary_down(max_scroll);
         }
         KeyCode::Char('k') | KeyCode::Up => {
@@ -372,7 +435,7 @@ async fn handle_review_decision_input(
             session.approval_context = ApprovalContext::PlanApproval;
         }
         KeyCode::Char('j') | KeyCode::Down => {
-            let max_scroll = session.plan_summary.lines().count().saturating_sub(10);
+            let max_scroll = compute_plan_summary_max_scroll(&session.plan_summary);
             session.scroll_summary_down(max_scroll);
         }
         KeyCode::Char('k') | KeyCode::Up => {
@@ -416,7 +479,7 @@ async fn handle_plan_generation_failed_input(
             session.error_state = Some("Plan generation failed".to_string());
         }
         KeyCode::Char('j') | KeyCode::Down => {
-            let max_scroll = session.plan_summary.lines().count().saturating_sub(10);
+            let max_scroll = compute_plan_summary_max_scroll(&session.plan_summary);
             session.scroll_summary_down(max_scroll);
         }
         KeyCode::Char('k') | KeyCode::Up => {
@@ -463,7 +526,7 @@ async fn handle_max_iterations_input(
             session.error_state = Some("Aborted at max iterations".to_string());
         }
         KeyCode::Char('j') | KeyCode::Down => {
-            let max_scroll = session.plan_summary.lines().count().saturating_sub(10);
+            let max_scroll = compute_plan_summary_max_scroll(&session.plan_summary);
             session.scroll_summary_down(max_scroll);
         }
         KeyCode::Char('k') | KeyCode::Up => {
@@ -500,7 +563,7 @@ async fn handle_user_override_input(
             session.start_feedback_input();
         }
         KeyCode::Char('j') | KeyCode::Down => {
-            let max_scroll = session.plan_summary.lines().count().saturating_sub(10);
+            let max_scroll = compute_plan_summary_max_scroll(&session.plan_summary);
             session.scroll_summary_down(max_scroll);
         }
         KeyCode::Char('k') | KeyCode::Up => {
@@ -532,20 +595,45 @@ async fn handle_entering_feedback_input(
                 !session.user_feedback.trim().is_empty() || session.has_feedback_pastes();
             if has_content {
                 let feedback = session.get_submit_text_feedback();
-                if let Some(tx) = session.approval_tx.take() {
-                    let _ = tx.send(UserApprovalResponse::Decline(feedback)).await;
+
+                match session.feedback_target {
+                    FeedbackTarget::ApprovalDecline => {
+                        // Existing behavior: decline with feedback via approval channel
+                        if let Some(tx) = session.approval_tx.take() {
+                            let _ = tx.send(UserApprovalResponse::Decline(feedback)).await;
+                        }
+                    }
+                    FeedbackTarget::WorkflowInterrupt => {
+                        // New behavior: send interrupt command via control channel
+                        if let Some(tx) = session.workflow_control_tx.as_ref() {
+                            let _ = tx.send(WorkflowCommand::Interrupt { feedback }).await;
+                        }
+                    }
                 }
+
                 session.user_feedback.clear();
                 session.cursor_position = 0;
+                session.feedback_scroll = 0;
                 session.clear_feedback_pastes();
                 session.approval_mode = ApprovalMode::None;
+                session.feedback_target = FeedbackTarget::default();
             }
         }
         KeyCode::Esc => {
-            session.approval_mode = ApprovalMode::AwaitingChoice;
+            // Cancel feedback entry - return to previous mode
+            match session.feedback_target {
+                FeedbackTarget::ApprovalDecline => {
+                    session.approval_mode = ApprovalMode::AwaitingChoice;
+                }
+                FeedbackTarget::WorkflowInterrupt => {
+                    session.approval_mode = ApprovalMode::None;
+                }
+            }
             session.user_feedback.clear();
             session.cursor_position = 0;
+            session.feedback_scroll = 0;
             session.clear_feedback_pastes();
+            session.feedback_target = FeedbackTarget::default();
         }
         KeyCode::Backspace => {
             if !session.delete_paste_at_cursor_feedback() {
@@ -580,6 +668,12 @@ fn handle_none_mode_input(
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             return Ok(true);
         }
+        KeyCode::Char('i') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            // Ctrl+I: Start interrupt feedback mode if workflow is running
+            if session.running && session.workflow_control_tx.is_some() {
+                session.start_feedback_input_for(FeedbackTarget::WorkflowInterrupt);
+            }
+        }
         KeyCode::Tab => {
             session.toggle_focus();
         }
@@ -606,7 +700,14 @@ fn handle_none_mode_input(
         KeyCode::Char('G') => match session.focused_panel {
             FocusedPanel::Output => session.scroll_to_bottom(),
             FocusedPanel::Chat => session.chat_scroll_to_bottom(),
-            FocusedPanel::Summary => session.summary_scroll_to_bottom(100),
+            FocusedPanel::Summary => {
+                let max_scroll = session
+                    .run_tabs
+                    .get(session.active_run_tab)
+                    .map(|tab| compute_run_tab_summary_max_scroll(&tab.summary_text))
+                    .unwrap_or(0);
+                session.summary_scroll_to_bottom(max_scroll);
+            }
         },
         KeyCode::Left => {
             if session.focused_panel == FocusedPanel::Chat

@@ -466,6 +466,54 @@ fn test_insert_feedback_newline_middle() {
 }
 
 #[test]
+fn test_chat_message_with_summary_suffix_routes_to_existing_tab() {
+    let mut session = Session::new(0);
+
+    // Create the base Planning tab
+    session.add_run_tab("Planning".to_string());
+    assert_eq!(session.run_tabs.len(), 1);
+    assert_eq!(session.run_tabs[0].phase, "Planning");
+
+    // Add a message with " Summary" suffix - should route to existing Planning tab
+    session.add_chat_message("summarizer", "Planning Summary", "Summary content".to_string());
+
+    // Should still have only one tab
+    assert_eq!(session.run_tabs.len(), 1);
+    assert_eq!(session.run_tabs[0].phase, "Planning");
+
+    // Message should be added to the Planning tab
+    assert_eq!(session.run_tabs[0].messages.len(), 1);
+    assert_eq!(session.run_tabs[0].messages[0].message, "Summary content");
+}
+
+#[test]
+fn test_chat_message_summary_suffix_creates_normalized_tab_if_missing() {
+    let mut session = Session::new(0);
+
+    // Add message with Summary suffix when no tab exists
+    session.add_chat_message("summarizer", "Planning Summary", "Test".to_string());
+
+    // Should create a tab with the normalized name (without suffix)
+    assert_eq!(session.run_tabs.len(), 1);
+    assert_eq!(session.run_tabs[0].phase, "Planning");
+}
+
+#[test]
+fn test_review_iteration_phase_consistency() {
+    let mut session = Session::new(0);
+
+    // Create Reviewing #1 tab (matches reviewing.rs format)
+    session.add_run_tab("Reviewing #1".to_string());
+
+    // Add message to the same tab
+    session.add_chat_message("reviewer", "Reviewing #1", "Review content".to_string());
+
+    // Should still have only one tab
+    assert_eq!(session.run_tabs.len(), 1);
+    assert_eq!(session.run_tabs[0].messages.len(), 1);
+}
+
+#[test]
 fn test_add_run_tab() {
     let mut session = Session::new(0);
     assert!(session.run_tabs.is_empty());

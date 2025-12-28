@@ -1,17 +1,21 @@
 
-use crate::app::util::{build_max_iterations_summary, build_plan_failure_summary, build_review_failure_summary, log_workflow};
+use crate::app::util::{build_plan_failure_summary, build_review_failure_summary, log_workflow};
 use crate::app::workflow_common::{cleanup_merged_feedback, REVIEW_FAILURE_RETRY_LIMIT};
+use crate::app::workflow_decisions::{
+    handle_max_iterations, wait_for_plan_failure_decision, wait_for_review_decision,
+    PlanFailureDecision, ReviewDecision,
+};
 use crate::config::WorkflowConfig;
 use crate::phases::{
     self, aggregate_reviews, merge_feedback, run_multi_agent_review_with_context,
     run_planning_phase_with_context, run_revision_phase_with_context, write_feedback_files,
 };
 use crate::state::{FeedbackStatus, Phase, State};
-use crate::tui::{Event, SessionEventSender, UserApprovalResponse};
+use crate::tui::{CancellationError, Event, SessionEventSender, UserApprovalResponse, WorkflowCommand};
 use anyhow::Result;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 
 pub enum WorkflowResult {
 
@@ -22,19 +26,6 @@ pub enum WorkflowResult {
     Aborted { reason: String },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum ReviewDecision {
-    Retry,
-    Continue,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum PlanFailureDecision {
-    Retry,
-    Continue,
-    Abort,
-}
-
 pub async fn run_workflow_with_config(
     mut state: State,
     working_dir: PathBuf,
@@ -42,7 +33,9 @@ pub async fn run_workflow_with_config(
     config: WorkflowConfig,
     output_tx: mpsc::UnboundedSender<Event>,
     mut approval_rx: mpsc::Receiver<UserApprovalResponse>,
+    mut control_rx: mpsc::Receiver<WorkflowCommand>,
     session_id: usize,
+    run_id: u64,
 ) -> Result<WorkflowResult> {
     log_workflow(
         &working_dir,
@@ -62,13 +55,23 @@ pub async fn run_workflow_with_config(
     );
     log_workflow(
         &working_dir,
-        &format!("Workflow session ID: {}", state.workflow_session_id),
+        &format!("Workflow session ID: {}, run ID: {}", state.workflow_session_id, run_id),
     );
 
-    let sender = SessionEventSender::new(session_id, output_tx.clone());
+    // Create cancellation signal for broadcasting to all agent tasks
+    let (cancel_tx, cancel_rx) = watch::channel(false);
+
+    let sender = SessionEventSender::new(session_id, run_id, output_tx.clone());
     let mut last_reviews: Vec<phases::ReviewResult> = Vec::new();
 
     while state.should_continue() {
+        // Check for interrupt before each phase
+        if let Ok(WorkflowCommand::Interrupt { feedback }) = control_rx.try_recv() {
+            log_workflow(&working_dir, &format!("Received interrupt with feedback: {}", feedback));
+            sender.send_output("[workflow] Interrupted by user".to_string());
+            return Ok(WorkflowResult::NeedsRestart { user_feedback: feedback });
+        }
+
         match state.phase {
             Phase::Planning => {
                 let result = run_planning_phase(
@@ -78,11 +81,27 @@ pub async fn run_workflow_with_config(
                     &config,
                     &sender,
                     &mut approval_rx,
+                    &mut control_rx,
+                    &cancel_tx,
+                    cancel_rx.clone(),
                 )
-                .await?;
+                .await;
 
-                if let Some(workflow_result) = result {
-                    return Ok(workflow_result);
+                match result {
+                    Ok(Some(workflow_result)) => return Ok(workflow_result),
+                    Ok(None) => {}
+                    Err(e) if e.downcast_ref::<CancellationError>().is_some() => {
+                        // Phase was cancelled - check for interrupt feedback
+                        if let Ok(WorkflowCommand::Interrupt { feedback }) = control_rx.try_recv() {
+                            log_workflow(&working_dir, "Planning phase cancelled, restarting with feedback");
+                            return Ok(WorkflowResult::NeedsRestart { user_feedback: feedback });
+                        }
+                        // Cancellation without feedback - shouldn't happen, but treat as abort
+                        return Ok(WorkflowResult::Aborted {
+                            reason: "Cancelled without feedback".to_string(),
+                        });
+                    }
+                    Err(e) => return Err(e),
                 }
             }
 
@@ -94,29 +113,60 @@ pub async fn run_workflow_with_config(
                     &config,
                     &sender,
                     &mut approval_rx,
+                    &mut control_rx,
+                    &cancel_tx,
+                    cancel_rx.clone(),
                     &mut last_reviews,
                 )
-                .await?;
+                .await;
 
-                if let Some(workflow_result) = result {
-                    return Ok(workflow_result);
-                }
-
-                if state.phase == Phase::Complete {
-                    break;
+                match result {
+                    Ok(Some(workflow_result)) => return Ok(workflow_result),
+                    Ok(None) => {
+                        if state.phase == Phase::Complete {
+                            break;
+                        }
+                    }
+                    Err(e) if e.downcast_ref::<CancellationError>().is_some() => {
+                        if let Ok(WorkflowCommand::Interrupt { feedback }) = control_rx.try_recv() {
+                            log_workflow(&working_dir, "Reviewing phase cancelled, restarting with feedback");
+                            return Ok(WorkflowResult::NeedsRestart { user_feedback: feedback });
+                        }
+                        return Ok(WorkflowResult::Aborted {
+                            reason: "Cancelled without feedback".to_string(),
+                        });
+                    }
+                    Err(e) => return Err(e),
                 }
             }
 
             Phase::Revising => {
-                run_revising_phase(
+                let result = run_revising_phase(
                     &mut state,
                     &working_dir,
                     &state_path,
                     &config,
                     &sender,
+                    &mut control_rx,
+                    &cancel_tx,
+                    cancel_rx.clone(),
                     &mut last_reviews,
                 )
-                .await?;
+                .await;
+
+                match result {
+                    Ok(()) => {}
+                    Err(e) if e.downcast_ref::<CancellationError>().is_some() => {
+                        if let Ok(WorkflowCommand::Interrupt { feedback }) = control_rx.try_recv() {
+                            log_workflow(&working_dir, "Revising phase cancelled, restarting with feedback");
+                            return Ok(WorkflowResult::NeedsRestart { user_feedback: feedback });
+                        }
+                        return Ok(WorkflowResult::Aborted {
+                            reason: "Cancelled without feedback".to_string(),
+                        });
+                    }
+                    Err(e) => return Err(e),
+                }
             }
 
             Phase::Complete => {
@@ -157,6 +207,9 @@ async fn run_planning_phase(
     config: &WorkflowConfig,
     sender: &SessionEventSender,
     approval_rx: &mut mpsc::Receiver<UserApprovalResponse>,
+    control_rx: &mut mpsc::Receiver<WorkflowCommand>,
+    cancel_tx: &watch::Sender<bool>,
+    cancel_rx: watch::Receiver<bool>,
 ) -> Result<Option<WorkflowResult>> {
     log_workflow(working_dir, ">>> ENTERING Planning phase");
     sender.send_phase_started("Planning".to_string());
@@ -169,9 +222,16 @@ async fn run_planning_phase(
     let plan_path = working_dir.join(&state.plan_file);
 
     loop {
+        // Check for interrupt before starting planning
+        if let Ok(WorkflowCommand::Interrupt { feedback }) = control_rx.try_recv() {
+            log_workflow(working_dir, &format!("Received interrupt during planning: {}", feedback));
+            sender.send_output("[planning] Interrupted by user".to_string());
+            return Ok(Some(WorkflowResult::NeedsRestart { user_feedback: feedback }));
+        }
+
         log_workflow(working_dir, "Calling run_planning_phase_with_context...");
         let planning_result =
-            run_planning_phase_with_context(state, working_dir, config, sender.clone(), state_path)
+            run_planning_phase_with_context(state, working_dir, config, sender.clone(), state_path, cancel_rx.clone())
                 .await;
 
         match planning_result {
@@ -213,6 +273,13 @@ async fn run_planning_phase(
                 break;
             }
             Err(e) => {
+                // Check if this is a cancellation error
+                if e.downcast_ref::<CancellationError>().is_some() {
+                    log_workflow(working_dir, "Planning phase was cancelled");
+                    // Re-throw to be handled by caller
+                    return Err(e);
+                }
+
                 let error_msg = format!("{}", e);
                 log_workflow(
                     working_dir,
@@ -276,6 +343,9 @@ async fn run_reviewing_phase(
     config: &WorkflowConfig,
     sender: &SessionEventSender,
     approval_rx: &mut mpsc::Receiver<UserApprovalResponse>,
+    control_rx: &mut mpsc::Receiver<WorkflowCommand>,
+    cancel_tx: &watch::Sender<bool>,
+    cancel_rx: watch::Receiver<bool>,
     last_reviews: &mut Vec<phases::ReviewResult>,
 ) -> Result<Option<WorkflowResult>> {
     log_workflow(
@@ -301,6 +371,13 @@ async fn run_reviewing_phase(
     let mut retry_attempts = 0usize;
 
     loop {
+        // Check for interrupt before running reviewers
+        if let Ok(WorkflowCommand::Interrupt { feedback }) = control_rx.try_recv() {
+            log_workflow(working_dir, &format!("Received interrupt during reviewing: {}", feedback));
+            sender.send_output("[review] Interrupted by user".to_string());
+            return Ok(Some(WorkflowResult::NeedsRestart { user_feedback: feedback }));
+        }
+
         log_workflow(
             working_dir,
             &format!("Running reviewers: {:?}", pending_reviewers),
@@ -313,8 +390,19 @@ async fn run_reviewing_phase(
             sender.clone(),
             state.iteration,
             state_path,
+            cancel_rx.clone(),
         )
-        .await?;
+        .await;
+
+        // Check for cancellation
+        let batch = match batch {
+            Ok(b) => b,
+            Err(e) if e.downcast_ref::<CancellationError>().is_some() => {
+                log_workflow(working_dir, "Review phase was cancelled");
+                return Err(e);
+            }
+            Err(e) => return Err(e),
+        };
 
         for review in batch.reviews {
             reviews_by_agent.insert(review.agent_name.clone(), review);
@@ -374,11 +462,7 @@ async fn run_reviewing_phase(
     *last_reviews = reviews;
     state.last_feedback_status = Some(status.clone());
 
-    let review_phase_name = if state.iteration > 1 {
-        format!("Reviewing #{}", state.iteration)
-    } else {
-        "Reviewing".to_string()
-    };
+    let review_phase_name = format!("Reviewing #{}", state.iteration);
     phases::spawn_summary_generation(
         review_phase_name,
         state,
@@ -421,198 +505,24 @@ async fn run_reviewing_phase(
     Ok(None)
 }
 
-async fn wait_for_review_decision(
-    working_dir: &PathBuf,
-    approval_rx: &mut mpsc::Receiver<UserApprovalResponse>,
-) -> ReviewDecision {
-    match approval_rx.recv().await {
-        Some(UserApprovalResponse::ReviewRetry) => ReviewDecision::Retry,
-        Some(UserApprovalResponse::ReviewContinue) => ReviewDecision::Continue,
-        Some(UserApprovalResponse::Accept) => {
-            log_workflow(
-                working_dir,
-                "Received plan approval while awaiting review decision, treating as continue",
-            );
-            ReviewDecision::Continue
-        }
-        Some(UserApprovalResponse::Decline(_)) => {
-            log_workflow(
-                working_dir,
-                "Received plan decline while awaiting review decision, treating as retry",
-            );
-            ReviewDecision::Retry
-        }
-        Some(UserApprovalResponse::PlanGenerationRetry) => {
-            log_workflow(
-                working_dir,
-                "Received PlanGenerationRetry while awaiting review decision, treating as retry",
-            );
-            ReviewDecision::Retry
-        }
-        Some(UserApprovalResponse::PlanGenerationContinue) => {
-            log_workflow(
-                working_dir,
-                "Received PlanGenerationContinue while awaiting review decision, treating as continue",
-            );
-            ReviewDecision::Continue
-        }
-        Some(UserApprovalResponse::AbortWorkflow) => {
-            log_workflow(
-                working_dir,
-                "Received AbortWorkflow while awaiting review decision, treating as continue",
-            );
-            ReviewDecision::Continue
-        }
-        Some(UserApprovalResponse::ProceedWithoutApproval) => {
-            log_workflow(
-                working_dir,
-                "Received ProceedWithoutApproval while awaiting review decision, treating as continue",
-            );
-            ReviewDecision::Continue
-        }
-        Some(UserApprovalResponse::ContinueReviewing) => {
-            log_workflow(
-                working_dir,
-                "Received ContinueReviewing while awaiting review decision, treating as continue",
-            );
-            ReviewDecision::Continue
-        }
-        None => {
-            log_workflow(
-                working_dir,
-                "Review decision channel closed, treating as continue",
-            );
-            ReviewDecision::Continue
-        }
-    }
-}
-
-async fn wait_for_plan_failure_decision(
-    working_dir: &PathBuf,
-    approval_rx: &mut mpsc::Receiver<UserApprovalResponse>,
-    plan_exists: bool,
-) -> PlanFailureDecision {
-    loop {
-        match approval_rx.recv().await {
-            Some(UserApprovalResponse::PlanGenerationRetry) => {
-                log_workflow(working_dir, "User chose to retry plan generation");
-                return PlanFailureDecision::Retry;
-            }
-            Some(UserApprovalResponse::PlanGenerationContinue) => {
-                if plan_exists {
-                    log_workflow(working_dir, "User chose to continue with existing plan");
-                    return PlanFailureDecision::Continue;
-                } else {
-                    log_workflow(
-                        working_dir,
-                        "User chose continue but no plan exists, treating as retry",
-                    );
-                    return PlanFailureDecision::Retry;
-                }
-            }
-            Some(UserApprovalResponse::AbortWorkflow) => {
-                log_workflow(working_dir, "User chose to abort workflow");
-                return PlanFailureDecision::Abort;
-            }
-            Some(other) => {
-                log_workflow(
-                    working_dir,
-                    &format!(
-                        "Ignoring unexpected response {:?} during plan failure prompt",
-                        other
-                    ),
-                );
-                continue;
-            }
-            None => {
-                log_workflow(
-                    working_dir,
-                    "Approval channel closed during plan failure prompt - aborting",
-                );
-                return PlanFailureDecision::Abort;
-            }
-        }
-    }
-}
-
-async fn handle_max_iterations(
-    state: &mut State,
-    working_dir: &PathBuf,
-    state_path: &PathBuf,
-    sender: &SessionEventSender,
-    approval_rx: &mut mpsc::Receiver<UserApprovalResponse>,
-    last_reviews: &[phases::ReviewResult],
-) -> Result<Option<WorkflowResult>> {
-    log_workflow(working_dir, "Max iterations reached - prompting user");
-    sender.send_output("[planning] Max iterations reached".to_string());
-    sender.send_output("[planning] Awaiting your decision...".to_string());
-
-    let summary = build_max_iterations_summary(state, working_dir, last_reviews);
-    sender.send_max_iterations_reached(summary);
-
-    loop {
-        match approval_rx.recv().await {
-            Some(UserApprovalResponse::ProceedWithoutApproval) => {
-                log_workflow(working_dir, "User chose to proceed without AI approval");
-                sender.send_output("[planning] Proceeding without AI approval...".to_string());
-                state.approval_overridden = true;
-                state.transition(Phase::Complete)?;
-                state.save(state_path)?;
-                return Ok(None);
-            }
-            Some(UserApprovalResponse::ContinueReviewing) => {
-                log_workflow(working_dir, "User chose to continue reviewing");
-                sender.send_output("[planning] Continuing with another review cycle...".to_string());
-                state.max_iterations += 1;
-                state.transition(Phase::Revising)?;
-                state.save(state_path)?;
-                return Ok(None);
-            }
-            Some(UserApprovalResponse::Decline(feedback)) => {
-                log_workflow(
-                    working_dir,
-                    &format!("User declined with feedback: {}", feedback),
-                );
-                sender.send_output(format!("[planning] Restarting with feedback: {}", feedback));
-                return Ok(Some(WorkflowResult::NeedsRestart {
-                    user_feedback: feedback,
-                }));
-            }
-            Some(UserApprovalResponse::AbortWorkflow) => {
-                log_workflow(working_dir, "User chose to abort workflow");
-                sender.send_output("[planning] Workflow aborted by user".to_string());
-                return Ok(Some(WorkflowResult::Aborted {
-                    reason: "User aborted workflow at max iterations".to_string(),
-                }));
-            }
-            Some(other) => {
-                log_workflow(
-                    working_dir,
-                    &format!(
-                        "Ignoring unexpected response {:?} during max iterations prompt",
-                        other
-                    ),
-                );
-                continue;
-            }
-            None => {
-                log_workflow(working_dir, "Approval channel closed - aborting");
-                return Ok(Some(WorkflowResult::Aborted {
-                    reason: "Approval channel closed".to_string(),
-                }));
-            }
-        }
-    }
-}
-
 async fn run_revising_phase(
     state: &mut State,
     working_dir: &PathBuf,
     state_path: &PathBuf,
     config: &WorkflowConfig,
     sender: &SessionEventSender,
+    control_rx: &mut mpsc::Receiver<WorkflowCommand>,
+    cancel_tx: &watch::Sender<bool>,
+    cancel_rx: watch::Receiver<bool>,
     last_reviews: &mut Vec<phases::ReviewResult>,
 ) -> Result<()> {
+    // Check for interrupt before starting revision
+    if let Ok(WorkflowCommand::Interrupt { feedback }) = control_rx.try_recv() {
+        log_workflow(working_dir, &format!("Received interrupt during revising: {}", feedback));
+        sender.send_output("[revision] Interrupted by user".to_string());
+        return Err(CancellationError { feedback }.into());
+    }
+
     log_workflow(
         working_dir,
         &format!(
@@ -629,7 +539,7 @@ async fn run_revising_phase(
     sender.send_output(format!("Agent: {}", config.workflow.revising.agent));
 
     log_workflow(working_dir, "Calling run_revision_phase_with_context...");
-    run_revision_phase_with_context(
+    let revision_result = run_revision_phase_with_context(
         state,
         working_dir,
         config,
@@ -637,8 +547,19 @@ async fn run_revising_phase(
         sender.clone(),
         state.iteration,
         state_path,
+        cancel_rx.clone(),
     )
-    .await?;
+    .await;
+
+    // Check for cancellation
+    match revision_result {
+        Ok(()) => {}
+        Err(e) if e.downcast_ref::<CancellationError>().is_some() => {
+            log_workflow(working_dir, "Revising phase was cancelled");
+            return Err(e);
+        }
+        Err(e) => return Err(e),
+    }
     last_reviews.clear();
     log_workflow(working_dir, "run_revision_phase_with_context completed");
 

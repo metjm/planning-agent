@@ -1,7 +1,7 @@
 
-use super::util::{parse_markdown_line, wrap_text_at_width};
+use super::util::{compute_wrapped_line_count, compute_wrapped_line_count_text, parse_markdown_line, wrap_text_at_width};
 use crate::state::Phase;
-use crate::tui::{ApprovalContext, ApprovalMode, Session, TabManager};
+use crate::tui::{ApprovalContext, ApprovalMode, FeedbackTarget, Session, TabManager};
 use crate::update::UpdateStatus;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
@@ -59,6 +59,15 @@ pub fn draw_footer(frame: &mut Frame, session: &Session, tab_manager: &TabManage
     if session.approval_mode != ApprovalMode::None {
         spans.push(Span::styled(
             "[↑/↓] Scroll  [Enter] Select  [Esc] Cancel",
+            Style::default().fg(Color::DarkGray),
+        ));
+    } else if session.running && session.workflow_control_tx.is_some() {
+        spans.push(Span::styled(
+            "[Ctrl+I] Interrupt  ",
+            Style::default().fg(Color::Magenta),
+        ));
+        spans.push(Span::styled(
+            "[Ctrl+PgUp/Dn] Switch Tabs",
             Style::default().fg(Color::DarkGray),
         ));
     } else {
@@ -168,15 +177,18 @@ fn draw_choice_popup(frame: &mut Frame, session: &Session, area: Rect) {
 
     let inner_area = summary_block.inner(chunks[1]);
     let visible_height = inner_area.height as usize;
+    let inner_width = inner_area.width;
 
     let summary_lines: Vec<Line> = session.plan_summary.lines().map(parse_markdown_line).collect();
 
-    let total_lines = summary_lines.len();
+    // Compute wrapped line count using block-less paragraph
+    let total_lines = compute_wrapped_line_count(&summary_lines, inner_width);
     let max_scroll = total_lines.saturating_sub(visible_height);
     let scroll_pos = session.plan_summary_scroll.min(max_scroll);
 
     let summary = Paragraph::new(summary_lines)
         .block(summary_block)
+        .wrap(Wrap { trim: false })
         .scroll((scroll_pos as u16, 0));
     frame.render_widget(summary, chunks[1]);
 
@@ -257,15 +269,29 @@ fn draw_feedback_popup(frame: &mut Frame, session: &Session, area: Rect) {
         ])
         .split(area);
 
+    // Customize title and color based on feedback target
+    let (title_text, block_title, border_color) = match session.feedback_target {
+        FeedbackTarget::ApprovalDecline => (
+            " Enter your feedback ",
+            " Request Changes ",
+            Color::Yellow,
+        ),
+        FeedbackTarget::WorkflowInterrupt => (
+            " Interrupt with feedback ",
+            " Interrupt Workflow ",
+            Color::Magenta,
+        ),
+    };
+
     let title = Paragraph::new(Line::from(vec![Span::styled(
-        " Enter your feedback ",
-        Style::default().fg(Color::Yellow).bold(),
+        title_text,
+        Style::default().fg(border_color).bold(),
     )]))
     .block(
         Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Yellow))
-            .title(" Request Changes "),
+            .border_style(Style::default().fg(border_color))
+            .title(block_title),
     );
     frame.render_widget(title, chunks[0]);
 
@@ -282,24 +308,46 @@ fn draw_feedback_popup(frame: &mut Frame, session: &Session, area: Rect) {
         Style::default().fg(Color::DarkGray)
     };
 
+    let input_title = match session.feedback_target {
+        FeedbackTarget::ApprovalDecline => " Your Feedback ",
+        FeedbackTarget::WorkflowInterrupt => " Interrupt Message ",
+    };
+
     let input_block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Cyan))
-        .title(" Your Feedback ");
+        .title(input_title);
 
     let inner = input_block.inner(chunks[1]);
     let input_width = inner.width as usize;
+    let input_height = inner.height as usize;
+
+    // Calculate cursor position for scrolling
+    let (cursor_row, cursor_col) = if has_content {
+        session.get_feedback_cursor_position(input_width)
+    } else {
+        (0, 0)
+    };
+
+    // Auto-scroll to keep cursor visible (same pattern as tab input)
+    let scroll = if cursor_row >= session.feedback_scroll + input_height {
+        cursor_row.saturating_sub(input_height - 1)
+    } else if cursor_row < session.feedback_scroll {
+        cursor_row
+    } else {
+        session.feedback_scroll
+    };
 
     let wrapped_input = wrap_text_at_width(&input_text, input_width);
     let input = Paragraph::new(wrapped_input)
         .style(input_style)
-        .block(input_block);
+        .block(input_block)
+        .scroll((scroll as u16, 0));
     frame.render_widget(input, chunks[1]);
 
     if has_content {
-        let (cursor_row, cursor_col) = session.get_feedback_cursor_position(input_width);
         let cursor_x = inner.x + cursor_col as u16;
-        let cursor_y = inner.y + cursor_row as u16;
+        let cursor_y = inner.y + (cursor_row - scroll) as u16;
         if cursor_y < inner.y + inner.height {
             frame.set_cursor_position((cursor_x.min(inner.x + inner.width - 1), cursor_y));
         }
@@ -307,9 +355,14 @@ fn draw_feedback_popup(frame: &mut Frame, session: &Session, area: Rect) {
         frame.set_cursor_position((inner.x, inner.y));
     }
 
+    let submit_label = match session.feedback_target {
+        FeedbackTarget::ApprovalDecline => "Submit  ",
+        FeedbackTarget::WorkflowInterrupt => "Interrupt & Restart  ",
+    };
+
     let instructions = Paragraph::new(Line::from(vec![
         Span::styled("  [Enter] ", Style::default().fg(Color::Green).bold()),
-        Span::raw("Submit  "),
+        Span::raw(submit_label),
         Span::styled("  [Esc] ", Style::default().fg(Color::Red).bold()),
         Span::raw("Cancel"),
     ]))
@@ -508,8 +561,21 @@ pub fn draw_error_overlay(frame: &mut Frame, session: &Session) {
     if let Some(ref error) = session.error_state {
         let area = frame.area();
 
-        let popup_width = (area.width as f32 * 0.5).min(60.0) as u16;
-        let popup_height = 8;
+        let popup_width = (area.width as f32 * 0.6).min(70.0) as u16;
+        // Calculate inner width for wrapping (popup width minus borders)
+        let inner_width = popup_width.saturating_sub(2);
+
+        // Compute wrapped line count for the error text
+        let wrapped_error_lines = compute_wrapped_line_count_text(error, inner_width);
+
+        // Error layout: border (1) + empty line (1) + error text + empty line (1) + instructions (1) + border (1)
+        // = 5 + wrapped_error_lines
+        // Cap popup height at 80% of terminal height
+        let max_popup_height = (area.height as f32 * 0.8) as u16;
+        let min_popup_height = 8u16;
+        let ideal_popup_height = (wrapped_error_lines as u16).saturating_add(5);
+        let popup_height = ideal_popup_height.clamp(min_popup_height, max_popup_height);
+
         let popup_x = (area.width.saturating_sub(popup_width)) / 2;
         let popup_y = (area.height.saturating_sub(popup_height)) / 2;
 
@@ -517,25 +583,57 @@ pub fn draw_error_overlay(frame: &mut Frame, session: &Session) {
 
         frame.render_widget(Clear, popup_area);
 
-        let error_text = Paragraph::new(vec![
+        // Split into error content and instructions
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Min(0),     // Error content (scrollable)
+                Constraint::Length(1),  // Instructions
+            ])
+            .split(popup_area);
+
+        let error_block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Red))
+            .title(" Error (j/k to scroll) ");
+
+        let inner_area = error_block.inner(chunks[0]);
+        let visible_height = inner_area.height as usize;
+
+        // Total lines = 1 (empty) + error lines + 1 (empty)
+        let total_content_lines = wrapped_error_lines + 2;
+        let max_scroll = total_content_lines.saturating_sub(visible_height);
+        let scroll_pos = session.error_scroll.min(max_scroll);
+
+        let error_paragraph = Paragraph::new(vec![
             Line::from(""),
             Line::from(Span::styled(error.clone(), Style::default().fg(Color::Red))),
             Line::from(""),
-            Line::from(vec![
-                Span::styled("[Esc]", Style::default().fg(Color::Yellow)),
-                Span::raw(" Close  "),
-                Span::styled("[Ctrl+W]", Style::default().fg(Color::Red)),
-                Span::raw(" Close Tab"),
-            ]),
         ])
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::Red))
-                .title(" Error "),
-        )
-        .wrap(Wrap { trim: false });
+        .block(error_block)
+        .wrap(Wrap { trim: false })
+        .scroll((scroll_pos as u16, 0));
+        frame.render_widget(error_paragraph, chunks[0]);
 
-        frame.render_widget(error_text, popup_area);
+        // Show scrollbar if content exceeds visible area
+        if total_content_lines > visible_height {
+            let mut scrollbar_state = ScrollbarState::new(total_content_lines).position(scroll_pos);
+            frame.render_stateful_widget(
+                Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                    .begin_symbol(Some("↑"))
+                    .end_symbol(Some("↓")),
+                chunks[0],
+                &mut scrollbar_state,
+            );
+        }
+
+        // Instructions line
+        let instructions = Paragraph::new(Line::from(vec![
+            Span::styled("  [Esc]", Style::default().fg(Color::Yellow)),
+            Span::raw(" Close  "),
+            Span::styled("[Ctrl+W]", Style::default().fg(Color::Red)),
+            Span::raw(" Close Tab"),
+        ]));
+        frame.render_widget(instructions, chunks[1]);
     }
 }

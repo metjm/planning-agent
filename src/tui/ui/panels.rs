@@ -1,6 +1,6 @@
 
 use super::stats::draw_stats;
-use super::util::parse_markdown_line;
+use super::util::{compute_wrapped_line_count, parse_markdown_line};
 use crate::tui::{FocusedPanel, RunTab, Session, SummaryState};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
@@ -504,13 +504,16 @@ fn draw_summary_panel(
 
     let inner_area = summary_block.inner(area);
     let visible_height = inner_area.height as usize;
+    let inner_width = inner_area.width;
 
-    let total_lines = lines.len();
+    // Compute wrapped line count using block-less paragraph
+    let total_lines = compute_wrapped_line_count(&lines, inner_width);
     let max_scroll = total_lines.saturating_sub(visible_height);
     let scroll_pos = active_tab.map(|t| t.summary_scroll.min(max_scroll)).unwrap_or(0);
 
     let paragraph = Paragraph::new(lines)
         .block(summary_block)
+        .wrap(Wrap { trim: false })
         .scroll((scroll_pos as u16, 0));
     frame.render_widget(paragraph, area);
 

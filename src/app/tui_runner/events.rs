@@ -5,6 +5,7 @@ use crate::config::WorkflowConfig;
 use crate::state::{Phase, State};
 use crate::tui::{
     ApprovalMode, Event, InputMode, SessionStatus, TabManager, UserApprovalResponse,
+    WorkflowCommand,
 };
 use crate::update;
 use anyhow::Result;
@@ -326,27 +327,38 @@ async fn handle_session_event(
                 session.update_todos(agent_name, todos);
             }
         }
-        Event::SessionRunTabSummaryGenerating { session_id, phase } => {
+        Event::SessionRunTabSummaryGenerating { session_id, phase, run_id } => {
             if let Some(session) = tab_manager.session_by_id_mut(session_id) {
-                session.set_summary_generating(&phase);
+                // Only process if run_id matches current run
+                if session.current_run_id == run_id {
+                    session.set_summary_generating(&phase);
+                }
             }
         }
         Event::SessionRunTabSummaryReady {
             session_id,
             phase,
             summary,
+            run_id,
         } => {
             if let Some(session) = tab_manager.session_by_id_mut(session_id) {
-                session.set_summary_ready(&phase, summary);
+                // Only process if run_id matches current run
+                if session.current_run_id == run_id {
+                    session.set_summary_ready(&phase, summary);
+                }
             }
         }
         Event::SessionRunTabSummaryError {
             session_id,
             phase,
             error,
+            run_id,
         } => {
             if let Some(session) = tab_manager.session_by_id_mut(session_id) {
-                session.set_summary_error(&phase, error);
+                // Only process if run_id matches current run
+                if session.current_run_id == run_id {
+                    session.set_summary_error(&phase, error);
+                }
             }
         }
         Event::AccountUsageUpdate(usage) => {
@@ -428,6 +440,15 @@ pub async fn handle_init_completion(
                     mpsc::channel::<UserApprovalResponse>(1);
                 session.approval_tx = Some(new_approval_tx);
 
+                // Create control channel for workflow interrupts
+                let (new_control_tx, new_control_rx) =
+                    mpsc::channel::<WorkflowCommand>(1);
+                session.workflow_control_tx = Some(new_control_tx);
+
+                // Increment run_id for this new workflow
+                session.current_run_id += 1;
+                let run_id = session.current_run_id;
+
                 let cfg = workflow_config.clone();
                 let workflow_handle = tokio::spawn({
                     let working_dir = working_dir.clone();
@@ -441,7 +462,9 @@ pub async fn handle_init_completion(
                             cfg,
                             tx,
                             new_approval_rx,
+                            new_control_rx,
                             sid,
+                            run_id,
                         )
                         .await
                     }
@@ -490,6 +513,10 @@ pub async fn check_workflow_completions(
 
                         session.streaming_lines.clear();
                         session.clear_todos();
+                        // Clear run tabs for clean restart
+                        session.run_tabs.clear();
+                        session.active_run_tab = 0;
+                        session.chat_follow_mode = true;
                         session.status = SessionStatus::Planning;
 
                         if let Some(ref mut state) = session.workflow_state {
@@ -509,6 +536,15 @@ pub async fn check_workflow_completions(
                                 mpsc::channel::<UserApprovalResponse>(1);
                             session.approval_tx = Some(new_approval_tx);
 
+                            // Create control channel for workflow interrupts
+                            let (new_control_tx, new_control_rx) =
+                                mpsc::channel::<WorkflowCommand>(1);
+                            session.workflow_control_tx = Some(new_control_tx);
+
+                            // Increment run_id to invalidate any stale summary events
+                            session.current_run_id += 1;
+                            let run_id = session.current_run_id;
+
                             let cfg = workflow_config.clone();
                             let new_handle = tokio::spawn({
                                 let state = state.clone();
@@ -523,7 +559,9 @@ pub async fn check_workflow_completions(
                                         cfg,
                                         tx,
                                         new_approval_rx,
+                                        new_control_rx,
                                         sid,
+                                        run_id,
                                     )
                                     .await
                                 }

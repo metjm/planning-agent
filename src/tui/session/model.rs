@@ -69,9 +69,17 @@ pub enum ApprovalContext {
     #[default]
     PlanApproval,
     ReviewDecision,
-    PlanGenerationFailed,   
-    MaxIterationsReached,   
-    UserOverrideApproval,   
+    PlanGenerationFailed,
+    MaxIterationsReached,
+    UserOverrideApproval,
+}
+
+/// Indicates the target of feedback entry mode.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub enum FeedbackTarget {
+    #[default]
+    ApprovalDecline,    // Existing: decline with feedback in approval flow
+    WorkflowInterrupt,  // New: interrupt active workflow with feedback
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Default)]

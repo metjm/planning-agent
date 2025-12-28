@@ -2,7 +2,7 @@
 mod overlays;
 mod panels;
 mod stats;
-mod util;
+pub mod util;
 
 use crate::tui::{ApprovalMode, InputMode, SessionStatus, TabManager};
 use ratatui::{
