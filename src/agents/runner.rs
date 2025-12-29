@@ -69,9 +69,9 @@ pub trait EventEmitter: Send + Sync {
     fn send_model_detected(&self, model: String);
     fn send_stop_reason(&self, reason: String);
     fn send_token_usage(&self, usage: TokenUsage);
-    fn send_tool_started(&self, name: String);
-    fn send_tool_finished(&self, id: String);
-    fn send_tool_result_received(&self, id: String, is_error: bool);
+    fn send_tool_started(&self, tool_id: Option<String>, display_name: String, input_preview: String);
+    fn send_tool_finished(&self, tool_id: Option<String>);
+    fn send_tool_result_received(&self, tool_id: Option<String>, is_error: bool);
     fn send_agent_message(&self, msg: String);
     fn send_todos_update(&self, items: Vec<crate::tui::TodoItem>);
 }
@@ -113,16 +113,23 @@ impl EventEmitter for ContextEmitter {
     fn send_token_usage(&self, usage: TokenUsage) {
         self.context.session_sender.send_token_usage(usage);
     }
-    fn send_tool_started(&self, name: String) {
-        self.context.session_sender.send_tool_started(name, self.agent_name.clone());
+    fn send_tool_started(&self, tool_id: Option<String>, display_name: String, input_preview: String) {
+        self.context.session_sender.send_tool_started(
+            tool_id,
+            display_name,
+            input_preview,
+            self.agent_name.clone(),
+        );
     }
-    fn send_tool_finished(&self, id: String) {
-        self.context.session_sender.send_tool_finished(id, self.agent_name.clone());
-    }
-    fn send_tool_result_received(&self, id: String, is_error: bool) {
+    fn send_tool_finished(&self, tool_id: Option<String>) {
         self.context
             .session_sender
-            .send_tool_result_received(id, is_error, self.agent_name.clone());
+            .send_tool_finished(tool_id, self.agent_name.clone());
+    }
+    fn send_tool_result_received(&self, tool_id: Option<String>, is_error: bool) {
+        self.context
+            .session_sender
+            .send_tool_result_received(tool_id, is_error, self.agent_name.clone());
     }
     fn send_agent_message(&self, msg: String) {
         self.context.session_sender.send_agent_message(
@@ -155,9 +162,7 @@ fn emit_agent_event(event: AgentEvent, emitter: &dyn EventEmitter) {
             tool_use_id,
             ..
         } => {
-            // Send the tool_use_id if available, otherwise use display_name as fallback
-            let tool_id = tool_use_id.clone().unwrap_or_else(|| display_name.clone());
-            emitter.send_tool_started(tool_id);
+            emitter.send_tool_started(tool_use_id, display_name.clone(), input_preview.clone());
             emitter.send_streaming(format!("[Tool: {}] {}", display_name, input_preview));
         }
         AgentEvent::ToolResult {
@@ -166,8 +171,14 @@ fn emit_agent_event(event: AgentEvent, emitter: &dyn EventEmitter) {
             content_lines,
             has_more,
         } => {
-            emitter.send_tool_result_received(tool_use_id.clone(), is_error);
-            emitter.send_tool_finished(tool_use_id);
+            // Normalize empty string to None for consistent handling
+            let normalized_id = if tool_use_id.is_empty() {
+                None
+            } else {
+                Some(tool_use_id.clone())
+            };
+            emitter.send_tool_result_received(normalized_id.clone(), is_error);
+            emitter.send_tool_finished(normalized_id);
             for (i, line) in content_lines.iter().enumerate() {
                 let prefix = if i == 0 { "[Result] " } else { "         " };
                 emitter.send_streaming(format!("{}{}", prefix, line));
@@ -178,7 +189,7 @@ fn emit_agent_event(event: AgentEvent, emitter: &dyn EventEmitter) {
         }
         AgentEvent::TodosUpdate(items) => emitter.send_todos_update(items),
         AgentEvent::ContentBlockStart { name } => {
-            emitter.send_tool_started(name.clone());
+            emitter.send_tool_started(None, name.clone(), String::new());
             emitter.send_streaming(format!("[Tool: {}] starting...", name));
         }
         AgentEvent::ContentDelta(text) => {

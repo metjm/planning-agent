@@ -316,7 +316,7 @@ fn build_tool_stats(session: &Session, show_live_tools: bool) -> Vec<Line<'stati
                     lines.push(Line::from(vec![
                         Span::styled(" ▶ ", Style::default().fg(Color::Yellow)),
                         Span::styled(
-                            format!("[{}] {} ({}s)", agent_name, tool.name, elapsed),
+                            format!("[{}] {} ({}s)", agent_name, tool.display_name, elapsed),
                             Style::default().fg(Color::Yellow),
                         ),
                     ]));
