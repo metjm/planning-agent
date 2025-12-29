@@ -52,6 +52,7 @@ fn draw_tab_bar(frame: &mut Frame, tab_manager: &TabManager, area: Rect) {
             SessionStatus::Planning => "",
             SessionStatus::GeneratingSummary => "◐",
             SessionStatus::AwaitingApproval => "?",
+            SessionStatus::Stopped => "⏸",
             SessionStatus::Complete => "+",
             SessionStatus::Error => "!",
         };

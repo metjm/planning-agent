@@ -237,6 +237,7 @@ pub fn format_window_title(tab_manager: &TabManager) -> String {
         SessionStatus::Planning => session.phase_name(),
         SessionStatus::GeneratingSummary => "Generating Summary",
         SessionStatus::AwaitingApproval => "Awaiting Approval",
+        SessionStatus::Stopped => "Stopped",
         SessionStatus::Complete => "Complete",
         SessionStatus::Error => "Error",
     };

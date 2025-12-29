@@ -303,4 +303,32 @@ workflow:
             AggregationMode::Majority
         );
     }
+
+    #[test]
+    fn test_config_backward_compatibility_without_session_persistence() {
+        // Test that configs without session_persistence field parse correctly
+        let yaml = r#"
+agents:
+  claude:
+    command: "claude"
+    args: ["-p"]
+
+workflow:
+  planning:
+    agent: claude
+  reviewing:
+    agents: [claude]
+  revising:
+    agent: claude
+"#;
+        let config: WorkflowConfig = serde_yaml::from_str(yaml).unwrap();
+        let claude_config = config.get_agent("claude").unwrap();
+
+        // session_persistence should default to disabled with Stateless strategy
+        assert!(!claude_config.session_persistence.enabled);
+        assert_eq!(
+            claude_config.session_persistence.strategy,
+            crate::state::ResumeStrategy::Stateless
+        );
+    }
 }

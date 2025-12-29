@@ -1,4 +1,3 @@
-
 use clap::Parser;
 use std::path::PathBuf;
 
@@ -7,7 +6,6 @@ use std::path::PathBuf;
 #[command(about = "Iterative planning workflow orchestrator using Claude Code")]
 #[command(version)]
 pub struct Cli {
-
     #[arg(trailing_var_arg = true)]
     pub objective: Vec<String>,
 
@@ -28,4 +26,20 @@ pub struct Cli {
 
     #[arg(long, short = 'c')]
     pub config: Option<PathBuf>,
+
+    /// Resume a stopped session by its ID
+    #[arg(long)]
+    pub resume_session: Option<String>,
+
+    /// List all available session snapshots
+    #[arg(long)]
+    pub list_sessions: bool,
+
+    /// Clean up stale session snapshots
+    #[arg(long)]
+    pub cleanup_sessions: bool,
+
+    /// Days threshold for cleanup (used with --cleanup-sessions)
+    #[arg(long)]
+    pub older_than: Option<u32>,
 }

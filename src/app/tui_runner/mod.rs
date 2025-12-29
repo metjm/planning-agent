@@ -140,7 +140,77 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
 
     let first_session_id = tab_manager.active().id;
 
-    if objective.is_empty() {
+    // Handle session resume if requested
+    if let Some(ref session_id) = cli.resume_session {
+        debug_log(start, &format!("resuming session: {}", session_id));
+
+        // Load the snapshot
+        let snapshot = match crate::session_store::load_snapshot(&working_dir, session_id) {
+            Ok(s) => s,
+            Err(e) => {
+                restore_terminal(&mut terminal)?;
+                anyhow::bail!("Failed to load session '{}': {}", session_id, e);
+            }
+        };
+
+        // Check for conflict with current state file
+        if snapshot.state_path.exists() {
+            let current_state = State::load(&snapshot.state_path).ok();
+            if let Some(ref cs) = current_state {
+                if let Some(conflict_msg) = crate::session_store::check_conflict(&snapshot, cs) {
+                    let first_session = tab_manager.active_mut();
+                    first_session.add_output(format!("[warning] {}", conflict_msg));
+                    first_session.add_output("[warning] Using snapshot state. State file will be overwritten.".to_string());
+                }
+            }
+        }
+
+        // Restore the session from snapshot
+        let first_session = tab_manager.active_mut();
+        let restored_state = snapshot.workflow_state.clone();
+        *first_session = crate::tui::Session::from_ui_state(
+            snapshot.ui_state.clone(),
+            Some(restored_state.clone()),
+        );
+        first_session.add_output(format!("[planning] Resumed session: {}", session_id));
+        first_session.add_output(format!(
+            "[planning] Feature: {}, Phase: {:?}, Iteration: {}",
+            restored_state.feature_name, restored_state.phase, restored_state.iteration
+        ));
+
+        // Set up for workflow continuation
+        first_session.status = SessionStatus::Planning;
+        first_session.input_mode = InputMode::Normal;
+
+        // Spawn workflow continuation
+        let init_tx = output_tx.clone();
+        let state_path = snapshot.state_path.clone();
+        let mut state = snapshot.workflow_state;
+
+        // Note: total_elapsed_before_resume_ms can be used for elapsed time tracking
+        let _total_elapsed_before = snapshot.total_elapsed_before_resume_ms;
+
+        let handle = tokio::spawn(async move {
+            let _ = init_tx.send(Event::Output("[planning] Continuing workflow...".to_string()));
+
+            // Save state to ensure state file is in sync with snapshot
+            state.set_updated_at();
+            state.save(&state_path)?;
+
+            let _ = init_tx.send(Event::StateUpdate(state.clone()));
+
+            let feature_name = state.feature_name.clone();
+            Ok::<_, anyhow::Error>((state, state_path, feature_name))
+        });
+        debug_log(start, "resume init task spawned");
+
+        init_handle = Some((first_session_id, handle));
+
+        // Store the elapsed time from before resume for cost tracking
+        if let Some(session) = tab_manager.sessions.iter_mut().find(|s| s.id == first_session_id) {
+            session.total_cost = snapshot.ui_state.total_cost;
+        }
+    } else if objective.is_empty() {
 
         let first_session = tab_manager.active_mut();
         first_session.input_mode = InputMode::NamingTab;
@@ -171,7 +241,7 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
             let state_path =
                 init_working_dir.join(format!(".planning-agent/{}.json", feature_name));
 
-            let state = if init_continue {
+            let mut state = if init_continue {
                 let _ = init_tx.send(Event::Output(format!(
                     "[planning] Loading existing workflow: {}",
                     feature_name
@@ -192,6 +262,7 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
             // Pre-create plan folder and files (in ~/.planning-agent/plans/)
             pre_create_plan_files(&state).context("Failed to pre-create plan files")?;
 
+            state.set_updated_at();
             state.save(&state_path)?;
 
             let _ = init_tx.send(Event::StateUpdate(state.clone()));

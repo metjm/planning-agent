@@ -1,4 +1,3 @@
-
 use crate::app::cli::Cli;
 use crate::app::headless::extract_feature_name;
 use crate::app::workflow_common::pre_create_plan_files;
@@ -307,11 +306,12 @@ async fn handle_naming_tab_input(
                         line: format!("[planning] Objective: {}", objective),
                     });
 
-                    let state = State::new(&feature_name, &objective, max_iter);
+                    let mut state = State::new(&feature_name, &objective, max_iter);
 
                     // Pre-create plan folder and files (in ~/.planning-agent/plans/)
                     pre_create_plan_files(&state).context("Failed to pre-create plan files")?;
 
+                    state.set_updated_at();
                     state.save(&state_path)?;
 
                     let _ = tx.send(Event::SessionStateUpdate {
@@ -734,16 +734,24 @@ fn handle_none_mode_input(
     session.reset_focus_if_todos_invisible(todos_visible);
 
     match key.code {
-        KeyCode::Char('q') | KeyCode::Esc => {
+        KeyCode::Char('q') => {
             return Ok(true);
+        }
+        KeyCode::Esc => {
+            // Escape: Start interrupt feedback mode if workflow is running, otherwise quit
+            if session.running && session.workflow_control_tx.is_some() {
+                session.start_feedback_input_for(FeedbackTarget::WorkflowInterrupt);
+            } else {
+                return Ok(true);
+            }
         }
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             return Ok(true);
         }
-        KeyCode::Char('i') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            // Ctrl+I: Start interrupt feedback mode if workflow is running
+        KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             if session.running && session.workflow_control_tx.is_some() {
-                session.start_feedback_input_for(FeedbackTarget::WorkflowInterrupt);
+                session.add_output("[planning] Stopping workflow...".to_string());
+                let _ = session.workflow_control_tx.as_ref().unwrap().try_send(WorkflowCommand::Stop);
             }
         }
         KeyCode::Tab => {

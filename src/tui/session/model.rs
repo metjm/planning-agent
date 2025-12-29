@@ -1,24 +1,25 @@
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TodoStatus {
     Pending,
     InProgress,
     Completed,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TodoItem {
     pub status: TodoStatus,
     pub active_form: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatMessage {
     pub agent_name: String,
     pub message: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum SummaryState {
     #[default]
     None,
@@ -27,15 +28,16 @@ pub enum SummaryState {
     Error,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunTab {
-    pub phase: String,           
+    pub phase: String,
     pub messages: Vec<ChatMessage>,
-    pub scroll_position: usize,  
+    pub scroll_position: usize,
 
     pub summary_text: String,
     pub summary_scroll: usize,
     pub summary_state: SummaryState,
+    #[serde(default)]
     pub summary_spinner_frame: u8,
 }
 
@@ -54,17 +56,14 @@ impl RunTab {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ApprovalMode {
-
     None,
-
     AwaitingChoice,
-
     EnteringFeedback,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
 pub enum ApprovalContext {
     #[default]
     PlanApproval,
@@ -75,14 +74,14 @@ pub enum ApprovalContext {
 }
 
 /// Indicates the target of feedback entry mode.
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
 pub enum FeedbackTarget {
     #[default]
     ApprovalDecline,    // Existing: decline with feedback in approval flow
     WorkflowInterrupt,  // New: interrupt active workflow with feedback
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
 pub enum FocusedPanel {
     #[default]
     Output,
@@ -91,31 +90,28 @@ pub enum FocusedPanel {
     Summary,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
 pub enum InputMode {
     #[default]
     Normal,
-
     NamingTab,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
 pub enum SessionStatus {
     #[default]
     InputPending,
     Planning,
     GeneratingSummary,
     AwaitingApproval,
+    Stopped,  // Cleanly stopped session, can be resumed
     Complete,
     Error,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PasteBlock {
-
     pub content: String,
-
     pub start_pos: usize,
-
     pub line_count: usize,
 }

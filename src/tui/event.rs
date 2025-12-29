@@ -14,6 +14,9 @@ use crate::update::{UpdateResult, UpdateStatus};
 pub enum WorkflowCommand {
     /// Interrupt the current workflow with user feedback.
     Interrupt { feedback: String },
+    /// Stop the workflow cleanly at the next phase boundary.
+    /// A snapshot will be saved for later resumption.
+    Stop,
 }
 
 /// Custom error type for cancellation - avoids fragile string matching.
@@ -78,6 +81,8 @@ pub enum Event {
     SessionStopReason { session_id: usize, reason: String },
     SessionWorkflowComplete { session_id: usize },
     SessionWorkflowError { session_id: usize, error: String },
+    /// Workflow was cleanly stopped and a snapshot was saved
+    SessionWorkflowStopped { session_id: usize },
     SessionGeneratingSummary { session_id: usize },
 
     SessionPlanGenerationFailed { session_id: usize, error: String },
@@ -341,6 +346,12 @@ impl SessionEventSender {
         let _ = self.inner.send(Event::SessionWorkflowError {
             session_id: self.session_id,
             error,
+        });
+    }
+
+    pub fn send_workflow_stopped(&self) {
+        let _ = self.inner.send(Event::SessionWorkflowStopped {
+            session_id: self.session_id,
         });
     }
 

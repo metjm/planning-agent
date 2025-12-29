@@ -205,6 +205,11 @@ pub struct State {
 
     #[serde(default)]
     pub invocations: Vec<InvocationRecord>,
+
+    /// Timestamp of last state update (RFC3339 format).
+    /// Used for conflict detection between session snapshots and state files.
+    #[serde(default)]
+    pub updated_at: String,
 }
 
 impl State {
@@ -233,6 +238,7 @@ impl State {
             workflow_session_id: Uuid::new_v4().to_string(),
             agent_sessions: HashMap::new(),
             invocations: Vec::new(),
+            updated_at: Utc::now().to_rfc3339(),
         }
     }
 
@@ -309,6 +315,24 @@ impl State {
         if self.workflow_session_id.is_empty() {
             self.workflow_session_id = Uuid::new_v4().to_string();
         }
+    }
+
+    /// Sets the updated_at timestamp to the current time.
+    /// Call this before saving to ensure the timestamp reflects the save time.
+    pub fn set_updated_at(&mut self) {
+        self.updated_at = Utc::now().to_rfc3339();
+    }
+
+    /// Sets the updated_at timestamp to a specific value.
+    /// Used for unified timestamps during stop operations.
+    pub fn set_updated_at_with(&mut self, timestamp: &str) {
+        self.updated_at = timestamp.to_string();
+    }
+
+    /// Returns true if this state has an updated_at timestamp.
+    /// Legacy state files without updated_at will return false.
+    pub fn has_updated_at(&self) -> bool {
+        !self.updated_at.is_empty()
     }
 
     pub fn load(path: &Path) -> Result<Self> {
@@ -666,5 +690,55 @@ mod tests {
         assert_eq!(Phase::Reviewing.label(), PhaseLabel::Reviewing);
         assert_eq!(Phase::Revising.label(), PhaseLabel::Revising);
         assert_eq!(Phase::Complete.label(), PhaseLabel::Complete);
+    }
+
+    #[test]
+    fn test_new_state_has_updated_at() {
+        let state = State::new("test", "test objective", 3);
+        assert!(!state.updated_at.is_empty());
+        assert!(state.has_updated_at());
+    }
+
+    #[test]
+    fn test_set_updated_at() {
+        let mut state = State::new("test", "test objective", 3);
+        let original = state.updated_at.clone();
+
+        // Wait a tiny bit and update
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        state.set_updated_at();
+
+        // Timestamp should have changed
+        assert_ne!(state.updated_at, original);
+        assert!(state.has_updated_at());
+    }
+
+    #[test]
+    fn test_set_updated_at_with() {
+        let mut state = State::new("test", "test objective", 3);
+        let custom_time = "2025-12-29T15:00:00Z";
+        state.set_updated_at_with(custom_time);
+        assert_eq!(state.updated_at, custom_time);
+    }
+
+    #[test]
+    fn test_legacy_state_without_updated_at() {
+        // Simulate loading a legacy state file without updated_at field
+        let old_state_json = r#"{
+            "phase": "reviewing",
+            "iteration": 2,
+            "max_iterations": 3,
+            "feature_name": "existing-feature",
+            "objective": "Some objective",
+            "plan_file": "docs/plans/existing-feature.md",
+            "feedback_file": "docs/plans/existing-feature_feedback.md",
+            "last_feedback_status": "needs_revision",
+            "approval_overridden": false
+        }"#;
+
+        let state: State = serde_json::from_str(old_state_json).unwrap();
+        // updated_at should default to empty string
+        assert!(state.updated_at.is_empty());
+        assert!(!state.has_updated_at());
     }
 }

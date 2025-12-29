@@ -530,6 +530,7 @@ pub async fn check_workflow_completions(
                             );
                             let state_path = working_dir
                                 .join(format!(".planning-agent/{}.json", state.feature_name));
+                            state.set_updated_at();
                             let _ = state.save(&state_path);
 
                             let (new_approval_tx, new_approval_rx) =
@@ -568,6 +569,46 @@ pub async fn check_workflow_completions(
                             });
 
                             session.workflow_handle = Some(new_handle);
+                        }
+                    }
+                    Ok(Ok(WorkflowResult::Stopped)) => {
+                        // Save snapshot before marking as stopped
+                        if let Some(ref state) = session.workflow_state {
+                            let ui_state = session.to_ui_state();
+                            let state_path = working_dir
+                                .join(format!(".planning-agent/{}.json", state.feature_name));
+                            let now = chrono::Utc::now().to_rfc3339();
+                            let mut state_copy = state.clone();
+                            state_copy.set_updated_at_with(&now);
+                            let elapsed = session.start_time.elapsed().as_millis() as u64;
+
+                            let snapshot = crate::session_store::SessionSnapshot::new_with_timestamp(
+                                working_dir.clone(),
+                                state.workflow_session_id.clone(),
+                                state_path,
+                                state_copy,
+                                ui_state,
+                                elapsed,
+                                now,
+                            );
+
+                            match crate::session_store::save_snapshot(working_dir, &snapshot) {
+                                Ok(path) => {
+                                    session.add_output(format!("[planning] Session saved: {}", path.display()));
+                                }
+                                Err(e) => {
+                                    session.add_output(format!("[planning] Warning: Failed to save: {}", e));
+                                }
+                            }
+                        }
+
+                        session.status = SessionStatus::Stopped;
+                        session.running = false;
+                        session.add_output("".to_string());
+                        session.add_output("=== SESSION STOPPED ===".to_string());
+                        if let Some(ref state) = session.workflow_state {
+                            session.add_output(format!("Session ID: {}", state.workflow_session_id));
+                            session.add_output("To resume: planning --resume-session <session-id>".to_string());
                         }
                     }
                     Ok(Err(e)) => {

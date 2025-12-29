@@ -34,11 +34,18 @@ pub async fn run_planning_phase_with_context(
 
     let prompt = build_planning_prompt(state);
 
-    let agent_session = state.get_or_create_agent_session(agent_name, ResumeStrategy::Stateless);
+    // Use resume strategy from config if session persistence is enabled, otherwise Stateless
+    let configured_strategy = if agent_config.session_persistence.enabled {
+        agent_config.session_persistence.strategy.clone()
+    } else {
+        ResumeStrategy::Stateless
+    };
+    let agent_session = state.get_or_create_agent_session(agent_name, configured_strategy);
     let session_key = agent_session.session_key.clone();
     let resume_strategy = agent_session.resume_strategy.clone();
 
     state.record_invocation(agent_name, "Planning");
+    state.set_updated_at();
     state.save_atomic(state_path)?;
 
     let context = AgentContext {
