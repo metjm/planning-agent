@@ -44,6 +44,72 @@ fn compute_run_tab_summary_max_scroll(summary_text: &str) -> usize {
     total_lines.saturating_sub(visible_height as usize)
 }
 
+/// Compute the inner size and visibility of the Todo panel given terminal dimensions.
+///
+/// This replicates the layout logic used in `draw_output`:
+/// - Main layout: top bar (2), main content (min 0), footer (3)
+/// - Main content split: 70% left, 30% right - we're in the left 70%
+/// - Output area split: 40% for output
+/// - When todos exist and width >= 80, output splits 65%/35% for output/todos
+///
+/// Returns (inner_width, inner_height, is_visible) of the Todo panel inner area.
+fn compute_todo_panel_inner_size(
+    terminal_width: u16,
+    terminal_height: u16,
+    has_todos: bool,
+) -> (u16, u16, bool) {
+    // Main layout: top bar (2) + footer (3) = 5 rows overhead
+    let main_content_height = terminal_height.saturating_sub(5);
+
+    // Horizontal split: 70% left, 30% right
+    let left_width = (terminal_width as f32 * 0.70) as u16;
+
+    // Vertical split: 40% output, 60% chat
+    let output_height = (main_content_height as f32 * 0.40) as u16;
+
+    // Todos are visible only when: output area width >= 80 AND todos exist
+    let todos_visible = left_width >= 80 && has_todos;
+
+    if !todos_visible {
+        return (0, 0, false);
+    }
+
+    // Output area split: 65% output, 35% todos
+    let todo_width = (left_width as f32 * 0.35) as u16;
+
+    // Todo block has borders (1 row each for top/bottom, 1 col each for left/right)
+    let inner_height = output_height.saturating_sub(2);
+    let inner_width = todo_width.saturating_sub(2);
+
+    (inner_width, inner_height, true)
+}
+
+/// Compute the max scroll for the Todo panel based on wrapped lines and terminal size.
+fn compute_todo_panel_max_scroll(session: &Session) -> usize {
+    let (term_width, term_height) = crossterm::terminal::size().unwrap_or((80, 24));
+    let has_todos = !session.todos.is_empty();
+    let (inner_width, inner_height, visible) =
+        compute_todo_panel_inner_size(term_width, term_height, has_todos);
+
+    if !visible || inner_width == 0 || inner_height == 0 {
+        return 0;
+    }
+
+    let todo_lines = session.get_todos_display();
+    let lines: Vec<Line> = todo_lines.iter().map(|s| Line::from(s.as_str())).collect();
+    let total_lines = compute_wrapped_line_count(&lines, inner_width);
+
+    total_lines.saturating_sub(inner_height as usize)
+}
+
+/// Check if the Todo panel is currently visible based on terminal size and todos.
+fn is_todo_panel_visible(session: &Session) -> bool {
+    let (term_width, term_height) = crossterm::terminal::size().unwrap_or((80, 24));
+    let has_todos = !session.todos.is_empty();
+    let (_, _, visible) = compute_todo_panel_inner_size(term_width, term_height, has_todos);
+    visible
+}
+
 /// Compute the max scroll for the error overlay based on wrapped lines and terminal size.
 fn compute_error_overlay_max_scroll(error: &str) -> usize {
     let (term_width, term_height) = crossterm::terminal::size().unwrap_or((80, 24));
@@ -661,6 +727,12 @@ fn handle_none_mode_input(
     key: crossterm::event::KeyEvent,
     session: &mut Session,
 ) -> Result<bool> {
+    // Check visibility of Todos panel for focus handling
+    let todos_visible = is_todo_panel_visible(session);
+
+    // Reset focus if currently on invisible Todos panel
+    session.reset_focus_if_todos_invisible(todos_visible);
+
     match key.code {
         KeyCode::Char('q') | KeyCode::Esc => {
             return Ok(true);
@@ -675,20 +747,26 @@ fn handle_none_mode_input(
             }
         }
         KeyCode::Tab => {
-            session.toggle_focus();
+            session.toggle_focus_with_visibility(todos_visible);
         }
         KeyCode::Char('j') | KeyCode::Down => match session.focused_panel {
             FocusedPanel::Output => session.scroll_down(),
+            FocusedPanel::Todos => {
+                let max_scroll = compute_todo_panel_max_scroll(session);
+                session.todo_scroll_down(max_scroll);
+            }
             FocusedPanel::Chat => session.chat_scroll_down(),
             FocusedPanel::Summary => session.summary_scroll_down(),
         },
         KeyCode::Char('k') | KeyCode::Up => match session.focused_panel {
             FocusedPanel::Output => session.scroll_up(),
+            FocusedPanel::Todos => session.todo_scroll_up(),
             FocusedPanel::Chat => session.chat_scroll_up(),
             FocusedPanel::Summary => session.summary_scroll_up(),
         },
         KeyCode::Char('g') => match session.focused_panel {
             FocusedPanel::Output => session.scroll_to_top(),
+            FocusedPanel::Todos => session.todo_scroll_to_top(),
             FocusedPanel::Chat => {
                 session.chat_follow_mode = false;
                 if let Some(tab) = session.run_tabs.get_mut(session.active_run_tab) {
@@ -699,6 +777,10 @@ fn handle_none_mode_input(
         },
         KeyCode::Char('G') => match session.focused_panel {
             FocusedPanel::Output => session.scroll_to_bottom(),
+            FocusedPanel::Todos => {
+                let max_scroll = compute_todo_panel_max_scroll(session);
+                session.todo_scroll_to_bottom(max_scroll);
+            }
             FocusedPanel::Chat => session.chat_scroll_to_bottom(),
             FocusedPanel::Summary => {
                 let max_scroll = session
