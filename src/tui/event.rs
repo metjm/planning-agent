@@ -53,8 +53,13 @@ pub enum Event {
 
     Output(String),
     Streaming(String),
-    ToolStarted { name: String, agent_name: String },
-    ToolFinished { id: String, agent_name: String },
+    ToolStarted {
+        tool_id: Option<String>,
+        display_name: String,
+        input_preview: String,
+        agent_name: String,
+    },
+    ToolFinished { tool_id: Option<String>, agent_name: String },
     StateUpdate(State),
     RequestUserApproval(String),
     BytesReceived(usize),
@@ -62,7 +67,7 @@ pub enum Event {
     PhaseStarted(String),
     TurnCompleted,
     ModelDetected(String),
-    ToolResultReceived { tool_id: String, is_error: bool, agent_name: String },
+    ToolResultReceived { tool_id: Option<String>, is_error: bool, agent_name: String },
     StopReason(String),
 
     SessionOutput { session_id: usize, line: String },
@@ -71,13 +76,19 @@ pub enum Event {
     SessionApprovalRequest { session_id: usize, summary: String },
     SessionReviewDecisionRequest { session_id: usize, summary: String },
     SessionTokenUsage { session_id: usize, usage: TokenUsage },
-    SessionToolStarted { session_id: usize, name: String, agent_name: String },
-    SessionToolFinished { session_id: usize, id: String, agent_name: String },
+    SessionToolStarted {
+        session_id: usize,
+        tool_id: Option<String>,
+        display_name: String,
+        input_preview: String,
+        agent_name: String,
+    },
+    SessionToolFinished { session_id: usize, tool_id: Option<String>, agent_name: String },
     SessionBytesReceived { session_id: usize, bytes: usize },
     SessionPhaseStarted { session_id: usize, phase: String },
     SessionTurnCompleted { session_id: usize },
     SessionModelDetected { session_id: usize, name: String },
-    SessionToolResultReceived { session_id: usize, tool_id: String, is_error: bool, agent_name: String },
+    SessionToolResultReceived { session_id: usize, tool_id: Option<String>, is_error: bool, agent_name: String },
     SessionStopReason { session_id: usize, reason: String },
     SessionWorkflowComplete { session_id: usize },
     SessionWorkflowError { session_id: usize, error: String },
@@ -277,18 +288,26 @@ impl SessionEventSender {
         });
     }
 
-    pub fn send_tool_started(&self, name: String, agent_name: String) {
+    pub fn send_tool_started(
+        &self,
+        tool_id: Option<String>,
+        display_name: String,
+        input_preview: String,
+        agent_name: String,
+    ) {
         let _ = self.inner.send(Event::SessionToolStarted {
             session_id: self.session_id,
-            name,
+            tool_id,
+            display_name,
+            input_preview,
             agent_name,
         });
     }
 
-    pub fn send_tool_finished(&self, id: String, agent_name: String) {
+    pub fn send_tool_finished(&self, tool_id: Option<String>, agent_name: String) {
         let _ = self.inner.send(Event::SessionToolFinished {
             session_id: self.session_id,
-            id,
+            tool_id,
             agent_name,
         });
     }
@@ -320,7 +339,7 @@ impl SessionEventSender {
         });
     }
 
-    pub fn send_tool_result_received(&self, tool_id: String, is_error: bool, agent_name: String) {
+    pub fn send_tool_result_received(&self, tool_id: Option<String>, is_error: bool, agent_name: String) {
         let _ = self.inner.send(Event::SessionToolResultReceived {
             session_id: self.session_id,
             tool_id,

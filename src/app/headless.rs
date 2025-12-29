@@ -389,11 +389,20 @@ pub async fn run_headless(cli: Cli) -> Result<()> {
                 Event::Output(line) | Event::Streaming(line) => {
                     eprintln!("{}", line);
                 }
-                Event::ToolStarted { name, agent_name } => {
-                    eprintln!("[tool started] [{}] {}", agent_name, name);
+                Event::ToolStarted {
+                    tool_id: _,
+                    display_name,
+                    input_preview,
+                    agent_name,
+                } => {
+                    if input_preview.is_empty() {
+                        eprintln!("[tool started] [{}] {}", agent_name, display_name);
+                    } else {
+                        eprintln!("[tool started] [{}] {}: {}", agent_name, display_name, input_preview);
+                    }
                 }
-                Event::ToolFinished { id, agent_name } => {
-                    eprintln!("[tool finished] [{}] {}", agent_name, id);
+                Event::ToolFinished { tool_id: _, agent_name } => {
+                    eprintln!("[tool finished] [{}]", agent_name);
                 }
                 Event::StateUpdate(state) => {
                     eprintln!(
@@ -409,7 +418,11 @@ pub async fn run_headless(cli: Cli) -> Result<()> {
                 }
                 Event::ToolResultReceived { tool_id, is_error, agent_name } => {
                     if is_error {
-                        eprintln!("[tool error] [{}] {}", agent_name, tool_id);
+                        if let Some(id) = tool_id {
+                            eprintln!("[tool error] [{}] {}", agent_name, id);
+                        } else {
+                            eprintln!("[tool error] [{}]", agent_name);
+                        }
                     }
                 }
                 Event::StopReason(reason) => {

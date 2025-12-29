@@ -568,6 +568,35 @@ fn draw_run_tabs(frame: &mut Frame, session: &Session, area: Rect) {
     frame.render_widget(tabs, area);
 }
 
+/// Truncate input_preview to a maximum length with ellipsis
+fn truncate_input_preview(preview: &str, max_len: usize) -> String {
+    if preview.len() <= max_len {
+        preview.to_string()
+    } else {
+        format!("{}...", &preview[..max_len.saturating_sub(3)])
+    }
+}
+
+/// Format tool label with display_name and optional input_preview
+fn format_tool_label(display_name: &str, input_preview: &str, max_preview_len: usize) -> String {
+    if input_preview.is_empty() {
+        display_name.to_string()
+    } else {
+        let truncated = truncate_input_preview(input_preview, max_preview_len);
+        format!("{}: {}", display_name, truncated)
+    }
+}
+
+/// Format duration for display
+fn format_duration_secs(duration_ms: u64) -> String {
+    let secs = duration_ms as f64 / 1000.0;
+    if secs < 10.0 {
+        format!("{:.1}s", secs)
+    } else {
+        format!("{}s", secs as u64)
+    }
+}
+
 fn draw_tool_calls_panel(frame: &mut Frame, session: &Session, area: Rect) {
     let tool_block = Block::default()
         .borders(Borders::ALL)
@@ -576,59 +605,136 @@ fn draw_tool_calls_panel(frame: &mut Frame, session: &Session, area: Rect) {
 
     let inner_area = tool_block.inner(area);
     let visible_height = inner_area.height as usize;
+    let max_preview_len = 40; // Truncate input_preview to ~40 chars
 
-    let lines: Vec<Line> = if session.active_tools_by_agent.is_empty() {
+    let has_active = !session.active_tools_by_agent.is_empty();
+    let has_completed = !session.completed_tools_by_agent.is_empty();
+
+    let lines: Vec<Line> = if !has_active && !has_completed {
         vec![Line::from(Span::styled(
             "No active tools",
             Style::default().fg(Color::DarkGray),
         ))]
     } else {
-        // Sort agent names alphabetically for stable ordering
-        let mut agent_names: Vec<_> = session.active_tools_by_agent.keys().collect();
-        agent_names.sort();
-
         let mut tool_lines: Vec<Line> = Vec::new();
         let mut lines_remaining = visible_height.saturating_sub(1); // Reserve 1 line for "more" indicator
         let mut total_remaining_tools = 0;
 
-        for agent_name in agent_names {
-            if lines_remaining == 0 {
-                // Count remaining tools for the "+N more" message
-                if let Some(tools) = session.active_tools_by_agent.get(agent_name) {
-                    total_remaining_tools += tools.len();
-                }
-                continue;
-            }
+        // Render active tools first (grouped by agent)
+        if has_active {
+            // Sort agent names alphabetically for stable ordering
+            let mut agent_names: Vec<_> = session.active_tools_by_agent.keys().collect();
+            agent_names.sort();
 
-            if let Some(tools) = session.active_tools_by_agent.get(agent_name) {
-                if tools.is_empty() {
+            for agent_name in agent_names {
+                if lines_remaining == 0 {
+                    // Count remaining tools for the "+N more" message
+                    if let Some(tools) = session.active_tools_by_agent.get(agent_name) {
+                        total_remaining_tools += tools.len();
+                    }
                     continue;
                 }
 
-                // Add agent header
-                if lines_remaining > 0 {
-                    tool_lines.push(Line::from(Span::styled(
-                        format!("{}:", agent_name),
-                        Style::default().fg(Color::Cyan).add_modifier(ratatui::style::Modifier::BOLD),
-                    )));
-                    lines_remaining = lines_remaining.saturating_sub(1);
-                }
-
-                // Add tool entries for this agent
-                for tool in tools {
-                    if lines_remaining == 0 {
-                        total_remaining_tools += 1;
+                if let Some(tools) = session.active_tools_by_agent.get(agent_name) {
+                    if tools.is_empty() {
                         continue;
                     }
-                    let elapsed = tool.started_at.elapsed().as_secs();
-                    tool_lines.push(Line::from(vec![
-                        Span::styled("  ▶ ", Style::default().fg(Color::Yellow)),
-                        Span::styled(
-                            format!("{} ({}s)", tool.name, elapsed),
-                            Style::default().fg(Color::Yellow),
-                        ),
-                    ]));
-                    lines_remaining = lines_remaining.saturating_sub(1);
+
+                    // Add agent header
+                    if lines_remaining > 0 {
+                        tool_lines.push(Line::from(Span::styled(
+                            format!("{}:", agent_name),
+                            Style::default().fg(Color::Cyan).add_modifier(ratatui::style::Modifier::BOLD),
+                        )));
+                        lines_remaining = lines_remaining.saturating_sub(1);
+                    }
+
+                    // Add active tool entries
+                    for tool in tools {
+                        if lines_remaining == 0 {
+                            total_remaining_tools += 1;
+                            continue;
+                        }
+                        let elapsed_secs = tool.started_at.elapsed().as_secs();
+                        let label = format_tool_label(&tool.display_name, &tool.input_preview, max_preview_len);
+                        tool_lines.push(Line::from(vec![
+                            Span::styled("  ▶ ", Style::default().fg(Color::Yellow)),
+                            Span::styled(
+                                format!("{} ({}s)", label, elapsed_secs),
+                                Style::default().fg(Color::Yellow),
+                            ),
+                        ]));
+                        lines_remaining = lines_remaining.saturating_sub(1);
+                    }
+                }
+            }
+        }
+
+        // Render completed tools (newest first, grouped view)
+        if has_completed && lines_remaining > 0 {
+            // Get all completed tools sorted by completion time (newest first)
+            let completed_tools = session.all_completed_tools();
+
+            // Group by agent for display
+            let mut by_agent: std::collections::HashMap<&str, Vec<&crate::tui::session::CompletedTool>> =
+                std::collections::HashMap::new();
+            for (agent, tool) in &completed_tools {
+                by_agent.entry(*agent).or_default().push(*tool);
+            }
+
+            let mut agent_names: Vec<_> = by_agent.keys().collect();
+            agent_names.sort();
+
+            for agent_name in agent_names {
+                if lines_remaining == 0 {
+                    if let Some(tools) = by_agent.get(agent_name) {
+                        total_remaining_tools += tools.len();
+                    }
+                    continue;
+                }
+
+                if let Some(tools) = by_agent.get(agent_name) {
+                    if tools.is_empty() {
+                        continue;
+                    }
+
+                    // Check if we already have an active header for this agent
+                    let has_active_header = session.active_tools_by_agent.contains_key(*agent_name);
+
+                    // Add agent header only if we don't have an active one
+                    if !has_active_header && lines_remaining > 0 {
+                        tool_lines.push(Line::from(Span::styled(
+                            format!("{}:", agent_name),
+                            Style::default().fg(Color::DarkGray),
+                        )));
+                        lines_remaining = lines_remaining.saturating_sub(1);
+                    }
+
+                    // Add completed tool entries
+                    for tool in tools {
+                        if lines_remaining == 0 {
+                            total_remaining_tools += 1;
+                            continue;
+                        }
+
+                        let label = format_tool_label(&tool.display_name, &tool.input_preview, max_preview_len);
+                        let duration_str = format_duration_secs(tool.duration_ms);
+
+                        let (icon, style) = if tool.is_error {
+                            ("  ✗ ", Style::default().fg(Color::Red))
+                        } else {
+                            ("  ✓ ", Style::default().fg(Color::DarkGray))
+                        };
+
+                        tool_lines.push(Line::from(vec![
+                            Span::styled(icon, style),
+                            Span::styled(
+                                format!("{} ({})", label, duration_str),
+                                style,
+                            ),
+                        ]));
+                        lines_remaining = lines_remaining.saturating_sub(1);
+                    }
                 }
             }
         }
