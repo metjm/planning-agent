@@ -109,9 +109,10 @@ pub struct Session {
 
     pub run_tabs: Vec<RunTab>,
     pub active_run_tab: usize,
-    pub chat_follow_mode: bool, 
+    pub chat_follow_mode: bool,
 
     pub todos: HashMap<String, Vec<TodoItem>>,
+    pub todo_scroll_position: usize,
 }
 
 /// Session provides the full API surface for session management.
@@ -190,6 +191,7 @@ impl Session {
             chat_follow_mode: true,
 
             todos: HashMap::new(),
+            todo_scroll_position: 0,
         }
     }
 
@@ -445,7 +447,13 @@ impl Session {
     }
 
     pub fn toggle_focus(&mut self) {
+        self.toggle_focus_with_visibility(false)
+    }
 
+    /// Toggle focus between panels, considering visibility of Todos panel.
+    /// `todos_visible` indicates whether the Todos panel is currently visible
+    /// (based on terminal width and whether todos exist).
+    pub fn toggle_focus_with_visibility(&mut self, todos_visible: bool) {
         let has_summary = self
             .run_tabs
             .get(self.active_run_tab)
@@ -453,7 +461,14 @@ impl Session {
             .unwrap_or(false);
 
         self.focused_panel = match self.focused_panel {
-            FocusedPanel::Output => FocusedPanel::Chat,
+            FocusedPanel::Output => {
+                if todos_visible {
+                    FocusedPanel::Todos
+                } else {
+                    FocusedPanel::Chat
+                }
+            }
+            FocusedPanel::Todos => FocusedPanel::Chat,
             FocusedPanel::Chat => {
                 if has_summary {
                     FocusedPanel::Summary
@@ -463,6 +478,19 @@ impl Session {
             }
             FocusedPanel::Summary => FocusedPanel::Output,
         };
+    }
+
+    /// Check if the current focused panel is Todos but todos are not visible.
+    /// Used to reset focus when the panel becomes invisible due to resize or clearing.
+    pub fn is_focus_on_invisible_todos(&self, todos_visible: bool) -> bool {
+        self.focused_panel == FocusedPanel::Todos && !todos_visible
+    }
+
+    /// Reset focus from Todos to Output if todos are not visible.
+    pub fn reset_focus_if_todos_invisible(&mut self, todos_visible: bool) {
+        if self.is_focus_on_invisible_todos(todos_visible) {
+            self.focused_panel = FocusedPanel::Output;
+        }
     }
 
     pub fn phase_name(&self) -> &str {
@@ -518,6 +546,25 @@ impl Session {
 
     pub fn clear_todos(&mut self) {
         self.todos.clear();
+        self.todo_scroll_position = 0;
+    }
+
+    pub fn todo_scroll_up(&mut self) {
+        self.todo_scroll_position = self.todo_scroll_position.saturating_sub(1);
+    }
+
+    pub fn todo_scroll_down(&mut self, max_scroll: usize) {
+        if self.todo_scroll_position < max_scroll {
+            self.todo_scroll_position += 1;
+        }
+    }
+
+    pub fn todo_scroll_to_top(&mut self) {
+        self.todo_scroll_position = 0;
+    }
+
+    pub fn todo_scroll_to_bottom(&mut self, max_scroll: usize) {
+        self.todo_scroll_position = max_scroll;
     }
 
     pub fn get_todos_display(&self) -> Vec<String> {

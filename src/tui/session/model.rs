@@ -86,8 +86,9 @@ pub enum FeedbackTarget {
 pub enum FocusedPanel {
     #[default]
     Output,
-    Chat,  
-    Summary,  
+    Todos,
+    Chat,
+    Summary,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Default)]

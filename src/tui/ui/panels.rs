@@ -121,13 +121,19 @@ fn draw_output_panel(frame: &mut Frame, session: &Session, area: Rect) {
 }
 
 fn draw_todos(frame: &mut Frame, session: &Session, area: Rect) {
+    let is_focused = session.focused_panel == FocusedPanel::Todos;
+    let border_color = if is_focused { Color::Yellow } else { Color::Magenta };
+
+    let title = if is_focused { " Todos [*] " } else { " Todos " };
+
     let todos_block = Block::default()
         .borders(Borders::ALL)
-        .title(" Todos ")
-        .border_style(Style::default().fg(Color::Magenta));
+        .title(title)
+        .border_style(Style::default().fg(border_color));
 
     let inner_area = todos_block.inner(area);
     let visible_height = inner_area.height as usize;
+    let inner_width = inner_area.width;
 
     let todo_lines = session.get_todos_display();
 
@@ -175,26 +181,27 @@ fn draw_todos(frame: &mut Frame, session: &Session, area: Rect) {
         })
         .collect();
 
-    let total_lines = lines.len();
-    let display_lines: Vec<Line> = lines.into_iter().take(visible_height).collect();
+    // Compute wrapped line count using block-less paragraph
+    let total_lines = compute_wrapped_line_count(&lines, inner_width);
+    let max_scroll = total_lines.saturating_sub(visible_height);
+    let scroll_pos = session.todo_scroll_position.min(max_scroll);
 
-    let paragraph = Paragraph::new(display_lines).block(todos_block);
+    let paragraph = Paragraph::new(lines)
+        .block(todos_block)
+        .wrap(Wrap { trim: false })
+        .scroll((scroll_pos as u16, 0));
     frame.render_widget(paragraph, area);
 
+    // Render scrollbar when content exceeds visible height
     if total_lines > visible_height {
-        let more_count = total_lines - visible_height;
-        let indicator = format!("+{} more", more_count);
-        let indicator_area = Rect::new(
-            area.x + area.width - indicator.len() as u16 - 2,
-            area.y + area.height - 1,
-            indicator.len() as u16 + 1,
-            1,
+        let mut scrollbar_state = ScrollbarState::new(total_lines).position(scroll_pos);
+        frame.render_stateful_widget(
+            Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                .begin_symbol(Some("↑"))
+                .end_symbol(Some("↓")),
+            area,
+            &mut scrollbar_state,
         );
-        let indicator_widget = Paragraph::new(Span::styled(
-            indicator,
-            Style::default().fg(Color::DarkGray),
-        ));
-        frame.render_widget(indicator_widget, indicator_area);
     }
 }
 

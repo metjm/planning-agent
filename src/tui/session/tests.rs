@@ -599,3 +599,139 @@ fn test_clear_chat_tabs() {
     assert_eq!(session.active_run_tab, 0);
     assert!(session.chat_follow_mode);
 }
+
+#[test]
+fn test_toggle_focus_with_todos_visible() {
+    let mut session = Session::new(0);
+    assert_eq!(session.focused_panel, FocusedPanel::Output);
+
+    // When todos are visible, Output -> Todos -> Chat -> Output
+    session.toggle_focus_with_visibility(true);
+    assert_eq!(session.focused_panel, FocusedPanel::Todos);
+
+    session.toggle_focus_with_visibility(true);
+    assert_eq!(session.focused_panel, FocusedPanel::Chat);
+
+    session.toggle_focus_with_visibility(true);
+    assert_eq!(session.focused_panel, FocusedPanel::Output);
+}
+
+#[test]
+fn test_toggle_focus_without_todos_visible() {
+    let mut session = Session::new(0);
+    assert_eq!(session.focused_panel, FocusedPanel::Output);
+
+    // When todos are not visible, Output -> Chat -> Output (skips Todos)
+    session.toggle_focus_with_visibility(false);
+    assert_eq!(session.focused_panel, FocusedPanel::Chat);
+
+    session.toggle_focus_with_visibility(false);
+    assert_eq!(session.focused_panel, FocusedPanel::Output);
+}
+
+#[test]
+fn test_toggle_focus_with_summary() {
+    let mut session = Session::new(0);
+    session.add_run_tab("Planning".to_string());
+    session.run_tabs[0].summary_state = SummaryState::Ready;
+
+    assert_eq!(session.focused_panel, FocusedPanel::Output);
+
+    // With summary visible: Output -> Todos -> Chat -> Summary -> Output
+    session.toggle_focus_with_visibility(true);
+    assert_eq!(session.focused_panel, FocusedPanel::Todos);
+
+    session.toggle_focus_with_visibility(true);
+    assert_eq!(session.focused_panel, FocusedPanel::Chat);
+
+    session.toggle_focus_with_visibility(true);
+    assert_eq!(session.focused_panel, FocusedPanel::Summary);
+
+    session.toggle_focus_with_visibility(true);
+    assert_eq!(session.focused_panel, FocusedPanel::Output);
+}
+
+#[test]
+fn test_is_focus_on_invisible_todos() {
+    let mut session = Session::new(0);
+    session.focused_panel = FocusedPanel::Todos;
+
+    assert!(session.is_focus_on_invisible_todos(false));
+    assert!(!session.is_focus_on_invisible_todos(true));
+
+    session.focused_panel = FocusedPanel::Output;
+    assert!(!session.is_focus_on_invisible_todos(false));
+}
+
+#[test]
+fn test_reset_focus_if_todos_invisible() {
+    let mut session = Session::new(0);
+    session.focused_panel = FocusedPanel::Todos;
+
+    // Should reset to Output when todos not visible
+    session.reset_focus_if_todos_invisible(false);
+    assert_eq!(session.focused_panel, FocusedPanel::Output);
+
+    // Should not change when todos are visible
+    session.focused_panel = FocusedPanel::Todos;
+    session.reset_focus_if_todos_invisible(true);
+    assert_eq!(session.focused_panel, FocusedPanel::Todos);
+}
+
+#[test]
+fn test_todo_scroll_up() {
+    let mut session = Session::new(0);
+    session.todo_scroll_position = 5;
+
+    session.todo_scroll_up();
+    assert_eq!(session.todo_scroll_position, 4);
+
+    session.todo_scroll_position = 0;
+    session.todo_scroll_up();
+    assert_eq!(session.todo_scroll_position, 0); // Should not go negative
+}
+
+#[test]
+fn test_todo_scroll_down() {
+    let mut session = Session::new(0);
+    session.todo_scroll_position = 0;
+
+    session.todo_scroll_down(10);
+    assert_eq!(session.todo_scroll_position, 1);
+
+    session.todo_scroll_position = 10;
+    session.todo_scroll_down(10);
+    assert_eq!(session.todo_scroll_position, 10); // Should not exceed max
+}
+
+#[test]
+fn test_todo_scroll_to_top() {
+    let mut session = Session::new(0);
+    session.todo_scroll_position = 5;
+
+    session.todo_scroll_to_top();
+    assert_eq!(session.todo_scroll_position, 0);
+}
+
+#[test]
+fn test_todo_scroll_to_bottom() {
+    let mut session = Session::new(0);
+    session.todo_scroll_position = 0;
+
+    session.todo_scroll_to_bottom(15);
+    assert_eq!(session.todo_scroll_position, 15);
+}
+
+#[test]
+fn test_clear_todos_resets_scroll() {
+    let mut session = Session::new(0);
+    session.update_todos("agent".to_string(), vec![
+        TodoItem { status: TodoStatus::Pending, active_form: "Task 1".to_string() },
+    ]);
+    session.todo_scroll_position = 5;
+
+    session.clear_todos();
+
+    assert!(session.todos.is_empty());
+    assert_eq!(session.todo_scroll_position, 0);
+}
