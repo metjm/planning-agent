@@ -152,6 +152,7 @@ pub async fn run_headless_with_config(
                 }
 
                 state.transition(Phase::Reviewing)?;
+                state.set_updated_at();
                 state.save_atomic(&state_path)?;
             }
 
@@ -248,6 +249,7 @@ pub async fn run_headless_with_config(
                     }
                 }
                 last_reviews = reviews;
+                state.set_updated_at();
                 state.save_atomic(&state_path)?;
             }
 
@@ -277,6 +279,7 @@ pub async fn run_headless_with_config(
                 // Update feedback filename for the new iteration before transitioning to review
                 state.update_feedback_for_iteration(state.iteration);
                 state.transition(Phase::Reviewing)?;
+                state.set_updated_at();
                 state.save_atomic(&state_path)?;
             }
 
@@ -360,7 +363,7 @@ pub async fn run_headless(cli: Cli) -> Result<()> {
 
     let state_path = working_dir.join(format!(".planning-agent/{}.json", feature_name));
 
-    let state = if cli.continue_workflow {
+    let mut state = if cli.continue_workflow {
         eprintln!("[planning] Loading existing workflow: {}", feature_name);
         State::load(&state_path)?
     } else {
@@ -375,6 +378,7 @@ pub async fn run_headless(cli: Cli) -> Result<()> {
     // Pre-create plan folder and files (in ~/.planning-agent/plans/)
     pre_create_plan_files(&state).context("Failed to pre-create plan files")?;
 
+    state.set_updated_at();
     state.save_atomic(&state_path)?;
 
     let (output_tx, mut output_rx) = mpsc::unbounded_channel::<Event>();

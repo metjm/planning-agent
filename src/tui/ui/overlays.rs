@@ -63,8 +63,12 @@ pub fn draw_footer(frame: &mut Frame, session: &Session, tab_manager: &TabManage
         ));
     } else if session.running && session.workflow_control_tx.is_some() {
         spans.push(Span::styled(
-            "[Ctrl+I] Interrupt  ",
+            "[Esc] Interrupt  ",
             Style::default().fg(Color::Magenta),
+        ));
+        spans.push(Span::styled(
+            "[Ctrl+S] Stop  ",
+            Style::default().fg(Color::Yellow),
         ));
         spans.push(Span::styled(
             "[Ctrl+PgUp/Dn] Switch Tabs",

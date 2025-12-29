@@ -100,7 +100,18 @@ pub async fn run_multi_agent_review_with_context(
 
     let mut agent_contexts: Vec<(String, Option<String>, ResumeStrategy)> = Vec::new();
     for agent_name in agent_names {
-        let agent_session = state.get_or_create_agent_session(agent_name, ResumeStrategy::Stateless);
+        // Get the configured resume strategy for this agent
+        let configured_strategy = config
+            .get_agent(agent_name)
+            .map(|cfg| {
+                if cfg.session_persistence.enabled {
+                    cfg.session_persistence.strategy.clone()
+                } else {
+                    ResumeStrategy::Stateless
+                }
+            })
+            .unwrap_or(ResumeStrategy::Stateless);
+        let agent_session = state.get_or_create_agent_session(agent_name, configured_strategy);
         agent_contexts.push((
             agent_name.clone(),
             agent_session.session_key.clone(),
@@ -108,6 +119,7 @@ pub async fn run_multi_agent_review_with_context(
         ));
         state.record_invocation(agent_name, &phase_name);
     }
+    state.set_updated_at();
     state.save_atomic(state_path)?;
 
     let agents: Vec<(String, AgentType, PathBuf, Option<String>, ResumeStrategy)> = agent_names

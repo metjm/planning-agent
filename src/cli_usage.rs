@@ -1,4 +1,4 @@
-
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::Instant;
 
@@ -6,23 +6,17 @@ use crate::claude_usage::{self, ClaudeUsage};
 use crate::codex_usage::{self, CodexUsage};
 use crate::gemini_usage::{self, GeminiUsage};
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ProviderUsage {
-
     pub provider: String,
-
     pub display_name: String,
-
     pub session_used: Option<u8>,
-
     pub weekly_used: Option<u8>,
-
     pub plan_type: Option<String>,
-
+    /// Timestamp when usage was fetched - skipped during serialization
+    #[serde(skip)]
     pub fetched_at: Option<Instant>,
-
     pub status_message: Option<String>,
-
     pub supports_usage: bool,
 }
 
@@ -93,9 +87,8 @@ impl ProviderUsage {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AccountUsage {
-
     pub providers: HashMap<String, ProviderUsage>,
 }
 

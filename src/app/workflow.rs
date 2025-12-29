@@ -18,12 +18,11 @@ use std::path::PathBuf;
 use tokio::sync::mpsc;
 
 pub enum WorkflowResult {
-
     Accepted,
-
     NeedsRestart { user_feedback: String },
-
     Aborted { reason: String },
+    /// Workflow was cleanly stopped at a phase boundary
+    Stopped,
 }
 
 pub async fn run_workflow_with_config(
@@ -62,11 +61,21 @@ pub async fn run_workflow_with_config(
     let mut last_reviews: Vec<phases::ReviewResult> = Vec::new();
 
     while state.should_continue() {
-        // Check for interrupt before each phase
-        if let Ok(WorkflowCommand::Interrupt { feedback }) = control_rx.try_recv() {
-            log_workflow(&working_dir, &format!("Received interrupt with feedback: {}", feedback));
-            sender.send_output("[workflow] Interrupted by user".to_string());
-            return Ok(WorkflowResult::NeedsRestart { user_feedback: feedback });
+        // Check for commands before each phase
+        if let Ok(cmd) = control_rx.try_recv() {
+            match cmd {
+                WorkflowCommand::Interrupt { feedback } => {
+                    log_workflow(&working_dir, &format!("Received interrupt with feedback: {}", feedback));
+                    sender.send_output("[workflow] Interrupted by user".to_string());
+                    return Ok(WorkflowResult::NeedsRestart { user_feedback: feedback });
+                }
+                WorkflowCommand::Stop => {
+                    log_workflow(&working_dir, "Received stop command at phase boundary");
+                    sender.send_output("[workflow] Stopping at phase boundary...".to_string());
+                    // Save snapshot is done by the TUI layer before returning
+                    return Ok(WorkflowResult::Stopped);
+                }
+            }
         }
 
         match state.phase {
@@ -86,12 +95,20 @@ pub async fn run_workflow_with_config(
                     Ok(Some(workflow_result)) => return Ok(workflow_result),
                     Ok(None) => {}
                     Err(e) if e.downcast_ref::<CancellationError>().is_some() => {
-                        // Phase was cancelled - check for interrupt feedback
-                        if let Ok(WorkflowCommand::Interrupt { feedback }) = control_rx.try_recv() {
-                            log_workflow(&working_dir, "Planning phase cancelled, restarting with feedback");
-                            return Ok(WorkflowResult::NeedsRestart { user_feedback: feedback });
+                        // Phase was cancelled - check for command
+                        if let Ok(cmd) = control_rx.try_recv() {
+                            match cmd {
+                                WorkflowCommand::Interrupt { feedback } => {
+                                    log_workflow(&working_dir, "Planning phase cancelled, restarting with feedback");
+                                    return Ok(WorkflowResult::NeedsRestart { user_feedback: feedback });
+                                }
+                                WorkflowCommand::Stop => {
+                                    log_workflow(&working_dir, "Planning phase cancelled for stop");
+                                    return Ok(WorkflowResult::Stopped);
+                                }
+                            }
                         }
-                        // Cancellation without feedback - shouldn't happen, but treat as abort
+                        // Cancellation without command - shouldn't happen, but treat as abort
                         return Ok(WorkflowResult::Aborted {
                             reason: "Cancelled without feedback".to_string(),
                         });
@@ -121,9 +138,17 @@ pub async fn run_workflow_with_config(
                         }
                     }
                     Err(e) if e.downcast_ref::<CancellationError>().is_some() => {
-                        if let Ok(WorkflowCommand::Interrupt { feedback }) = control_rx.try_recv() {
-                            log_workflow(&working_dir, "Reviewing phase cancelled, restarting with feedback");
-                            return Ok(WorkflowResult::NeedsRestart { user_feedback: feedback });
+                        if let Ok(cmd) = control_rx.try_recv() {
+                            match cmd {
+                                WorkflowCommand::Interrupt { feedback } => {
+                                    log_workflow(&working_dir, "Reviewing phase cancelled, restarting with feedback");
+                                    return Ok(WorkflowResult::NeedsRestart { user_feedback: feedback });
+                                }
+                                WorkflowCommand::Stop => {
+                                    log_workflow(&working_dir, "Reviewing phase cancelled for stop");
+                                    return Ok(WorkflowResult::Stopped);
+                                }
+                            }
                         }
                         return Ok(WorkflowResult::Aborted {
                             reason: "Cancelled without feedback".to_string(),
@@ -148,9 +173,17 @@ pub async fn run_workflow_with_config(
                 match result {
                     Ok(()) => {}
                     Err(e) if e.downcast_ref::<CancellationError>().is_some() => {
-                        if let Ok(WorkflowCommand::Interrupt { feedback }) = control_rx.try_recv() {
-                            log_workflow(&working_dir, "Revising phase cancelled, restarting with feedback");
-                            return Ok(WorkflowResult::NeedsRestart { user_feedback: feedback });
+                        if let Ok(cmd) = control_rx.try_recv() {
+                            match cmd {
+                                WorkflowCommand::Interrupt { feedback } => {
+                                    log_workflow(&working_dir, "Revising phase cancelled, restarting with feedback");
+                                    return Ok(WorkflowResult::NeedsRestart { user_feedback: feedback });
+                                }
+                                WorkflowCommand::Stop => {
+                                    log_workflow(&working_dir, "Revising phase cancelled for stop");
+                                    return Ok(WorkflowResult::Stopped);
+                                }
+                            }
                         }
                         return Ok(WorkflowResult::Aborted {
                             reason: "Cancelled without feedback".to_string(),
@@ -212,11 +245,20 @@ async fn run_planning_phase(
     let plan_path = state.plan_file.clone();
 
     loop {
-        // Check for interrupt before starting planning
-        if let Ok(WorkflowCommand::Interrupt { feedback }) = control_rx.try_recv() {
-            log_workflow(working_dir, &format!("Received interrupt during planning: {}", feedback));
-            sender.send_output("[planning] Interrupted by user".to_string());
-            return Ok(Some(WorkflowResult::NeedsRestart { user_feedback: feedback }));
+        // Check for commands before starting planning
+        if let Ok(cmd) = control_rx.try_recv() {
+            match cmd {
+                WorkflowCommand::Interrupt { feedback } => {
+                    log_workflow(working_dir, &format!("Received interrupt during planning: {}", feedback));
+                    sender.send_output("[planning] Interrupted by user".to_string());
+                    return Ok(Some(WorkflowResult::NeedsRestart { user_feedback: feedback }));
+                }
+                WorkflowCommand::Stop => {
+                    log_workflow(working_dir, "Received stop during planning");
+                    sender.send_output("[planning] Stopping...".to_string());
+                    return Ok(Some(WorkflowResult::Stopped));
+                }
+            }
         }
 
         log_workflow(working_dir, "Calling run_planning_phase_with_context...");
@@ -241,7 +283,7 @@ async fn run_planning_phase(
                     );
                     sender.send_plan_generation_failed(summary);
 
-                    match wait_for_plan_failure_decision(working_dir, approval_rx, false).await {
+                    match wait_for_plan_failure_decision(working_dir, approval_rx, control_rx, false).await {
                         PlanFailureDecision::Retry => {
                             sender.send_output("[planning] Retrying plan generation...".to_string());
                             continue;
@@ -256,6 +298,10 @@ async fn run_planning_phase(
                             return Ok(Some(WorkflowResult::Aborted {
                                 reason: "User aborted: plan file has no content".to_string(),
                             }));
+                        }
+                        PlanFailureDecision::Stopped => {
+                            log_workflow(working_dir, "Workflow stopped during plan failure decision");
+                            return Ok(Some(WorkflowResult::Stopped));
                         }
                     }
                 }
@@ -283,7 +329,7 @@ async fn run_planning_phase(
                 let summary = build_plan_failure_summary(&error_msg, &plan_path, plan_has_content);
                 sender.send_plan_generation_failed(summary);
 
-                match wait_for_plan_failure_decision(working_dir, approval_rx, plan_has_content).await {
+                match wait_for_plan_failure_decision(working_dir, approval_rx, control_rx, plan_has_content).await {
                     PlanFailureDecision::Retry => {
                         sender.send_output("[planning] Retrying plan generation...".to_string());
                         continue;
@@ -305,6 +351,10 @@ async fn run_planning_phase(
                             reason: format!("User aborted: {}", error_msg),
                         }));
                     }
+                    PlanFailureDecision::Stopped => {
+                        log_workflow(working_dir, "Workflow stopped during plan failure decision");
+                        return Ok(Some(WorkflowResult::Stopped));
+                    }
                 }
             }
         }
@@ -312,6 +362,7 @@ async fn run_planning_phase(
 
     log_workflow(working_dir, "Transitioning: Planning -> Reviewing");
     state.transition(Phase::Reviewing)?;
+    state.set_updated_at();
     state.save_atomic(state_path)?;
     sender.send_state_update(state.clone());
     sender.send_output("[planning] Transitioning to review phase...".to_string());
@@ -361,11 +412,20 @@ async fn run_reviewing_phase(
     let mut retry_attempts = 0usize;
 
     loop {
-        // Check for interrupt before running reviewers
-        if let Ok(WorkflowCommand::Interrupt { feedback }) = control_rx.try_recv() {
-            log_workflow(working_dir, &format!("Received interrupt during reviewing: {}", feedback));
-            sender.send_output("[review] Interrupted by user".to_string());
-            return Ok(Some(WorkflowResult::NeedsRestart { user_feedback: feedback }));
+        // Check for commands before running reviewers
+        if let Ok(cmd) = control_rx.try_recv() {
+            match cmd {
+                WorkflowCommand::Interrupt { feedback } => {
+                    log_workflow(working_dir, &format!("Received interrupt during reviewing: {}", feedback));
+                    sender.send_output("[review] Interrupted by user".to_string());
+                    return Ok(Some(WorkflowResult::NeedsRestart { user_feedback: feedback }));
+                }
+                WorkflowCommand::Stop => {
+                    log_workflow(working_dir, "Received stop during reviewing");
+                    sender.send_output("[review] Stopping...".to_string());
+                    return Ok(Some(WorkflowResult::Stopped));
+                }
+            }
         }
 
         log_workflow(
@@ -425,7 +485,7 @@ async fn run_reviewing_phase(
         let summary = build_review_failure_summary(&reviews_by_agent, &batch.failures);
         sender.send_review_decision_request(summary);
 
-        let decision = wait_for_review_decision(working_dir, approval_rx).await;
+        let decision = wait_for_review_decision(working_dir, approval_rx, control_rx).await;
 
         match decision {
             ReviewDecision::Retry => {
@@ -434,6 +494,10 @@ async fn run_reviewing_phase(
             }
             ReviewDecision::Continue => {
                 break;
+            }
+            ReviewDecision::Stopped => {
+                log_workflow(working_dir, "Workflow stopped during review decision");
+                return Ok(Some(WorkflowResult::Stopped));
             }
         }
     }
@@ -477,6 +541,7 @@ async fn run_reviewing_phase(
                     state_path,
                     sender,
                     approval_rx,
+                    control_rx,
                     last_reviews,
                 )
                 .await?;
@@ -489,6 +554,7 @@ async fn run_reviewing_phase(
             }
         }
     }
+    state.set_updated_at();
     state.save_atomic(state_path)?;
     sender.send_state_update(state.clone());
 
@@ -504,11 +570,21 @@ async fn run_revising_phase(
     control_rx: &mut mpsc::Receiver<WorkflowCommand>,
     last_reviews: &mut Vec<phases::ReviewResult>,
 ) -> Result<()> {
-    // Check for interrupt before starting revision
-    if let Ok(WorkflowCommand::Interrupt { feedback }) = control_rx.try_recv() {
-        log_workflow(working_dir, &format!("Received interrupt during revising: {}", feedback));
-        sender.send_output("[revision] Interrupted by user".to_string());
-        return Err(CancellationError { feedback }.into());
+    // Check for commands before starting revision
+    if let Ok(cmd) = control_rx.try_recv() {
+        match cmd {
+            WorkflowCommand::Interrupt { feedback } => {
+                log_workflow(working_dir, &format!("Received interrupt during revising: {}", feedback));
+                sender.send_output("[revision] Interrupted by user".to_string());
+                return Err(CancellationError { feedback }.into());
+            }
+            WorkflowCommand::Stop => {
+                log_workflow(working_dir, "Received stop during revising");
+                sender.send_output("[revision] Stopping...".to_string());
+                // Return a special error that signals stop - will be handled by caller
+                return Err(anyhow::anyhow!("Workflow stopped"));
+            }
+        }
     }
 
     log_workflow(
@@ -575,6 +651,7 @@ async fn run_revising_phase(
         ),
     );
     state.transition(Phase::Reviewing)?;
+    state.set_updated_at();
     state.save_atomic(state_path)?;
     sender.send_state_update(state.clone());
     sender.send_output("[planning] Transitioning to review phase...".to_string());
