@@ -64,7 +64,7 @@ impl ProviderUsage {
             display_name: "Gemini".to_string(),
             session_used: None, 
             weekly_used: daily_used, 
-            plan_type: usage.constrained_model, 
+            plan_type: None, // Gemini /stats doesn't provide plan info; constrained_model is a model name, not a plan
             fetched_at: usage.fetched_at,
             status_message: usage.error_message,
             supports_usage: true,
@@ -185,6 +185,24 @@ mod tests {
     }
 
     #[test]
+    fn test_provider_usage_from_gemini() {
+        let gemini_usage = GeminiUsage {
+            usage_remaining: Some(75),
+            constrained_model: Some("gemini-2.5-flash".to_string()),
+            fetched_at: Some(Instant::now()),
+            error_message: None,
+        };
+        let provider = ProviderUsage::from_gemini_usage(gemini_usage);
+        assert_eq!(provider.provider, "gemini");
+        assert_eq!(provider.display_name, "Gemini");
+        assert_eq!(provider.session_used, None); // Gemini doesn't have session usage
+        assert_eq!(provider.weekly_used, Some(25)); // 100 - 75 = 25% used
+        // Plan type should be None - constrained_model is not a plan
+        assert_eq!(provider.plan_type, None, "Gemini plan_type should be None (model name is not a plan)");
+        assert!(provider.supports_usage);
+    }
+
+    #[test]
     fn test_provider_has_error() {
         let error_usage = ProviderUsage {
             provider: "claude".to_string(),
@@ -240,10 +258,12 @@ mod tests {
             eprintln!("\nGemini:");
             eprintln!("  supports_usage: {}", gemini.supports_usage);
             eprintln!("  daily_used (as weekly): {:?}", gemini.weekly_used);
-            eprintln!("  plan_type (model): {:?}", gemini.plan_type);
+            eprintln!("  plan_type: {:?}", gemini.plan_type);
             eprintln!("  status_message: {:?}", gemini.status_message);
 
             assert!(gemini.supports_usage, "Gemini should support usage via /stats");
+            // plan_type should be None - Gemini /stats doesn't provide plan info
+            assert_eq!(gemini.plan_type, None, "Gemini plan_type should be None");
             if gemini.status_message.is_none() {
                 assert!(gemini.weekly_used.is_some(), "Gemini should have daily usage data");
                 eprintln!("  Daily used: {}%", gemini.weekly_used.unwrap());
