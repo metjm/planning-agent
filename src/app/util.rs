@@ -95,7 +95,9 @@ pub fn build_max_iterations_summary(
     }
 
     if !last_reviews.is_empty() {
-        summary.push_str("---\n\n## Latest Review Feedback\n\n");
+        // Preview section: concise cut-off view
+        summary.push_str("---\n\n## Latest Review Feedback (Preview)\n\n");
+        summary.push_str("_Scroll down for full feedback_\n\n");
         for review in last_reviews {
             let verdict = if review.needs_revision {
                 "NEEDS REVISION"
@@ -110,6 +112,24 @@ pub fn build_max_iterations_summary(
             let preview: String = review.feedback.lines().take(5).collect::<Vec<_>>().join("\n");
             summary.push_str(&format!("{}\n\n", truncate_for_summary(&preview, 300)));
         }
+
+        // Full feedback section: complete review content
+        summary.push_str("---\n\n## Full Review Feedback\n\n");
+        for review in last_reviews {
+            let verdict = if review.needs_revision {
+                "NEEDS REVISION"
+            } else {
+                "APPROVED"
+            };
+            summary.push_str(&format!(
+                "### {} ({})\n\n",
+                review.agent_name.to_uppercase(),
+                verdict
+            ));
+            summary.push_str(&format!("{}\n\n", review.feedback));
+        }
+    } else {
+        summary.push_str("---\n\n_No review feedback available._\n\n");
     }
 
     summary.push_str("---\n\n");
@@ -297,5 +317,107 @@ mod tests {
         // Should still contain override actions even if file is missing
         assert!(summary.contains("[i] Implement"));
         assert!(summary.contains("[d] Decline"));
+    }
+
+    #[test]
+    fn test_build_max_iterations_summary_with_preview_and_full_feedback() {
+        let dir = tempdir().unwrap();
+        let working_dir = dir.path();
+
+        let mut state = State::new("test-feature", "Test objective", 3);
+        state.iteration = 3;
+
+        // Create a review with long feedback (more than 5 lines)
+        let long_feedback = "Line 1: First issue found\n\
+                             Line 2: Second issue found\n\
+                             Line 3: Third issue found\n\
+                             Line 4: Fourth issue found\n\
+                             Line 5: Fifth issue found\n\
+                             Line 6: Sixth issue found\n\
+                             Line 7: Seventh issue found\n\
+                             Line 8: Additional detailed feedback here";
+
+        let reviews = vec![phases::ReviewResult {
+            agent_name: "test-reviewer".to_string(),
+            needs_revision: true,
+            feedback: long_feedback.to_string(),
+        }];
+
+        let summary = build_max_iterations_summary(&state, working_dir, &reviews);
+
+        // Verify preview section exists with truncated content
+        assert!(summary.contains("## Latest Review Feedback (Preview)"));
+        assert!(summary.contains("Scroll down for full feedback"));
+        assert!(summary.contains("TEST-REVIEWER (NEEDS REVISION)"));
+
+        // Verify full feedback section exists with complete content
+        assert!(summary.contains("## Full Review Feedback"));
+        assert!(summary.contains("Line 6: Sixth issue found"));
+        assert!(summary.contains("Line 7: Seventh issue found"));
+        assert!(summary.contains("Line 8: Additional detailed feedback here"));
+
+        // Verify action choices are present
+        assert!(summary.contains("[p] Proceed"));
+        assert!(summary.contains("[c] Continue Review"));
+        assert!(summary.contains("[d] Restart with Feedback"));
+    }
+
+    #[test]
+    fn test_build_max_iterations_summary_empty_reviews() {
+        let dir = tempdir().unwrap();
+        let working_dir = dir.path();
+
+        let mut state = State::new("test-feature", "Test objective", 3);
+        state.iteration = 3;
+
+        let reviews: Vec<phases::ReviewResult> = vec![];
+
+        let summary = build_max_iterations_summary(&state, working_dir, &reviews);
+
+        // Verify empty reviews message
+        assert!(summary.contains("No review feedback available"));
+
+        // Should NOT contain preview or full feedback sections
+        assert!(!summary.contains("## Latest Review Feedback (Preview)"));
+        assert!(!summary.contains("## Full Review Feedback"));
+
+        // Verify action choices are still present
+        assert!(summary.contains("[p] Proceed"));
+        assert!(summary.contains("[c] Continue Review"));
+        assert!(summary.contains("[d] Restart with Feedback"));
+    }
+
+    #[test]
+    fn test_build_max_iterations_summary_multiple_reviewers() {
+        let dir = tempdir().unwrap();
+        let working_dir = dir.path();
+
+        let mut state = State::new("test-feature", "Test objective", 3);
+        state.iteration = 2;
+
+        let reviews = vec![
+            phases::ReviewResult {
+                agent_name: "reviewer-1".to_string(),
+                needs_revision: true,
+                feedback: "Issue A\nIssue B\nIssue C".to_string(),
+            },
+            phases::ReviewResult {
+                agent_name: "reviewer-2".to_string(),
+                needs_revision: false,
+                feedback: "Looks good to me".to_string(),
+            },
+        ];
+
+        let summary = build_max_iterations_summary(&state, working_dir, &reviews);
+
+        // Verify both reviewers appear in preview
+        assert!(summary.contains("REVIEWER-1 (NEEDS REVISION)"));
+        assert!(summary.contains("REVIEWER-2 (APPROVED)"));
+
+        // Verify full feedback contains both
+        assert!(summary.contains("Issue A"));
+        assert!(summary.contains("Issue B"));
+        assert!(summary.contains("Issue C"));
+        assert!(summary.contains("Looks good to me"));
     }
 }
