@@ -12,9 +12,10 @@ mod skills;
 mod state;
 mod tui;
 mod update;
+mod verification_state;
 
 use anyhow::Result;
-use app::{cli::Cli, headless::run_headless, tui_runner::run_tui};
+use app::{cli::Cli, headless::run_headless, tui_runner::run_tui, verify::run_headless_verification};
 use clap::Parser;
 use std::path::PathBuf;
 
@@ -56,12 +57,100 @@ async fn main() -> Result<()> {
         return cleanup_sessions(&working_dir, cli.older_than);
     }
 
+    // Handle list-plans command
+    if cli.list_plans {
+        return list_plans();
+    }
+
+    // Handle verification mode
+    if let Some(ref plan_spec) = cli.verify {
+        let plan_path = resolve_plan_path(plan_spec)?;
+        return run_headless_verification(
+            plan_path,
+            working_dir,
+            cli.config.clone(),
+        )
+        .await;
+    }
+
     // Resume session or normal workflow
     if cli.headless {
         run_headless(cli).await
     } else {
         run_tui(cli, start).await
     }
+}
+
+/// Resolves a plan specification (path, name pattern, or "latest") to a full path.
+fn resolve_plan_path(spec: &str) -> Result<PathBuf> {
+    // Check if it's already a valid path
+    let path = PathBuf::from(spec);
+    if path.exists() {
+        return Ok(path);
+    }
+
+    // Handle "latest" keyword
+    if spec.eq_ignore_ascii_case("latest") {
+        return planning_paths::latest_plan()?
+            .map(|p| p.path)
+            .ok_or_else(|| anyhow::anyhow!("No plans found. Create a plan first with 'planning <objective>'"));
+    }
+
+    // Try to find by pattern
+    planning_paths::find_plan(spec)?
+        .map(|p| p.path)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "No plan found matching '{}'. Use --list-plans to see available plans.",
+                spec
+            )
+        })
+}
+
+/// Lists all available plans
+fn list_plans() -> Result<()> {
+    let plans = planning_paths::list_plans()?;
+
+    if plans.is_empty() {
+        println!("No plans found.");
+        println!("Create a plan with: planning <objective>");
+        return Ok(());
+    }
+
+    println!("Available plans:\n");
+    println!(
+        "{:<20} {:<40} {}",
+        "Created", "Feature Name", "Folder"
+    );
+    println!("{}", "-".repeat(100));
+
+    for plan in plans {
+        // Format timestamp (YYYYMMDD-HHMMSS -> YYYY-MM-DD HH:MM:SS)
+        let formatted_ts = if plan.timestamp.len() >= 15 {
+            format!(
+                "{}-{}-{} {}:{}:{}",
+                &plan.timestamp[0..4],
+                &plan.timestamp[4..6],
+                &plan.timestamp[6..8],
+                &plan.timestamp[9..11],
+                &plan.timestamp[11..13],
+                &plan.timestamp[13..15],
+            )
+        } else {
+            plan.timestamp.clone()
+        };
+
+        println!(
+            "{:<20} {:<40} {}",
+            formatted_ts,
+            truncate_string(&plan.feature_name, 38),
+            plan.folder_name
+        );
+    }
+
+    println!("\nTo verify a plan: planning --verify <plan-name-or-path>");
+    println!("To verify latest plan: planning --verify latest");
+    Ok(())
 }
 
 /// Lists available session snapshots

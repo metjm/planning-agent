@@ -153,6 +153,112 @@ pub fn snapshot_path(session_id: &str) -> Result<PathBuf> {
     Ok(sessions_dir()?.join(format!("{}.json", session_id)))
 }
 
+/// Metadata about a plan folder for listing purposes.
+#[derive(Debug, Clone)]
+pub struct PlanInfo {
+    /// Full path to the plan folder
+    pub path: PathBuf,
+    /// Feature name extracted from the folder name
+    pub feature_name: String,
+    /// Timestamp string from the folder name (YYYYMMDD-HHMMSS)
+    pub timestamp: String,
+    /// Full folder name (timestamp_feature-name)
+    pub folder_name: String,
+}
+
+/// Lists all plan folders in the plans directory.
+///
+/// Returns a vector of PlanInfo, sorted by timestamp descending (most recent first).
+pub fn list_plans() -> Result<Vec<PlanInfo>> {
+    let plans_directory = plans_dir()?;
+
+    let mut plans = Vec::new();
+
+    if !plans_directory.exists() {
+        return Ok(plans);
+    }
+
+    for entry in fs::read_dir(&plans_directory)? {
+        let entry = entry?;
+        let path = entry.path();
+
+        if !path.is_dir() {
+            continue;
+        }
+
+        // Check if plan.md exists in this folder
+        let plan_file = path.join("plan.md");
+        if !plan_file.exists() {
+            continue;
+        }
+
+        let folder_name = entry.file_name().to_string_lossy().to_string();
+
+        // Parse folder name format: YYYYMMDD-HHMMSS-shortid_feature-name
+        // Example: 20251230-123632-a3529aa2_plan-verification-phase
+        if let Some((timestamp_part, feature_part)) = folder_name.split_once('_') {
+            // Extract just the timestamp (first 15 chars: YYYYMMDD-HHMMSS)
+            let timestamp = if timestamp_part.len() >= 15 {
+                timestamp_part[..15].to_string()
+            } else {
+                timestamp_part.to_string()
+            };
+
+            plans.push(PlanInfo {
+                path,
+                feature_name: feature_part.to_string(),
+                timestamp,
+                folder_name,
+            });
+        }
+    }
+
+    // Sort by timestamp descending (most recent first)
+    plans.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+
+    Ok(plans)
+}
+
+/// Finds a plan folder by partial match on feature name or folder name.
+///
+/// Returns the most recent matching plan if multiple matches are found.
+pub fn find_plan(pattern: &str) -> Result<Option<PlanInfo>> {
+    let plans = list_plans()?;
+
+    let pattern_lower = pattern.to_lowercase();
+
+    // First try exact match on folder name
+    for plan in &plans {
+        if plan.folder_name.to_lowercase() == pattern_lower {
+            return Ok(Some(plan.clone()));
+        }
+    }
+
+    // Then try exact match on feature name
+    for plan in &plans {
+        if plan.feature_name.to_lowercase() == pattern_lower {
+            return Ok(Some(plan.clone()));
+        }
+    }
+
+    // Then try partial match on feature name or folder name
+    for plan in &plans {
+        if plan.feature_name.to_lowercase().contains(&pattern_lower)
+            || plan.folder_name.to_lowercase().contains(&pattern_lower)
+        {
+            return Ok(Some(plan.clone()));
+        }
+    }
+
+    Ok(None)
+}
+
+/// Returns the most recently created plan folder.
+pub fn latest_plan() -> Result<Option<PlanInfo>> {
+    let plans = list_plans()?;
+    Ok(plans.into_iter().next())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

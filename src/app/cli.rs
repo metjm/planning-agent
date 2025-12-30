@@ -24,7 +24,7 @@ pub struct Cli {
     #[arg(long)]
     pub headless: bool,
 
-    #[arg(long, short = 'c')]
+    #[arg(long)]
     pub config: Option<PathBuf>,
 
     /// Resume a stopped session by its ID
@@ -42,4 +42,14 @@ pub struct Cli {
     /// Days threshold for cleanup (used with --cleanup-sessions)
     #[arg(long)]
     pub older_than: Option<u32>,
+
+    /// Verify implementation against an approved plan.
+    /// Accepts either a plan folder path, plan.md file path, or a plan name pattern.
+    /// Use "latest" to verify against the most recent plan.
+    #[arg(long, value_name = "PLAN_PATH_OR_NAME")]
+    pub verify: Option<String>,
+
+    /// List all available plans
+    #[arg(long)]
+    pub list_plans: bool,
 }
