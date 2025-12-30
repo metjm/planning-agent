@@ -3,10 +3,13 @@ mod chat;
 mod input;
 pub mod model;
 mod paste;
+mod snapshot;
+mod tools;
 
 use crate::app::WorkflowResult;
 use crate::cli_usage::AccountUsage;
 use crate::state::{Phase, State};
+use crate::tui::embedded_terminal::EmbeddedTerminal;
 use crate::tui::event::{TokenUsage, WorkflowCommand};
 use anyhow::Result;
 use std::collections::HashMap;
@@ -133,6 +136,9 @@ pub struct Session {
 
     pub todos: HashMap<String, Vec<TodoItem>>,
     pub todo_scroll_position: usize,
+
+    /// Embedded implementation terminal (runtime-only, not serialized)
+    pub implementation_terminal: Option<EmbeddedTerminal>,
 }
 
 /// Session provides the full API surface for session management.
@@ -213,6 +219,8 @@ impl Session {
 
             todos: HashMap::new(),
             todo_scroll_position: 0,
+
+            implementation_terminal: None,
         }
     }
 
@@ -348,221 +356,7 @@ impl Session {
         self.feedback_scroll = 0;
     }
 
-    /// Record that a tool has started for a specific agent
-    pub fn tool_started(
-        &mut self,
-        tool_id: Option<String>,
-        display_name: String,
-        input_preview: String,
-        agent_name: String,
-    ) {
-        let tool = ActiveTool {
-            tool_id,
-            display_name,
-            input_preview,
-            started_at: Instant::now(),
-        };
-        self.active_tools_by_agent
-            .entry(agent_name)
-            .or_default()
-            .push(tool);
-    }
-
-    /// Handle ToolFinished events - this is a no-op if the tool was already
-    /// completed by ToolResultReceived (prevents double-removal).
-    /// Uses ID-based matching with FIFO fallback.
-    pub fn tool_finished_for_agent(&mut self, tool_id: Option<&str>, agent_name: &str) {
-        if let Some(tools) = self.active_tools_by_agent.get_mut(agent_name) {
-            // Normalize empty string to None
-            let normalized_id = tool_id.filter(|s| !s.is_empty());
-
-            // Try ID-based matching first if ID is provided
-            let found_idx = if let Some(id) = normalized_id {
-                tools.iter().position(|t| t.tool_id.as_deref() == Some(id))
-            } else {
-                None
-            };
-
-            // If ID match failed (or no ID), fall back to FIFO
-            // This handles the Gemini case where starts have None but results have function name
-            if found_idx.is_none() && !tools.is_empty() {
-                tools.remove(0);
-            } else if let Some(idx) = found_idx {
-                tools.remove(idx);
-            }
-
-            // Clean up empty agent entries
-            if tools.is_empty() {
-                self.active_tools_by_agent.remove(agent_name);
-            }
-        }
-    }
-
-    /// Remove a tool and return its duration (for ToolResult events).
-    /// Uses ID-based matching with FIFO fallback.
-    /// Returns Some(duration_ms) if a tool was found and completed, None otherwise.
-    pub fn tool_result_received_for_agent(
-        &mut self,
-        tool_id: Option<&str>,
-        is_error: bool,
-        agent_name: &str,
-    ) -> Option<u64> {
-        // Normalize empty string to None
-        let normalized_id = tool_id.filter(|s| !s.is_empty());
-
-        // First, check if we have active tools for this agent and find the matching tool
-        let tool_info: Option<(String, String, u64)> = {
-            if let Some(tools) = self.active_tools_by_agent.get_mut(agent_name) {
-                if tools.is_empty() {
-                    None
-                } else {
-                    // Try ID-based matching first if ID is provided
-                    let found_idx = if let Some(id) = normalized_id {
-                        tools.iter().position(|t| t.tool_id.as_deref() == Some(id))
-                    } else {
-                        None
-                    };
-
-                    // If ID match failed (or no ID), fall back to FIFO (index 0)
-                    // This handles the Gemini case where starts have None but results have function name
-                    let idx = found_idx.unwrap_or(0);
-
-                    let tool = tools.remove(idx);
-                    let duration_ms = tool.started_at.elapsed().as_millis() as u64;
-                    Some((tool.display_name, tool.input_preview, duration_ms))
-                }
-            } else {
-                None
-            }
-        };
-
-        if let Some((display_name, input_preview, duration_ms)) = tool_info {
-            let completed_at = Instant::now();
-
-            // Move to completed tools list
-            let completed_tool = CompletedTool {
-                display_name,
-                input_preview,
-                duration_ms,
-                is_error,
-                completed_at,
-            };
-
-            // Insert at the beginning for reverse chronological order (newest first)
-            self.completed_tools_by_agent
-                .entry(agent_name.to_string())
-                .or_default()
-                .insert(0, completed_tool);
-
-            // Enforce retention cap
-            self.trim_completed_tools();
-
-            // Clean up empty active tools entries
-            if let Some(tools) = self.active_tools_by_agent.get(agent_name) {
-                if tools.is_empty() {
-                    self.active_tools_by_agent.remove(agent_name);
-                }
-            }
-
-            return Some(duration_ms);
-        }
-
-        // No active tools found - create a synthetic completed entry only for true orphan results
-        // (This is an edge case where we got a result without a matching start)
-        let completed_tool = CompletedTool {
-            display_name: normalized_id.unwrap_or("unknown").to_string(),
-            input_preview: String::new(),
-            duration_ms: 0,
-            is_error,
-            completed_at: Instant::now(),
-        };
-
-        self.completed_tools_by_agent
-            .entry(agent_name.to_string())
-            .or_default()
-            .insert(0, completed_tool);
-
-        self.trim_completed_tools();
-
-        Some(0)
-    }
-
-    /// Trim completed tools to stay under the retention cap
-    fn trim_completed_tools(&mut self) {
-        // Count total completed tools
-        let total: usize = self.completed_tools_by_agent.values().map(|v| v.len()).sum();
-
-        if total <= MAX_COMPLETED_TOOLS {
-            return;
-        }
-
-        // Need to drop (total - MAX_COMPLETED_TOOLS) oldest entries
-        let to_drop = total - MAX_COMPLETED_TOOLS;
-
-        // Collect all completed tools with their agent names to find oldest
-        let mut all_tools: Vec<(String, Instant)> = Vec::new();
-        for (agent, tools) in &self.completed_tools_by_agent {
-            for tool in tools {
-                all_tools.push((agent.clone(), tool.completed_at));
-            }
-        }
-
-        // Sort by completed_at (oldest first)
-        all_tools.sort_by_key(|(_, t)| *t);
-
-        // Find the cutoff time
-        if let Some((_, cutoff_time)) = all_tools.get(to_drop.saturating_sub(1)) {
-            let cutoff = *cutoff_time;
-
-            // Remove tools older than or equal to cutoff
-            for tools in self.completed_tools_by_agent.values_mut() {
-                let mut dropped = 0;
-                tools.retain(|t| {
-                    if dropped < to_drop && t.completed_at <= cutoff {
-                        dropped += 1;
-                        false
-                    } else {
-                        true
-                    }
-                });
-            }
-
-            // Clean up empty agent entries
-            self.completed_tools_by_agent.retain(|_, v| !v.is_empty());
-        }
-    }
-
-    /// Get all active tools across all agents as a flat list for compatibility
-    pub fn all_active_tools(&self) -> Vec<(&str, &ActiveTool)> {
-        let mut tools = Vec::new();
-        for (agent_name, agent_tools) in &self.active_tools_by_agent {
-            for tool in agent_tools {
-                tools.push((agent_name.as_str(), tool));
-            }
-        }
-        tools
-    }
-
-    /// Get all completed tools across all agents as a flat list
-    pub fn all_completed_tools(&self) -> Vec<(&str, &CompletedTool)> {
-        let mut tools = Vec::new();
-        for (agent_name, agent_tools) in &self.completed_tools_by_agent {
-            for tool in agent_tools {
-                tools.push((agent_name.as_str(), tool));
-            }
-        }
-        // Sort by completed_at descending (newest first)
-        tools.sort_by(|a, b| b.1.completed_at.cmp(&a.1.completed_at));
-        tools
-    }
-
-    pub fn average_tool_duration_ms(&self) -> Option<u64> {
-        if self.completed_tool_count > 0 {
-            Some(self.total_tool_duration_ms / self.completed_tool_count as u64)
-        } else {
-            None
-        }
-    }
+    // Note: Tool tracking methods (tool_started, tool_finished_for_agent, etc.) are in tools.rs
 
     pub fn elapsed(&self) -> Duration {
         self.start_time.elapsed()
@@ -652,6 +446,7 @@ impl Session {
                 }
             }
             FocusedPanel::Summary => FocusedPanel::Output,
+            FocusedPanel::Implementation => FocusedPanel::Output,
         };
     }
 
@@ -793,129 +588,23 @@ impl Session {
         self.total_cost
     }
 
-    /// Converts session to a serializable UI state for snapshotting.
-    pub fn to_ui_state(&self) -> crate::session_store::SessionUiState {
-        crate::session_store::SessionUiState {
-            id: self.id,
-            name: self.name.clone(),
-            status: self.status,
-            output_lines: self.output_lines.clone(),
-            scroll_position: self.scroll_position,
-            output_follow_mode: self.output_follow_mode,
-            streaming_lines: self.streaming_lines.clone(),
-            streaming_scroll_position: self.streaming_scroll_position,
-            streaming_follow_mode: self.streaming_follow_mode,
-            focused_panel: self.focused_panel,
-            total_cost: self.total_cost,
-            bytes_received: self.bytes_received,
-            total_input_tokens: self.total_input_tokens,
-            total_output_tokens: self.total_output_tokens,
-            total_cache_creation_tokens: self.total_cache_creation_tokens,
-            total_cache_read_tokens: self.total_cache_read_tokens,
-            tool_call_count: self.tool_call_count,
-            bytes_per_second: self.bytes_per_second,
-            turn_count: self.turn_count,
-            model_name: self.model_name.clone(),
-            last_stop_reason: self.last_stop_reason.clone(),
-            tool_error_count: self.tool_error_count,
-            total_tool_duration_ms: self.total_tool_duration_ms,
-            completed_tool_count: self.completed_tool_count,
-            approval_mode: self.approval_mode.clone(),
-            approval_context: self.approval_context,
-            plan_summary: self.plan_summary.clone(),
-            plan_summary_scroll: self.plan_summary_scroll,
-            user_feedback: self.user_feedback.clone(),
-            cursor_position: self.cursor_position,
-            feedback_scroll: self.feedback_scroll,
-            feedback_target: self.feedback_target,
-            input_mode: self.input_mode,
-            tab_input: self.tab_input.clone(),
-            tab_input_cursor: self.tab_input_cursor,
-            tab_input_scroll: self.tab_input_scroll,
-            last_key_was_backslash: self.last_key_was_backslash,
-            tab_input_pastes: self.tab_input_pastes.clone(),
-            feedback_pastes: self.feedback_pastes.clone(),
-            error_state: self.error_state.clone(),
-            error_scroll: self.error_scroll,
-            run_tabs: self.run_tabs.clone(),
-            active_run_tab: self.active_run_tab,
-            chat_follow_mode: self.chat_follow_mode,
-            todos: self.todos.clone(),
-            todo_scroll_position: self.todo_scroll_position,
-            account_usage: self.account_usage.clone(),
-            spinner_frame: self.spinner_frame,
-            current_run_id: self.current_run_id,
-        }
+    // Note: `to_ui_state` and `from_ui_state` are implemented in snapshot.rs
+
+    /// Check if implementation terminal is active
+    pub fn has_active_implementation_terminal(&self) -> bool {
+        self.implementation_terminal
+            .as_ref()
+            .map(|t| t.active)
+            .unwrap_or(false)
     }
 
-    /// Creates a session from a snapshot's UI state.
-    /// Runtime fields (handles, channels, Instant) are initialized fresh.
-    pub fn from_ui_state(
-        ui_state: crate::session_store::SessionUiState,
-        workflow_state: Option<State>,
-    ) -> Self {
-        Self {
-            id: ui_state.id,
-            name: ui_state.name,
-            status: ui_state.status,
-            output_lines: ui_state.output_lines,
-            scroll_position: ui_state.scroll_position,
-            output_follow_mode: ui_state.output_follow_mode,
-            streaming_lines: ui_state.streaming_lines,
-            streaming_scroll_position: ui_state.streaming_scroll_position,
-            streaming_follow_mode: ui_state.streaming_follow_mode,
-            focused_panel: ui_state.focused_panel,
-            workflow_state,
-            start_time: Instant::now(), // Reset to now
-            total_cost: ui_state.total_cost,
-            running: false, // Will be set when workflow resumes
-            active_tools_by_agent: HashMap::new(), // Reset
-            completed_tools_by_agent: HashMap::new(), // Reset
-            approval_mode: ui_state.approval_mode,
-            approval_context: ui_state.approval_context,
-            plan_summary: ui_state.plan_summary,
-            plan_summary_scroll: ui_state.plan_summary_scroll,
-            user_feedback: ui_state.user_feedback,
-            cursor_position: ui_state.cursor_position,
-            feedback_scroll: ui_state.feedback_scroll,
-            input_mode: ui_state.input_mode,
-            tab_input: ui_state.tab_input,
-            tab_input_cursor: ui_state.tab_input_cursor,
-            tab_input_scroll: ui_state.tab_input_scroll,
-            last_key_was_backslash: ui_state.last_key_was_backslash,
-            tab_input_pastes: ui_state.tab_input_pastes,
-            feedback_pastes: ui_state.feedback_pastes,
-            error_state: ui_state.error_state,
-            error_scroll: ui_state.error_scroll,
-            bytes_received: ui_state.bytes_received,
-            total_input_tokens: ui_state.total_input_tokens,
-            total_output_tokens: ui_state.total_output_tokens,
-            total_cache_creation_tokens: ui_state.total_cache_creation_tokens,
-            total_cache_read_tokens: ui_state.total_cache_read_tokens,
-            phase_times: HashMap::new(), // Reset
-            current_phase_start: None, // Reset
-            tool_call_count: ui_state.tool_call_count,
-            last_bytes_sample: (Instant::now(), 0), // Reset
-            bytes_per_second: ui_state.bytes_per_second,
-            turn_count: ui_state.turn_count,
-            model_name: ui_state.model_name,
-            last_stop_reason: ui_state.last_stop_reason,
-            tool_error_count: ui_state.tool_error_count,
-            total_tool_duration_ms: ui_state.total_tool_duration_ms,
-            completed_tool_count: ui_state.completed_tool_count,
-            workflow_handle: None, // Reset
-            approval_tx: None, // Reset
-            workflow_control_tx: None, // Reset
-            feedback_target: ui_state.feedback_target,
-            current_run_id: ui_state.current_run_id,
-            account_usage: ui_state.account_usage,
-            spinner_frame: ui_state.spinner_frame,
-            run_tabs: ui_state.run_tabs,
-            active_run_tab: ui_state.active_run_tab,
-            chat_follow_mode: ui_state.chat_follow_mode,
-            todos: ui_state.todos,
-            todo_scroll_position: ui_state.todo_scroll_position,
+    /// Stop the implementation terminal and return to normal mode
+    pub fn stop_implementation_terminal(&mut self) {
+        if let Some(mut terminal) = self.implementation_terminal.take() {
+            terminal.kill();
         }
+        self.input_mode = InputMode::Normal;
+        self.focused_panel = FocusedPanel::Output;
     }
 }
 

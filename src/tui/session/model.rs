@@ -88,6 +88,7 @@ pub enum FocusedPanel {
     Todos,
     Chat,
     Summary,
+    Implementation,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
@@ -95,6 +96,7 @@ pub enum InputMode {
     #[default]
     Normal,
     NamingTab,
+    ImplementationTerminal,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]

@@ -1,9 +1,11 @@
+pub mod embedded_terminal;
 mod event;
 pub mod session;
 mod tabs;
 mod title;
 pub mod ui;
 
+pub use embedded_terminal::EmbeddedTerminal;
 pub use session::{ApprovalContext, ApprovalMode, FeedbackTarget, FocusedPanel, InputMode, RunTab, Session, SessionStatus, SummaryState, TodoItem, TodoStatus};
 pub use tabs::TabManager;
 pub use event::{CancellationError, Event, EventHandler, SessionEventSender, TokenUsage, UserApprovalResponse, WorkflowCommand};
