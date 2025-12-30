@@ -1,4 +1,4 @@
-use crate::planning_dir::ensure_planning_agent_dir;
+use crate::planning_paths;
 use serde::Deserialize;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader};
@@ -151,26 +151,24 @@ pub fn fetch_codex_usage_sync() -> CodexUsage {
             let hourly_remaining = (100.0 - primary_used).round().clamp(0.0, 100.0) as u8;
             let weekly_remaining = (100.0 - secondary_used).round().clamp(0.0, 100.0) as u8;
             if is_debug_enabled() {
-                // Use current_dir since this uses hardcoded relative path
-                if let Ok(cwd) = std::env::current_dir() {
-                    let _ = ensure_planning_agent_dir(&cwd);
-                }
-                let log_path = ".planning-agent/codex-status.log";
-                if let Ok(mut file) = std::fs::OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(log_path)
-                {
-                    use std::io::Write as _;
-                    let _ = writeln!(file, "\n=== Session File Parse ===");
-                    let _ = writeln!(file, "File: {:?}", session_file);
-                    let _ = writeln!(file, "Primary used: {}%", primary_used);
-                    let _ = writeln!(file, "Secondary used: {}%", secondary_used);
-                    let _ = writeln!(
-                        file,
-                        "Hourly remaining: {}%, Weekly remaining: {}%",
-                        hourly_remaining, weekly_remaining
-                    );
+                // Use home-based log path
+                if let Ok(log_path) = planning_paths::codex_status_log_path() {
+                    if let Ok(mut file) = std::fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(log_path)
+                    {
+                        use std::io::Write as _;
+                        let _ = writeln!(file, "\n=== Session File Parse ===");
+                        let _ = writeln!(file, "File: {:?}", session_file);
+                        let _ = writeln!(file, "Primary used: {}%", primary_used);
+                        let _ = writeln!(file, "Secondary used: {}%", secondary_used);
+                        let _ = writeln!(
+                            file,
+                            "Hourly remaining: {}%, Weekly remaining: {}%",
+                            hourly_remaining, weekly_remaining
+                        );
+                    }
                 }
             }
             return CodexUsage {

@@ -58,21 +58,25 @@ flowchart TD
 
 ## Storage
 
+All data is stored under `~/.planning-agent/`:
+
 ```
 ~/.planning-agent/
-└── plans/
-    └── <timestamp>-<uuid>_<feature>/
-        ├── plan.md
-        └── feedback_<N>.md
-
-<working-dir>/
-└── .planning-agent/
-    └── sessions/
-        └── <session-id>.json
+├── plans/                          # Plan and feedback files
+│   └── <timestamp>-<uuid>_<feature>/
+│       ├── plan.md
+│       └── feedback_<N>.md
+├── sessions/                       # Session snapshots
+│   └── <session-id>.json
+├── state/<wd-hash>/                # Workflow state (per working directory)
+│   └── <feature>.json
+├── logs/<wd-hash>/                 # Logs (per working directory)
+│   ├── workflow-<run>.log
+│   └── agent-stream-<run>.log
+└── update-installed                # Update marker
 ```
 
-Plans and feedback: `~/.planning-agent/plans/`
-Session snapshots: `.planning-agent/sessions/` in working directory
+The `<wd-hash>` is a 12-character hex hash of the working directory path, ensuring isolation between projects.
 
 ## Agent Configuration
 

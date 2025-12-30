@@ -1,5 +1,5 @@
 use crate::phases;
-use crate::planning_dir::ensure_planning_agent_dir;
+use crate::planning_paths;
 use crate::state::State;
 use crate::tui::TabManager;
 use std::collections::HashMap;
@@ -16,10 +16,12 @@ pub fn get_run_id() -> String {
 }
 
 pub fn log_workflow(working_dir: &Path, message: &str) {
-    // Ensure the .planning-agent directory exists before writing log
-    let _ = ensure_planning_agent_dir(working_dir);
     let run_id = get_run_id();
-    let log_path = working_dir.join(format!(".planning-agent/workflow-{}.log", run_id));
+    // Use home-based log path
+    let log_path = match planning_paths::workflow_log_path(working_dir, &run_id) {
+        Ok(p) => p,
+        Err(_) => return, // Skip logging if we can't determine the path
+    };
     if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(&log_path) {
         let timestamp = chrono::Local::now().format("%H:%M:%S");
         let _ = writeln!(f, "[{}] {}", timestamp, message);
@@ -27,11 +29,12 @@ pub fn log_workflow(working_dir: &Path, message: &str) {
 }
 
 pub fn debug_log(start: std::time::Instant, msg: &str) {
-    if let Ok(mut f) = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open("/tmp/planning-debug.log")
-    {
+    // Use home-based debug log path
+    let log_path = match planning_paths::debug_log_path() {
+        Ok(p) => p,
+        Err(_) => return, // Skip logging if we can't determine the path
+    };
+    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(&log_path) {
         let now = chrono::Local::now().format("%H:%M:%S%.3f");
         let _ = writeln!(f, "[{}][+{:?}] {}", now, start.elapsed(), msg);
     }
@@ -325,7 +328,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let working_dir = dir.path();
 
-        let mut state = State::new("test-feature", "Test objective", 3);
+        let mut state = State::new("test-feature", "Test objective", 3).unwrap();
         state.iteration = 3;
 
         // Create a review with long feedback (more than 5 lines)
@@ -368,7 +371,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let working_dir = dir.path();
 
-        let mut state = State::new("test-feature", "Test objective", 3);
+        let mut state = State::new("test-feature", "Test objective", 3).unwrap();
         state.iteration = 3;
 
         let reviews: Vec<phases::ReviewResult> = vec![];
@@ -393,7 +396,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let working_dir = dir.path();
 
-        let mut state = State::new("test-feature", "Test objective", 3);
+        let mut state = State::new("test-feature", "Test objective", 3).unwrap();
         state.iteration = 2;
 
         let reviews = vec![

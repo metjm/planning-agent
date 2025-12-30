@@ -112,7 +112,7 @@ mod tests {
 
     #[test]
     fn test_build_revision_prompt_with_reviews() {
-        let mut state = State::new("test", "test objective", 3);
+        let mut state = State::new("test", "test objective", 3).unwrap();
         state.phase = Phase::Revising;
 
         let reviews = vec![
