@@ -8,6 +8,43 @@ use std::path::Path;
 pub struct WorkflowConfig {
     pub agents: HashMap<String, AgentConfig>,
     pub workflow: PhaseConfigs,
+    /// Optional verification workflow configuration.
+    /// When present and enabled, allows post-implementation verification.
+    #[serde(default)]
+    pub verification: VerificationConfig,
+}
+
+/// Configuration for the post-implementation verification workflow.
+/// All fields have defaults to ensure backward compatibility with existing configs.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct VerificationConfig {
+    /// Whether verification is enabled. Default: false (opt-in feature)
+    #[serde(default)]
+    pub enabled: bool,
+    /// Maximum verification/fix iterations before stopping. Default: 3
+    #[serde(default = "default_max_verification_iterations")]
+    pub max_iterations: u32,
+    /// Configuration for the verifying phase agent
+    #[serde(default)]
+    pub verifying: Option<SingleAgentPhase>,
+    /// Configuration for the fixing phase agent
+    #[serde(default)]
+    pub fixing: Option<SingleAgentPhase>,
+}
+
+impl Default for VerificationConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            max_iterations: default_max_verification_iterations(),
+            verifying: None,
+            fixing: None,
+        }
+    }
+}
+
+fn default_max_verification_iterations() -> u32 {
+    3
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
@@ -109,6 +146,26 @@ impl WorkflowConfig {
 
         if self.workflow.reviewing.agents.is_empty() {
             anyhow::bail!("At least one review agent must be configured");
+        }
+
+        // Only validate verification agents if verification is enabled
+        if self.verification.enabled {
+            if let Some(ref verifying) = self.verification.verifying {
+                if !self.agents.contains_key(&verifying.agent) {
+                    anyhow::bail!(
+                        "Verifying agent '{}' not found in agents configuration",
+                        verifying.agent
+                    );
+                }
+            }
+            if let Some(ref fixing) = self.verification.fixing {
+                if !self.agents.contains_key(&fixing.agent) {
+                    anyhow::bail!(
+                        "Fixing agent '{}' not found in agents configuration",
+                        fixing.agent
+                    );
+                }
+            }
         }
 
         Ok(())
@@ -330,5 +387,132 @@ workflow:
             claude_config.session_persistence.strategy,
             crate::state::ResumeStrategy::Stateless
         );
+    }
+
+    #[test]
+    fn test_config_backward_compatibility_without_verification() {
+        // Test that configs without verification section parse correctly
+        let yaml = r#"
+agents:
+  claude:
+    command: "claude"
+    args: ["-p"]
+
+workflow:
+  planning:
+    agent: claude
+  reviewing:
+    agents: [claude]
+  revising:
+    agent: claude
+"#;
+        let config: WorkflowConfig = serde_yaml::from_str(yaml).unwrap();
+
+        // verification should default to disabled
+        assert!(!config.verification.enabled);
+        assert_eq!(config.verification.max_iterations, 3);
+        assert!(config.verification.verifying.is_none());
+        assert!(config.verification.fixing.is_none());
+
+        // Validation should pass
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_verification_config_parsing() {
+        let yaml = r#"
+agents:
+  claude:
+    command: "claude"
+    args: ["-p"]
+
+workflow:
+  planning:
+    agent: claude
+  reviewing:
+    agents: [claude]
+  revising:
+    agent: claude
+
+verification:
+  enabled: true
+  max_iterations: 5
+  verifying:
+    agent: claude
+    max_turns: 10
+  fixing:
+    agent: claude
+    max_turns: 15
+"#;
+        let config: WorkflowConfig = serde_yaml::from_str(yaml).unwrap();
+
+        assert!(config.verification.enabled);
+        assert_eq!(config.verification.max_iterations, 5);
+
+        let verifying = config.verification.verifying.as_ref().unwrap();
+        assert_eq!(verifying.agent, "claude");
+        assert_eq!(verifying.max_turns, Some(10));
+
+        let fixing = config.verification.fixing.as_ref().unwrap();
+        assert_eq!(fixing.agent, "claude");
+        assert_eq!(fixing.max_turns, Some(15));
+
+        // Validation should pass
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_verification_validation_missing_agent() {
+        let yaml = r#"
+agents:
+  claude:
+    command: "claude"
+
+workflow:
+  planning:
+    agent: claude
+  reviewing:
+    agents: [claude]
+  revising:
+    agent: claude
+
+verification:
+  enabled: true
+  verifying:
+    agent: nonexistent
+"#;
+        let config: WorkflowConfig = serde_yaml::from_str(yaml).unwrap();
+
+        // Validation should fail because verifying agent doesn't exist
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Verifying agent"));
+    }
+
+    #[test]
+    fn test_verification_validation_disabled_skips_agent_check() {
+        // When verification is disabled, missing agents should not cause validation errors
+        let yaml = r#"
+agents:
+  claude:
+    command: "claude"
+
+workflow:
+  planning:
+    agent: claude
+  reviewing:
+    agents: [claude]
+  revising:
+    agent: claude
+
+verification:
+  enabled: false
+  verifying:
+    agent: nonexistent
+"#;
+        let config: WorkflowConfig = serde_yaml::from_str(yaml).unwrap();
+
+        // Validation should pass because verification is disabled
+        assert!(config.validate().is_ok());
     }
 }

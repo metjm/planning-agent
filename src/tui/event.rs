@@ -147,6 +147,18 @@ pub enum Event {
     ImplementationExited { session_id: usize, exit_code: Option<i32> },
     /// Implementation terminal encountered an error
     ImplementationError { session_id: usize, error: String },
+
+    // Verification workflow events
+    /// Verification phase started
+    SessionVerificationStarted { session_id: usize, iteration: u32 },
+    /// Verification phase completed with verdict
+    SessionVerificationCompleted { session_id: usize, verdict: String, report: String },
+    /// Fixing phase started
+    SessionFixingStarted { session_id: usize, iteration: u32 },
+    /// Fixing phase completed
+    SessionFixingCompleted { session_id: usize },
+    /// Verification workflow result
+    SessionVerificationResult { session_id: usize, approved: bool, iterations_used: u32 },
 }
 
 #[derive(Debug, Clone)]
@@ -453,6 +465,44 @@ impl SessionEventSender {
 
     pub fn raw_sender(&self) -> mpsc::UnboundedSender<Event> {
         self.inner.clone()
+    }
+
+    // Verification workflow event helpers
+
+    pub fn send_verification_started(&self, iteration: u32) {
+        let _ = self.inner.send(Event::SessionVerificationStarted {
+            session_id: self.session_id,
+            iteration,
+        });
+    }
+
+    pub fn send_verification_completed(&self, verdict: String, report: String) {
+        let _ = self.inner.send(Event::SessionVerificationCompleted {
+            session_id: self.session_id,
+            verdict,
+            report,
+        });
+    }
+
+    pub fn send_fixing_started(&self, iteration: u32) {
+        let _ = self.inner.send(Event::SessionFixingStarted {
+            session_id: self.session_id,
+            iteration,
+        });
+    }
+
+    pub fn send_fixing_completed(&self) {
+        let _ = self.inner.send(Event::SessionFixingCompleted {
+            session_id: self.session_id,
+        });
+    }
+
+    pub fn send_verification_result(&self, approved: bool, iterations_used: u32) {
+        let _ = self.inner.send(Event::SessionVerificationResult {
+            session_id: self.session_id,
+            approved,
+            iterations_used,
+        });
     }
 }
 

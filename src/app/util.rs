@@ -243,6 +243,9 @@ pub fn format_window_title(tab_manager: &TabManager) -> String {
         SessionStatus::Stopped => "Stopped",
         SessionStatus::Complete => "Complete",
         SessionStatus::Error => "Error",
+        SessionStatus::Verifying => "Verifying",
+        SessionStatus::Fixing => "Fixing",
+        SessionStatus::VerificationComplete => "Verified",
     };
 
     if plan_name.is_empty() || plan_name == "New Tab" {

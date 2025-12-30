@@ -56,6 +56,9 @@ fn draw_tab_bar(frame: &mut Frame, tab_manager: &TabManager, area: Rect) {
             SessionStatus::Stopped => "⏸",
             SessionStatus::Complete => "+",
             SessionStatus::Error => "!",
+            SessionStatus::Verifying => "⚡",
+            SessionStatus::Fixing => "🔧",
+            SessionStatus::VerificationComplete => "✓",
         };
 
         let name = if session.name.is_empty() {

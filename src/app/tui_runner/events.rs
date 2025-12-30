@@ -445,6 +445,32 @@ async fn handle_session_event(
         Event::UpdateStatusReceived(status) => {
             tab_manager.update_status = status;
         }
+        // Handle verification workflow events
+        Event::SessionVerificationStarted { session_id, iteration } => {
+            if let Some(session) = tab_manager.session_by_id_mut(session_id) {
+                session.start_verification(iteration);
+            }
+        }
+        Event::SessionVerificationCompleted { session_id, verdict, report } => {
+            if let Some(session) = tab_manager.session_by_id_mut(session_id) {
+                session.handle_verification_completed(&verdict, &report);
+            }
+        }
+        Event::SessionFixingStarted { session_id, iteration } => {
+            if let Some(session) = tab_manager.session_by_id_mut(session_id) {
+                session.start_fixing(iteration);
+            }
+        }
+        Event::SessionFixingCompleted { session_id } => {
+            if let Some(session) = tab_manager.session_by_id_mut(session_id) {
+                session.handle_fixing_completed();
+            }
+        }
+        Event::SessionVerificationResult { session_id, approved, iterations_used } => {
+            if let Some(session) = tab_manager.session_by_id_mut(session_id) {
+                session.handle_verification_result(approved, iterations_used);
+            }
+        }
         Event::UpdateInstallFinished(result) => {
             tab_manager.update_in_progress = false;
 

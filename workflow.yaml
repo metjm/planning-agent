@@ -43,3 +43,15 @@ workflow:
 
   revising:
     agent: claude
+
+# Optional: Post-implementation verification workflow
+# Uncomment to enable verification after implementation
+#verification:
+#  enabled: true
+#  max_iterations: 3
+#  verifying:
+#    agent: claude
+#    max_turns: 10
+#  fixing:
+#    agent: claude
+#    max_turns: 15

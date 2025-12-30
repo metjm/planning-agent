@@ -109,6 +109,10 @@ pub enum SessionStatus {
     Stopped,  // Cleanly stopped session, can be resumed
     Complete,
     Error,
+    // Verification workflow states
+    Verifying,
+    Fixing,
+    VerificationComplete,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
