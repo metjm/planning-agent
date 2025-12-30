@@ -1,64 +1,114 @@
 # Planning Agent
 
-<img width="982" height="770" alt="image" src="https://github.com/user-attachments/assets/6549dbf1-6aca-428c-88c0-c52a6ed19340" />
-
-A TUI application for creating implementation plans.
-
-## What is Planning Agent?
-
-Planning Agent is a Rust-based terminal user interface (TUI) application that automates the creation of high-quality implementation plans. It orchestrates an iterative plan-review-revise cycle using Claude Code.
-
-**Key Features:**
-
-- **Automated Planning**: Creates comprehensive implementation plans based on your objective
-- **AI-Powered Review**: Plans are automatically reviewed for correctness, completeness, and technical accuracy
-- **Iterative Refinement**: Plans that need improvement are automatically revised and re-reviewed (up to 3 iterations by default)
-- **User Approval Gate**: Final checkpoint where you can accept, decline with feedback, or hand off directly to Claude Code for implementation
+TUI/headless tool for iterative implementation planning with configurable AI agents.
 
 ## Workflow
 
-The Planning Agent follows an iterative workflow: First, it creates an implementation plan. Then, an AI reviewer evaluates the plan and either approves it or requests revisions. If revisions are needed, the plan is updated and re-reviewed (up to 3 iterations by default). Once approved, the user can accept the final plan, decline with feedback to restart, or press `[i]` to hand off directly to Claude Code for implementation.
+```mermaid
+flowchart LR
+    P[Planning] --> R[Reviewing]
+    R -->|approved| C[Complete]
+    R -->|needs revision| V[Revising]
+    V --> R
+    C --> U{User Approval}
+    U -->|accept| Done
+    U -->|decline| P
+```
+
+Phases:
+- **Planning**: Agent generates `plan.md` based on objective.
+- **Reviewing**: One or more agents evaluate plan; any rejection triggers revision.
+- **Revising**: Agent updates plan based on feedback; loops back to review.
+- **Complete**: User approval gate—accept, decline with feedback, or press `[i]` to hand off to Claude Code.
+
+Max iterations (default 3) prevents infinite loops. Reaching max triggers manual review.
+
+## CLI
+
+```
+planning [OPTIONS] [OBJECTIVE]...
+```
+
+| Flag | Description |
+|------|-------------|
+| `--headless` | Non-interactive mode (no TUI) |
+| `--max-iterations N` | Max review/revise cycles (default: 3) |
+| `--config PATH` | Custom workflow.yaml |
+| `--name NAME` | Feature name override |
+| `--working-dir PATH` | Working directory |
+| `--continue` | Resume from existing plan |
+| `--resume-session ID` | Resume stopped session |
+| `--list-sessions` | List saved session snapshots |
+| `--cleanup-sessions` | Remove old snapshots |
+| `--older-than DAYS` | Age threshold for cleanup |
 
 ```mermaid
 flowchart TD
-    Start([User provides objective]) --> Planning
-
-    subgraph "Planning Agent Workflow (up to 3 iterations)"
-        Planning[Planning Phase<br/>Creates plan.md] --> Reviewing
-        Reviewing[Reviewing Phase<br/>Creates feedback.md] --> Decision{Feedback Status}
-        Decision -->|APPROVED| Complete[Complete]
-        Decision -->|NEEDS REVISION| CheckIter{Iteration < Max?}
-        CheckIter -->|Yes| Revising[Revising Phase<br/>Updates plan.md<br/>Iteration +1]
-        CheckIter -->|No| MaxReached[Max Iterations<br/>Manual review needed]
-        Revising --> Reviewing
-    end
-
-    Complete --> UserApproval{User Approval}
-    UserApproval -->|Accept| Done([Workflow Complete])
-    UserApproval -->|Decline with feedback| Restart([Restart workflow])
-
-    MaxReached --> ManualDone([Workflow ends])
+    CLI[planning command] --> LS{--list-sessions?}
+    LS -->|yes| List[Print snapshots]
+    LS -->|no| CS{--cleanup-sessions?}
+    CS -->|yes| Clean[Remove old snapshots]
+    CS -->|no| HL{--headless?}
+    HL -->|yes| Headless[Run headless workflow]
+    HL -->|no| TUI[Run TUI]
+    TUI --> RS{--resume-session?}
+    RS -->|yes| Resume[Load snapshot & continue]
+    RS -->|no| New[Start new workflow]
 ```
 
-> **Note:** When the user approval dialog appears, pressing `[i]` hands off directly to Claude Code for implementation. This terminates the Planning Agent process and is not shown in the diagram as it's not a workflow state transition.
+## Storage
 
-⚠️⚠️⚠️
+```
+~/.planning-agent/
+└── plans/
+    └── <timestamp>-<uuid>_<feature>/
+        ├── plan.md
+        └── feedback_<N>.md
 
-This uses --dangerously-skip-permissions by default, so I do **NOT** recommend using it without a container.
+<working-dir>/
+└── .planning-agent/
+    └── sessions/
+        └── <session-id>.json
+```
 
-⚠️⚠️⚠️
+Plans and feedback: `~/.planning-agent/plans/`
+Session snapshots: `.planning-agent/sessions/` in working directory
+
+## Agent Configuration
+
+Agents configured via `workflow.yaml` (or `--config`):
+
+```yaml
+agents:
+  claude:
+    command: "claude"
+    args: ["-p", "--output-format", "stream-json", "--dangerously-skip-permissions"]
+  codex:
+    command: "codex"
+    args: ["exec", "--json", "--dangerously-bypass-approvals-and-sandbox"]
+  gemini:
+    command: "gemini"
+    args: ["-p", "--output-format", "json"]
+
+workflow:
+  planning:
+    agent: codex
+  reviewing:
+    agents: [claude, codex]
+    aggregation: any_rejects
+  revising:
+    agent: claude
+```
+
+Default: codex plans, claude+codex review (any rejection triggers revision), claude revises.
 
 ## Installation
-
-### Quick Install
 
 ```bash
 cargo install --git https://github.com/metjm/planning-agent.git --force
 ```
 
-### From Source
-
-Clone and build locally:
+Or from source:
 
 ```bash
 git clone https://github.com/metjm/planning-agent.git
@@ -66,27 +116,13 @@ cd planning-agent
 ./install.sh
 ```
 
-### Troubleshooting
-
-If `planning` command is not found after installation:
-
-```bash
-source "$HOME/.cargo/env"
-```
-
-Or add to your shell profile (~/.bashrc, ~/.zshrc):
-
-```bash
-export PATH="$HOME/.cargo/bin:$PATH"
-```
-
-## Usage
-
-```bash
-planning --help
-```
+If `planning` not found: `source "$HOME/.cargo/env"` or add `$HOME/.cargo/bin` to PATH.
 
 ## Requirements
 
-- Rust toolchain (rustc + cargo)
-- Git (for cloning)
+- Rust toolchain
+- At least one configured AI CLI (claude, codex, or gemini)
+
+## Warning
+
+Uses `--dangerously-skip-permissions` by default. Run in a container.
