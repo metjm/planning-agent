@@ -187,7 +187,7 @@ mod tests {
     #[test]
     fn test_pre_create_plan_files_creates_folder_and_files() {
         // State::new creates paths in ~/.planning-agent/plans/ which are absolute
-        let state = State::new("test-feature", "Test objective", 3);
+        let state = State::new("test-feature", "Test objective", 3).unwrap();
 
         // The paths should be absolute (starting with home dir)
         assert!(state.plan_file.is_absolute() || state.plan_file.to_string_lossy().starts_with("/"));
@@ -209,7 +209,7 @@ mod tests {
 
     #[test]
     fn test_pre_create_plan_files_handles_already_exists() {
-        let state = State::new("test-feature-exists", "Test objective", 3);
+        let state = State::new("test-feature-exists", "Test objective", 3).unwrap();
 
         // First, create the folder and files with content
         if let Some(parent) = state.plan_file.parent() {

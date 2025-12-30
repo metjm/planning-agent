@@ -6,7 +6,7 @@ mod codex_usage;
 mod config;
 mod gemini_usage;
 mod phases;
-mod planning_dir;
+mod planning_paths;
 mod session_store;
 mod skills;
 mod state;

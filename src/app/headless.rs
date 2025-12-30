@@ -7,6 +7,7 @@ use crate::phases::{
     self, aggregate_reviews, merge_feedback, run_multi_agent_review_with_context,
     run_planning_phase_with_context, run_revision_phase_with_context, write_feedback_files,
 };
+use crate::planning_paths;
 use crate::state::{FeedbackStatus, Phase, State};
 use crate::tui::{Event, SessionEventSender};
 use anyhow::{Context, Result};
@@ -361,7 +362,7 @@ pub async fn run_headless(cli: Cli) -> Result<()> {
         extract_feature_name(&objective, None).await?
     };
 
-    let state_path = working_dir.join(format!(".planning-agent/{}.json", feature_name));
+    let state_path = planning_paths::state_path(&working_dir, &feature_name)?;
 
     let mut state = if cli.continue_workflow {
         eprintln!("[planning] Loading existing workflow: {}", feature_name);
@@ -369,7 +370,7 @@ pub async fn run_headless(cli: Cli) -> Result<()> {
     } else {
         eprintln!("[planning] Starting new workflow: {}", feature_name);
         eprintln!("[planning] Objective: {}", objective);
-        State::new(&feature_name, &objective, cli.max_iterations)
+        State::new(&feature_name, &objective, cli.max_iterations)?
     };
 
     // Canonicalize working_dir for absolute paths in prompts

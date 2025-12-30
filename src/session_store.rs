@@ -7,11 +7,11 @@
 //!
 //! - **Per-workflow snapshots**: Each snapshot contains exactly one workflow session,
 //!   NOT the entire TabManager state. This provides clear resume semantics.
-//! - **Snapshot location**: `.planning-agent/sessions/<workflow_session_id>.json`
+//! - **Snapshot location**: `~/.planning-agent/sessions/<workflow_session_id>.json`
 //! - **Versioned format**: Snapshots include a version field for future migrations.
 
 use crate::cli_usage::AccountUsage;
-use crate::planning_dir::ensure_planning_agent_dir;
+use crate::planning_paths;
 use crate::state::State;
 use crate::tui::session::model::{
     ApprovalContext, ApprovalMode, FeedbackTarget, FocusedPanel, InputMode, PasteBlock, RunTab,
@@ -191,37 +191,25 @@ impl SessionSnapshot {
     }
 }
 
-/// Returns the sessions directory path for the given working directory.
-fn get_sessions_dir(working_dir: &Path) -> PathBuf {
-    working_dir.join(".planning-agent").join("sessions")
+/// Returns the home-based sessions directory: `~/.planning-agent/sessions/`
+fn get_sessions_dir() -> Result<PathBuf> {
+    planning_paths::sessions_dir()
 }
 
-/// Returns the snapshot file path for a given session ID.
-fn get_snapshot_path(working_dir: &Path, session_id: &str) -> PathBuf {
-    get_sessions_dir(working_dir).join(format!("{}.json", session_id))
+/// Returns the snapshot file path for a given session ID (home-based).
+fn get_snapshot_path(session_id: &str) -> Result<PathBuf> {
+    planning_paths::snapshot_path(session_id)
 }
 
-/// Ensures the sessions directory exists.
-fn ensure_sessions_dir(working_dir: &Path) -> Result<PathBuf> {
-    let sessions_dir = get_sessions_dir(working_dir);
-
-    // Ensure the parent .planning-agent directory exists
-    ensure_planning_agent_dir(working_dir)
-        .context("Failed to create .planning-agent directory")?;
-
-    // Create sessions subdirectory
-    fs::create_dir_all(&sessions_dir)
-        .with_context(|| format!("Failed to create sessions directory: {}", sessions_dir.display()))?;
-
-    Ok(sessions_dir)
-}
-
-/// Saves a session snapshot atomically.
+/// Saves a session snapshot atomically to home storage (`~/.planning-agent/sessions/`).
+///
+/// The `working_dir` parameter is no longer used for storage location but is kept
+/// for API compatibility.
 ///
 /// The snapshot is first written to a temporary file, then renamed to the final path.
+#[allow(unused_variables)]
 pub fn save_snapshot(working_dir: &Path, snapshot: &SessionSnapshot) -> Result<PathBuf> {
-    let sessions_dir = ensure_sessions_dir(working_dir)?;
-    let snapshot_path = sessions_dir.join(format!("{}.json", snapshot.workflow_session_id));
+    let snapshot_path = get_snapshot_path(&snapshot.workflow_session_id)?;
     let temp_path = snapshot_path.with_extension("json.tmp");
 
     let content = serde_json::to_string_pretty(snapshot)
@@ -236,9 +224,10 @@ pub fn save_snapshot(working_dir: &Path, snapshot: &SessionSnapshot) -> Result<P
     Ok(snapshot_path)
 }
 
-/// Loads a session snapshot by session ID.
+/// Loads a session snapshot by session ID from `~/.planning-agent/sessions/`.
+#[allow(unused_variables)]
 pub fn load_snapshot(working_dir: &Path, session_id: &str) -> Result<SessionSnapshot> {
-    let snapshot_path = get_snapshot_path(working_dir, session_id);
+    let snapshot_path = get_snapshot_path(session_id)?;
 
     if !snapshot_path.exists() {
         anyhow::bail!(
@@ -265,9 +254,10 @@ pub fn load_snapshot(working_dir: &Path, session_id: &str) -> Result<SessionSnap
     Ok(snapshot)
 }
 
-/// Lists all available session snapshots in the working directory.
+/// Lists all available session snapshots from `~/.planning-agent/sessions/`.
+#[allow(unused_variables)]
 pub fn list_snapshots(working_dir: &Path) -> Result<Vec<SessionSnapshotInfo>> {
-    let sessions_dir = get_sessions_dir(working_dir);
+    let sessions_dir = get_sessions_dir()?;
 
     if !sessions_dir.exists() {
         return Ok(Vec::new());
@@ -282,13 +272,10 @@ pub fn list_snapshots(working_dir: &Path) -> Result<Vec<SessionSnapshotInfo>> {
         let path = entry.path();
 
         if path.extension().map_or(false, |ext| ext == "json") {
-            match fs::read_to_string(&path) {
-                Ok(content) => {
-                    if let Ok(snapshot) = serde_json::from_str::<SessionSnapshot>(&content) {
-                        snapshots.push(snapshot.info());
-                    }
+            if let Ok(content) = fs::read_to_string(&path) {
+                if let Ok(snapshot) = serde_json::from_str::<SessionSnapshot>(&content) {
+                    snapshots.push(snapshot.info());
                 }
-                Err(_) => continue, // Skip unreadable files
             }
         }
     }
@@ -299,9 +286,10 @@ pub fn list_snapshots(working_dir: &Path) -> Result<Vec<SessionSnapshotInfo>> {
     Ok(snapshots)
 }
 
-/// Deletes a session snapshot.
+/// Deletes a session snapshot from `~/.planning-agent/sessions/`.
+#[allow(unused_variables)]
 pub fn delete_snapshot(working_dir: &Path, session_id: &str) -> Result<()> {
-    let snapshot_path = get_snapshot_path(working_dir, session_id);
+    let snapshot_path = get_snapshot_path(session_id)?;
 
     if snapshot_path.exists() {
         fs::remove_file(&snapshot_path)
@@ -353,7 +341,7 @@ mod tests {
     use crate::state::Phase;
 
     fn create_test_state() -> State {
-        State::new("test-feature", "Test objective", 3)
+        State::new("test-feature", "Test objective", 3).unwrap()
     }
 
     fn create_test_ui_state() -> SessionUiState {

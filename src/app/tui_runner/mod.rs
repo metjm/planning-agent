@@ -11,6 +11,7 @@ use crate::app::workflow::run_workflow_with_config;
 use crate::app::workflow_common::pre_create_plan_files;
 use crate::cli_usage;
 use crate::config::WorkflowConfig;
+use crate::planning_paths;
 use crate::state::State;
 use crate::tui::{
     Event, EventHandler, InputMode, SessionStatus, TabManager, TerminalTitleManager,
@@ -240,8 +241,7 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                 extract_feature_name(&init_objective, Some(&init_tx)).await?
             };
 
-            let state_path =
-                init_working_dir.join(format!(".planning-agent/{}.json", feature_name));
+            let state_path = planning_paths::state_path(&init_working_dir, &feature_name)?;
 
             let mut state = if init_continue {
                 let _ = init_tx.send(Event::Output(format!(
@@ -258,7 +258,7 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                     "[planning] Objective: {}",
                     init_objective
                 )));
-                State::new(&feature_name, &init_objective, init_max_iterations)
+                State::new(&feature_name, &init_objective, init_max_iterations)?
             };
 
             // Pre-create plan folder and files (in ~/.planning-agent/plans/)

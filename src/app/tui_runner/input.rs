@@ -2,6 +2,7 @@ use crate::app::cli::Cli;
 use crate::app::headless::extract_feature_name;
 use crate::app::workflow_common::pre_create_plan_files;
 use crate::config::WorkflowConfig;
+use crate::planning_paths;
 use crate::state::State;
 use crate::tui::ui::util::{
     compute_summary_panel_inner_size, compute_wrapped_line_count,
@@ -293,7 +294,7 @@ async fn handle_naming_tab_input(
 
                     let feature_name = extract_feature_name(&objective, Some(&tx)).await?;
 
-                    let state_path = wd.join(format!(".planning-agent/{}.json", feature_name));
+                    let state_path = planning_paths::state_path(&wd, &feature_name)?;
 
                     let _ = tx.send(Event::SessionOutput {
                         session_id,
@@ -304,7 +305,7 @@ async fn handle_naming_tab_input(
                         line: format!("[planning] Objective: {}", objective),
                     });
 
-                    let mut state = State::new(&feature_name, &objective, max_iter);
+                    let mut state = State::new(&feature_name, &objective, max_iter)?;
 
                     // Pre-create plan folder and files (in ~/.planning-agent/plans/)
                     pre_create_plan_files(&state).context("Failed to pre-create plan files")?;

@@ -1,4 +1,4 @@
-use crate::planning_dir::ensure_planning_agent_dir;
+use crate::planning_paths;
 use anyhow::{Context, Result};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -6,14 +6,6 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
-
-/// Returns the base directory for plan storage: ~/.planning-agent/plans/
-fn get_plans_base_dir() -> PathBuf {
-    dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".planning-agent")
-        .join("plans")
-}
 
 /// Generates a unique folder name for a plan using timestamp and UUID.
 /// Format: YYYYMMDD-HHMMSS-xxxxxxxx_<sanitized_name>
@@ -25,16 +17,22 @@ fn generate_plan_folder_name(sanitized_name: &str) -> String {
 
 /// Generates the plan file path inside a plan folder.
 /// Format: ~/.planning-agent/plans/<folder>/plan.md
-fn generate_plan_path(folder_name: &str) -> PathBuf {
-    get_plans_base_dir().join(folder_name).join("plan.md")
+///
+/// # Errors
+/// Returns an error if the home directory cannot be determined.
+fn generate_plan_path(folder_name: &str) -> Result<PathBuf> {
+    Ok(planning_paths::plans_dir()?.join(folder_name).join("plan.md"))
 }
 
 /// Generates a feedback file path inside a plan folder.
 /// Format: ~/.planning-agent/plans/<folder>/feedback_<round>.md
-fn generate_feedback_path(folder_name: &str, round: u32) -> PathBuf {
-    get_plans_base_dir()
+///
+/// # Errors
+/// Returns an error if the home directory cannot be determined.
+fn generate_feedback_path(folder_name: &str, round: u32) -> Result<PathBuf> {
+    Ok(planning_paths::plans_dir()?
         .join(folder_name)
-        .join(format!("feedback_{}.md", round))
+        .join(format!("feedback_{}.md", round)))
 }
 
 /// Extracts the plan folder name from a plan file path.
@@ -213,7 +211,11 @@ pub struct State {
 }
 
 impl State {
-    pub fn new(feature_name: &str, objective: &str, max_iterations: u32) -> Self {
+    /// Creates a new State for a workflow.
+    ///
+    /// # Errors
+    /// Returns an error if the home directory cannot be determined for plan storage.
+    pub fn new(feature_name: &str, objective: &str, max_iterations: u32) -> Result<Self> {
         let sanitized_name = feature_name
             .to_lowercase()
             .replace(' ', "-")
@@ -222,10 +224,10 @@ impl State {
             .collect::<String>();
 
         let folder_name = generate_plan_folder_name(&sanitized_name);
-        let plan_file = generate_plan_path(&folder_name);
-        let feedback_file = generate_feedback_path(&folder_name, 1);
+        let plan_file = generate_plan_path(&folder_name)?;
+        let feedback_file = generate_feedback_path(&folder_name, 1)?;
 
-        Self {
+        Ok(Self {
             phase: Phase::Planning,
             iteration: 1,
             max_iterations,
@@ -239,7 +241,7 @@ impl State {
             agent_sessions: HashMap::new(),
             invocations: Vec::new(),
             updated_at: Utc::now().to_rfc3339(),
-        }
+        })
     }
 
     /// Updates the feedback filename for a new iteration/round.
@@ -247,8 +249,10 @@ impl State {
     pub fn update_feedback_for_iteration(&mut self, iteration: u32) {
         // Try to extract the folder name from the plan file path
         if let Some(folder_name) = extract_plan_folder(&self.plan_file) {
-            self.feedback_file = generate_feedback_path(&folder_name, iteration);
-            return;
+            if let Ok(path) = generate_feedback_path(&folder_name, iteration) {
+                self.feedback_file = path;
+                return;
+            }
         }
 
         // Legacy fallback: generate a new folder for feedback
@@ -265,7 +269,9 @@ impl State {
 
         // Generate a new folder for legacy plans
         let folder_name = generate_plan_folder_name(&sanitized_name);
-        self.feedback_file = generate_feedback_path(&folder_name, iteration);
+        if let Ok(path) = generate_feedback_path(&folder_name, iteration) {
+            self.feedback_file = path;
+        }
     }
 
     pub fn get_or_create_agent_session(
@@ -345,17 +351,10 @@ impl State {
     }
 
     pub fn save(&self, path: &Path) -> Result<()> {
-        // Extract working_dir from path: .planning-agent/<feature>.json -> working_dir
-        // path.parent() gives .planning-agent, and parent of that gives working_dir
-        if let Some(planning_dir) = path.parent() {
-            if let Some(working_dir) = planning_dir.parent() {
-                ensure_planning_agent_dir(working_dir)
-                    .with_context(|| format!("Failed to create planning directory in: {}", working_dir.display()))?;
-            } else {
-                // Fallback: just create the parent directory
-                fs::create_dir_all(planning_dir)
-                    .with_context(|| format!("Failed to create directory: {}", planning_dir.display()))?;
-            }
+        // Create parent directory if needed (works for both home-based and legacy paths)
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)
+                .with_context(|| format!("Failed to create directory: {}", parent.display()))?;
         }
         let content = serde_json::to_string_pretty(self)
             .with_context(|| "Failed to serialize state to JSON")?;
@@ -365,17 +364,10 @@ impl State {
     }
 
     pub fn save_atomic(&self, path: &Path) -> Result<()> {
-        // Extract working_dir from path: .planning-agent/<feature>.json -> working_dir
-        // path.parent() gives .planning-agent, and parent of that gives working_dir
-        if let Some(planning_dir) = path.parent() {
-            if let Some(working_dir) = planning_dir.parent() {
-                ensure_planning_agent_dir(working_dir)
-                    .with_context(|| format!("Failed to create planning directory in: {}", working_dir.display()))?;
-            } else {
-                // Fallback: just create the parent directory
-                fs::create_dir_all(planning_dir)
-                    .with_context(|| format!("Failed to create directory: {}", planning_dir.display()))?;
-            }
+        // Create parent directory if needed (works for both home-based and legacy paths)
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)
+                .with_context(|| format!("Failed to create directory: {}", parent.display()))?;
         }
         let content = serde_json::to_string_pretty(self)
             .with_context(|| "Failed to serialize state to JSON")?;
@@ -423,7 +415,7 @@ mod tests {
 
     #[test]
     fn test_new_state() {
-        let state = State::new("user-auth", "Implement authentication", 3);
+        let state = State::new("user-auth", "Implement authentication", 3).unwrap();
         assert_eq!(state.phase, Phase::Planning);
         assert_eq!(state.iteration, 1);
 
@@ -437,7 +429,7 @@ mod tests {
 
     #[test]
     fn test_new_state_feedback_file_has_round_number() {
-        let state = State::new("user-auth", "Implement authentication", 3);
+        let state = State::new("user-auth", "Implement authentication", 3).unwrap();
 
         // Feedback file should be in ~/.planning-agent/plans/<folder>/feedback_1.md
         let feedback_file_str = state.feedback_file.to_string_lossy();
@@ -447,7 +439,7 @@ mod tests {
 
     #[test]
     fn test_update_feedback_for_iteration() {
-        let mut state = State::new("test-feature", "Test objective", 3);
+        let mut state = State::new("test-feature", "Test objective", 3).unwrap();
 
         // Initial feedback file should have round 1
         assert!(state.feedback_file.to_string_lossy().ends_with("/feedback_1.md"));
@@ -494,7 +486,7 @@ mod tests {
     #[test]
     fn test_update_feedback_for_iteration_with_legacy_plan_file() {
         // Simulate loading a state with legacy plan file format
-        let mut state = State::new("test", "test", 3);
+        let mut state = State::new("test", "test", 3).unwrap();
         // Manually set to legacy format
         state.plan_file = PathBuf::from("docs/plans/existing-feature.md");
         state.feedback_file = PathBuf::from("docs/plans/existing-feature_feedback.md");
@@ -511,7 +503,7 @@ mod tests {
 
     #[test]
     fn test_valid_transitions() {
-        let mut state = State::new("test", "test", 3);
+        let mut state = State::new("test", "test", 3).unwrap();
 
         assert!(state.transition(Phase::Reviewing).is_ok());
         assert_eq!(state.phase, Phase::Reviewing);
@@ -525,13 +517,13 @@ mod tests {
 
     #[test]
     fn test_invalid_transition() {
-        let mut state = State::new("test", "test", 3);
+        let mut state = State::new("test", "test", 3).unwrap();
         assert!(state.transition(Phase::Complete).is_err());
     }
 
     #[test]
     fn test_should_continue() {
-        let mut state = State::new("test", "test", 2);
+        let mut state = State::new("test", "test", 2).unwrap();
         assert!(state.should_continue());
 
         state.iteration = 3;
@@ -544,7 +536,7 @@ mod tests {
 
     #[test]
     fn test_new_state_has_workflow_session_id() {
-        let state = State::new("test", "test objective", 3);
+        let state = State::new("test", "test objective", 3).unwrap();
         assert!(!state.workflow_session_id.is_empty());
         assert!(state.agent_sessions.is_empty());
         assert!(state.invocations.is_empty());
@@ -552,14 +544,14 @@ mod tests {
 
     #[test]
     fn test_workflow_session_id_is_stable() {
-        let state = State::new("test", "test objective", 3);
+        let state = State::new("test", "test objective", 3).unwrap();
         let session_id = state.workflow_session_id.clone();
         assert_eq!(state.workflow_session_id, session_id);
     }
 
     #[test]
     fn test_get_or_create_agent_session_stateless() {
-        let mut state = State::new("test", "test objective", 3);
+        let mut state = State::new("test", "test objective", 3).unwrap();
         let session = state.get_or_create_agent_session("claude", ResumeStrategy::Stateless);
 
         assert_eq!(session.resume_strategy, ResumeStrategy::Stateless);
@@ -569,7 +561,7 @@ mod tests {
 
     #[test]
     fn test_get_or_create_agent_session_with_session_id() {
-        let mut state = State::new("test", "test objective", 3);
+        let mut state = State::new("test", "test objective", 3).unwrap();
         let session = state.get_or_create_agent_session("claude", ResumeStrategy::SessionId);
 
         assert_eq!(session.resume_strategy, ResumeStrategy::SessionId);
@@ -580,7 +572,7 @@ mod tests {
 
     #[test]
     fn test_agent_session_is_reused() {
-        let mut state = State::new("test", "test objective", 3);
+        let mut state = State::new("test", "test objective", 3).unwrap();
 
         let session1 = state.get_or_create_agent_session("claude", ResumeStrategy::SessionId);
         let key1 = session1.session_key.clone();
@@ -593,7 +585,7 @@ mod tests {
 
     #[test]
     fn test_record_invocation() {
-        let mut state = State::new("test", "test objective", 3);
+        let mut state = State::new("test", "test objective", 3).unwrap();
         state.get_or_create_agent_session("claude", ResumeStrategy::SessionId);
         state.record_invocation("claude", "Planning");
 
@@ -608,7 +600,7 @@ mod tests {
 
     #[test]
     fn test_ensure_workflow_session_id() {
-        let mut state = State::new("test", "test objective", 3);
+        let mut state = State::new("test", "test objective", 3).unwrap();
         state.workflow_session_id = String::new();
         assert!(state.workflow_session_id.is_empty());
 
@@ -639,7 +631,7 @@ mod tests {
 
     #[test]
     fn test_state_serialization_with_session_data() {
-        let mut state = State::new("test", "test objective", 3);
+        let mut state = State::new("test", "test objective", 3).unwrap();
         state.get_or_create_agent_session("claude", ResumeStrategy::SessionId);
         state.record_invocation("claude", "Planning");
 
@@ -694,14 +686,14 @@ mod tests {
 
     #[test]
     fn test_new_state_has_updated_at() {
-        let state = State::new("test", "test objective", 3);
+        let state = State::new("test", "test objective", 3).unwrap();
         assert!(!state.updated_at.is_empty());
         assert!(state.has_updated_at());
     }
 
     #[test]
     fn test_set_updated_at() {
-        let mut state = State::new("test", "test objective", 3);
+        let mut state = State::new("test", "test objective", 3).unwrap();
         let original = state.updated_at.clone();
 
         // Wait a tiny bit and update
@@ -715,7 +707,7 @@ mod tests {
 
     #[test]
     fn test_set_updated_at_with() {
-        let mut state = State::new("test", "test objective", 3);
+        let mut state = State::new("test", "test objective", 3).unwrap();
         let custom_time = "2025-12-29T15:00:00Z";
         state.set_updated_at_with(custom_time);
         assert_eq!(state.updated_at, custom_time);

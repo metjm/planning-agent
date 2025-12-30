@@ -2,6 +2,7 @@
 use crate::app::util::shorten_model_name;
 use crate::app::workflow::WorkflowResult;
 use crate::config::WorkflowConfig;
+use crate::planning_paths;
 use crate::state::{Phase, State};
 use crate::tui::{
     ApprovalMode, Event, InputMode, SessionStatus, TabManager, UserApprovalResponse,
@@ -603,8 +604,13 @@ pub async fn check_workflow_completions(
                                 state.objective,
                                 user_feedback
                             );
-                            let state_path = working_dir
-                                .join(format!(".planning-agent/{}.json", state.feature_name));
+                            let state_path = match planning_paths::state_path(working_dir, &state.feature_name) {
+                                Ok(p) => p,
+                                Err(e) => {
+                                    session.handle_error(&format!("Failed to get state path: {}", e));
+                                    continue;
+                                }
+                            };
                             state.set_updated_at();
                             let _ = state.save(&state_path);
 
@@ -650,8 +656,15 @@ pub async fn check_workflow_completions(
                         // Save snapshot before marking as stopped
                         if let Some(ref state) = session.workflow_state {
                             let ui_state = session.to_ui_state();
-                            let state_path = working_dir
-                                .join(format!(".planning-agent/{}.json", state.feature_name));
+                            let state_path = match planning_paths::state_path(working_dir, &state.feature_name) {
+                                Ok(p) => p,
+                                Err(e) => {
+                                    session.add_output(format!("[planning] Warning: Failed to get state path: {}", e));
+                                    session.status = SessionStatus::Stopped;
+                                    session.running = false;
+                                    continue;
+                                }
+                            };
                             let now = chrono::Utc::now().to_rfc3339();
                             let mut state_copy = state.clone();
                             state_copy.set_updated_at_with(&now);

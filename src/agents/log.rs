@@ -1,7 +1,7 @@
-use crate::planning_dir::ensure_planning_agent_dir;
+use crate::planning_paths;
 use std::fs::OpenOptions;
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock};
 
 pub struct AgentLogger {
@@ -38,9 +38,9 @@ fn get_log_file(working_dir: &Path) -> Option<Arc<Mutex<std::fs::File>>> {
     let run_id = RUN_ID
         .get_or_init(|| chrono::Local::now().format("%Y%m%d-%H%M%S").to_string())
         .clone();
-    let log_path = build_log_path(working_dir, &run_id);
-    // Use the centralized helper to ensure directory exists and gitignore is updated
-    let _ = ensure_planning_agent_dir(working_dir);
+
+    // Use home-based log path
+    let log_path = planning_paths::agent_stream_log_path(working_dir, &run_id).ok()?;
 
     match OpenOptions::new().create(true).append(true).open(&log_path) {
         Ok(mut file) => {
@@ -58,8 +58,4 @@ fn get_log_file(working_dir: &Path) -> Option<Arc<Mutex<std::fs::File>>> {
         }
         Err(_) => None,
     }
-}
-
-fn build_log_path(working_dir: &Path, run_id: &str) -> PathBuf {
-    working_dir.join(format!(".planning-agent/agent-stream-{}.log", run_id))
 }

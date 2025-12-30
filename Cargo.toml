@@ -23,6 +23,7 @@ futures = "0.3"
 
 # Utils
 dirs = "6"
+sha2 = "0.10"
 unicode-width = "0.2"
 
 # PTY for Claude usage (removes expect dependency)
