@@ -38,11 +38,15 @@ pub fn start_implementation_terminal(
     let panel_height = term_height.saturating_sub(5);
     let panel_width = (term_width as f32 * 0.70) as u16;
 
-    // Spawn the embedded terminal
+    // Account for borders (2 rows, 2 cols) to get inner terminal size
+    let inner_height = panel_height.saturating_sub(2);
+    let inner_width = panel_width.saturating_sub(2);
+
+    // Spawn the embedded terminal with inner dimensions
     let terminal = EmbeddedTerminal::spawn(
         &plan_path,
-        panel_height,
-        panel_width,
+        inner_height,
+        inner_width,
         session.id,
         output_tx.clone(),
     ).context("Failed to spawn embedded implementation terminal")?;
@@ -87,11 +91,14 @@ pub fn handle_implementation_terminal_input(
             if key.modifiers.contains(KeyModifiers::CONTROL) {
                 match c {
                     'c' | 'C' => Some(key_sequences::CTRL_C.to_vec()),
+                    'd' | 'D' => Some(key_sequences::CTRL_D.to_vec()),
                     'a' | 'A' => Some(key_sequences::CTRL_A.to_vec()),
                     'e' | 'E' => Some(key_sequences::CTRL_E.to_vec()),
                     'u' | 'U' => Some(key_sequences::CTRL_U.to_vec()),
                     'k' | 'K' => Some(key_sequences::CTRL_K.to_vec()),
                     'l' | 'L' => Some(key_sequences::CTRL_L.to_vec()),
+                    'w' | 'W' => Some(key_sequences::CTRL_W.to_vec()),
+                    'z' | 'Z' => Some(key_sequences::CTRL_Z.to_vec()),
                     _ => None,
                 }
             } else {
@@ -112,6 +119,8 @@ pub fn handle_implementation_terminal_input(
         KeyCode::Home => Some(key_sequences::HOME.to_vec()),
         KeyCode::End => Some(key_sequences::END.to_vec()),
         KeyCode::Delete => Some(key_sequences::DELETE.to_vec()),
+        KeyCode::PageUp => Some(key_sequences::PAGE_UP.to_vec()),
+        KeyCode::PageDown => Some(key_sequences::PAGE_DOWN.to_vec()),
         _ => None,
     };
 

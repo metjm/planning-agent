@@ -804,7 +804,7 @@ fn draw_implementation_terminal(frame: &mut Frame, session: &Session, area: Rect
         "[SCROLLED] "
     };
 
-    let title = format!(" {} Implementation Terminal [Ctrl+\\ to exit] ", follow_indicator);
+    let title = format!(" {}Implementation Terminal [Ctrl+\\ to exit] ", follow_indicator);
 
     let terminal_block = Block::default()
         .borders(Borders::ALL)
@@ -818,33 +818,27 @@ fn draw_implementation_terminal(frame: &mut Frame, session: &Session, area: Rect
     if let Some(ref impl_term) = session.implementation_terminal {
         let screen = impl_term.screen();
         let screen_size = screen.size();
+        let screen_rows = screen_size.0 as usize;
+        let screen_cols = screen_size.1 as usize;
         let visible_rows = inner_area.height as usize;
         let visible_cols = inner_area.width as usize;
 
-        // Calculate scroll position
+        // Get scrollback info for scrollbar
         let scrollback_len = screen.scrollback();
-        let total_rows = screen_size.0 as usize + scrollback_len;
-        let scroll_offset = impl_term.scroll_offset;
+        let total_content_rows = screen_rows + scrollback_len;
+        // Note: scroll_offset is tracked but scrollback viewing isn't implemented
+        // due to vt100 API limitations (no cell-level access to scrollback)
+        let _scroll_offset = impl_term.scroll_offset;
 
-        // Render each row
-        for y in 0..visible_rows.min(screen_size.0 as usize) {
-            let row_idx = if scroll_offset > 0 {
-                // When scrolled, show from scrollback
-                let scrollback_row = scrollback_len.saturating_sub(scroll_offset) + y;
-                if scrollback_row < scrollback_len {
-                    // This row is in scrollback
-                    continue; // Skip scrollback rendering for now (complex)
-                } else {
-                    // This row is in the main screen
-                    (scrollback_row - scrollback_len) as u16
-                }
-            } else {
-                y as u16
-            };
-
-            for x in 0..visible_cols.min(screen_size.1 as usize) {
-                let cell = screen.cell(row_idx, x as u16);
-                if let Some(cell) = cell {
+        // Render each row of the visible screen
+        // Note: vt100's cell() API only provides access to the current visible screen,
+        // not the scrollback buffer. For full scrollback rendering, we'd need to use
+        // contents_formatted() and parse ANSI codes, which is complex.
+        // For now, we render the current screen with full styling.
+        let rows_to_render = visible_rows.min(screen_rows);
+        for y in 0..rows_to_render {
+            for x in 0..visible_cols.min(screen_cols) {
+                if let Some(cell) = screen.cell(y as u16, x as u16) {
                     // Skip wide character continuation cells
                     if cell.is_wide_continuation() {
                         continue;
@@ -859,8 +853,7 @@ fn draw_implementation_terminal(frame: &mut Frame, session: &Session, area: Rect
 
                     if buf_x < inner_area.x + inner_area.width && buf_y < inner_area.y + inner_area.height {
                         let buf = frame.buffer_mut();
-                        let buf_cell = buf.cell_mut((buf_x, buf_y));
-                        if let Some(buf_cell) = buf_cell {
+                        if let Some(buf_cell) = buf.cell_mut((buf_x, buf_y)) {
                             buf_cell.set_symbol(if contents.is_empty() { " " } else { contents });
                             buf_cell.set_style(style);
                         }
@@ -869,10 +862,11 @@ fn draw_implementation_terminal(frame: &mut Frame, session: &Session, area: Rect
             }
         }
 
-        // Show scrollbar if there's scrollback
-        if total_rows > visible_rows {
-            let current_pos = total_rows.saturating_sub(scroll_offset).saturating_sub(visible_rows);
-            let mut scrollbar_state = ScrollbarState::new(total_rows).position(current_pos);
+        // Show scrollbar indicator if there's scrollback history
+        // This shows that content exists above even though we can't scroll to it
+        if total_content_rows > visible_rows || scrollback_len > 0 {
+            let current_pos = total_content_rows.saturating_sub(screen_rows);
+            let mut scrollbar_state = ScrollbarState::new(total_content_rows).position(current_pos);
             frame.render_stateful_widget(
                 Scrollbar::new(ScrollbarOrientation::VerticalRight)
                     .begin_symbol(Some("↑"))
