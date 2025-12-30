@@ -199,8 +199,19 @@ impl EmbeddedTerminal {
     }
 
     /// Resize the PTY and terminal emulator
+    /// Enforces minimum size to prevent issues with small terminals
     pub fn resize(&mut self, rows: u16, cols: u16) -> Result<()> {
         if rows < 1 || cols < 1 {
+            return Ok(());
+        }
+
+        // Enforce minimum size - clamp to minimum values
+        // This prevents issues when terminal becomes very small
+        let rows = rows.max(MIN_TERMINAL_ROWS);
+        let cols = cols.max(MIN_TERMINAL_COLS);
+
+        // Skip resize if size hasn't changed
+        if (rows, cols) == self.last_size {
             return Ok(());
         }
 
@@ -284,14 +295,20 @@ impl EmbeddedTerminal {
 
     /// Kill the child process
     pub fn kill(&mut self) {
+        // Signal the reader thread to stop
         self.stop_flag.store(true, std::sync::atomic::Ordering::Relaxed);
+
+        // Kill the child process - this should cause the PTY to close
         let _ = self.child_killer.kill();
         self.active = false;
 
-        // Wait for reader thread to finish
-        if let Some(handle) = self.reader_handle.take() {
-            let _ = handle.join();
-        }
+        // Don't block waiting for the reader thread - it will exit when:
+        // 1. The PTY read returns EOF (from child exit)
+        // 2. The PTY read returns an error
+        // 3. The stop flag is checked on the next iteration
+        // Blocking here could hang if the PTY doesn't close immediately.
+        // The thread is detached and will clean up on its own.
+        let _ = self.reader_handle.take();
     }
 
     /// Get the PTY writer for external use (e.g., handling paste events)
@@ -371,6 +388,8 @@ pub mod key_sequences {
     pub const TAB: &[u8] = b"\t";
     /// Ctrl+C (SIGINT)
     pub const CTRL_C: &[u8] = b"\x03";
+    /// Ctrl+D (EOF)
+    pub const CTRL_D: &[u8] = b"\x04";
     /// Ctrl+A (line start)
     pub const CTRL_A: &[u8] = b"\x01";
     /// Ctrl+E (line end)
@@ -381,6 +400,10 @@ pub mod key_sequences {
     pub const CTRL_K: &[u8] = b"\x0b";
     /// Ctrl+L (clear screen)
     pub const CTRL_L: &[u8] = b"\x0c";
+    /// Ctrl+W (delete word)
+    pub const CTRL_W: &[u8] = b"\x17";
+    /// Ctrl+Z (suspend)
+    pub const CTRL_Z: &[u8] = b"\x1a";
     /// Ctrl+\ (SIGQUIT) - used for exit
     pub const CTRL_BACKSLASH: &[u8] = b"\x1c";
     /// Arrow Up
@@ -397,6 +420,10 @@ pub mod key_sequences {
     pub const END: &[u8] = b"\x1b[F";
     /// Delete
     pub const DELETE: &[u8] = b"\x1b[3~";
+    /// Page Up
+    pub const PAGE_UP: &[u8] = b"\x1b[5~";
+    /// Page Down
+    pub const PAGE_DOWN: &[u8] = b"\x1b[6~";
 }
 
 #[cfg(test)]
