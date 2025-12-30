@@ -1,4 +1,5 @@
 
+use super::objective::{compute_objective_height, draw_objective, OBJECTIVE_MAX_FRACTION, OBJECTIVE_MIN_HEIGHT};
 use super::stats::draw_stats;
 use super::util::{compute_wrapped_line_count, parse_markdown_line};
 use crate::tui::{FocusedPanel, RunTab, Session, SummaryState};
@@ -26,8 +27,31 @@ pub fn draw_main(frame: &mut Frame, session: &Session, area: Rect) {
 
     draw_output(frame, session, left_chunks[0]);
     draw_chat(frame, session, left_chunks[1], show_tool_panel);
+
+    // Split right column into Objective (top) and Stats (bottom)
+    let right_area = chunks[1];
+    let objective_text = session
+        .workflow_state
+        .as_ref()
+        .map(|s| s.objective.as_str())
+        .unwrap_or("");
+
+    // Compute objective height based on content and available space
+    let max_objective_height = ((right_area.height as f32) * OBJECTIVE_MAX_FRACTION) as u16;
+    let objective_height = compute_objective_height(objective_text, right_area.width, max_objective_height)
+        .max(OBJECTIVE_MIN_HEIGHT);
+
+    let right_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(objective_height),
+            Constraint::Min(0),
+        ])
+        .split(right_area);
+
+    draw_objective(frame, session, right_chunks[0]);
     // Show live tools in Stats only when tool panel is NOT visible (narrow terminals)
-    draw_stats(frame, session, chunks[1], !show_tool_panel);
+    draw_stats(frame, session, right_chunks[1], !show_tool_panel);
 }
 
 fn draw_output(frame: &mut Frame, session: &Session, area: Rect) {

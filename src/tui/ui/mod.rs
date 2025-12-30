@@ -1,4 +1,5 @@
 
+mod objective;
 mod overlays;
 mod panels;
 mod stats;
