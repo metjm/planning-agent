@@ -4,12 +4,12 @@ use crate::app::workflow_common::pre_create_plan_files;
 use crate::config::WorkflowConfig;
 use crate::state::State;
 use crate::tui::ui::util::{
-    compute_popup_summary_inner_size, compute_summary_panel_inner_size, compute_wrapped_line_count,
+    compute_summary_panel_inner_size, compute_wrapped_line_count,
     compute_wrapped_line_count_text,
 };
 use crate::tui::{
-    ApprovalContext, ApprovalMode, Event, FeedbackTarget, FocusedPanel, InputMode, Session, SessionStatus,
-    TabManager, UserApprovalResponse, WorkflowCommand,
+    ApprovalMode, Event, FeedbackTarget, FocusedPanel, InputMode, Session, SessionStatus,
+    TabManager, WorkflowCommand,
 };
 use crate::update;
 use anyhow::{Context, Result};
@@ -18,19 +18,10 @@ use ratatui::text::Line;
 use std::path::PathBuf;
 use tokio::sync::mpsc;
 
-use super::{restore_terminal, InitHandle};
+use super::approval_input::{handle_awaiting_choice_input, handle_entering_feedback_input};
+use super::implementation_input::handle_implementation_terminal_input;
+use super::InitHandle;
 use crate::tui::ui::util::parse_markdown_line;
-
-/// Compute the max scroll for the plan summary popup based on wrapped lines and terminal size.
-fn compute_plan_summary_max_scroll(plan_summary: &str) -> usize {
-    let (term_width, term_height) = crossterm::terminal::size().unwrap_or((80, 24));
-    let (inner_width, visible_height) = compute_popup_summary_inner_size(term_width, term_height);
-
-    let summary_lines: Vec<Line> = plan_summary.lines().map(parse_markdown_line).collect();
-    let total_lines = compute_wrapped_line_count(&summary_lines, inner_width);
-
-    total_lines.saturating_sub(visible_height as usize)
-}
 
 /// Compute the max scroll for the run-tab summary panel based on wrapped lines and terminal size.
 fn compute_run_tab_summary_max_scroll(summary_text: &str) -> usize {
@@ -194,6 +185,13 @@ pub async fn handle_key_event(
         return Ok(should_quit);
     }
 
+    // Handle implementation terminal input mode
+    let session = tab_manager.active_mut();
+    if session.input_mode == InputMode::ImplementationTerminal {
+        should_quit = handle_implementation_terminal_input(key, session)?;
+        return Ok(should_quit);
+    }
+
     let session = tab_manager.active_mut();
     if session.approval_mode == ApprovalMode::None {
         if handle_tab_switching(key, tab_manager) {
@@ -202,7 +200,7 @@ pub async fn handle_key_event(
     }
 
     let session = tab_manager.active_mut();
-    should_quit = handle_approval_mode_input(key, session, terminal, working_dir).await?;
+    should_quit = handle_approval_mode_input(key, session, terminal, working_dir, output_tx).await?;
 
     Ok(should_quit)
 }
@@ -404,323 +402,15 @@ async fn handle_approval_mode_input(
     session: &mut Session,
     terminal: &mut ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io::Stdout>>,
     working_dir: &PathBuf,
+    output_tx: &mpsc::UnboundedSender<Event>,
 ) -> Result<bool> {
     match session.approval_mode {
         ApprovalMode::AwaitingChoice => {
-            handle_awaiting_choice_input(key, session, terminal, working_dir).await
+            handle_awaiting_choice_input(key, session, terminal, working_dir, output_tx).await
         }
         ApprovalMode::EnteringFeedback => handle_entering_feedback_input(key, session).await,
         ApprovalMode::None => handle_none_mode_input(key, session),
     }
-}
-
-async fn handle_awaiting_choice_input(
-    key: crossterm::event::KeyEvent,
-    session: &mut Session,
-    terminal: &mut ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io::Stdout>>,
-    working_dir: &PathBuf,
-) -> Result<bool> {
-    match session.approval_context {
-        ApprovalContext::PlanApproval => {
-            handle_plan_approval_input(key, session, terminal, working_dir).await
-        }
-        ApprovalContext::ReviewDecision => handle_review_decision_input(key, session).await,
-        ApprovalContext::PlanGenerationFailed => {
-            handle_plan_generation_failed_input(key, session).await
-        }
-        ApprovalContext::MaxIterationsReached => handle_max_iterations_input(key, session).await,
-        ApprovalContext::UserOverrideApproval => {
-            handle_user_override_input(key, session, terminal, working_dir).await
-        }
-    }
-}
-
-async fn handle_plan_approval_input(
-    key: crossterm::event::KeyEvent,
-    session: &mut Session,
-    terminal: &mut ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io::Stdout>>,
-    working_dir: &PathBuf,
-) -> Result<bool> {
-    match key.code {
-        KeyCode::Char('a') | KeyCode::Char('A') => {
-            if let Some(tx) = session.approval_tx.take() {
-                let _ = tx.send(UserApprovalResponse::Accept).await;
-            }
-            session.approval_mode = ApprovalMode::None;
-            session.status = SessionStatus::Complete;
-        }
-        KeyCode::Char('i') | KeyCode::Char('I') => {
-            let plan_path = session
-                .workflow_state
-                .as_ref()
-                .map(|s| working_dir.join(&s.plan_file))
-                .unwrap_or_default();
-
-            session.approval_tx.take();
-            session.approval_mode = ApprovalMode::None;
-
-            launch_claude_implementation(terminal, plan_path)?;
-        }
-        KeyCode::Char('d') | KeyCode::Char('D') => {
-            session.start_feedback_input();
-        }
-        KeyCode::Char('j') | KeyCode::Down => {
-            let max_scroll = compute_plan_summary_max_scroll(&session.plan_summary);
-            session.scroll_summary_down(max_scroll);
-        }
-        KeyCode::Char('k') | KeyCode::Up => {
-            session.scroll_summary_up();
-        }
-        KeyCode::Char('q') | KeyCode::Esc => {
-            return Ok(true);
-        }
-        _ => {}
-    }
-    Ok(false)
-}
-
-async fn handle_review_decision_input(
-    key: crossterm::event::KeyEvent,
-    session: &mut Session,
-) -> Result<bool> {
-    match key.code {
-        KeyCode::Char('c') | KeyCode::Char('C') => {
-            if let Some(tx) = session.approval_tx.clone() {
-                let _ = tx.send(UserApprovalResponse::ReviewContinue).await;
-            }
-            session.approval_mode = ApprovalMode::None;
-            session.status = SessionStatus::Planning;
-            session.approval_context = ApprovalContext::PlanApproval;
-        }
-        KeyCode::Char('r') | KeyCode::Char('R') => {
-            if let Some(tx) = session.approval_tx.clone() {
-                let _ = tx.send(UserApprovalResponse::ReviewRetry).await;
-            }
-            session.approval_mode = ApprovalMode::None;
-            session.status = SessionStatus::Planning;
-            session.approval_context = ApprovalContext::PlanApproval;
-        }
-        KeyCode::Char('j') | KeyCode::Down => {
-            let max_scroll = compute_plan_summary_max_scroll(&session.plan_summary);
-            session.scroll_summary_down(max_scroll);
-        }
-        KeyCode::Char('k') | KeyCode::Up => {
-            session.scroll_summary_up();
-        }
-        KeyCode::Char('q') | KeyCode::Esc => {
-            return Ok(true);
-        }
-        _ => {}
-    }
-    Ok(false)
-}
-
-async fn handle_plan_generation_failed_input(
-    key: crossterm::event::KeyEvent,
-    session: &mut Session,
-) -> Result<bool> {
-    match key.code {
-        KeyCode::Char('r') | KeyCode::Char('R') => {
-            if let Some(tx) = session.approval_tx.clone() {
-                let _ = tx.send(UserApprovalResponse::PlanGenerationRetry).await;
-            }
-            session.approval_mode = ApprovalMode::None;
-            session.status = SessionStatus::Planning;
-            session.approval_context = ApprovalContext::PlanApproval;
-        }
-        KeyCode::Char('c') | KeyCode::Char('C') => {
-            if let Some(tx) = session.approval_tx.clone() {
-                let _ = tx.send(UserApprovalResponse::PlanGenerationContinue).await;
-            }
-            session.approval_mode = ApprovalMode::None;
-            session.status = SessionStatus::Planning;
-            session.approval_context = ApprovalContext::PlanApproval;
-        }
-        KeyCode::Char('a') | KeyCode::Char('A') | KeyCode::Esc => {
-            if let Some(tx) = session.approval_tx.clone() {
-                let _ = tx.send(UserApprovalResponse::AbortWorkflow).await;
-            }
-            session.approval_mode = ApprovalMode::None;
-            session.status = SessionStatus::Error;
-            session.error_state = Some("Plan generation failed".to_string());
-        }
-        KeyCode::Char('j') | KeyCode::Down => {
-            let max_scroll = compute_plan_summary_max_scroll(&session.plan_summary);
-            session.scroll_summary_down(max_scroll);
-        }
-        KeyCode::Char('k') | KeyCode::Up => {
-            session.scroll_summary_up();
-        }
-        KeyCode::Char('q') => {
-            return Ok(true);
-        }
-        _ => {}
-    }
-    Ok(false)
-}
-
-async fn handle_max_iterations_input(
-    key: crossterm::event::KeyEvent,
-    session: &mut Session,
-) -> Result<bool> {
-    match key.code {
-        KeyCode::Char('p') | KeyCode::Char('P') => {
-            if let Some(tx) = session.approval_tx.clone() {
-                let _ = tx.send(UserApprovalResponse::ProceedWithoutApproval).await;
-            }
-            session.approval_mode = ApprovalMode::None;
-            session.status = SessionStatus::Planning;
-            session.approval_context = ApprovalContext::PlanApproval;
-        }
-        KeyCode::Char('c') | KeyCode::Char('C') => {
-            if let Some(tx) = session.approval_tx.clone() {
-                let _ = tx.send(UserApprovalResponse::ContinueReviewing).await;
-            }
-            session.approval_mode = ApprovalMode::None;
-            session.status = SessionStatus::Planning;
-            session.approval_context = ApprovalContext::PlanApproval;
-        }
-        KeyCode::Char('d') | KeyCode::Char('D') => {
-            session.start_feedback_input();
-        }
-        KeyCode::Char('a') | KeyCode::Char('A') => {
-            if let Some(tx) = session.approval_tx.clone() {
-                let _ = tx.send(UserApprovalResponse::AbortWorkflow).await;
-            }
-            session.approval_mode = ApprovalMode::None;
-            session.status = SessionStatus::Error;
-            session.error_state = Some("Aborted at max iterations".to_string());
-        }
-        KeyCode::Char('j') | KeyCode::Down => {
-            let max_scroll = compute_plan_summary_max_scroll(&session.plan_summary);
-            session.scroll_summary_down(max_scroll);
-        }
-        KeyCode::Char('k') | KeyCode::Up => {
-            session.scroll_summary_up();
-        }
-        KeyCode::Char('q') | KeyCode::Esc => {
-            return Ok(true);
-        }
-        _ => {}
-    }
-    Ok(false)
-}
-
-async fn handle_user_override_input(
-    key: crossterm::event::KeyEvent,
-    session: &mut Session,
-    terminal: &mut ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io::Stdout>>,
-    working_dir: &PathBuf,
-) -> Result<bool> {
-    match key.code {
-        KeyCode::Char('i') | KeyCode::Char('I') => {
-            let plan_path = session
-                .workflow_state
-                .as_ref()
-                .map(|s| working_dir.join(&s.plan_file))
-                .unwrap_or_default();
-
-            session.approval_tx.take();
-            session.approval_mode = ApprovalMode::None;
-
-            launch_claude_implementation(terminal, plan_path)?;
-        }
-        KeyCode::Char('d') | KeyCode::Char('D') => {
-            session.start_feedback_input();
-        }
-        KeyCode::Char('j') | KeyCode::Down => {
-            let max_scroll = compute_plan_summary_max_scroll(&session.plan_summary);
-            session.scroll_summary_down(max_scroll);
-        }
-        KeyCode::Char('k') | KeyCode::Up => {
-            session.scroll_summary_up();
-        }
-        KeyCode::Char('q') | KeyCode::Esc => {
-            return Ok(true);
-        }
-        _ => {}
-    }
-    Ok(false)
-}
-
-async fn handle_entering_feedback_input(
-    key: crossterm::event::KeyEvent,
-    session: &mut Session,
-) -> Result<bool> {
-    match key.code {
-        KeyCode::Enter if key.modifiers.contains(KeyModifiers::SHIFT) => {
-            session.insert_feedback_newline();
-        }
-        KeyCode::Enter if session.last_key_was_backslash => {
-            session.delete_char();
-            session.insert_feedback_newline();
-            session.last_key_was_backslash = false;
-        }
-        KeyCode::Enter => {
-            let has_content =
-                !session.user_feedback.trim().is_empty() || session.has_feedback_pastes();
-            if has_content {
-                let feedback = session.get_submit_text_feedback();
-
-                match session.feedback_target {
-                    FeedbackTarget::ApprovalDecline => {
-                        // Existing behavior: decline with feedback via approval channel
-                        if let Some(tx) = session.approval_tx.take() {
-                            let _ = tx.send(UserApprovalResponse::Decline(feedback)).await;
-                        }
-                    }
-                    FeedbackTarget::WorkflowInterrupt => {
-                        // New behavior: send interrupt command via control channel
-                        if let Some(tx) = session.workflow_control_tx.as_ref() {
-                            let _ = tx.send(WorkflowCommand::Interrupt { feedback }).await;
-                        }
-                    }
-                }
-
-                session.user_feedback.clear();
-                session.cursor_position = 0;
-                session.feedback_scroll = 0;
-                session.clear_feedback_pastes();
-                session.approval_mode = ApprovalMode::None;
-                session.feedback_target = FeedbackTarget::default();
-            }
-        }
-        KeyCode::Esc => {
-            // Cancel feedback entry - return to previous mode
-            match session.feedback_target {
-                FeedbackTarget::ApprovalDecline => {
-                    session.approval_mode = ApprovalMode::AwaitingChoice;
-                }
-                FeedbackTarget::WorkflowInterrupt => {
-                    session.approval_mode = ApprovalMode::None;
-                }
-            }
-            session.user_feedback.clear();
-            session.cursor_position = 0;
-            session.feedback_scroll = 0;
-            session.clear_feedback_pastes();
-            session.feedback_target = FeedbackTarget::default();
-        }
-        KeyCode::Backspace => {
-            if !session.delete_paste_at_cursor_feedback() {
-                session.delete_char();
-            }
-        }
-        KeyCode::Left => {
-            session.move_cursor_left();
-        }
-        KeyCode::Right => {
-            session.move_cursor_right();
-        }
-        KeyCode::Char(c) => {
-            session.insert_char(c);
-            session.last_key_was_backslash = c == '\\';
-        }
-        _ => {
-            session.last_key_was_backslash = false;
-        }
-    }
-    Ok(false)
 }
 
 fn handle_none_mode_input(
@@ -765,12 +455,14 @@ fn handle_none_mode_input(
             }
             FocusedPanel::Chat => session.chat_scroll_down(),
             FocusedPanel::Summary => session.summary_scroll_down(),
+            FocusedPanel::Implementation => {} // Handled by ImplementationTerminal mode
         },
         KeyCode::Char('k') | KeyCode::Up => match session.focused_panel {
             FocusedPanel::Output => session.scroll_up(),
             FocusedPanel::Todos => session.todo_scroll_up(),
             FocusedPanel::Chat => session.chat_scroll_up(),
             FocusedPanel::Summary => session.summary_scroll_up(),
+            FocusedPanel::Implementation => {} // Handled by ImplementationTerminal mode
         },
         KeyCode::Char('g') => match session.focused_panel {
             FocusedPanel::Output => session.scroll_to_top(),
@@ -782,6 +474,7 @@ fn handle_none_mode_input(
                 }
             }
             FocusedPanel::Summary => session.summary_scroll_to_top(),
+            FocusedPanel::Implementation => {} // Handled by ImplementationTerminal mode
         },
         KeyCode::Char('G') => match session.focused_panel {
             FocusedPanel::Output => session.scroll_to_bottom(),
@@ -798,6 +491,7 @@ fn handle_none_mode_input(
                     .unwrap_or(0);
                 session.summary_scroll_to_bottom(max_scroll);
             }
+            FocusedPanel::Implementation => {} // Handled by ImplementationTerminal mode
         },
         KeyCode::Left => {
             if session.focused_panel == FocusedPanel::Chat
@@ -816,46 +510,4 @@ fn handle_none_mode_input(
         _ => {}
     }
     Ok(false)
-}
-
-fn launch_claude_implementation(
-    terminal: &mut ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io::Stdout>>,
-    plan_path: PathBuf,
-) -> Result<()> {
-    restore_terminal(terminal)?;
-
-    let prompt = format!(
-        "Please implement the following plan fully: {}",
-        plan_path.display()
-    );
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        let err = std::process::Command::new("claude")
-            .arg("--dangerously-skip-permissions")
-            .arg(&prompt)
-            .exec();
-        eprintln!("Failed to launch Claude: {}", err);
-        std::process::exit(1);
-    }
-
-    #[cfg(not(unix))]
-    {
-        let status = std::process::Command::new("claude")
-            .arg("--dangerously-skip-permissions")
-            .arg(&prompt)
-            .stdin(std::process::Stdio::inherit())
-            .stdout(std::process::Stdio::inherit())
-            .stderr(std::process::Stdio::inherit())
-            .status();
-
-        match status {
-            Ok(s) => std::process::exit(s.code().unwrap_or(0)),
-            Err(e) => {
-                eprintln!("Failed to launch Claude: {}", e);
-                std::process::exit(1);
-            }
-        }
-    }
 }

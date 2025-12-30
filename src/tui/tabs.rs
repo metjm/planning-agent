@@ -57,14 +57,17 @@ impl TabManager {
 
     pub fn close_tab(&mut self, index: usize) {
         if self.sessions.len() <= 1 {
-            return; 
+            return;
         }
 
         if index >= self.sessions.len() {
             return;
         }
 
-        let session = self.sessions.remove(index);
+        let mut session = self.sessions.remove(index);
+
+        // Clean up implementation terminal if active
+        session.stop_implementation_terminal();
 
         drop(session.approval_tx);
 
