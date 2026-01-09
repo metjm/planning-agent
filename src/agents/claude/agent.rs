@@ -45,7 +45,21 @@ impl ClaudeAgent {
         context: AgentContext,
     ) -> Result<AgentResult> {
         let emitter = ContextEmitter::new(context.clone(), self.name.clone());
-        self.execute_streaming_internal(prompt, system_prompt, max_turns, &emitter, Some(&context))
+        self.execute_streaming_internal(prompt, system_prompt, max_turns, &emitter, Some(&context), None)
+            .await
+    }
+
+    /// Execute with MCP config for review feedback collection
+    pub async fn execute_streaming_with_mcp(
+        &self,
+        prompt: String,
+        system_prompt: Option<String>,
+        max_turns: Option<u32>,
+        context: AgentContext,
+        mcp_config: &str,
+    ) -> Result<AgentResult> {
+        let emitter = ContextEmitter::new(context.clone(), self.name.clone());
+        self.execute_streaming_internal(prompt, system_prompt, max_turns, &emitter, Some(&context), Some(mcp_config))
             .await
     }
 
@@ -56,12 +70,13 @@ impl ClaudeAgent {
         max_turns: Option<u32>,
         emitter: &dyn EventEmitter,
         context: Option<&AgentContext>,
+        mcp_config: Option<&str>,
     ) -> Result<AgentResult> {
         let logger = AgentLogger::new(&self.name, &self.working_dir);
         self.log_start(&logger, &prompt, &system_prompt, context.is_some());
         self.log_timeout(&logger);
 
-        let cmd = self.build_command(&prompt, &system_prompt, max_turns, context);
+        let cmd = self.build_command(&prompt, &system_prompt, max_turns, context, mcp_config);
         let config = RunnerConfig::new(self.name.clone(), self.working_dir.clone())
             .with_activity_timeout(self.activity_timeout)
             .with_overall_timeout(self.overall_timeout);
@@ -77,6 +92,7 @@ impl ClaudeAgent {
         system_prompt: &Option<String>,
         max_turns: Option<u32>,
         context: Option<&AgentContext>,
+        mcp_config: Option<&str>,
     ) -> Command {
         let mut cmd = Command::new(&self.config.command);
 
@@ -107,6 +123,11 @@ impl ClaudeAgent {
                     }
                 }
             }
+        }
+
+        // Add MCP config if provided
+        if let Some(config) = mcp_config {
+            cmd.arg("--mcp-config").arg(config);
         }
 
         cmd

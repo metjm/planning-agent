@@ -5,6 +5,7 @@ mod cli_usage;
 mod codex_usage;
 mod config;
 mod gemini_usage;
+mod mcp;
 mod phases;
 mod planning_paths;
 mod session_store;
@@ -42,6 +43,11 @@ async fn main() -> Result<()> {
 
     let cli = Cli::parse();
     app::util::debug_log(start, "cli parsed");
+
+    // Handle internal MCP server mode
+    if cli.internal_mcp_server {
+        return run_mcp_server(&cli);
+    }
 
     // Handle session management commands first (no TUI needed)
     let working_dir = cli
@@ -209,4 +215,28 @@ fn truncate_string(s: &str, max_len: usize) -> String {
     } else {
         format!("{}...", &s[..max_len - 3])
     }
+}
+
+/// Run as an MCP server (internal mode for review feedback collection)
+fn run_mcp_server(cli: &Cli) -> Result<()> {
+    let plan_content = cli
+        .plan_content_b64
+        .as_ref()
+        .map(|b64| mcp::spawner::decode_plan_content(b64))
+        .transpose()?
+        .unwrap_or_default();
+
+    let review_prompt = cli
+        .review_prompt_b64
+        .as_ref()
+        .map(|b64| mcp::spawner::decode_review_prompt(b64))
+        .transpose()?
+        .unwrap_or_default();
+
+    // Create a channel for reviews (we don't actually use the receiver in server mode,
+    // but the server needs it for its API)
+    let (review_tx, _review_rx) = tokio::sync::mpsc::channel(1);
+
+    let server = mcp::McpReviewServer::new(review_tx, plan_content, review_prompt);
+    server.run_sync()
 }

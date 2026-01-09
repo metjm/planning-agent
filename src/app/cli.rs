@@ -52,4 +52,16 @@ pub struct Cli {
     /// List all available plans
     #[arg(long)]
     pub list_plans: bool,
+
+    /// Internal: Run as MCP server (used by review phase)
+    #[arg(long, hide = true)]
+    pub internal_mcp_server: bool,
+
+    /// Internal: Base64-encoded plan content for MCP server
+    #[arg(long, hide = true)]
+    pub plan_content_b64: Option<String>,
+
+    /// Internal: Base64-encoded review prompt for MCP server
+    #[arg(long, hide = true)]
+    pub review_prompt_b64: Option<String>,
 }
