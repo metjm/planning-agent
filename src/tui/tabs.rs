@@ -1,3 +1,4 @@
+use super::file_index::FileIndex;
 use super::session::Session;
 use crate::update::UpdateStatus;
 
@@ -15,6 +16,9 @@ pub struct TabManager {
     pub update_spinner_frame: u8,
 
     pub update_notice: Option<String>,
+
+    /// Shared file index for @-mention auto-complete across all sessions
+    pub file_index: FileIndex,
 }
 
 /// TabManager provides the full API surface for multi-tab management.
@@ -31,6 +35,7 @@ impl TabManager {
             update_error: None,
             update_spinner_frame: 0,
             update_notice: None,
+            file_index: FileIndex::new(),
         };
 
         manager.add_session();

@@ -6,6 +6,7 @@
 use super::{FocusedPanel, InputMode, Session};
 use crate::session_store::SessionUiState;
 use crate::state::State;
+use crate::tui::mention::MentionState;
 use std::collections::HashMap;
 use std::time::Instant;
 
@@ -140,6 +141,8 @@ impl Session {
             todos: ui_state.todos,
             todo_scroll_position: ui_state.todo_scroll_position,
             implementation_terminal: None, // Runtime-only, reset on resume
+            tab_mention_state: MentionState::new(), // Runtime-only, reset on resume
+            feedback_mention_state: MentionState::new(), // Runtime-only, reset on resume
         }
     }
 }

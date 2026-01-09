@@ -1,5 +1,7 @@
 pub mod embedded_terminal;
 mod event;
+pub mod file_index;
+pub mod mention;
 pub mod session;
 mod tabs;
 mod title;

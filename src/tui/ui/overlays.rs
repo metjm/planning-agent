@@ -1,11 +1,12 @@
 
 use super::util::{compute_wrapped_line_count, compute_wrapped_line_count_text, parse_markdown_line, wrap_text_at_width};
 use crate::state::Phase;
+use crate::tui::mention::MentionState;
 use crate::tui::{ApprovalContext, ApprovalMode, FeedbackTarget, Session, TabManager};
 use crate::update::UpdateStatus;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Style},
+    style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap},
     Frame,
@@ -349,15 +350,28 @@ fn draw_feedback_popup(frame: &mut Frame, session: &Session, area: Rect) {
         .scroll((scroll as u16, 0));
     frame.render_widget(input, chunks[1]);
 
+    let cursor_screen_x;
+    let cursor_screen_y;
     if has_content {
-        let cursor_x = inner.x + cursor_col as u16;
-        let cursor_y = inner.y + (cursor_row - scroll) as u16;
-        if cursor_y < inner.y + inner.height {
-            frame.set_cursor_position((cursor_x.min(inner.x + inner.width - 1), cursor_y));
+        cursor_screen_x = inner.x + cursor_col as u16;
+        cursor_screen_y = inner.y + (cursor_row - scroll) as u16;
+        if cursor_screen_y < inner.y + inner.height {
+            frame.set_cursor_position((cursor_screen_x.min(inner.x + inner.width - 1), cursor_screen_y));
         }
     } else {
-        frame.set_cursor_position((inner.x, inner.y));
+        cursor_screen_x = inner.x;
+        cursor_screen_y = inner.y;
+        frame.set_cursor_position((cursor_screen_x, cursor_screen_y));
     }
+
+    // Draw @-mention dropdown if active
+    draw_mention_dropdown(
+        frame,
+        &session.feedback_mention_state,
+        cursor_screen_x,
+        cursor_screen_y,
+        area.width,
+    );
 
     let submit_label = match session.feedback_target {
         FeedbackTarget::ApprovalDecline => "Submit  ",
@@ -495,13 +509,27 @@ pub fn draw_tab_input_overlay(frame: &mut Frame, session: &Session, tab_manager:
         .scroll((scroll as u16, 0));
     frame.render_widget(input, chunks[input_chunk_idx]);
 
+    let cursor_screen_x;
+    let cursor_screen_y;
     if has_content {
-        let cursor_x = inner.x + visual_col as u16;
-        let cursor_y = inner.y + (visual_row - scroll) as u16;
-        if cursor_y < inner.y + inner.height {
-            frame.set_cursor_position((cursor_x.min(inner.x + inner.width - 1), cursor_y));
+        cursor_screen_x = inner.x + visual_col as u16;
+        cursor_screen_y = inner.y + (visual_row - scroll) as u16;
+        if cursor_screen_y < inner.y + inner.height {
+            frame.set_cursor_position((cursor_screen_x.min(inner.x + inner.width - 1), cursor_screen_y));
         }
+    } else {
+        cursor_screen_x = inner.x;
+        cursor_screen_y = inner.y;
     }
+
+    // Draw @-mention dropdown if active
+    draw_mention_dropdown(
+        frame,
+        &session.tab_mention_state,
+        cursor_screen_x,
+        cursor_screen_y,
+        popup_width,
+    );
 
     let help = Paragraph::new(Line::from(vec![
         Span::styled("[Enter]", Style::default().fg(Color::Green)),
@@ -640,4 +668,98 @@ pub fn draw_error_overlay(frame: &mut Frame, session: &Session) {
         ]));
         frame.render_widget(instructions, chunks[1]);
     }
+}
+
+/// Draw the @-mention dropdown below the given cursor position.
+/// The dropdown shows matching files and allows selection.
+fn draw_mention_dropdown(
+    frame: &mut Frame,
+    mention_state: &MentionState,
+    cursor_x: u16,
+    cursor_y: u16,
+    max_width: u16,
+) {
+    if !mention_state.active || mention_state.matches.is_empty() {
+        return;
+    }
+
+    let screen_area = frame.area();
+    let matches = &mention_state.matches;
+    let selected_idx = mention_state.selected_idx;
+
+    // Dropdown dimensions
+    let dropdown_height = (matches.len() as u16).min(10) + 2; // +2 for borders
+    let max_path_width = matches
+        .iter()
+        .map(|m| m.path.width())
+        .max()
+        .unwrap_or(20) as u16;
+    let dropdown_width = (max_path_width + 4).min(max_width).max(30); // +4 for padding and selection indicator
+
+    // Position dropdown below cursor, but flip above if not enough space below
+    let space_below = screen_area.height.saturating_sub(cursor_y + 1);
+    let space_above = cursor_y;
+
+    let (dropdown_y, fits_below) = if space_below >= dropdown_height {
+        (cursor_y + 1, true)
+    } else if space_above >= dropdown_height {
+        (cursor_y.saturating_sub(dropdown_height), false)
+    } else {
+        // Not enough space either way, prefer below with truncation
+        (cursor_y + 1, true)
+    };
+
+    let actual_height = if fits_below {
+        dropdown_height.min(space_below)
+    } else {
+        dropdown_height.min(space_above)
+    };
+
+    // Adjust x position if dropdown would extend past screen edge
+    let dropdown_x = if cursor_x + dropdown_width > screen_area.width {
+        screen_area.width.saturating_sub(dropdown_width)
+    } else {
+        cursor_x
+    };
+
+    let dropdown_area = Rect::new(dropdown_x, dropdown_y, dropdown_width, actual_height);
+
+    // Clear background
+    frame.render_widget(Clear, dropdown_area);
+
+    // Build dropdown content
+    let visible_matches = (actual_height.saturating_sub(2)) as usize;
+    let scroll_offset = if selected_idx >= visible_matches {
+        selected_idx.saturating_sub(visible_matches - 1)
+    } else {
+        0
+    };
+
+    let items: Vec<Line> = matches
+        .iter()
+        .enumerate()
+        .skip(scroll_offset)
+        .take(visible_matches)
+        .map(|(i, m)| {
+            let is_selected = i == selected_idx;
+            let prefix = if is_selected { "› " } else { "  " };
+            let style = if is_selected {
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::White)
+            };
+            Line::from(Span::styled(format!("{}{}", prefix, m.path), style))
+        })
+        .collect();
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan))
+        .title(" Files (Tab to select) ");
+
+    let dropdown = Paragraph::new(items).block(block);
+    frame.render_widget(dropdown, dropdown_area);
 }
