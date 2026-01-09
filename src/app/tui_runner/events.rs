@@ -1,6 +1,6 @@
 
 use crate::app::util::shorten_model_name;
-use crate::app::workflow::WorkflowResult;
+use crate::app::workflow::{WorkflowResult, WorkflowRunConfig};
 use crate::config::WorkflowConfig;
 use crate::planning_paths;
 use crate::state::{Phase, State};
@@ -10,7 +10,7 @@ use crate::tui::{
 };
 use crate::update;
 use anyhow::Result;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tokio::sync::mpsc;
 
 use super::input::handle_key_event;
@@ -22,7 +22,7 @@ pub async fn process_event(
     tab_manager: &mut TabManager,
     terminal: &mut ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io::Stdout>>,
     output_tx: &mpsc::UnboundedSender<Event>,
-    working_dir: &PathBuf,
+    working_dir: &Path,
     cli: &crate::app::cli::Cli,
     workflow_config: &WorkflowConfig,
     init_handle: &mut InitHandle,
@@ -251,7 +251,7 @@ async fn handle_session_event(
     event: Event,
     tab_manager: &mut TabManager,
     terminal: &mut ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io::Stdout>>,
-    working_dir: &PathBuf,
+    working_dir: &Path,
 ) -> Result<()> {
     match event {
         Event::SessionOutput { session_id, line } => {
@@ -531,7 +531,7 @@ pub async fn handle_init_completion(
     session_id: usize,
     handle: tokio::task::JoinHandle<anyhow::Result<(State, PathBuf, String)>>,
     tab_manager: &mut TabManager,
-    working_dir: &PathBuf,
+    working_dir: &Path,
     workflow_config: &WorkflowConfig,
     output_tx: &mpsc::UnboundedSender<Event>,
 ) {
@@ -556,20 +556,22 @@ pub async fn handle_init_completion(
 
                 let cfg = workflow_config.clone();
                 let workflow_handle = tokio::spawn({
-                    let working_dir = working_dir.clone();
+                    let working_dir = working_dir.to_path_buf();
                     let tx = output_tx.clone();
                     let sid = session_id;
                     async move {
                         run_workflow_with_config(
                             state,
-                            working_dir,
-                            state_path,
-                            cfg,
-                            tx,
-                            new_approval_rx,
-                            new_control_rx,
-                            sid,
-                            run_id,
+                            WorkflowRunConfig {
+                                working_dir,
+                                state_path,
+                                config: cfg,
+                                output_tx: tx,
+                                approval_rx: new_approval_rx,
+                                control_rx: new_control_rx,
+                                session_id: sid,
+                                run_id,
+                            },
                         )
                         .await
                     }
@@ -593,7 +595,7 @@ pub async fn handle_init_completion(
 
 pub async fn check_workflow_completions(
     tab_manager: &mut TabManager,
-    working_dir: &PathBuf,
+    working_dir: &Path,
     workflow_config: &WorkflowConfig,
     output_tx: &mpsc::UnboundedSender<Event>,
 ) {
@@ -659,20 +661,22 @@ pub async fn check_workflow_completions(
                             let cfg = workflow_config.clone();
                             let new_handle = tokio::spawn({
                                 let state = state.clone();
-                                let working_dir = working_dir.clone();
+                                let working_dir = working_dir.to_path_buf();
                                 let tx = output_tx.clone();
                                 let sid = session.id;
                                 async move {
                                     run_workflow_with_config(
                                         state,
-                                        working_dir,
-                                        state_path,
-                                        cfg,
-                                        tx,
-                                        new_approval_rx,
-                                        new_control_rx,
-                                        sid,
-                                        run_id,
+                                        WorkflowRunConfig {
+                                            working_dir,
+                                            state_path,
+                                            config: cfg,
+                                            output_tx: tx,
+                                            approval_rx: new_approval_rx,
+                                            control_rx: new_control_rx,
+                                            session_id: sid,
+                                            run_id,
+                                        },
                                     )
                                     .await
                                 }
@@ -700,7 +704,7 @@ pub async fn check_workflow_completions(
                             let elapsed = session.start_time.elapsed().as_millis() as u64;
 
                             let snapshot = crate::session_store::SessionSnapshot::new_with_timestamp(
-                                working_dir.clone(),
+                                working_dir.to_path_buf(),
                                 state.workflow_session_id.clone(),
                                 state_path,
                                 state_copy,

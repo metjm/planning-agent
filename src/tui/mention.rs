@@ -1,6 +1,4 @@
-
-/// Mention state for @-mention auto-complete in input fields.
-
+//! Mention state for @-mention auto-complete in input fields.
 use super::file_index::{FileIndex, MentionMatch};
 
 /// Maximum number of matches to show in the dropdown

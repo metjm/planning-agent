@@ -21,7 +21,7 @@ use anyhow::{Context, Result};
 use crossterm::event::{
     KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
 };
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 pub use events::{check_workflow_completions, handle_init_completion, process_event};
@@ -132,7 +132,7 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                 crate::tui::file_index::build_file_index(&file_index_working_dir)
             })
             .await
-            .unwrap_or_else(|_| crate::tui::file_index::FileIndex::with_error("Task panicked".to_string()));
+            .unwrap_or_else(|_| crate::tui::file_index::FileIndex::with_error());
             let _ = file_index_tx.send(Event::FileIndexReady(index));
         });
         debug_log(start, "file index task spawned");
@@ -375,7 +375,7 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
 
 fn load_workflow_config(
     cli: &Cli,
-    working_dir: &PathBuf,
+    working_dir: &Path,
     start: std::time::Instant,
 ) -> WorkflowConfig {
     if let Some(config_path) = &cli.config {

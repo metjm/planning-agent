@@ -18,7 +18,7 @@ mod verification_state;
 use anyhow::Result;
 use app::{cli::Cli, headless::run_headless, tui_runner::run_tui, verify::run_headless_verification};
 use clap::Parser;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -125,8 +125,8 @@ fn list_plans() -> Result<()> {
 
     println!("Available plans:\n");
     println!(
-        "{:<20} {:<40} {}",
-        "Created", "Feature Name", "Folder"
+        "{:<20} {:<40} Folder",
+        "Created", "Feature Name"
     );
     println!("{}", "-".repeat(100));
 
@@ -160,7 +160,7 @@ fn list_plans() -> Result<()> {
 }
 
 /// Lists available session snapshots
-fn list_sessions(working_dir: &PathBuf) -> Result<()> {
+fn list_sessions(working_dir: &Path) -> Result<()> {
     let snapshots = session_store::list_snapshots(working_dir)?;
 
     if snapshots.is_empty() {
@@ -171,8 +171,8 @@ fn list_sessions(working_dir: &PathBuf) -> Result<()> {
 
     println!("Available session snapshots:\n");
     println!(
-        "{:<40} {:<20} {:<12} {:<8} {}",
-        "Session ID", "Feature", "Phase", "Iter", "Saved At"
+        "{:<40} {:<20} {:<12} {:<8} Saved At",
+        "Session ID", "Feature", "Phase", "Iter"
     );
     println!("{}", "-".repeat(100));
 
@@ -192,7 +192,7 @@ fn list_sessions(working_dir: &PathBuf) -> Result<()> {
 }
 
 /// Cleans up old session snapshots
-fn cleanup_sessions(working_dir: &PathBuf, older_than: Option<u32>) -> Result<()> {
+fn cleanup_sessions(working_dir: &Path, older_than: Option<u32>) -> Result<()> {
     let days = older_than.unwrap_or(30);
     let deleted = session_store::cleanup_old_snapshots(working_dir, days)?;
 

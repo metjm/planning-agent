@@ -14,62 +14,6 @@ pub enum VerificationPhase {
     Complete,
 }
 
-impl VerificationPhase {
-    /// Get a UI-friendly label for the phase.
-    pub fn label(&self) -> VerificationPhaseLabel {
-        match self {
-            VerificationPhase::Verifying => VerificationPhaseLabel::Verifying,
-            VerificationPhase::Fixing => VerificationPhaseLabel::Fixing,
-            VerificationPhase::Complete => VerificationPhaseLabel::Complete,
-        }
-    }
-}
-
-/// Human-readable phase labels for UI/logging purposes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum VerificationPhaseLabel {
-    Verifying,
-    Fixing,
-    Complete,
-}
-
-impl VerificationPhaseLabel {
-    /// Short label for compact display (e.g., status bars).
-    pub fn short(&self) -> &'static str {
-        match self {
-            VerificationPhaseLabel::Verifying => "Verify",
-            VerificationPhaseLabel::Fixing => "Fix",
-            VerificationPhaseLabel::Complete => "Done",
-        }
-    }
-
-    /// Full label for verbose display.
-    pub fn full(&self) -> &'static str {
-        match self {
-            VerificationPhaseLabel::Verifying => "Verifying",
-            VerificationPhaseLabel::Fixing => "Fixing",
-            VerificationPhaseLabel::Complete => "Complete",
-        }
-    }
-
-    /// Label with iteration number for verification phases.
-    pub fn with_iteration(&self, iteration: u32) -> String {
-        match self {
-            VerificationPhaseLabel::Verifying if iteration > 1 => {
-                format!("Verifying #{}", iteration)
-            }
-            VerificationPhaseLabel::Fixing => format!("Fixing #{}", iteration),
-            _ => self.full().to_string(),
-        }
-    }
-}
-
-impl std::fmt::Display for VerificationPhaseLabel {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.full())
-    }
-}
-
 /// State for the verification workflow.
 /// This is separate from the planning `State` struct and tracks the verification/fixing loop.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -202,10 +146,6 @@ impl VerificationState {
         }
     }
 
-    /// Sets the updated_at timestamp to the current time.
-    pub fn set_updated_at(&mut self) {
-        self.updated_at = chrono::Utc::now().to_rfc3339();
-    }
 }
 
 /// Normalizes a plan path to always point to the plan folder (not plan.md file).
@@ -381,41 +321,4 @@ mod tests {
         assert_eq!(loaded.workflow_session_id, state.workflow_session_id);
     }
 
-    #[test]
-    fn test_phase_label_short() {
-        assert_eq!(VerificationPhaseLabel::Verifying.short(), "Verify");
-        assert_eq!(VerificationPhaseLabel::Fixing.short(), "Fix");
-        assert_eq!(VerificationPhaseLabel::Complete.short(), "Done");
-    }
-
-    #[test]
-    fn test_phase_label_full() {
-        assert_eq!(VerificationPhaseLabel::Verifying.full(), "Verifying");
-        assert_eq!(VerificationPhaseLabel::Fixing.full(), "Fixing");
-        assert_eq!(VerificationPhaseLabel::Complete.full(), "Complete");
-    }
-
-    #[test]
-    fn test_phase_label_with_iteration() {
-        assert_eq!(
-            VerificationPhaseLabel::Verifying.with_iteration(1),
-            "Verifying"
-        );
-        assert_eq!(
-            VerificationPhaseLabel::Verifying.with_iteration(2),
-            "Verifying #2"
-        );
-        assert_eq!(
-            VerificationPhaseLabel::Fixing.with_iteration(1),
-            "Fixing #1"
-        );
-        assert_eq!(
-            VerificationPhaseLabel::Fixing.with_iteration(3),
-            "Fixing #3"
-        );
-        assert_eq!(
-            VerificationPhaseLabel::Complete.with_iteration(5),
-            "Complete"
-        );
-    }
 }

@@ -2,7 +2,7 @@ use crate::planning_paths;
 use serde::Deserialize;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 fn is_debug_enabled() -> bool {
@@ -83,7 +83,7 @@ fn find_session_files_sorted() -> Vec<PathBuf> {
         return Vec::new();
     }
     let mut all_files: Vec<PathBuf> = Vec::new();
-    fn collect_jsonl_files(dir: &PathBuf, files: &mut Vec<PathBuf>) {
+fn collect_jsonl_files(dir: &Path, files: &mut Vec<PathBuf>) {
         if let Ok(entries) = fs::read_dir(dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
@@ -104,12 +104,12 @@ fn find_session_files_sorted() -> Vec<PathBuf> {
     all_files
 }
 
-fn read_rate_limits_from_session(path: &PathBuf) -> Option<(f64, f64)> {
+fn read_rate_limits_from_session(path: &Path) -> Option<(f64, f64)> {
     let file = File::open(path).ok()?;
     let reader = BufReader::new(file);
     let mut primary_used: Option<f64> = None;
     let mut secondary_used: Option<f64> = None;
-    for line in reader.lines().flatten() {
+    for line in reader.lines().map_while(Result::ok) {
         if let Ok(entry) = serde_json::from_str::<SessionEntry>(&line) {
             if entry.entry_type == "event_msg" {
                 if let Some(payload) = entry.payload {

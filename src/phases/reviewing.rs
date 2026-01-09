@@ -138,9 +138,9 @@ pub fn parse_verdict(feedback: &str) -> VerdictParseResult {
 
             if normalized == "APPROVED" {
                 return VerdictParseResult::Approved;
-            } else if normalized.contains("NEEDS") && normalized.contains("REVISION") {
-                return VerdictParseResult::NeedsRevision;
-            } else if normalized.contains("MAJOR") && normalized.contains("ISSUES") {
+            } else if (normalized.contains("NEEDS") && normalized.contains("REVISION"))
+                || (normalized.contains("MAJOR") && normalized.contains("ISSUES"))
+            {
                 return VerdictParseResult::NeedsRevision;
             }
         }

@@ -112,7 +112,7 @@ impl McpReviewServer {
     /// Handle the initialize request
     fn handle_initialize(&self, params: Option<Value>) -> Result<Value, (i32, String)> {
         let _init_params: InitializeParams = params
-            .map(|p| serde_json::from_value(p))
+            .map(serde_json::from_value)
             .transpose()
             .map_err(|e| {
                 (
@@ -329,12 +329,9 @@ mod tests {
         let result = server.handle_get_plan();
         assert!(!result.is_error);
 
-        if let super::super::protocol::ToolContent::Text { text } = &result.content[0] {
-            assert!(text.contains("# Test Plan"));
-            assert!(text.contains("Review this plan"));
-        } else {
-            panic!("Expected text content");
-        }
+        let super::super::protocol::ToolContent::Text { text } = &result.content[0];
+        assert!(text.contains("# Test Plan"));
+        assert!(text.contains("Review this plan"));
     }
 
     #[test]

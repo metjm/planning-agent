@@ -280,13 +280,6 @@ impl EmbeddedTerminal {
         total_rows.saturating_sub(visible_rows)
     }
 
-    /// Check if the child process has exited
-    pub fn check_exit(&mut self) -> Option<i32> {
-        // We can't check exit status directly here without the Child handle
-        // The reader thread will send ImplementationExited when EOF is reached
-        self.exit_code
-    }
-
     /// Mark the process as exited
     pub fn mark_exited(&mut self, exit_code: Option<i32>) {
         self.exit_code = exit_code;
@@ -311,10 +304,6 @@ impl EmbeddedTerminal {
         let _ = self.reader_handle.take();
     }
 
-    /// Get the PTY writer for external use (e.g., handling paste events)
-    pub fn writer(&self) -> Arc<Mutex<Box<dyn Write + Send>>> {
-        Arc::clone(&self.pty_writer)
-    }
 }
 
 impl Drop for EmbeddedTerminal {
@@ -404,8 +393,6 @@ pub mod key_sequences {
     pub const CTRL_W: &[u8] = b"\x17";
     /// Ctrl+Z (suspend)
     pub const CTRL_Z: &[u8] = b"\x1a";
-    /// Ctrl+\ (SIGQUIT) - used for exit
-    pub const CTRL_BACKSLASH: &[u8] = b"\x1c";
     /// Arrow Up
     pub const ARROW_UP: &[u8] = b"\x1b[A";
     /// Arrow Down

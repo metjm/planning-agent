@@ -14,6 +14,5 @@ pub use reviewing::{
 pub use revising::run_revision_phase_with_context;
 pub use summary::spawn_summary_generation;
 pub use verification::{
-    extract_verification_feedback, parse_verification_verdict, run_verification_phase,
-    VerificationVerdictResult,
+    parse_verification_verdict, run_verification_phase, VerificationVerdictResult,
 };

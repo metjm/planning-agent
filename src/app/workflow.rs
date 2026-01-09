@@ -14,7 +14,7 @@ use crate::state::{FeedbackStatus, Phase, State};
 use crate::tui::{CancellationError, Event, SessionEventSender, UserApprovalResponse, WorkflowCommand};
 use anyhow::Result;
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tokio::sync::mpsc;
 
 pub enum WorkflowResult {
@@ -25,17 +25,31 @@ pub enum WorkflowResult {
     Stopped,
 }
 
+pub struct WorkflowRunConfig {
+    pub working_dir: PathBuf,
+    pub state_path: PathBuf,
+    pub config: WorkflowConfig,
+    pub output_tx: mpsc::UnboundedSender<Event>,
+    pub approval_rx: mpsc::Receiver<UserApprovalResponse>,
+    pub control_rx: mpsc::Receiver<WorkflowCommand>,
+    pub session_id: usize,
+    pub run_id: u64,
+}
+
 pub async fn run_workflow_with_config(
     mut state: State,
-    working_dir: PathBuf,
-    state_path: PathBuf,
-    config: WorkflowConfig,
-    output_tx: mpsc::UnboundedSender<Event>,
-    mut approval_rx: mpsc::Receiver<UserApprovalResponse>,
-    mut control_rx: mpsc::Receiver<WorkflowCommand>,
-    session_id: usize,
-    run_id: u64,
+    run_config: WorkflowRunConfig,
 ) -> Result<WorkflowResult> {
+    let WorkflowRunConfig {
+        working_dir,
+        state_path,
+        config,
+        output_tx,
+        mut approval_rx,
+        mut control_rx,
+        session_id,
+        run_id,
+    } = run_config;
     log_workflow(
         &working_dir,
         &format!(
@@ -59,6 +73,12 @@ pub async fn run_workflow_with_config(
 
     let sender = SessionEventSender::new(session_id, run_id, output_tx.clone());
     let mut last_reviews: Vec<phases::ReviewResult> = Vec::new();
+    let phase_context = WorkflowPhaseContext {
+        working_dir: &working_dir,
+        state_path: &state_path,
+        config: &config,
+        sender: &sender,
+    };
 
     while state.should_continue() {
         // Check for commands before each phase
@@ -120,10 +140,7 @@ pub async fn run_workflow_with_config(
             Phase::Reviewing => {
                 let result = run_reviewing_phase(
                     &mut state,
-                    &working_dir,
-                    &state_path,
-                    &config,
-                    &sender,
+                    &phase_context,
                     &mut approval_rx,
                     &mut control_rx,
                     &mut last_reviews,
@@ -226,8 +243,8 @@ pub async fn run_workflow_with_config(
 
 async fn run_planning_phase(
     state: &mut State,
-    working_dir: &PathBuf,
-    state_path: &PathBuf,
+    working_dir: &Path,
+    state_path: &Path,
     config: &WorkflowConfig,
     sender: &SessionEventSender,
     approval_rx: &mut mpsc::Receiver<UserApprovalResponse>,
@@ -379,16 +396,24 @@ async fn run_planning_phase(
     Ok(None)
 }
 
+struct WorkflowPhaseContext<'a> {
+    working_dir: &'a Path,
+    state_path: &'a Path,
+    config: &'a WorkflowConfig,
+    sender: &'a SessionEventSender,
+}
+
 async fn run_reviewing_phase(
     state: &mut State,
-    working_dir: &PathBuf,
-    state_path: &PathBuf,
-    config: &WorkflowConfig,
-    sender: &SessionEventSender,
+    context: &WorkflowPhaseContext<'_>,
     approval_rx: &mut mpsc::Receiver<UserApprovalResponse>,
     control_rx: &mut mpsc::Receiver<WorkflowCommand>,
     last_reviews: &mut Vec<phases::ReviewResult>,
 ) -> Result<Option<WorkflowResult>> {
+    let working_dir = context.working_dir;
+    let state_path = context.state_path;
+    let config = context.config;
+    let sender = context.sender;
     log_workflow(
         working_dir,
         &format!(
@@ -563,8 +588,8 @@ async fn run_reviewing_phase(
 
 async fn run_revising_phase(
     state: &mut State,
-    working_dir: &PathBuf,
-    state_path: &PathBuf,
+    working_dir: &Path,
+    state_path: &Path,
     config: &WorkflowConfig,
     sender: &SessionEventSender,
     control_rx: &mut mpsc::Receiver<WorkflowCommand>,
@@ -661,7 +686,7 @@ async fn run_revising_phase(
 
 async fn handle_completion(
     state: &State,
-    working_dir: &PathBuf,
+    working_dir: &Path,
     sender: &SessionEventSender,
     approval_rx: &mut mpsc::Receiver<UserApprovalResponse>,
 ) -> Result<WorkflowResult> {

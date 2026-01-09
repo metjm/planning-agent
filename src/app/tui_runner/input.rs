@@ -18,7 +18,7 @@ use crate::update;
 use anyhow::{Context, Result};
 use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::text::Line;
-use std::path::PathBuf;
+use std::path::Path;
 use tokio::sync::mpsc;
 
 use super::approval_input::{handle_awaiting_choice_input, handle_entering_feedback_input};
@@ -135,7 +135,7 @@ pub async fn handle_key_event(
     tab_manager: &mut TabManager,
     terminal: &mut ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io::Stdout>>,
     output_tx: &mpsc::UnboundedSender<Event>,
-    working_dir: &PathBuf,
+    working_dir: &Path,
     cli: &Cli,
     _workflow_config: &WorkflowConfig,
     init_handle: &mut InitHandle,
@@ -162,7 +162,7 @@ pub async fn handle_key_event(
                 return Ok(false);
             }
             KeyCode::Char('j') | KeyCode::Down => {
-                let max_scroll = compute_error_overlay_max_scroll(&error);
+                let max_scroll = compute_error_overlay_max_scroll(error);
                 session.error_scroll_down(max_scroll);
                 return Ok(false);
             }
@@ -196,10 +196,8 @@ pub async fn handle_key_event(
     }
 
     let session = tab_manager.active_mut();
-    if session.approval_mode == ApprovalMode::None {
-        if handle_tab_switching(key, tab_manager) {
-            return Ok(false);
-        }
+    if session.approval_mode == ApprovalMode::None && handle_tab_switching(key, tab_manager) {
+        return Ok(false);
     }
 
     // Clone file_index for mention handling
@@ -214,7 +212,7 @@ async fn handle_naming_tab_input(
     key: crossterm::event::KeyEvent,
     tab_manager: &mut TabManager,
     output_tx: &mpsc::UnboundedSender<Event>,
-    working_dir: &PathBuf,
+    working_dir: &Path,
     cli: &Cli,
     init_handle: &mut InitHandle,
     update_in_progress: bool,
@@ -318,7 +316,7 @@ async fn handle_naming_tab_input(
 
                 let session_id = session.id;
                 let tx = output_tx.clone();
-                let wd = working_dir.clone();
+                let wd = working_dir.to_path_buf();
                 let max_iter = cli.max_iterations;
 
                 let new_init_handle = tokio::spawn(async move {
@@ -446,7 +444,7 @@ async fn handle_approval_mode_input(
     key: crossterm::event::KeyEvent,
     session: &mut Session,
     terminal: &mut ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io::Stdout>>,
-    working_dir: &PathBuf,
+    working_dir: &Path,
     output_tx: &mpsc::UnboundedSender<Event>,
     file_index: &FileIndex,
 ) -> Result<bool> {

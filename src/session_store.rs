@@ -135,27 +135,6 @@ pub struct SessionSnapshotInfo {
 }
 
 impl SessionSnapshot {
-    /// Creates a new snapshot with the current timestamp.
-    pub fn new(
-        working_dir: PathBuf,
-        workflow_session_id: String,
-        state_path: PathBuf,
-        workflow_state: State,
-        ui_state: SessionUiState,
-        total_elapsed_before_resume_ms: u64,
-    ) -> Self {
-        Self {
-            version: SNAPSHOT_VERSION,
-            saved_at: chrono::Utc::now().to_rfc3339(),
-            working_dir,
-            workflow_session_id,
-            state_path,
-            workflow_state,
-            ui_state,
-            total_elapsed_before_resume_ms,
-        }
-    }
-
     /// Creates a snapshot with a specific timestamp (for unified stop operations).
     pub fn new_with_timestamp(
         working_dir: PathBuf,
@@ -271,7 +250,7 @@ pub fn list_snapshots(working_dir: &Path) -> Result<Vec<SessionSnapshotInfo>> {
         let entry = entry?;
         let path = entry.path();
 
-        if path.extension().map_or(false, |ext| ext == "json") {
+        if path.extension().is_some_and(|ext| ext == "json") {
             if let Ok(content) = fs::read_to_string(&path) {
                 if let Ok(snapshot) = serde_json::from_str::<SessionSnapshot>(&content) {
                     snapshots.push(snapshot.info());
@@ -338,7 +317,6 @@ pub fn check_conflict(snapshot: &SessionSnapshot, current_state: &State) -> Opti
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::Phase;
 
     fn create_test_state() -> State {
         State::new("test-feature", "Test objective", 3).unwrap()
@@ -402,14 +380,16 @@ mod tests {
     fn test_snapshot_creation() {
         let state = create_test_state();
         let ui_state = create_test_ui_state();
+        let saved_at = chrono::Utc::now().to_rfc3339();
 
-        let snapshot = SessionSnapshot::new(
+        let snapshot = SessionSnapshot::new_with_timestamp(
             PathBuf::from("/tmp/test"),
             "test-session-id".to_string(),
             PathBuf::from("/tmp/test/.planning-agent/test-feature.json"),
             state.clone(),
             ui_state,
             0,
+            saved_at,
         );
 
         assert_eq!(snapshot.version, SNAPSHOT_VERSION);
@@ -422,14 +402,16 @@ mod tests {
     fn test_snapshot_serialization_roundtrip() {
         let state = create_test_state();
         let ui_state = create_test_ui_state();
+        let saved_at = chrono::Utc::now().to_rfc3339();
 
-        let snapshot = SessionSnapshot::new(
+        let snapshot = SessionSnapshot::new_with_timestamp(
             PathBuf::from("/tmp/test"),
             "test-session-id".to_string(),
             PathBuf::from("/tmp/test/.planning-agent/test-feature.json"),
             state,
             ui_state,
             5000,
+            saved_at,
         );
 
         let json = serde_json::to_string(&snapshot).unwrap();
@@ -447,14 +429,16 @@ mod tests {
     fn test_snapshot_info() {
         let state = create_test_state();
         let ui_state = create_test_ui_state();
+        let saved_at = chrono::Utc::now().to_rfc3339();
 
-        let snapshot = SessionSnapshot::new(
+        let snapshot = SessionSnapshot::new_with_timestamp(
             PathBuf::from("/tmp/test"),
             "test-session-id".to_string(),
             PathBuf::from("/tmp/test/.planning-agent/test-feature.json"),
             state,
             ui_state,
             0,
+            saved_at,
         );
 
         let info = snapshot.info();
@@ -514,13 +498,14 @@ mod tests {
         state.updated_at = String::new(); // Simulate legacy state without updated_at
 
         let ui_state = create_test_ui_state();
-        let snapshot = SessionSnapshot::new(
+        let snapshot = SessionSnapshot::new_with_timestamp(
             PathBuf::from("/tmp/test"),
             "test-session-id".to_string(),
             PathBuf::from("/tmp/test/.planning-agent/test-feature.json"),
             state.clone(),
             ui_state,
             0,
+            chrono::Utc::now().to_rfc3339(),
         );
 
         // No conflict detection for legacy state files

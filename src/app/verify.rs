@@ -15,8 +15,6 @@ pub enum VerificationResult {
     Approved,
     /// Verification failed even after max iterations
     Failed { iterations_used: u32 },
-    /// User aborted the verification
-    Aborted { reason: String },
 }
 
 /// Runs the verification workflow loop.
@@ -256,11 +254,8 @@ pub async fn run_headless_verification(
         Ok(VerificationResult::Approved) => {
             Ok(())
         }
-        Ok(VerificationResult::Failed { .. }) => {
-            std::process::exit(1);
-        }
-        Ok(VerificationResult::Aborted { reason }) => {
-            eprintln!("\nVerification aborted: {}", reason);
+        Ok(VerificationResult::Failed { iterations_used }) => {
+            eprintln!("\nVerification failed after {} iterations.", iterations_used);
             std::process::exit(1);
         }
         Err(e) => {

@@ -252,7 +252,7 @@ pub async fn run_agent_process<P: AgentStreamParser>(
     loop {
         // Check overall timeout
         if start_time.elapsed() > config.overall_timeout {
-            handle_overall_timeout(&config, &logger, emitter, &mut child).await?;
+            handle_overall_timeout(config, &logger, emitter, &mut child).await?;
         }
 
         let activity_deadline = last_activity + config.activity_timeout;
@@ -315,13 +315,13 @@ pub async fn run_agent_process<P: AgentStreamParser>(
                 }
             }
             _ = tokio::time::sleep_until(activity_deadline) => {
-                handle_activity_timeout(&config, &logger, emitter, &mut child).await?;
+                handle_activity_timeout(config, &logger, emitter, &mut child).await?;
             }
         }
     }
 
     // Wait for process to exit
-    let status = wait_for_process(&config, &logger, emitter, &mut child).await?;
+    let status = wait_for_process(config, &logger, emitter, &mut child).await?;
 
     if let Some(ref logger) = logger {
         logger.log_line("exit", &format!("status: {}", status));
