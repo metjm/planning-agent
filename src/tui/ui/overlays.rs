@@ -758,7 +758,7 @@ fn draw_mention_dropdown(
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Cyan))
-        .title(" Files (Tab to select) ");
+        .title(" Files & Folders (Tab to select) ");
 
     let dropdown = Paragraph::new(items).block(block);
     frame.render_widget(dropdown, dropdown_area);
