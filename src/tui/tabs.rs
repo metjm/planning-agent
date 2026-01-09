@@ -19,6 +19,15 @@ pub struct TabManager {
 
     /// Shared file index for @-mention auto-complete across all sessions
     pub file_index: FileIndex,
+
+    /// Notice from a slash command execution (success message)
+    pub command_notice: Option<String>,
+
+    /// Error from a slash command execution
+    pub command_error: Option<String>,
+
+    /// Whether a slash command is currently executing
+    pub command_in_progress: bool,
 }
 
 /// TabManager provides the full API surface for multi-tab management.
@@ -36,6 +45,9 @@ impl TabManager {
             update_spinner_frame: 0,
             update_notice: None,
             file_index: FileIndex::new(),
+            command_notice: None,
+            command_error: None,
+            command_in_progress: false,
         };
 
         manager.add_session();

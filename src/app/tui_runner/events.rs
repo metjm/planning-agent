@@ -448,6 +448,24 @@ async fn handle_session_event(
         Event::FileIndexReady(index) => {
             tab_manager.file_index = index;
         }
+        Event::SlashCommandResult {
+            session_id: _,
+            command,
+            summary,
+            error,
+        } => {
+            tab_manager.command_in_progress = false;
+            if let Some(err) = error {
+                tab_manager.command_error = Some(format!("/{}: {}", command, err));
+                // Still show summary if available
+                if !summary.is_empty() {
+                    tab_manager.command_notice = Some(summary);
+                }
+            } else {
+                tab_manager.command_notice = Some(summary);
+                tab_manager.command_error = None;
+            }
+        }
         // Handle verification workflow events
         Event::SessionVerificationStarted { session_id, iteration } => {
             if let Some(session) = tab_manager.session_by_id_mut(session_id) {

@@ -402,8 +402,28 @@ pub fn draw_tab_input_overlay(frame: &mut Frame, session: &Session, tab_manager:
       || tab_manager.update_in_progress
       || tab_manager.update_notice.is_some();
 
+    // Check for command notices/errors (from /config-dangerous, etc.)
+    let has_command_line = tab_manager.command_notice.is_some()
+        || tab_manager.command_error.is_some()
+        || tab_manager.command_in_progress;
+
+    // Calculate the number of lines needed for command notice
+    let command_lines = if let Some(ref notice) = tab_manager.command_notice {
+        notice.lines().count().max(1) as u16
+    } else if tab_manager.command_in_progress || tab_manager.command_error.is_some() {
+        1
+    } else {
+        0
+    };
+
     let popup_width = (area.width as f32 * 0.6).min(80.0) as u16;
-    let popup_height = if has_update_line { 17 } else { 15 };
+    let mut popup_height = 15u16;
+    if has_update_line {
+        popup_height += 1;
+    }
+    if has_command_line {
+        popup_height += command_lines;
+    }
     let popup_x = (area.width.saturating_sub(popup_width)) / 2;
     let popup_y = (area.height.saturating_sub(popup_height)) / 2;
 
@@ -411,26 +431,21 @@ pub fn draw_tab_input_overlay(frame: &mut Frame, session: &Session, tab_manager:
 
     frame.render_widget(Clear, popup_area);
 
-    let chunks = if has_update_line {
-        Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(3),
-                Constraint::Length(1),
-                Constraint::Min(5),
-                Constraint::Length(2),
-            ])
-            .split(popup_area)
-    } else {
-        Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(3),
-                Constraint::Min(5),
-                Constraint::Length(2),
-            ])
-            .split(popup_area)
-    };
+    // Build constraints dynamically based on what lines we have
+    let mut constraints: Vec<Constraint> = vec![Constraint::Length(3)]; // Title
+    if has_update_line {
+        constraints.push(Constraint::Length(1)); // Update line
+    }
+    if has_command_line {
+        constraints.push(Constraint::Length(command_lines)); // Command notice
+    }
+    constraints.push(Constraint::Min(5)); // Input
+    constraints.push(Constraint::Length(2)); // Instructions
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints(constraints)
+        .split(popup_area);
 
     let title = Paragraph::new(Line::from(vec![Span::styled(
         "Enter planning objective:",
@@ -444,14 +459,24 @@ pub fn draw_tab_input_overlay(frame: &mut Frame, session: &Session, tab_manager:
     );
     frame.render_widget(title, chunks[0]);
 
-    let (input_chunk_idx, instructions_chunk_idx) = if has_update_line {
+    let mut chunk_idx = 1;
+
+    if has_update_line {
         let update_line = render_update_line(tab_manager);
         let update_para = Paragraph::new(update_line);
-        frame.render_widget(update_para, chunks[1]);
-        (2, 3)
-    } else {
-        (1, 2)
-    };
+        frame.render_widget(update_para, chunks[chunk_idx]);
+        chunk_idx += 1;
+    }
+
+    if has_command_line {
+        let command_line = render_command_line(tab_manager);
+        let command_para = Paragraph::new(command_line);
+        frame.render_widget(command_para, chunks[chunk_idx]);
+        chunk_idx += 1;
+    }
+
+    let input_chunk_idx = chunk_idx;
+    let instructions_chunk_idx = chunk_idx + 1;
 
     let has_content = !session.tab_input.is_empty() || session.has_tab_input_pastes();
     let input_text = if has_content {
@@ -586,6 +611,48 @@ fn render_update_line(tab_manager: &TabManager) -> Line<'static> {
             }
             _ => Line::from(""),
         }
+    }
+}
+
+/// Render slash command status/result line(s).
+fn render_command_line(tab_manager: &TabManager) -> ratatui::text::Text<'static> {
+    const SPINNER_CHARS: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+
+    if tab_manager.command_in_progress {
+        let spinner = SPINNER_CHARS[tab_manager.update_spinner_frame as usize % SPINNER_CHARS.len()];
+        ratatui::text::Text::from(Line::from(vec![
+            Span::styled(format!(" {} ", spinner), Style::default().fg(Color::Yellow).bold()),
+            Span::styled("Running command...", Style::default().fg(Color::Yellow)),
+        ]))
+    } else if let Some(ref notice) = tab_manager.command_notice {
+        // Multi-line notice - convert each line
+        let lines: Vec<Line> = notice
+            .lines()
+            .map(|line| {
+                // Color code status symbols
+                if line.contains("✓") {
+                    Line::from(Span::styled(format!(" {}", line), Style::default().fg(Color::Green)))
+                } else if line.contains("✗") {
+                    Line::from(Span::styled(format!(" {}", line), Style::default().fg(Color::Red)))
+                } else if line.contains("○") {
+                    Line::from(Span::styled(format!(" {}", line), Style::default().fg(Color::DarkGray)))
+                } else if line.starts_with("[config") {
+                    Line::from(Span::styled(format!(" {}", line), Style::default().fg(Color::Cyan).bold()))
+                } else if line.trim().starts_with("Note:") {
+                    Line::from(Span::styled(format!(" {}", line), Style::default().fg(Color::Yellow)))
+                } else {
+                    Line::from(Span::styled(format!(" {}", line), Style::default().fg(Color::White)))
+                }
+            })
+            .collect();
+        ratatui::text::Text::from(lines)
+    } else if let Some(ref error) = tab_manager.command_error {
+        ratatui::text::Text::from(Line::from(vec![
+            Span::styled(" Command failed: ", Style::default().fg(Color::Red)),
+            Span::styled(error.clone(), Style::default().fg(Color::Red)),
+        ]))
+    } else {
+        ratatui::text::Text::from("")
     }
 }
 
