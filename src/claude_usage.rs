@@ -187,9 +187,12 @@ fn detect_cli_state(output: &str) -> CliState {
     // Generic words like "setup" and "configure" can appear in normal CLI conversation
     // output (e.g., user discussing "setup instructions" for their project).
     // These specific patterns are unique to Claude CLI onboarding prompts.
+    //
+    // NOTE: We removed "getting started" because the Claude CLI welcome screen
+    // always shows "Tips for getting started" in the sidebar, even for properly
+    // configured users. This was causing false positives.
     if lower.contains("welcome to claude")
         || lower.contains("first time")
-        || lower.contains("getting started")
         // Specific setup phrases that indicate onboarding
         || lower.contains("complete setup")
         || lower.contains("finish setup")
