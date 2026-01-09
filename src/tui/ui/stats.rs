@@ -6,7 +6,7 @@ use ratatui::{
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph},
+    widgets::{Block, Borders, Paragraph, Wrap},
     Frame,
 };
 
@@ -117,12 +117,14 @@ pub fn draw_stats(frame: &mut Frame, session: &Session, area: Rect, show_live_to
         Span::styled(" quit", Style::default().fg(Color::DarkGray)),
     ]));
 
-    let stats = Paragraph::new(stats_text).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title(" Stats ")
-            .border_style(Style::default().fg(Color::Magenta)),
-    );
+    let stats = Paragraph::new(stats_text)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Stats ")
+                .border_style(Style::default().fg(Color::Magenta)),
+        )
+        .wrap(Wrap { trim: false });
 
     frame.render_widget(stats, area);
 }

@@ -182,12 +182,22 @@ fn detect_cli_state(output: &str) -> CliState {
         return CliState::RequiresAuth;
     }
 
-    // Check for first-run/setup indicators
+    // Check for first-run/setup indicators using SPECIFIC patterns only.
+    // Generic words like "setup" and "configure" can appear in normal CLI conversation
+    // output (e.g., user discussing "setup instructions" for their project).
+    // These specific patterns are unique to Claude CLI onboarding prompts.
     if lower.contains("welcome to claude")
         || lower.contains("first time")
         || lower.contains("getting started")
-        || lower.contains("setup")
-        || lower.contains("configure")
+        // Specific setup phrases that indicate onboarding
+        || lower.contains("complete setup")
+        || lower.contains("finish setup")
+        || lower.contains("initial setup")
+        || lower.contains("setup required")
+        || lower.contains("setup is required")
+        // Specific configure phrases that indicate onboarding
+        || lower.contains("configure claude")
+        || lower.contains("configuration required")
     {
         return CliState::FirstRun;
     }
@@ -204,11 +214,14 @@ fn detect_cli_state(output: &str) -> CliState {
         return CliState::Ready;
     }
 
-    CliState::Unknown(if output.len() > 200 {
-        format!("{}...", &output[..200])
+    // Return Unknown with sanitized excerpt for diagnostic purposes
+    let sanitized = strip_ansi_codes(output);
+    let excerpt = if sanitized.len() > 100 {
+        format!("{}...", &sanitized[..100])
     } else {
-        output.to_string()
-    })
+        sanitized
+    };
+    CliState::Unknown(excerpt)
 }
 
 fn run_claude_usage_via_pty(command: &str, _timeout: Duration) -> Result<String, String> {
@@ -303,7 +316,11 @@ fn run_claude_usage_via_pty(command: &str, _timeout: Duration) -> Result<String,
             return match cli_state {
                 CliState::RequiresAuth => Err("Claude CLI requires login. Run 'claude' to authenticate.".to_string()),
                 CliState::FirstRun => Err("Claude CLI requires setup. Run 'claude' to complete first-time configuration.".to_string()),
-                _ => Err("Timeout waiting for Claude CLI prompt".to_string()),
+                CliState::Unknown(excerpt) => Err(format!(
+                    "Unable to determine CLI state (set CLAUDE_USAGE_DEBUG=1 for details). Output: {}",
+                    excerpt
+                )),
+                CliState::Ready => Err("Timeout waiting for Claude CLI prompt".to_string()),
             };
         }
 
@@ -556,320 +573,5 @@ fn parse_plan_type(text: &str) -> Option<String> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_parse_usage_used_percent() {
-
-        let output = r#"
- Current session
- ██▌                                                5% used
- Resets 9:59am (America/Los_Angeles)
-
- Current week (all models)
- ████████████████████▌                              41% used
- Resets Dec 26, 5:59am (America/Los_Angeles)
-"#;
-        assert_eq!(parse_usage_used_percent(output, "current session"), Some(5));
-        assert_eq!(parse_usage_used_percent(output, "current week"), Some(41));
-    }
-
-    #[test]
-    fn test_parse_usage_used_percent_100() {
-        let output = r#"
- Current session
- ████████████████████████████████████████████████████100% used
-"#;
-        assert_eq!(parse_usage_used_percent(output, "current session"), Some(100));
-    }
-
-    #[test]
-    fn test_parse_usage_used_percent_not_found() {
-        let output = "No percentage here";
-        assert_eq!(parse_usage_used_percent(output, "session"), None);
-    }
-
-    #[test]
-    fn test_parse_plan_type_claude_max() {
-
-        let output = "Opus 4.5 · Claude Max · gabe.b.azevedo@gmail.com's Organization";
-        assert_eq!(parse_plan_type(output), Some("Max".to_string()));
-    }
-
-    #[test]
-    fn test_parse_plan_type_claude_pro() {
-        let output = "Sonnet · Claude Pro · user@example.com";
-        assert_eq!(parse_plan_type(output), Some("Pro".to_string()));
-    }
-
-    #[test]
-    fn test_parse_plan_type_fallback() {
-
-        assert_eq!(parse_plan_type("Plan: Max"), Some("Max".to_string()));
-        assert_eq!(
-            parse_plan_type("Your plan: Pro tier"),
-            Some("Pro".to_string())
-        );
-    }
-
-    #[test]
-    fn test_parse_plan_type_not_found() {
-        assert_eq!(parse_plan_type("No plan info"), None);
-    }
-
-    #[test]
-    fn test_claude_usage_is_stale() {
-        let usage = ClaudeUsage::default();
-        assert!(usage.is_stale());
-
-        let fresh = ClaudeUsage {
-            fetched_at: Some(Instant::now()),
-            ..Default::default()
-        };
-        assert!(!fresh.is_stale());
-    }
-
-    #[test]
-    fn test_strip_ansi_codes() {
-
-        assert_eq!(strip_ansi_codes("\x1b[32mHello\x1b[0m"), "Hello");
-        assert_eq!(
-            strip_ansi_codes("\x1b[1;31mBold Red\x1b[0m Text"),
-            "Bold Red Text"
-        );
-
-        assert_eq!(strip_ansi_codes("Plain text"), "Plain text");
-
-        assert_eq!(
-            strip_ansi_codes("\x1b[33mYellow\x1b[0m \x1b[34mBlue\x1b[0m"),
-            "Yellow Blue"
-        );
-
-        assert_eq!(strip_ansi_codes("\x1b[2K\x1b[1GLine"), "Line");
-    }
-
-    #[test]
-    fn test_parse_usage_with_ansi_codes() {
-
-        let raw = "\x1b[32mCurrent session\x1b[0m\n██ 80% used";
-        let stripped = strip_ansi_codes(raw);
-        assert_eq!(parse_usage_used_percent(&stripped, "current session"), Some(80));
-    }
-
-    #[test]
-    fn test_parse_plan_with_ansi_codes() {
-        let raw = "\x1b[1mClaude Max\x1b[0m · user@example.com";
-        let stripped = strip_ansi_codes(raw);
-        assert_eq!(parse_plan_type(&stripped), Some("Max".to_string()));
-    }
-
-    #[test]
-    fn test_no_expect_in_error_messages() {
-
-        let error_usage = ClaudeUsage::with_error("Some error".to_string());
-        if let Some(msg) = &error_usage.error_message {
-            assert!(
-                !msg.to_lowercase().contains("expect"),
-                "Error message should not mention expect"
-            );
-        }
-
-        let claude_not_found = ClaudeUsage::claude_not_available();
-        if let Some(msg) = &claude_not_found.error_message {
-            assert!(
-                !msg.to_lowercase().contains("expect"),
-                "Error message should not mention expect"
-            );
-        }
-    }
-
-    #[test]
-    fn test_claude_usage_with_error_sets_fetched_at() {
-        let usage = ClaudeUsage::with_error("Test error".to_string());
-        assert!(
-            usage.fetched_at.is_some(),
-            "with_error should set fetched_at"
-        );
-        assert_eq!(usage.error_message, Some("Test error".to_string()));
-    }
-
-    #[test]
-    fn test_claude_usage_not_available_sets_fetched_at() {
-        let usage = ClaudeUsage::claude_not_available();
-        assert!(
-            usage.fetched_at.is_some(),
-            "claude_not_available should set fetched_at"
-        );
-        assert_eq!(
-            usage.error_message,
-            Some("Claude CLI not found".to_string())
-        );
-    }
-
-    // Tests for CLI state detection
-    #[test]
-    fn test_detect_cli_state_ready() {
-        // Standard Claude CLI prompt
-        let output = "Opus 4.5 · Claude Max · user@example.com >";
-        assert_eq!(detect_cli_state(output), CliState::Ready);
-
-        // Sonnet prompt
-        let output = "Sonnet · Claude Pro > ";
-        assert_eq!(detect_cli_state(output), CliState::Ready);
-
-        // Just > character
-        let output = "Loading...\n>";
-        assert_eq!(detect_cli_state(output), CliState::Ready);
-    }
-
-    #[test]
-    fn test_detect_cli_state_requires_auth() {
-        assert_eq!(
-            detect_cli_state("Please log in to continue"),
-            CliState::RequiresAuth
-        );
-        assert_eq!(
-            detect_cli_state("You are not logged in"),
-            CliState::RequiresAuth
-        );
-        assert_eq!(
-            detect_cli_state("Please authenticate first"),
-            CliState::RequiresAuth
-        );
-        assert_eq!(
-            detect_cli_state("API key required"),
-            CliState::RequiresAuth
-        );
-    }
-
-    #[test]
-    fn test_detect_cli_state_first_run() {
-        assert_eq!(
-            detect_cli_state("Welcome to Claude Code! Let's get started."),
-            CliState::FirstRun
-        );
-        assert_eq!(
-            detect_cli_state("First time setup required"),
-            CliState::FirstRun
-        );
-        assert_eq!(
-            detect_cli_state("Configure your settings"),
-            CliState::FirstRun
-        );
-    }
-
-    #[test]
-    fn test_detect_cli_state_unknown() {
-        // No clear indicators
-        let state = detect_cli_state("Loading spinner...");
-        assert!(matches!(state, CliState::Unknown(_)));
-
-        // Empty output
-        let state = detect_cli_state("");
-        assert!(matches!(state, CliState::Unknown(_)));
-    }
-
-    // Tests for env var timeout configuration
-    #[test]
-    fn test_default_timeouts() {
-        // These tests verify defaults when env vars are not set
-        // Note: actual env var testing would require setting/unsetting vars
-        let prompt = get_prompt_timeout();
-        assert_eq!(prompt.as_secs(), 10);
-
-        let usage = get_usage_timeout();
-        assert_eq!(usage.as_secs(), 8);
-
-        let overall = get_overall_timeout();
-        assert_eq!(overall.as_secs(), 25);
-    }
-
-    #[test]
-    fn test_is_debug_enabled_default() {
-        // By default, debug should be disabled (env var not set in test environment)
-        // This test verifies the function doesn't panic
-        let _ = is_debug_enabled();
-    }
-
-    // Tests for debug logger (unit level)
-    #[test]
-    fn test_debug_logger_disabled() {
-        // When debug is disabled, entries should still be collected but not written
-        let mut logger = DebugLogger::new();
-        logger.log("Test message");
-        logger.log_output_snapshot("Test", "some output", 100);
-        // Should not panic, logger will be dropped without writing when disabled
-    }
-
-    #[test]
-    fn test_debug_logger_output_snapshot_truncation() {
-        let mut logger = DebugLogger::new();
-        let long_output = "a".repeat(1000);
-        logger.log_output_snapshot("Long output", &long_output, 100);
-        // Verify the logger handles long output without panicking
-    }
-
-    #[test]
-    #[ignore]
-    fn test_fetch_claude_usage_real() {
-        if !is_claude_available() {
-            eprintln!("Claude CLI not found, skipping integration test");
-            return;
-        }
-
-        eprintln!("Fetching real Claude usage (this may take 15-20 seconds)...");
-        let usage = fetch_claude_usage_sync();
-
-        eprintln!("Result: {:?}", usage);
-
-        assert!(usage.fetched_at.is_some(), "fetched_at should be set");
-
-        if usage.error_message.is_none() {
-
-            let has_data = usage.session_used.is_some()
-                || usage.weekly_used.is_some()
-                || usage.plan_type.is_some();
-            assert!(has_data, "Should have at least some usage data: {:?}", usage);
-
-            if let Some(session) = usage.session_used {
-                eprintln!("Session used: {}%", session);
-                assert!(session <= 100, "Session percentage should be <= 100");
-            }
-            if let Some(weekly) = usage.weekly_used {
-                eprintln!("Weekly used: {}%", weekly);
-                assert!(weekly <= 100, "Weekly percentage should be <= 100");
-            }
-            if let Some(ref plan) = usage.plan_type {
-                eprintln!("Plan type: {}", plan);
-            }
-        } else {
-            eprintln!("Got error (may be expected): {:?}", usage.error_message);
-        }
-    }
-
-    #[test]
-    #[ignore]
-    fn test_fetch_claude_usage_with_debug_logging() {
-        // Set CLAUDE_USAGE_DEBUG=1 before running this test manually:
-        // CLAUDE_USAGE_DEBUG=1 cargo test test_fetch_claude_usage_with_debug_logging --release -- --ignored
-        if !is_claude_available() {
-            eprintln!("Claude CLI not found, skipping integration test");
-            return;
-        }
-
-        eprintln!("Fetching Claude usage with debug logging enabled...");
-        eprintln!("Debug logs will be written to ~/.planning-agent/logs/claude-usage.log");
-
-        let usage = fetch_claude_usage_sync();
-        eprintln!("Result: {:?}", usage);
-
-        // Check if log file was created (when debug is enabled)
-        if is_debug_enabled() {
-            if let Ok(log_path) = planning_paths::claude_usage_log_path() {
-                assert!(log_path.exists(), "Debug log file should exist when CLAUDE_USAGE_DEBUG=1");
-                eprintln!("Debug log written to: {:?}", log_path);
-            }
-        }
-    }
-}
+#[path = "claude_usage_tests.rs"]
+mod tests;
