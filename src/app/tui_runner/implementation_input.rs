@@ -4,13 +4,14 @@ use crate::tui::embedded_terminal::{key_sequences, EmbeddedTerminal, MIN_TERMINA
 use crate::tui::{Event, FocusedPanel, InputMode, Session};
 use anyhow::{Context, Result};
 use crossterm::event::{KeyCode, KeyModifiers};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tokio::sync::mpsc;
 
 /// Start the embedded implementation terminal
 pub fn start_implementation_terminal(
     session: &mut Session,
     plan_path: PathBuf,
+    working_dir: &Path,
     output_tx: &mpsc::UnboundedSender<Event>,
 ) -> Result<()> {
     // Check if Claude CLI is available
@@ -45,6 +46,7 @@ pub fn start_implementation_terminal(
     // Spawn the embedded terminal with inner dimensions
     let terminal = EmbeddedTerminal::spawn(
         &plan_path,
+        working_dir,
         inner_height,
         inner_width,
         session.id,

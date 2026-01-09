@@ -16,7 +16,8 @@ Your task is to:
 4. Verify your fixes resolve the identified problems
 
 Be precise and focused - only fix what the verification report identifies as issues.
-Do not introduce new features or make unrelated changes."#;
+Do not introduce new features or make unrelated changes.
+IMPORTANT: Use absolute paths for all file references in your output."#;
 
 /// Runs the fixing phase to address issues found during verification.
 pub async fn run_fixing_phase(
@@ -103,6 +104,9 @@ fn build_fixing_prompt(state: &VerificationState, verification_report: &str) -> 
     format!(
         r###"Fix the implementation issues identified in the verification report.
 
+## Workspace Root
+{}
+
 ## Original Plan
 Read the implementation plan for context: {}
 
@@ -127,7 +131,10 @@ Focus on:
 - Not introducing new bugs
 - Maintaining code quality and consistency with existing patterns
 
+IMPORTANT: Use absolute paths for all file references in your summary.
+
 After making your fixes, provide a brief summary of what you changed."###,
+        state.working_dir.display(),
         plan_path.display(),
         state.working_dir.display(),
         feedback

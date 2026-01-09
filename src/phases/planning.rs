@@ -32,7 +32,7 @@ pub async fn run_planning_phase_with_context(
 
     let agent = AgentType::from_config(agent_name, agent_config, working_dir.to_path_buf())?;
 
-    let prompt = build_planning_prompt(state);
+    let prompt = build_planning_prompt(state, working_dir);
 
     // Use resume strategy from config if session persistence is enabled, otherwise Stateless
     let configured_strategy = if agent_config.session_persistence.enabled {
@@ -74,17 +74,21 @@ pub async fn run_planning_phase_with_context(
     Ok(())
 }
 
-fn build_planning_prompt(state: &State) -> String {
+fn build_planning_prompt(state: &State, working_dir: &Path) -> String {
     // state.plan_file is now an absolute path (in ~/.planning-agent/plans/)
     format!(
-        r#"Create a detailed implementation plan for the following:
+        r#"Workspace Root: {}
+
+IMPORTANT: Use absolute paths for all file references in your plan.
+
+Create a detailed implementation plan for the following:
 
 Feature Name: {}
 Objective: {}
 
 Requirements:
 1. Analyze the existing codebase to understand the current architecture
-2. Identify all files that need to be modified or created
+2. Identify all files that need to be modified or created (use absolute paths)
 3. Break down the implementation into clear, actionable steps
 4. Consider edge cases and potential issues
 5. Include a testing strategy
@@ -92,6 +96,7 @@ Requirements:
 Write your plan to: {}
 
 Use the Read, Glob, and Grep tools to explore the codebase as needed."#,
+        working_dir.display(),
         state.feature_name,
         state.objective,
         state.plan_file.display()

@@ -9,6 +9,7 @@ use std::path::Path;
 const REVISION_SYSTEM_PROMPT: &str = r#"You are revising an implementation plan based on reviewer feedback.
 Focus on addressing all blocking issues first, then important improvements.
 Verify each finding before making changes. Only address those that require revision.
+IMPORTANT: Use absolute paths for all file references in the revised plan.
 "#;
 
 pub async fn run_revision_phase_with_context(
@@ -36,7 +37,7 @@ pub async fn run_revision_phase_with_context(
 
     let agent = AgentType::from_config(agent_name, agent_config, working_dir.to_path_buf())?;
 
-    let prompt = build_revision_prompt_with_reviews(state, reviews);
+    let prompt = build_revision_prompt_with_reviews(state, reviews, working_dir);
 
     let phase_name = format!("Revising #{}", iteration);
     // Use resume strategy from config if session persistence is enabled, otherwise Stateless
@@ -82,7 +83,7 @@ pub async fn run_revision_phase_with_context(
     Ok(())
 }
 
-fn build_revision_prompt_with_reviews(state: &State, reviews: &[ReviewResult]) -> String {
+fn build_revision_prompt_with_reviews(state: &State, reviews: &[ReviewResult], working_dir: &Path) -> String {
     let merged_feedback = reviews
         .iter()
         .map(|r| format!("## {} Review\n\n{}", r.agent_name.to_uppercase(), r.feedback))
@@ -90,7 +91,9 @@ fn build_revision_prompt_with_reviews(state: &State, reviews: &[ReviewResult]) -
         .join("\n\n---\n\n");
 
     format!(
-        r#"Read the current plan at: {}
+        r#"Workspace Root: {}
+
+Read the current plan at: {}
 
 # Consolidated Reviewer Feedback
 
@@ -98,8 +101,10 @@ fn build_revision_prompt_with_reviews(state: &State, reviews: &[ReviewResult]) -
 
 Revise the plan to address all issues raised by the reviewers.
 Preserve the good parts of the existing plan - only modify what needs to change.
+IMPORTANT: Use absolute paths for all file references in the revised plan.
 
 Update the plan file with your revisions."#,
+        working_dir.display(),
         state.plan_file.display(),
         merged_feedback
     )
@@ -128,10 +133,13 @@ mod tests {
             },
         ];
 
-        let prompt = build_revision_prompt_with_reviews(&state, &reviews);
+        let working_dir = Path::new("/workspaces/myproject");
+        let prompt = build_revision_prompt_with_reviews(&state, &reviews, working_dir);
         assert!(prompt.contains("CLAUDE Review"));
         assert!(prompt.contains("CODEX Review"));
         assert!(prompt.contains("Issue 1: Missing tests"));
         assert!(prompt.contains("Issue 2: Unclear architecture"));
+        assert!(prompt.contains("Workspace Root: /workspaces/myproject"));
+        assert!(prompt.contains("Use absolute paths"));
     }
 }

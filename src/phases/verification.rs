@@ -16,7 +16,8 @@ Your task is to:
 4. Generate a structured verification report
 
 Be thorough but fair - minor differences in implementation approach are acceptable if they achieve the plan's goals.
-Focus on functional correctness and completeness."#;
+Focus on functional correctness and completeness.
+IMPORTANT: Use absolute paths for all file references in your verification report."#;
 
 /// Result of parsing a verification verdict from the report
 #[derive(Debug, Clone, PartialEq)]
@@ -168,6 +169,9 @@ fn build_verification_prompt(state: &VerificationState) -> String {
     format!(
         r###"Verify the implementation against the approved plan.
 
+## Workspace Root
+{}
+
 ## Plan Location
 Read the implementation plan from: {}
 
@@ -183,6 +187,8 @@ Write your verification report to: {}
 2. Explore the repository to see what was actually implemented
 3. Compare each requirement/step in the plan against the implementation
 4. Note any discrepancies, missing features, or deviations
+
+IMPORTANT: Use absolute paths for all file references in your report (e.g., {}/src/main.rs:45).
 
 ## Report Format
 
@@ -201,7 +207,7 @@ Your report MUST follow this structure:
 
 ## Discrepancies Found
 1. **Issue**: [Description]
-   **Location**: [file:line or general location]
+   **Location**: [absolute/path/to/file:line]
    **Expected**: [What the plan specified]
    **Actual**: [What was implemented or missing]
 
@@ -211,15 +217,17 @@ NEEDS REVISION (if there are issues to fix)
 
 <verification-feedback>
 [Detailed feedback for the fixer agent if NEEDS REVISION.
-Include specific instructions on what needs to be fixed.]
+Include specific instructions on what needs to be fixed, using absolute paths.]
 </verification-feedback>
 ```
 
 CRITICAL: Your report MUST include "## Verdict" followed by either "APPROVED" or "NEEDS REVISION".
 If there are issues, wrap detailed fix instructions in <verification-feedback> tags."###,
+        state.working_dir.display(),
         plan_path.display(),
         state.working_dir.display(),
         report_path.display(),
+        state.working_dir.display(),
         state.iteration
     )
 }
