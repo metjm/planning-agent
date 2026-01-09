@@ -237,17 +237,23 @@ pub async fn run_multi_agent_review_with_context(
     // Read plan content for MCP server
     let plan_path = state.plan_file.clone();
     let plan_content = fs::read_to_string(&plan_path)?;
+    let objective = state.objective.clone();
+    let base_feedback_path = state.feedback_file.clone();
+    let total_reviewers = agent_names.len();
 
     // Pre-build prompts outside the closure to avoid borrow issues
     let mcp_review_prompt = build_mcp_review_prompt(state);
-    let agent_prompt = build_mcp_agent_prompt(state);
+    let mcp_agent_prompt = build_mcp_agent_prompt(state);
 
     let futures: Vec<_> = agents
         .into_iter()
         .map(|(agent_name, agent, session_key, resume_strategy)| {
             let plan = plan_content.clone();
             let review_prompt = mcp_review_prompt.clone();
-            let prompt = agent_prompt.clone();
+            let mcp_prompt = mcp_agent_prompt.clone();
+            let objective = objective.clone();
+            let plan_path = plan_path.clone();
+            let base_feedback_path = base_feedback_path.clone();
             let sender = session_sender.clone();
             let phase = format!("Reviewing #{}", iteration);
 
@@ -270,6 +276,17 @@ pub async fn run_multi_agent_review_with_context(
                             Err(anyhow::anyhow!("Failed to generate MCP config: {}", e)),
                         );
                     }
+                };
+
+                let prompt = if agent.supports_mcp() {
+                    mcp_prompt.clone()
+                } else {
+                    let feedback_path = feedback_path_for_agent(
+                        &base_feedback_path,
+                        &agent_name,
+                        total_reviewers,
+                    );
+                    build_review_prompt_for_agent(&objective, &plan_path, &feedback_path)
                 };
 
                 // Execute agent with MCP config (Claude supports it, others fall back)
@@ -438,8 +455,11 @@ After submitting your review via MCP, wrap your final assessment in <plan-feedba
     )
 }
 
-#[allow(dead_code)]
-fn build_review_prompt(state: &State, plan_path_abs: &Path, feedback_path_abs: &Path) -> String {
+fn build_review_prompt_for_agent(
+    objective: &str,
+    plan_path_abs: &Path,
+    feedback_path_abs: &Path,
+) -> String {
     format!(
         r###"User objective (used to create the plan):
 ```text
@@ -474,7 +494,7 @@ Example format:
 
 ## Overall Assessment: APPROVED/NEEDS REVISION
 </plan-feedback>"###,
-        state.objective,
+        objective,
         plan_path_abs.display(),
         feedback_path_abs.display()
     )
@@ -789,5 +809,21 @@ mod tests {
     fn test_parse_verdict_with_markdown_formatting() {
         let feedback = "### Overall Assessment: **APPROVED**\n\nReady for implementation.";
         assert_eq!(parse_verdict(feedback), VerdictParseResult::Approved);
+    }
+
+    #[test]
+    fn test_build_review_prompt_for_agent() {
+        let prompt = build_review_prompt_for_agent(
+            "Ship the feature safely",
+            Path::new("/tmp/plan.md"),
+            Path::new("/tmp/feedback.md"),
+        );
+
+        assert!(prompt.contains("Ship the feature safely"));
+        assert!(prompt.contains("/tmp/plan.md"));
+        assert!(prompt.contains("/tmp/feedback.md"));
+        assert!(prompt.contains("<plan-feedback>"));
+        assert!(!prompt.contains("submit_review"));
+        assert!(!prompt.contains("get_plan"));
     }
 }

@@ -1,7 +1,7 @@
 use super::protocol::{
     error_codes, InitializeParams, InitializeResult, JsonRpcRequest, JsonRpcResponse,
-    ResourcesCapability, ServerCapabilities, ServerInfo, Tool, ToolCallParams, ToolCallResult,
-    ToolsCapability, ToolsListResult,
+    ServerCapabilities, ServerInfo, Tool, ToolCallParams, ToolCallResult, ToolsCapability,
+    ToolsListResult,
 };
 use super::review_schema::{get_plan_schema, submit_review_schema, SubmittedReview};
 use anyhow::Result;
@@ -133,10 +133,7 @@ impl McpReviewServer {
             protocol_version: PROTOCOL_VERSION.to_string(),
             capabilities: ServerCapabilities {
                 tools: Some(ToolsCapability { list_changed: false }),
-                resources: Some(ResourcesCapability {
-                    subscribe: false,
-                    list_changed: false,
-                }),
+                resources: None,
             },
             server_info: ServerInfo {
                 name: SERVER_NAME.to_string(),
@@ -222,11 +219,17 @@ impl McpReviewServer {
             return ToolCallResult::error("Summary cannot be empty.".to_string());
         }
 
-        // Send the review through the channel
-        if self.review_tx.blocking_send(review.clone()).is_err() {
-            return ToolCallResult::error(
-                "Failed to submit review: channel closed.".to_string(),
-            );
+        // Send the review without blocking the runtime thread
+        if let Err(err) = self.review_tx.try_send(review.clone()) {
+            let message = match err {
+                tokio::sync::mpsc::error::TrySendError::Full(_) => {
+                    "Failed to submit review: channel full."
+                }
+                tokio::sync::mpsc::error::TrySendError::Closed(_) => {
+                    "Failed to submit review: channel closed."
+                }
+            };
+            return ToolCallResult::error(message.to_string());
         }
 
         self.review_submitted = true;
@@ -283,6 +286,23 @@ mod tests {
         let value = result.unwrap();
         assert_eq!(value["protocolVersion"], "2024-11-05");
         assert!(value["capabilities"]["tools"].is_object());
+        assert!(value["capabilities"]["resources"].is_null());
+    }
+
+    #[tokio::test]
+    async fn test_handle_submit_review_inside_runtime() {
+        let (mut server, mut rx) = create_test_server();
+
+        let args = serde_json::json!({
+            "verdict": "APPROVED",
+            "summary": "The plan looks good and is ready for implementation."
+        });
+
+        let result = server.handle_submit_review(args);
+        assert!(!result.is_error);
+
+        let review = rx.recv().await.unwrap();
+        assert_eq!(review.verdict, super::super::review_schema::ReviewVerdict::Approved);
     }
 
     #[test]
