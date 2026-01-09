@@ -3,6 +3,7 @@ use super::parser::ClaudeParser;
 use super::{AgentContext, AgentResult};
 use crate::agents::runner::{run_agent_process, ContextEmitter, EventEmitter, RunnerConfig};
 use crate::config::AgentConfig;
+use crate::mcp::McpServerConfig;
 use crate::state::ResumeStrategy;
 use anyhow::Result;
 use std::path::PathBuf;
@@ -56,10 +57,11 @@ impl ClaudeAgent {
         system_prompt: Option<String>,
         max_turns: Option<u32>,
         context: AgentContext,
-        mcp_config: &str,
+        mcp_config: &McpServerConfig,
     ) -> Result<AgentResult> {
         let emitter = ContextEmitter::new(context.clone(), self.name.clone());
-        self.execute_streaming_internal(prompt, system_prompt, max_turns, &emitter, Some(&context), Some(mcp_config))
+        let config_json = mcp_config.to_claude_json();
+        self.execute_streaming_internal(prompt, system_prompt, max_turns, &emitter, Some(&context), Some(&config_json))
             .await
     }
 
