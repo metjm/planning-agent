@@ -171,6 +171,7 @@ pub struct ReviewBatchResult {
 const REVIEW_SYSTEM_PROMPT: &str = r#"You are a technical plan reviewer.
 Review the plan for correctness, completeness, and technical accuracy.
 Use the "plan-review" skill to review.
+IMPORTANT: Use absolute paths for all file references in your feedback.
 "#;
 
 pub async fn run_multi_agent_review_with_context(
@@ -242,8 +243,9 @@ pub async fn run_multi_agent_review_with_context(
     let total_reviewers = agent_names.len();
 
     // Pre-build prompts outside the closure to avoid borrow issues
-    let mcp_review_prompt = build_mcp_review_prompt(state);
-    let mcp_agent_prompt = build_mcp_agent_prompt(state);
+    let mcp_review_prompt = build_mcp_review_prompt(state, working_dir);
+    let mcp_agent_prompt = build_mcp_agent_prompt(state, working_dir);
+    let working_dir_owned = working_dir.to_path_buf();
 
     let futures: Vec<_> = agents
         .into_iter()
@@ -256,6 +258,7 @@ pub async fn run_multi_agent_review_with_context(
             let base_feedback_path = base_feedback_path.clone();
             let sender = session_sender.clone();
             let phase = format!("Reviewing #{}", iteration);
+            let working_dir_for_closure = working_dir_owned.clone();
 
             async move {
                 sender.send_output(format!("[review:{}] Starting MCP review...", agent_name));
@@ -286,7 +289,7 @@ pub async fn run_multi_agent_review_with_context(
                         &agent_name,
                         total_reviewers,
                     );
-                    build_review_prompt_for_agent(&objective, &plan_path, &feedback_path)
+                    build_review_prompt_for_agent(&objective, &plan_path, &feedback_path, &working_dir_for_closure)
                 };
 
                 // Execute agent with MCP config (Claude supports it, others fall back)
@@ -400,9 +403,11 @@ pub async fn run_multi_agent_review_with_context(
 }
 
 /// Build the review prompt that will be embedded in the MCP server's get_plan response
-fn build_mcp_review_prompt(state: &State) -> String {
+fn build_mcp_review_prompt(state: &State, working_dir: &Path) -> String {
     format!(
-        r###"User objective (used to create the plan):
+        r###"Workspace Root: {}
+
+User objective (used to create the plan):
 ```text
 {}
 ```
@@ -413,19 +418,24 @@ Please review the implementation plan above for:
 3. Potential risks or issues
 4. Code quality and best practices
 
+IMPORTANT: Use absolute paths for all file references in your feedback.
+
 After your review, you MUST submit your feedback using the `submit_review` MCP tool with:
 - verdict: "APPROVED" or "NEEDS_REVISION"
 - summary: A brief one-paragraph summary
 - critical_issues: Array of blocking issues (if any)
 - recommendations: Array of non-blocking suggestions"###,
+        working_dir.display(),
         state.objective
     )
 }
 
 /// Build the prompt that instructs the agent to use the MCP tools
-fn build_mcp_agent_prompt(state: &State) -> String {
+fn build_mcp_agent_prompt(state: &State, working_dir: &Path) -> String {
     format!(
         r###"You are reviewing an implementation plan. Follow these steps:
+
+Workspace Root: {}
 
 1. Use the `get_plan` MCP tool to retrieve the plan content and review instructions
 2. Read and analyze the plan thoroughly
@@ -436,6 +446,7 @@ User objective: {}
 IMPORTANT: You MUST use the MCP tools to complete this review:
 - First call `get_plan` to get the plan content
 - Then call `submit_review` with your verdict and feedback
+- Use absolute paths for all file references in your feedback
 
 After submitting your review via MCP, wrap your final assessment in <plan-feedback> tags:
 
@@ -451,6 +462,7 @@ After submitting your review via MCP, wrap your final assessment in <plan-feedba
 
 ## Overall Assessment: [APPROVED or NEEDS REVISION]
 </plan-feedback>"###,
+        working_dir.display(),
         state.objective
     )
 }
@@ -459,9 +471,12 @@ fn build_review_prompt_for_agent(
     objective: &str,
     plan_path_abs: &Path,
     feedback_path_abs: &Path,
+    working_dir: &Path,
 ) -> String {
     format!(
-        r###"User objective (used to create the plan):
+        r###"Workspace Root: {}
+
+User objective (used to create the plan):
 ```text
 {}
 ```
@@ -473,6 +488,8 @@ Write your feedback to: {}
 IMPORTANT: Your feedback MUST include one of these exact strings in the output:
 - "Overall Assessment:** APPROVED" - if the plan is ready for implementation
 - "Overall Assessment:** NEEDS REVISION" - if the plan has issues that need to be fixed
+
+Use absolute paths for all file references in your feedback.
 
 Provide your assessment with one of these verdicts:
 - "APPROVED" - if the plan is ready for implementation
@@ -490,10 +507,11 @@ Example format:
 ...your assessment here...
 
 ## Issues Found
-...specific issues...
+...specific issues (use absolute paths)...
 
 ## Overall Assessment: APPROVED/NEEDS REVISION
 </plan-feedback>"###,
+        working_dir.display(),
         objective,
         plan_path_abs.display(),
         feedback_path_abs.display()
@@ -817,6 +835,7 @@ mod tests {
             "Ship the feature safely",
             Path::new("/tmp/plan.md"),
             Path::new("/tmp/feedback.md"),
+            Path::new("/workspaces/myproject"),
         );
 
         assert!(prompt.contains("Ship the feature safely"));
@@ -825,5 +844,7 @@ mod tests {
         assert!(prompt.contains("<plan-feedback>"));
         assert!(!prompt.contains("submit_review"));
         assert!(!prompt.contains("get_plan"));
+        assert!(prompt.contains("Workspace Root: /workspaces/myproject"));
+        assert!(prompt.contains("Use absolute paths"));
     }
 }

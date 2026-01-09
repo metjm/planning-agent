@@ -143,6 +143,9 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
         .clone()
         .unwrap_or_else(|| std::env::current_dir().expect("Failed to get current directory"));
 
+    // Canonicalize working_dir for absolute paths in prompts (matching headless behavior)
+    let working_dir = std::fs::canonicalize(&working_dir).unwrap_or(working_dir);
+
     if update::consume_update_marker(&working_dir) {
         tab_manager.update_notice = Some("Update installed successfully!".to_string());
         debug_log(start, "update-installed marker consumed");

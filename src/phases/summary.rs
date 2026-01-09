@@ -9,7 +9,8 @@ use std::path::Path;
 const SUMMARY_SYSTEM_PROMPT: &str = r#"You are a concise technical summarizer.
 Your task is to provide a brief, focused summary of the content provided.
 Keep summaries short (3-5 bullet points max) and highlight only the most important aspects.
-Do not include code blocks or lengthy explanations - be succinct."#;
+Do not include code blocks or lengthy explanations - be succinct.
+When referencing files, use absolute paths."#;
 
 pub fn spawn_summary_generation(
     phase: String,
@@ -67,7 +68,7 @@ fn build_plan_summary_input(plan_content: &str, phase: &str) -> String {
     format!(
         r#"Summarize this {} plan. Highlight:
 - Key components/features being implemented
-- Major files to be modified
+- Major files to be modified (use absolute paths)
 - Any risks or considerations mentioned
 
 Plan content:

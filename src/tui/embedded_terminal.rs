@@ -50,12 +50,14 @@ impl EmbeddedTerminal {
     ///
     /// # Arguments
     /// * `plan_path` - Path to the plan file to implement
+    /// * `working_dir` - Workspace root directory for the implementation
     /// * `rows` - Initial terminal height
     /// * `cols` - Initial terminal width
     /// * `session_id` - Session ID for event routing
     /// * `event_tx` - Channel to send terminal output events
     pub fn spawn(
         plan_path: &Path,
+        working_dir: &Path,
         rows: u16,
         cols: u16,
         session_id: usize,
@@ -91,9 +93,10 @@ impl EmbeddedTerminal {
             .take_writer()
             .context("Failed to get PTY writer")?;
 
-        // Build the command with exact parity to launch_claude_implementation
+        // Build the command with workspace root and absolute path instruction
         let prompt = format!(
-            "Please implement the following plan fully: {}",
+            "Workspace Root: {}\n\nPlease implement the following plan fully: {}\n\nIMPORTANT: Use absolute paths for all file operations. Work within the workspace root.",
+            working_dir.display(),
             plan_path.display()
         );
 

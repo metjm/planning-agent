@@ -75,7 +75,7 @@ pub async fn handle_plan_approval_input(
             session.approval_tx.take();
             session.approval_mode = ApprovalMode::None;
 
-            if let Err(e) = start_implementation_terminal(session, plan_path, output_tx) {
+            if let Err(e) = start_implementation_terminal(session, plan_path, working_dir, output_tx) {
                 session.handle_error(&format!("Failed to start implementation: {}", e));
             }
         }
@@ -242,7 +242,7 @@ pub async fn handle_user_override_input(
             session.approval_tx.take();
             session.approval_mode = ApprovalMode::None;
 
-            if let Err(e) = start_implementation_terminal(session, plan_path, output_tx) {
+            if let Err(e) = start_implementation_terminal(session, plan_path, working_dir, output_tx) {
                 session.handle_error(&format!("Failed to start implementation: {}", e));
             }
         }
