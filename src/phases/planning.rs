@@ -1,5 +1,6 @@
 use crate::agents::{AgentContext, AgentType};
 use crate::config::WorkflowConfig;
+use crate::prompt_format::PromptBuilder;
 use crate::state::{ResumeStrategy, State};
 use crate::tui::SessionEventSender;
 use anyhow::Result;
@@ -76,29 +77,21 @@ pub async fn run_planning_phase_with_context(
 
 fn build_planning_prompt(state: &State, working_dir: &Path) -> String {
     // state.plan_file is now an absolute path (in ~/.planning-agent/plans/)
-    format!(
-        r#"Workspace Root: {}
-
-IMPORTANT: Use absolute paths for all file references in your plan.
-
-Create a detailed implementation plan for the following:
-
-Feature Name: {}
-Objective: {}
+    PromptBuilder::new()
+        .phase("planning")
+        .instructions(r#"Create a detailed implementation plan for the given objective.
 
 Requirements:
 1. Analyze the existing codebase to understand the current architecture
 2. Identify all files that need to be modified or created (use absolute paths)
 3. Break down the implementation into clear, actionable steps
 4. Consider edge cases and potential issues
-5. Include a testing strategy
-
-Write your plan to: {}
-
-Use the Read, Glob, and Grep tools to explore the codebase as needed."#,
-        working_dir.display(),
-        state.feature_name,
-        state.objective,
-        state.plan_file.display()
-    )
+5. Include a testing strategy"#)
+        .input("workspace-root", &working_dir.display().to_string())
+        .input("feature-name", &state.feature_name)
+        .input("objective", &state.objective)
+        .input("plan-output-path", &state.plan_file.display().to_string())
+        .constraint("Use absolute paths for all file references in your plan")
+        .tools("Use the Read, Glob, and Grep tools to explore the codebase as needed.")
+        .build()
 }

@@ -1,5 +1,6 @@
 use crate::agents::{AgentContext, AgentType};
 use crate::config::WorkflowConfig;
+use crate::prompt_format::PromptBuilder;
 use crate::state::ResumeStrategy;
 use crate::tui::SessionEventSender;
 use crate::verification_state::VerificationState;
@@ -166,33 +167,8 @@ fn build_verification_prompt(state: &VerificationState) -> String {
     let plan_path = state.plan_file_path();
     let report_path = state.verification_report_path();
 
-    format!(
-        r###"Verify the implementation against the approved plan.
-
-## Workspace Root
-{}
-
-## Plan Location
-Read the implementation plan from: {}
-
-## Repository Location
-The implementation is in: {}
-
-## Verification Report Location
-Write your verification report to: {}
-
-## Instructions
-
-1. Read the plan file to understand what was supposed to be implemented
-2. Explore the repository to see what was actually implemented
-3. Compare each requirement/step in the plan against the implementation
-4. Note any discrepancies, missing features, or deviations
-
-IMPORTANT: Use absolute paths for all file references in your report (e.g., {}/src/main.rs:45).
-
-## Report Format
-
-Your report MUST follow this structure:
+    let output_format = format!(
+        r###"Your report MUST follow this structure:
 
 ```markdown
 # Verification Report - Round {}
@@ -223,13 +199,25 @@ Include specific instructions on what needs to be fixed, using absolute paths.]
 
 CRITICAL: Your report MUST include "## Verdict" followed by either "APPROVED" or "NEEDS REVISION".
 If there are issues, wrap detailed fix instructions in <verification-feedback> tags."###,
-        state.working_dir.display(),
-        plan_path.display(),
-        state.working_dir.display(),
-        report_path.display(),
-        state.working_dir.display(),
         state.iteration
-    )
+    );
+
+    PromptBuilder::new()
+        .phase("verification")
+        .instructions(r#"Verify the implementation against the approved plan.
+
+1. Read the plan file to understand what was supposed to be implemented
+2. Explore the repository to see what was actually implemented
+3. Compare each requirement/step in the plan against the implementation
+4. Note any discrepancies, missing features, or deviations"#)
+        .input("workspace-root", &state.working_dir.display().to_string())
+        .input("plan-path", &plan_path.display().to_string())
+        .input("repository-path", &state.working_dir.display().to_string())
+        .input("report-output-path", &report_path.display().to_string())
+        .input("iteration", &state.iteration.to_string())
+        .constraint(&format!("Use absolute paths for all file references in your report (e.g., {}/src/main.rs:45)", state.working_dir.display()))
+        .output_format(&output_format)
+        .build()
 }
 
 #[cfg(test)]
