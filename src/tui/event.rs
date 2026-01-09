@@ -8,7 +8,7 @@ use crate::cli_usage::AccountUsage;
 use crate::state::State;
 use crate::tui::file_index::FileIndex;
 use crate::tui::session::TodoItem;
-use crate::update::{UpdateResult, UpdateStatus};
+use crate::update::{UpdateResult, UpdateStatus, VersionInfo};
 
 /// Command sent from UI to workflow to control execution.
 #[derive(Debug, Clone)]
@@ -139,6 +139,8 @@ pub enum Event {
     AccountUsageUpdate(AccountUsage),
 
     UpdateStatusReceived(UpdateStatus),
+
+    VersionInfoReceived(Option<VersionInfo>),
 
     UpdateInstallFinished(UpdateResult),
 

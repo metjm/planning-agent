@@ -82,13 +82,61 @@ pub fn draw_footer(frame: &mut Frame, session: &Session, tab_manager: &TabManage
         ));
     }
 
-    let footer = Paragraph::new(Line::from(spans)).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::DarkGray)),
-    );
+    // Build version info line for right side
+    let version_line: Option<Line> = tab_manager.version_info.as_ref().map(|info| {
+        Line::from(vec![
+            Span::styled(&info.short_sha, Style::default().fg(Color::DarkGray)),
+            Span::styled(" ", Style::default()),
+            Span::styled(&info.commit_date, Style::default().fg(Color::DarkGray)),
+            Span::styled(" ", Style::default()),
+        ])
+    });
 
-    frame.render_widget(footer, area);
+    // Create the block first
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::DarkGray));
+
+    // Compute inner area
+    let inner = block.inner(area);
+
+    // Calculate widths
+    let left_line = Line::from(spans.clone());
+    let left_width = left_line.width() as u16;
+    let version_width = version_line.as_ref().map(|l| l.width() as u16).unwrap_or(0);
+
+    // Render the block
+    frame.render_widget(block, area);
+
+    // Only render right-aligned version if there's enough space
+    // Need at least: left_width + 1 (gap) + version_width
+    let inner_width = inner.width;
+    let min_required = left_width.saturating_add(1).saturating_add(version_width);
+
+    if version_line.is_some() && inner_width >= min_required {
+        // Split into left and right
+        let chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Min(0),
+                Constraint::Length(version_width),
+            ])
+            .split(inner);
+
+        // Left content
+        let left_para = Paragraph::new(left_line);
+        frame.render_widget(left_para, chunks[0]);
+
+        // Right content (version info)
+        if let Some(ver_line) = version_line {
+            let right_para = Paragraph::new(ver_line);
+            frame.render_widget(right_para, chunks[1]);
+        }
+    } else {
+        // Not enough space or no version info, just render left content
+        let footer = Paragraph::new(left_line);
+        frame.render_widget(footer, inner);
+    }
 }
 
 pub fn draw_approval_overlay(frame: &mut Frame, session: &Session) {

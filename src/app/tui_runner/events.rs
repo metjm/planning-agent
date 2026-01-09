@@ -445,6 +445,9 @@ async fn handle_session_event(
         Event::UpdateStatusReceived(status) => {
             tab_manager.update_status = status;
         }
+        Event::VersionInfoReceived(info) => {
+            tab_manager.version_info = info;
+        }
         Event::FileIndexReady(index) => {
             tab_manager.file_index = index;
         }

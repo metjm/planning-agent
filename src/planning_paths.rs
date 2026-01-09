@@ -94,6 +94,11 @@ pub fn update_marker_path() -> Result<PathBuf> {
     Ok(planning_agent_home_dir()?.join("update-installed"))
 }
 
+/// Returns the version cache path: `~/.planning-agent/version-cache.json`
+pub fn version_cache_path() -> Result<PathBuf> {
+    Ok(planning_agent_home_dir()?.join("version-cache.json"))
+}
+
 /// Returns the codex status log path: `~/.planning-agent/logs/codex-status.log`
 pub fn codex_status_log_path() -> Result<PathBuf> {
     let logs = planning_agent_home_dir()?.join("logs");
