@@ -177,6 +177,18 @@ fn test_detect_cli_state_unknown() {
 }
 
 #[test]
+fn test_detect_cli_state_unknown_truncates_unicode_safely() {
+    let output = "─".repeat(120);
+    let state = detect_cli_state(&output);
+    if let CliState::Unknown(excerpt) = state {
+        assert!(excerpt.ends_with("..."), "Excerpt should be truncated with ellipsis");
+        assert_eq!(excerpt.chars().count(), 103);
+    } else {
+        panic!("Expected CliState::Unknown");
+    }
+}
+
+#[test]
 fn test_default_timeouts() {
     let prompt = get_prompt_timeout();
     assert_eq!(prompt.as_secs(), 10);
@@ -203,6 +215,18 @@ fn test_debug_logger_output_snapshot_truncation() {
     let mut logger = DebugLogger::new();
     let long_output = "a".repeat(1000);
     logger.log_output_snapshot("Long output", &long_output, 100);
+}
+
+#[test]
+fn test_debug_logger_output_snapshot_unicode_truncation() {
+    let mut logger = DebugLogger {
+        enabled: true,
+        start: Instant::now(),
+        entries: Vec::new(),
+    };
+    let long_output = "─".repeat(200);
+    logger.log_output_snapshot("Unicode output", &long_output, 50);
+    logger.enabled = false;
 }
 
 #[test]
