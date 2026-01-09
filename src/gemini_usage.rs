@@ -9,8 +9,6 @@ pub struct GeminiUsage {
 
     pub usage_remaining: Option<u8>,
 
-    pub constrained_model: Option<String>,
-
     pub fetched_at: Option<Instant>,
 
     pub error_message: Option<String>,
@@ -49,11 +47,10 @@ pub fn fetch_gemini_usage_sync() -> GeminiUsage {
         Ok(raw_output) => {
             let output = strip_ansi_codes(&raw_output);
 
-            let (usage_remaining, constrained_model) = parse_gemini_usage(&output);
+            let usage_remaining = parse_gemini_usage(&output);
 
             GeminiUsage {
                 usage_remaining,
-                constrained_model,
                 fetched_at: Some(Instant::now()),
                 error_message: None,
             }
@@ -224,17 +221,14 @@ fn strip_ansi_codes(text: &str) -> String {
     result
 }
 
-fn parse_gemini_usage(text: &str) -> (Option<u8>, Option<String>) {
+fn parse_gemini_usage(text: &str) -> Option<u8> {
     let mut lowest_usage: Option<f32> = None;
-    let mut constrained_model: Option<String> = None;
 
     for line in text.lines() {
 
         if line.contains('%') && line.contains("Resets") {
 
             let parts: Vec<&str> = line.split_whitespace().collect();
-
-            let model_name = parts.iter().find(|p| p.starts_with("gemini")).map(|s| s.to_string());
 
             for part in parts.iter() {
                 if part.ends_with('%') {
@@ -243,7 +237,6 @@ fn parse_gemini_usage(text: &str) -> (Option<u8>, Option<String>) {
 
                         if lowest_usage.is_none() || pct < lowest_usage.unwrap() {
                             lowest_usage = Some(pct);
-                            constrained_model = model_name.clone();
                         }
                     }
                     break; 
@@ -252,7 +245,7 @@ fn parse_gemini_usage(text: &str) -> (Option<u8>, Option<String>) {
         }
     }
 
-    (lowest_usage.map(|p| p.round() as u8), constrained_model)
+    lowest_usage.map(|p| p.round() as u8)
 }
 
 #[cfg(test)]
@@ -270,9 +263,8 @@ mod tests {
   gemini-3-flash-preview         -   99.9% (Resets in 23h 41m)
   gemini-3-pro-preview           -      100.0% (Resets in 24h)
 "#;
-        let (usage, model) = parse_gemini_usage(output);
+        let usage = parse_gemini_usage(output);
         assert_eq!(usage, Some(99)); 
-        assert_eq!(model, Some("gemini-2.5-flash".to_string()));
     }
 
     #[test]
@@ -281,9 +273,8 @@ mod tests {
   gemini-2.5-flash               -   50.0% (Resets in 12h)
   gemini-2.5-pro                 -   25.5% (Resets in 6h)
 "#;
-        let (usage, model) = parse_gemini_usage(output);
+        let usage = parse_gemini_usage(output);
         assert_eq!(usage, Some(26)); 
-        assert_eq!(model, Some("gemini-2.5-pro".to_string()));
     }
 
     #[test]
@@ -302,9 +293,6 @@ mod tests {
         if usage.error_message.is_none() {
             assert!(usage.usage_remaining.is_some(), "Should have usage data");
             eprintln!("Usage remaining: {}%", usage.usage_remaining.unwrap());
-            if let Some(ref model) = usage.constrained_model {
-                eprintln!("Most constrained model: {}", model);
-            }
         }
     }
 }

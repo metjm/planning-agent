@@ -4,7 +4,7 @@ use crate::phases::ReviewResult;
 use crate::state::{Phase, State};
 use crate::tui::{SessionEventSender, UserApprovalResponse, WorkflowCommand};
 use anyhow::Result;
-use std::path::PathBuf;
+use std::path::Path;
 use tokio::sync::mpsc;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -23,7 +23,7 @@ pub enum PlanFailureDecision {
 }
 
 pub async fn wait_for_review_decision(
-    working_dir: &PathBuf,
+    working_dir: &Path,
     approval_rx: &mut mpsc::Receiver<UserApprovalResponse>,
     control_rx: &mut mpsc::Receiver<WorkflowCommand>,
 ) -> ReviewDecision {
@@ -78,7 +78,7 @@ pub async fn wait_for_review_decision(
 }
 
 pub async fn wait_for_plan_failure_decision(
-    working_dir: &PathBuf,
+    working_dir: &Path,
     approval_rx: &mut mpsc::Receiver<UserApprovalResponse>,
     control_rx: &mut mpsc::Receiver<WorkflowCommand>,
     plan_exists: bool,
@@ -126,8 +126,8 @@ pub async fn wait_for_plan_failure_decision(
 
 pub async fn handle_max_iterations(
     state: &mut State,
-    working_dir: &PathBuf,
-    state_path: &PathBuf,
+    working_dir: &Path,
+    state_path: &Path,
     sender: &SessionEventSender,
     approval_rx: &mut mpsc::Receiver<UserApprovalResponse>,
     control_rx: &mut mpsc::Receiver<WorkflowCommand>,

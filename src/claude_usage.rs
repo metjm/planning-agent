@@ -544,8 +544,7 @@ fn parse_usage_used_percent(text: &str, section_keyword: &str) -> Option<u8> {
 
         if line_lower.contains(&section_keyword_lower) {
 
-            for j in i..std::cmp::min(i + 5, lines.len()) {
-                let candidate = lines[j];
+            for candidate in lines.iter().skip(i).take(5) {
                 if candidate.to_lowercase().contains("used") {
 
                     if let Some(pct_pos) = candidate.find('%') {

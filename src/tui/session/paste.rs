@@ -92,32 +92,6 @@ impl Session {
         false
     }
 
-    pub fn delete_paste_at_cursor_feedback(&mut self) -> bool {
-
-        if let Some(idx) = self.find_paste_at_cursor_feedback() {
-            let paste = self.feedback_pastes.remove(idx);
-            let placeholder = Self::format_paste_placeholder(paste.line_count);
-            let placeholder_len = placeholder.len();
-
-            self.user_feedback = format!(
-                "{}{}",
-                &self.user_feedback[..paste.start_pos],
-                &self.user_feedback[paste.start_pos + placeholder_len..]
-            );
-
-            self.cursor_position = paste.start_pos;
-
-            for p in &mut self.feedback_pastes {
-                if p.start_pos > paste.start_pos {
-                    p.start_pos -= placeholder_len;
-                }
-            }
-
-            return true;
-        }
-        false
-    }
-
     fn find_paste_at_cursor_tab(&self) -> Option<usize> {
         for (idx, paste) in self.tab_input_pastes.iter().enumerate() {
             let placeholder = Self::format_paste_placeholder(paste.line_count);
@@ -125,20 +99,6 @@ impl Session {
 
             if self.tab_input_cursor > paste.start_pos
                 && self.tab_input_cursor <= placeholder_end
-            {
-                return Some(idx);
-            }
-        }
-        None
-    }
-
-    fn find_paste_at_cursor_feedback(&self) -> Option<usize> {
-        for (idx, paste) in self.feedback_pastes.iter().enumerate() {
-            let placeholder = Self::format_paste_placeholder(paste.line_count);
-            let placeholder_end = paste.start_pos + placeholder.len();
-
-            if self.cursor_position > paste.start_pos
-                && self.cursor_position <= placeholder_end
             {
                 return Some(idx);
             }

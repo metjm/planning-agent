@@ -8,7 +8,7 @@ use crate::tui::{
 };
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyModifiers};
-use std::path::PathBuf;
+use std::path::Path;
 use tokio::sync::mpsc;
 
 use super::implementation_input::start_implementation_terminal;
@@ -32,7 +32,7 @@ pub async fn handle_awaiting_choice_input(
     key: crossterm::event::KeyEvent,
     session: &mut Session,
     terminal: &mut ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io::Stdout>>,
-    working_dir: &PathBuf,
+    working_dir: &Path,
     output_tx: &mpsc::UnboundedSender<Event>,
 ) -> Result<bool> {
     match session.approval_context {
@@ -54,7 +54,7 @@ pub async fn handle_plan_approval_input(
     key: crossterm::event::KeyEvent,
     session: &mut Session,
     _terminal: &mut ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io::Stdout>>,
-    working_dir: &PathBuf,
+    working_dir: &Path,
     output_tx: &mpsc::UnboundedSender<Event>,
 ) -> Result<bool> {
     match key.code {
@@ -228,7 +228,7 @@ pub async fn handle_user_override_input(
     key: crossterm::event::KeyEvent,
     session: &mut Session,
     _terminal: &mut ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io::Stdout>>,
-    working_dir: &PathBuf,
+    working_dir: &Path,
     output_tx: &mpsc::UnboundedSender<Event>,
 ) -> Result<bool> {
     match key.code {

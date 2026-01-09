@@ -48,5 +48,11 @@ base64 = "0.22"
 # Auto-update
 ureq = "3"
 
+[lints.rust]
+warnings = "deny"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+
 [dev-dependencies]
 tempfile = "3"

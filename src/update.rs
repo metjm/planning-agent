@@ -92,7 +92,7 @@ fn fetch_latest_commit() -> Result<UpdateInfo> {
 
     let commit_date = commit["commit"]["author"]["date"]
         .as_str()
-        .map(|d| format_commit_date(d))
+        .map(format_commit_date)
         .unwrap_or_else(|| "Unknown".to_string());
 
     Ok(UpdateInfo {
@@ -144,7 +144,7 @@ pub enum UpdateResult {
 #[allow(unused_variables)]
 pub fn write_update_marker(working_dir: &std::path::Path) -> std::io::Result<()> {
     let marker_path = planning_paths::update_marker_path()
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+        .map_err(|e| std::io::Error::other(e.to_string()))?;
     std::fs::write(&marker_path, "")
 }
 
@@ -217,7 +217,6 @@ pub fn perform_update() -> UpdateResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
 
     #[test]
     fn test_format_commit_date() {

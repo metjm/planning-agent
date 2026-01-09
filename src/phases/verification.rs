@@ -114,16 +114,14 @@ pub async fn run_verification_phase(
     let mut report = result.output.clone();
 
     // If output is empty or doesn't contain the verdict, try reading from report file
-    if report.trim().is_empty() || !report.contains("Verdict") {
-        if report_path.exists() {
-            if let Ok(file_content) = fs::read_to_string(&report_path) {
-                if !file_content.trim().is_empty() {
-                    report = file_content;
-                    session_sender.send_output(format!(
-                        "[verification] Loaded report from {}",
-                        report_path.display()
-                    ));
-                }
+    if (report.trim().is_empty() || !report.contains("Verdict")) && report_path.exists() {
+        if let Ok(file_content) = fs::read_to_string(&report_path) {
+            if !file_content.trim().is_empty() {
+                report = file_content;
+                session_sender.send_output(format!(
+                    "[verification] Loaded report from {}",
+                    report_path.display()
+                ));
             }
         }
     }

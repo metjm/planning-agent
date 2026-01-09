@@ -1,8 +1,6 @@
-
-/// File index for @-mention auto-complete functionality.
-/// Built once at TUI startup from `git ls-files` output.
-/// Includes both files and folders from the working directory.
-
+//! File index for @-mention auto-complete functionality.
+//! Built once at TUI startup from `git ls-files` output.
+//! Includes both files and folders from the working directory.
 use std::collections::HashSet;
 
 #[derive(Debug, Clone)]
@@ -13,13 +11,11 @@ pub struct FileEntry {
     pub path_lower: String,
     /// Lowercase version of just the filename/folder name for boosted matching
     pub file_name_lower: String,
-    /// Whether this entry is a folder
-    pub is_folder: bool,
 }
 
 impl FileEntry {
     pub fn new(path: String) -> Self {
-        Self::new_with_type(path, false)
+        Self::new_with_type(path)
     }
 
     pub fn new_folder(path: String) -> Self {
@@ -29,10 +25,10 @@ impl FileEntry {
         } else {
             format!("{}/", path)
         };
-        Self::new_with_type(path, true)
+        Self::new_with_type(path)
     }
 
-    fn new_with_type(path: String, is_folder: bool) -> Self {
+    fn new_with_type(path: String) -> Self {
         let path_lower = path.to_lowercase();
         // For folders, strip trailing / before extracting name
         let path_for_name = path.trim_end_matches('/');
@@ -45,25 +41,19 @@ impl FileEntry {
             path,
             path_lower,
             file_name_lower,
-            is_folder,
         }
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub enum FileIndexStatus {
     /// Index is still being built
+    #[default]
     Loading,
     /// Index is ready for use
     Ready,
     /// Index build failed (e.g., not a git repo, git not available)
-    Error(String),
-}
-
-impl Default for FileIndexStatus {
-    fn default() -> Self {
-        FileIndexStatus::Loading
-    }
+    Error,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -93,9 +83,9 @@ impl FileIndex {
         }
     }
 
-    pub fn with_error(message: String) -> Self {
+    pub fn with_error() -> Self {
         Self {
-            status: FileIndexStatus::Error(message),
+            status: FileIndexStatus::Error,
             entries: Vec::new(),
         }
     }
@@ -242,17 +232,10 @@ pub fn build_file_index(working_dir: &std::path::Path) -> FileIndex {
 
                 FileIndex::with_entries(entries)
             } else {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                FileIndex::with_error(format!("git ls-files failed: {}", stderr.trim()))
+                FileIndex::with_error()
             }
         }
-        Err(e) => {
-            if e.kind() == std::io::ErrorKind::NotFound {
-                FileIndex::with_error("git not found".to_string())
-            } else {
-                FileIndex::with_error(format!("Failed to run git: {}", e))
-            }
-        }
+        Err(_) => FileIndex::with_error(),
     }
 }
 
@@ -266,7 +249,7 @@ mod tests {
         assert_eq!(entry.path, "src/main.rs");
         assert_eq!(entry.path_lower, "src/main.rs");
         assert_eq!(entry.file_name_lower, "main.rs");
-        assert!(!entry.is_folder);
+        assert!(!entry.path.ends_with('/'));
     }
 
     #[test]
@@ -275,7 +258,7 @@ mod tests {
         assert_eq!(entry.path, "Src/MainFile.RS");
         assert_eq!(entry.path_lower, "src/mainfile.rs");
         assert_eq!(entry.file_name_lower, "mainfile.rs");
-        assert!(!entry.is_folder);
+        assert!(!entry.path.ends_with('/'));
     }
 
     #[test]
@@ -284,14 +267,14 @@ mod tests {
         assert_eq!(entry.path, "src/components/");
         assert_eq!(entry.path_lower, "src/components/");
         assert_eq!(entry.file_name_lower, "components");
-        assert!(entry.is_folder);
+        assert!(entry.path.ends_with('/'));
     }
 
     #[test]
     fn test_folder_entry_already_has_slash() {
         let entry = FileEntry::new_folder("src/components/".to_string());
         assert_eq!(entry.path, "src/components/");
-        assert!(entry.is_folder);
+        assert!(entry.path.ends_with('/'));
     }
 
     #[test]
@@ -400,7 +383,7 @@ mod tests {
 
     #[test]
     fn test_error_index_returns_no_matches() {
-        let index = FileIndex::with_error("test error".to_string());
+        let index = FileIndex::with_error();
         let matches = index.find_matches("test", 10);
         assert!(matches.is_empty());
     }

@@ -58,7 +58,7 @@ impl ProviderUsage {
             display_name: "Gemini".to_string(),
             session_used: None, 
             weekly_used: daily_used, 
-            plan_type: None, // Gemini /stats doesn't provide plan info; constrained_model is a model name, not a plan
+            plan_type: None, // Gemini /stats doesn't provide plan info
             fetched_at: usage.fetched_at,
             status_message: usage.error_message,
             supports_usage: true,
@@ -236,7 +236,6 @@ mod tests {
     fn test_provider_usage_from_gemini() {
         let gemini_usage = GeminiUsage {
             usage_remaining: Some(75),
-            constrained_model: Some("gemini-2.5-flash".to_string()),
             fetched_at: Some(Instant::now()),
             error_message: None,
         };
@@ -245,8 +244,7 @@ mod tests {
         assert_eq!(provider.display_name, "Gemini");
         assert_eq!(provider.session_used, None); // Gemini doesn't have session usage
         assert_eq!(provider.weekly_used, Some(25)); // 100 - 75 = 25% used
-        // Plan type should be None - constrained_model is not a plan
-        assert_eq!(provider.plan_type, None, "Gemini plan_type should be None (model name is not a plan)");
+        assert_eq!(provider.plan_type, None);
         assert!(provider.supports_usage);
     }
 

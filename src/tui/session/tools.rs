@@ -191,17 +191,6 @@ impl Session {
         }
     }
 
-    /// Get all active tools across all agents as a flat list for compatibility
-    pub fn all_active_tools(&self) -> Vec<(&str, &ActiveTool)> {
-        let mut tools = Vec::new();
-        for (agent_name, agent_tools) in &self.active_tools_by_agent {
-            for tool in agent_tools {
-                tools.push((agent_name.as_str(), tool));
-            }
-        }
-        tools
-    }
-
     /// Get all completed tools across all agents as a flat list
     pub fn all_completed_tools(&self) -> Vec<(&str, &CompletedTool)> {
         let mut tools = Vec::new();

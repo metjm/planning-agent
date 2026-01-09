@@ -50,9 +50,6 @@ mod tests {
     #[test]
     fn test_title_manager_creation() {
         let manager = TerminalTitleManager::new();
-
-        assert!(true);
-
         let _ = manager.is_supported;
     }
 }

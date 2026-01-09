@@ -108,7 +108,7 @@ fn test_tool_result_fifo_fallback_when_id_not_matched() {
     assert!(duration.is_some());
 
     // Tool should be completed via FIFO fallback
-    assert!(session.active_tools_by_agent.get("gemini").is_none());
+    assert!(!session.active_tools_by_agent.contains_key("gemini"));
     let completed = session.completed_tools_by_agent.get("gemini").unwrap();
     assert_eq!(completed.len(), 1);
     assert_eq!(completed[0].display_name, "search_file");
@@ -226,34 +226,6 @@ fn test_completed_tools_retention_cap() {
     // Newest tools should be retained
     let completed = session.completed_tools_by_agent.get("agent").unwrap();
     assert!(completed[0].display_name.contains("119")); // Most recent
-}
-
-#[test]
-fn test_all_active_tools_returns_correct_data() {
-    let mut session = Session::new(0);
-
-    session.tool_started(
-        Some("id1".to_string()),
-        "Read".to_string(),
-        "file1.rs".to_string(),
-        "claude".to_string(),
-    );
-    session.tool_started(
-        None,
-        "Bash".to_string(),
-        "npm test".to_string(),
-        "gemini".to_string(),
-    );
-
-    let active = session.all_active_tools();
-    assert_eq!(active.len(), 2);
-
-    // Find the tools by agent
-    let claude_tool = active.iter().find(|(agent, _)| *agent == "claude").unwrap();
-    assert_eq!(claude_tool.1.display_name, "Read");
-
-    let gemini_tool = active.iter().find(|(agent, _)| *agent == "gemini").unwrap();
-    assert_eq!(gemini_tool.1.display_name, "Bash");
 }
 
 #[test]
