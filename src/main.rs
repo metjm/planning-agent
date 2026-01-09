@@ -8,6 +8,7 @@ mod gemini_usage;
 mod mcp;
 mod phases;
 mod planning_paths;
+pub mod prompt_format;
 mod session_store;
 mod skills;
 mod state;

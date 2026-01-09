@@ -1,6 +1,7 @@
 use crate::agents::{AgentContext, AgentType};
 use crate::config::WorkflowConfig;
 use crate::phases::ReviewResult;
+use crate::prompt_format::PromptBuilder;
 use crate::state::{ResumeStrategy, State};
 use crate::tui::SessionEventSender;
 use anyhow::Result;
@@ -90,24 +91,16 @@ fn build_revision_prompt_with_reviews(state: &State, reviews: &[ReviewResult], w
         .collect::<Vec<_>>()
         .join("\n\n---\n\n");
 
-    format!(
-        r#"Workspace Root: {}
-
-Read the current plan at: {}
-
-# Consolidated Reviewer Feedback
-
-{}
-
-Revise the plan to address all issues raised by the reviewers.
+    PromptBuilder::new()
+        .phase("revising")
+        .instructions(r#"Revise the plan to address all issues raised by the reviewers.
 Preserve the good parts of the existing plan - only modify what needs to change.
-IMPORTANT: Use absolute paths for all file references in the revised plan.
-
-Update the plan file with your revisions."#,
-        working_dir.display(),
-        state.plan_file.display(),
-        merged_feedback
-    )
+Update the plan file with your revisions."#)
+        .input("workspace-root", &working_dir.display().to_string())
+        .input("plan-path", &state.plan_file.display().to_string())
+        .context(&format!("# Consolidated Reviewer Feedback\n\n{}", merged_feedback))
+        .constraint("Use absolute paths for all file references in the revised plan")
+        .build()
 }
 
 #[cfg(test)]
@@ -135,11 +128,19 @@ mod tests {
 
         let working_dir = Path::new("/workspaces/myproject");
         let prompt = build_revision_prompt_with_reviews(&state, &reviews, working_dir);
+
+        // Check XML structure
+        assert!(prompt.starts_with("<user-prompt>"));
+        assert!(prompt.ends_with("</user-prompt>"));
+        assert!(prompt.contains("<phase>revising</phase>"));
+        // Check feedback content is present
         assert!(prompt.contains("CLAUDE Review"));
         assert!(prompt.contains("CODEX Review"));
         assert!(prompt.contains("Issue 1: Missing tests"));
         assert!(prompt.contains("Issue 2: Unclear architecture"));
-        assert!(prompt.contains("Workspace Root: /workspaces/myproject"));
+        // Check inputs
+        assert!(prompt.contains("<workspace-root>/workspaces/myproject</workspace-root>"));
+        // Check constraints
         assert!(prompt.contains("Use absolute paths"));
     }
 }

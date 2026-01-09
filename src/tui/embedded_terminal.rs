@@ -10,6 +10,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 
+use crate::prompt_format::PromptBuilder;
 use crate::tui::Event;
 
 /// Default scrollback buffer size (number of lines)
@@ -94,11 +95,13 @@ impl EmbeddedTerminal {
             .context("Failed to get PTY writer")?;
 
         // Build the command with workspace root and absolute path instruction
-        let prompt = format!(
-            "Workspace Root: {}\n\nPlease implement the following plan fully: {}\n\nIMPORTANT: Use absolute paths for all file operations. Work within the workspace root.",
-            working_dir.display(),
-            plan_path.display()
-        );
+        let prompt = PromptBuilder::new()
+            .phase("implementation")
+            .instructions("Please implement the following plan fully. Work within the workspace root.")
+            .input("workspace-root", &working_dir.display().to_string())
+            .input("plan-path", &plan_path.display().to_string())
+            .constraint("Use absolute paths for all file operations")
+            .build();
 
         let mut cmd = CommandBuilder::new("claude");
         cmd.arg("--dangerously-skip-permissions");

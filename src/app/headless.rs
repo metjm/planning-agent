@@ -1,4 +1,3 @@
-
 use crate::app::cli::Cli;
 use crate::app::util::truncate_for_summary;
 use crate::app::workflow_common::{plan_file_has_content, pre_create_plan_files, REVIEW_FAILURE_RETRY_LIMIT, PLANNING_FAILURE_RETRY_LIMIT};
@@ -8,6 +7,7 @@ use crate::phases::{
     run_planning_phase_with_context, run_revision_phase_with_context, write_feedback_files,
 };
 use crate::planning_paths;
+use crate::prompt_format::PromptBuilder;
 use crate::state::{FeedbackStatus, Phase, State};
 use crate::tui::{Event, SessionEventSender};
 use anyhow::{Context, Result};
@@ -28,15 +28,14 @@ pub async fn extract_feature_name(
         ));
     }
 
-    let prompt = format!(
-        r#"Extract a short kebab-case feature name (2-4 words, lowercase, hyphens) from this objective.
+    let prompt = PromptBuilder::new()
+        .phase("feature-name-extraction")
+        .instructions(r#"Extract a short kebab-case feature name (2-4 words, lowercase, hyphens) from the given objective.
 Output ONLY the feature name, nothing else.
 
-Objective: {}
-
-Example outputs: "sharing-permissions", "user-auth", "api-rate-limiting""#,
-        objective
-    );
+Example outputs: "sharing-permissions", "user-auth", "api-rate-limiting""#)
+        .input("objective", objective)
+        .build();
 
     let output = Command::new("claude")
         .arg("-p")

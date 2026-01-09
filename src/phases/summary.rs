@@ -1,6 +1,7 @@
 use crate::agents::{AgentContext, AgentType};
 use crate::config::WorkflowConfig;
 use crate::phases::ReviewResult;
+use crate::prompt_format::PromptBuilder;
 use crate::state::{ResumeStrategy, State};
 use crate::tui::SessionEventSender;
 use anyhow::Result;
@@ -56,7 +57,6 @@ pub fn spawn_summary_generation(
 }
 
 fn build_plan_summary_input(plan_content: &str, phase: &str) -> String {
-
     let max_len = 8000;
     let content = if plan_content.len() > max_len {
         format!("{}...\n\n[Content truncated, {} characters total]",
@@ -65,34 +65,33 @@ fn build_plan_summary_input(plan_content: &str, phase: &str) -> String {
         plan_content.to_string()
     };
 
-    format!(
-        r#"Summarize this {} plan. Highlight:
+    PromptBuilder::new()
+        .phase("summary")
+        .instructions(&format!(r#"Summarize this {} plan. Highlight:
 - Key components/features being implemented
 - Major files to be modified (use absolute paths)
-- Any risks or considerations mentioned
-
-Plan content:
-{}
-"#,
-        phase, content
-    )
+- Any risks or considerations mentioned"#, phase))
+        .context(&format!("# Plan Content\n\n{}", content))
+        .build()
 }
 
 fn build_review_summary_input(reviews: &[ReviewResult]) -> String {
-    let mut input = String::from("Summarize these code review results. Highlight:\n");
-    input.push_str("- Overall verdict (approved/rejected)\n");
-    input.push_str("- Key issues found\n");
-    input.push_str("- Main recommendations\n\n");
-    input.push_str("Review results:\n");
-
+    let mut review_content = String::new();
     for review in reviews {
-        input.push_str(&format!("\n## Reviewer: {}\n", review.agent_name));
+        review_content.push_str(&format!("\n## Reviewer: {}\n", review.agent_name));
         let verdict = if review.needs_revision { "Needs Revision" } else { "Approved" };
-        input.push_str(&format!("Verdict: {}\n", verdict));
-        input.push_str(&format!("Feedback:\n{}\n", review.feedback));
+        review_content.push_str(&format!("Verdict: {}\n", verdict));
+        review_content.push_str(&format!("Feedback:\n{}\n", review.feedback));
     }
 
-    input
+    PromptBuilder::new()
+        .phase("summary")
+        .instructions(r#"Summarize these code review results. Highlight:
+- Overall verdict (approved/rejected)
+- Key issues found
+- Main recommendations"#)
+        .context(&format!("# Review Results\n{}", review_content))
+        .build()
 }
 
 async fn run_summary_generation(

@@ -2,6 +2,7 @@ use crate::agents::{AgentContext, AgentType};
 use crate::config::{AggregationMode, WorkflowConfig};
 use crate::mcp::spawner::generate_mcp_server_config;
 use crate::mcp::{ReviewVerdict, SubmittedReview};
+use crate::prompt_format::PromptBuilder;
 use crate::state::{FeedbackStatus, ResumeStrategy, State};
 use crate::tui::SessionEventSender;
 use anyhow::Result;
@@ -370,51 +371,42 @@ pub async fn run_multi_agent_review_with_context(
 
 /// Build the review prompt that will be embedded in the MCP server's get_plan response
 fn build_mcp_review_prompt(state: &State, working_dir: &Path) -> String {
-    format!(
-        r###"Workspace Root: {}
-
-User objective (used to create the plan):
-```text
-{}
-```
-
-Please review the implementation plan above for:
+    PromptBuilder::new()
+        .phase("reviewing")
+        .instructions(r#"Review the implementation plan above for:
 1. Technical correctness and feasibility
 2. Completeness (does it address all requirements?)
 3. Potential risks or issues
 4. Code quality and best practices
 
-IMPORTANT: Use absolute paths for all file references in your feedback.
-
 After your review, you MUST submit your feedback using the `submit_review` MCP tool with:
 - verdict: "APPROVED" or "NEEDS_REVISION"
 - summary: A brief one-paragraph summary
 - critical_issues: Array of blocking issues (if any)
-- recommendations: Array of non-blocking suggestions"###,
-        working_dir.display(),
-        state.objective
-    )
+- recommendations: Array of non-blocking suggestions"#)
+        .input("workspace-root", &working_dir.display().to_string())
+        .input("objective", &state.objective)
+        .constraint("Use absolute paths for all file references in your feedback")
+        .build()
 }
 
 /// Build the prompt that instructs the agent to use the MCP tools
 fn build_mcp_agent_prompt(state: &State, working_dir: &Path) -> String {
-    format!(
-        r###"You are reviewing an implementation plan. Follow these steps:
-
-Workspace Root: {}
+    PromptBuilder::new()
+        .phase("reviewing")
+        .instructions(r#"You are reviewing an implementation plan. Follow these steps:
 
 1. Use the `get_plan` MCP tool to retrieve the plan content and review instructions
 2. Read and analyze the plan thoroughly
 3. Submit your review using the `submit_review` MCP tool
 
-User objective: {}
-
-IMPORTANT: You MUST use the MCP tools to complete this review:
+You MUST use the MCP tools to complete this review:
 - First call `get_plan` to get the plan content
-- Then call `submit_review` with your verdict and feedback
-- Use absolute paths for all file references in your feedback
-
-After submitting your review via MCP, wrap your final assessment in <plan-feedback> tags:
+- Then call `submit_review` with your verdict and feedback"#)
+        .input("workspace-root", &working_dir.display().to_string())
+        .input("objective", &state.objective)
+        .constraint("Use absolute paths for all file references in your feedback")
+        .output_format(r#"After submitting your review via MCP, wrap your final assessment in <plan-feedback> tags:
 
 <plan-feedback>
 ## Summary
@@ -427,10 +419,8 @@ After submitting your review via MCP, wrap your final assessment in <plan-feedba
 [Non-blocking suggestions]
 
 ## Overall Assessment: [APPROVED or NEEDS REVISION]
-</plan-feedback>"###,
-        working_dir.display(),
-        state.objective
-    )
+</plan-feedback>"#)
+        .build()
 }
 
 #[allow(dead_code)]
@@ -440,33 +430,24 @@ fn build_review_prompt_for_agent(
     feedback_path_abs: &Path,
     working_dir: &Path,
 ) -> String {
-    format!(
-        r###"Workspace Root: {}
+    PromptBuilder::new()
+        .phase("reviewing")
+        .instructions(r#"Review the implementation plan for technical correctness and completeness.
 
-User objective (used to create the plan):
-```text
-{}
-```
-
-Review the implementation plan at: {}
-
-Write your feedback to: {}
-
-IMPORTANT: Your feedback MUST include one of these exact strings in the output:
-- "Overall Assessment:** APPROVED" - if the plan is ready for implementation
-- "Overall Assessment:** NEEDS REVISION" - if the plan has issues that need to be fixed
-
-Use absolute paths for all file references in your feedback.
+Read the plan file first, then provide your detailed review.
 
 Provide your assessment with one of these verdicts:
 - "APPROVED" - if the plan is ready for implementation
 - "NEEDS REVISION" - if the plan has issues that need to be fixed
 
-Include specific feedback about any issues found.
-
-Read the plan file first, then provide your detailed review.
-
-CRITICAL: You MUST wrap your final feedback in <plan-feedback> tags. Only the content inside these tags will be saved as the review feedback. Everything outside these tags (thinking, tool calls, intermediate steps) will be ignored.
+Include specific feedback about any issues found."#)
+        .input("workspace-root", &working_dir.display().to_string())
+        .input("objective", objective)
+        .input("plan-path", &plan_path_abs.display().to_string())
+        .input("feedback-output-path", &feedback_path_abs.display().to_string())
+        .constraint("Use absolute paths for all file references in your feedback")
+        .constraint("Your feedback MUST include 'Overall Assessment:** APPROVED' or 'Overall Assessment:** NEEDS REVISION'")
+        .output_format(r#"CRITICAL: You MUST wrap your final feedback in <plan-feedback> tags. Only the content inside these tags will be saved as the review feedback. Everything outside these tags (thinking, tool calls, intermediate steps) will be ignored.
 
 Example format:
 <plan-feedback>
@@ -477,12 +458,8 @@ Example format:
 ...specific issues (use absolute paths)...
 
 ## Overall Assessment: APPROVED/NEEDS REVISION
-</plan-feedback>"###,
-        working_dir.display(),
-        objective,
-        plan_path_abs.display(),
-        feedback_path_abs.display()
-    )
+</plan-feedback>"#)
+        .build()
 }
 
 pub fn aggregate_reviews(reviews: &[ReviewResult], mode: &AggregationMode) -> FeedbackStatus {
@@ -805,13 +782,21 @@ mod tests {
             Path::new("/workspaces/myproject"),
         );
 
-        assert!(prompt.contains("Ship the feature safely"));
-        assert!(prompt.contains("/tmp/plan.md"));
-        assert!(prompt.contains("/tmp/feedback.md"));
+        // Check XML structure
+        assert!(prompt.starts_with("<user-prompt>"));
+        assert!(prompt.ends_with("</user-prompt>"));
+        assert!(prompt.contains("<phase>reviewing</phase>"));
+        // Check inputs are present
+        assert!(prompt.contains("<objective>Ship the feature safely</objective>"));
+        assert!(prompt.contains("<plan-path>/tmp/plan.md</plan-path>"));
+        assert!(prompt.contains("<feedback-output-path>/tmp/feedback.md</feedback-output-path>"));
+        assert!(prompt.contains("<workspace-root>/workspaces/myproject</workspace-root>"));
+        // Check required output tags are preserved
         assert!(prompt.contains("<plan-feedback>"));
+        // Check constraints are present
+        assert!(prompt.contains("Use absolute paths"));
+        // Ensure MCP tools are not mentioned in non-MCP prompt
         assert!(!prompt.contains("submit_review"));
         assert!(!prompt.contains("get_plan"));
-        assert!(prompt.contains("Workspace Root: /workspaces/myproject"));
-        assert!(prompt.contains("Use absolute paths"));
     }
 }

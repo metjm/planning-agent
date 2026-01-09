@@ -1,6 +1,7 @@
 use crate::agents::{AgentContext, AgentType};
 use crate::config::WorkflowConfig;
 use crate::phases::verification::extract_verification_feedback;
+use crate::prompt_format::PromptBuilder;
 use crate::state::ResumeStrategy;
 use crate::tui::SessionEventSender;
 use crate::verification_state::VerificationState;
@@ -101,25 +102,9 @@ fn build_fixing_prompt(state: &VerificationState, verification_report: &str) -> 
     let feedback = extract_verification_feedback(verification_report)
         .unwrap_or_else(|| verification_report.to_string());
 
-    format!(
-        r###"Fix the implementation issues identified in the verification report.
-
-## Workspace Root
-{}
-
-## Original Plan
-Read the implementation plan for context: {}
-
-## Working Directory
-Make your fixes in: {}
-
-## Issues to Fix
-
-The verification found the following issues:
-
-{}
-
-## Instructions
+    PromptBuilder::new()
+        .phase("fixing")
+        .instructions(r#"Fix the implementation issues identified in the verification report.
 
 1. Read the original plan to understand the intended implementation
 2. Review each issue from the verification report
@@ -131,14 +116,13 @@ Focus on:
 - Not introducing new bugs
 - Maintaining code quality and consistency with existing patterns
 
-IMPORTANT: Use absolute paths for all file references in your summary.
-
-After making your fixes, provide a brief summary of what you changed."###,
-        state.working_dir.display(),
-        plan_path.display(),
-        state.working_dir.display(),
-        feedback
-    )
+After making your fixes, provide a brief summary of what you changed."#)
+        .input("workspace-root", &state.working_dir.display().to_string())
+        .input("plan-path", &plan_path.display().to_string())
+        .input("working-directory", &state.working_dir.display().to_string())
+        .context(&format!("# Issues to Fix\n\nThe verification found the following issues:\n\n{}", feedback))
+        .constraint("Use absolute paths for all file references in your summary")
+        .build()
 }
 
 #[cfg(test)]
@@ -167,10 +151,14 @@ NEEDS REVISION
 
         let prompt = build_fixing_prompt(&state, report);
 
+        // Check XML structure
+        assert!(prompt.starts_with("<user-prompt>"));
+        assert!(prompt.ends_with("</user-prompt>"));
+        assert!(prompt.contains("<phase>fixing</phase>"));
         // Should extract the feedback content
         assert!(prompt.contains("Missing error handling"));
         assert!(prompt.contains("Unit tests needed"));
-        // Should not include the tags themselves
+        // Should not include the verification-feedback tags themselves (they're extracted)
         assert!(!prompt.contains("<verification-feedback>"));
     }
 
@@ -187,6 +175,9 @@ NEEDS REVISION
 
         let prompt = build_fixing_prompt(&state, report);
 
+        // Check XML structure
+        assert!(prompt.starts_with("<user-prompt>"));
+        assert!(prompt.ends_with("</user-prompt>"));
         // Should include the full report as fallback
         assert!(prompt.contains("Some issues were found"));
     }
