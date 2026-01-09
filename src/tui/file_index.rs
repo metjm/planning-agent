@@ -1,29 +1,51 @@
 
 /// File index for @-mention auto-complete functionality.
 /// Built once at TUI startup from `git ls-files` output.
+/// Includes both files and folders from the working directory.
+
+use std::collections::HashSet;
 
 #[derive(Debug, Clone)]
 pub struct FileEntry {
-    /// The relative file path
+    /// The relative file path (folders have trailing `/`)
     pub path: String,
     /// Lowercase version of the full path for case-insensitive matching
     pub path_lower: String,
-    /// Lowercase version of just the filename for boosted matching
+    /// Lowercase version of just the filename/folder name for boosted matching
     pub file_name_lower: String,
+    /// Whether this entry is a folder
+    pub is_folder: bool,
 }
 
 impl FileEntry {
     pub fn new(path: String) -> Self {
+        Self::new_with_type(path, false)
+    }
+
+    pub fn new_folder(path: String) -> Self {
+        // Ensure folder paths end with /
+        let path = if path.ends_with('/') {
+            path
+        } else {
+            format!("{}/", path)
+        };
+        Self::new_with_type(path, true)
+    }
+
+    fn new_with_type(path: String, is_folder: bool) -> Self {
         let path_lower = path.to_lowercase();
-        let file_name_lower = path
+        // For folders, strip trailing / before extracting name
+        let path_for_name = path.trim_end_matches('/');
+        let file_name_lower = path_for_name
             .rsplit('/')
             .next()
-            .unwrap_or(&path)
+            .unwrap_or(path_for_name)
             .to_lowercase();
         Self {
             path,
             path_lower,
             file_name_lower,
+            is_folder,
         }
     }
 }
@@ -159,6 +181,7 @@ impl FileIndex {
 }
 
 /// Build a file index by running `git ls-files` in the given directory.
+/// Includes both files and folders (extracted from file paths).
 /// This function is meant to be called via `tokio::task::spawn_blocking`.
 pub fn build_file_index(working_dir: &std::path::Path) -> FileIndex {
     use std::process::Command;
@@ -179,11 +202,43 @@ pub fn build_file_index(working_dir: &std::path::Path) -> FileIndex {
         Ok(output) => {
             if output.status.success() {
                 let stdout = String::from_utf8_lossy(&output.stdout);
-                let entries: Vec<FileEntry> = stdout
+
+                // Collect all file entries
+                let file_paths: Vec<&str> = stdout
                     .split('\0')
                     .filter(|s| !s.is_empty())
-                    .map(|s| FileEntry::new(s.to_string()))
                     .collect();
+
+                // Extract unique folder paths from file paths
+                let mut folder_set: HashSet<String> = HashSet::new();
+                for path in &file_paths {
+                    // Extract all parent directories
+                    let mut current = *path;
+                    while let Some(pos) = current.rfind('/') {
+                        let folder = &current[..pos];
+                        if !folder.is_empty() && folder_set.insert(folder.to_string()) {
+                            // Continue to extract parent folders
+                        }
+                        current = folder;
+                    }
+                }
+
+                // Build entries: folders first, then files
+                let mut entries: Vec<FileEntry> = Vec::with_capacity(
+                    folder_set.len() + file_paths.len()
+                );
+
+                // Add folders (sorted for consistent ordering)
+                let mut folders: Vec<String> = folder_set.into_iter().collect();
+                folders.sort();
+                for folder in folders {
+                    entries.push(FileEntry::new_folder(folder));
+                }
+
+                // Add files
+                for path in file_paths {
+                    entries.push(FileEntry::new(path.to_string()));
+                }
 
                 FileIndex::with_entries(entries)
             } else {
@@ -211,6 +266,7 @@ mod tests {
         assert_eq!(entry.path, "src/main.rs");
         assert_eq!(entry.path_lower, "src/main.rs");
         assert_eq!(entry.file_name_lower, "main.rs");
+        assert!(!entry.is_folder);
     }
 
     #[test]
@@ -219,6 +275,49 @@ mod tests {
         assert_eq!(entry.path, "Src/MainFile.RS");
         assert_eq!(entry.path_lower, "src/mainfile.rs");
         assert_eq!(entry.file_name_lower, "mainfile.rs");
+        assert!(!entry.is_folder);
+    }
+
+    #[test]
+    fn test_folder_entry_creation() {
+        let entry = FileEntry::new_folder("src/components".to_string());
+        assert_eq!(entry.path, "src/components/");
+        assert_eq!(entry.path_lower, "src/components/");
+        assert_eq!(entry.file_name_lower, "components");
+        assert!(entry.is_folder);
+    }
+
+    #[test]
+    fn test_folder_entry_already_has_slash() {
+        let entry = FileEntry::new_folder("src/components/".to_string());
+        assert_eq!(entry.path, "src/components/");
+        assert!(entry.is_folder);
+    }
+
+    #[test]
+    fn test_folder_matching() {
+        let index = FileIndex::with_entries(vec![
+            FileEntry::new_folder("src".to_string()),
+            FileEntry::new_folder("src/components".to_string()),
+            FileEntry::new("src/main.rs".to_string()),
+        ]);
+        let matches = index.find_matches("src", 10);
+        assert_eq!(matches.len(), 3);
+        // "src/" should match with high score
+        assert!(matches.iter().any(|m| m.path == "src/"));
+    }
+
+    #[test]
+    fn test_folder_name_matching() {
+        let index = FileIndex::with_entries(vec![
+            FileEntry::new_folder("src/components".to_string()),
+            FileEntry::new_folder("lib/components".to_string()),
+            FileEntry::new("src/components.rs".to_string()),
+        ]);
+        let matches = index.find_matches("components", 10);
+        assert_eq!(matches.len(), 3);
+        // All should match
+        assert!(matches.iter().any(|m| m.path.ends_with("components/")));
     }
 
     #[test]
