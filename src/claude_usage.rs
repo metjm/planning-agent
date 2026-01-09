@@ -206,11 +206,21 @@ fn detect_cli_state(output: &str) -> CliState {
         return CliState::FirstRun;
     }
 
-    // Check for ready state (has a prompt character)
+    // Check for ready state indicators
+    // 1. "Welcome back" in the welcome box indicates user is logged in and CLI is ready
+    // 2. The CLI prompt uses '❯' (unicode chevron) or '>' character
+    // 3. Model indicator line with model names
+    if lower.contains("welcome back") {
+        return CliState::Ready;
+    }
+
     let has_prompt = output.lines().any(|line| {
         let trimmed = line.trim();
-        // Claude CLI prompt typically ends with '>' or contains a model indicator with '>'
+        // Claude CLI v2.x uses '❯' (unicode chevron U+276F) for the input prompt
+        // Older versions may use '>'
         trimmed.ends_with('>')
+            || trimmed.ends_with('❯')
+            || trimmed.starts_with('❯')
             || (trimmed.contains('>') && (trimmed.contains("claude") || trimmed.contains("opus") || trimmed.contains("sonnet")))
     });
 

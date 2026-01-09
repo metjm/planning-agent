@@ -117,9 +117,18 @@ fn test_claude_usage_not_available_sets_fetched_at() {
 
 #[test]
 fn test_detect_cli_state_ready() {
+    // Legacy prompt format with '>'
     assert_eq!(detect_cli_state("Opus 4.5 · Claude Max · user@example.com >"), CliState::Ready);
     assert_eq!(detect_cli_state("Sonnet · Claude Pro > "), CliState::Ready);
     assert_eq!(detect_cli_state("Loading...\n>"), CliState::Ready);
+
+    // Claude CLI v2.x uses '❯' (unicode chevron) for prompts
+    assert_eq!(detect_cli_state("❯ Type your message"), CliState::Ready);
+    assert_eq!(detect_cli_state("Some output\n❯"), CliState::Ready);
+
+    // "Welcome back" in welcome box indicates logged-in ready state
+    assert_eq!(detect_cli_state("Welcome back Gabe!"), CliState::Ready);
+    assert_eq!(detect_cli_state("│                 Welcome back User!                 │"), CliState::Ready);
 }
 
 #[test]
@@ -159,7 +168,7 @@ fn test_detect_cli_state_false_positive_prevention() {
     // Claude CLI welcome screen sidebar text should NOT trigger FirstRun
     // The sidebar always shows "Tips for getting started" even for configured users
     assert!(matches!(detect_cli_state("Tips for getting started"), CliState::Unknown(_)));
-    assert!(matches!(detect_cli_state("Welcome back! Tips for getting started with your project"), CliState::Unknown(_)));
+    // Note: "Welcome back" IS a ready indicator since it appears in the CLI welcome box for logged-in users
 }
 
 #[test]
