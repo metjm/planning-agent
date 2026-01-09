@@ -97,6 +97,41 @@ impl AgentType {
             }
         }
     }
+
+    /// Execute with MCP config for review feedback collection (Claude only)
+    /// For non-Claude agents, this falls back to regular execution
+    pub async fn execute_streaming_with_mcp(
+        &self,
+        prompt: String,
+        system_prompt: Option<String>,
+        max_turns: Option<u32>,
+        context: AgentContext,
+        mcp_config: &str,
+    ) -> Result<AgentResult> {
+        match self {
+            Self::Claude(agent) => {
+                agent
+                    .execute_streaming_with_mcp(prompt, system_prompt, max_turns, context, mcp_config)
+                    .await
+            }
+            // Codex and Gemini don't support dynamic MCP config, fall back to regular execution
+            Self::Codex(agent) => {
+                agent
+                    .execute_streaming_with_context(prompt, system_prompt, max_turns, context)
+                    .await
+            }
+            Self::Gemini(agent) => {
+                agent
+                    .execute_streaming_with_context(prompt, system_prompt, max_turns, context)
+                    .await
+            }
+        }
+    }
+
+    /// Returns true if this agent type supports MCP config injection
+    pub fn supports_mcp(&self) -> bool {
+        matches!(self, Self::Claude(_))
+    }
 }
 
 #[cfg(test)]

@@ -1,12 +1,13 @@
 use crate::agents::{AgentContext, AgentType};
 use crate::config::{AggregationMode, WorkflowConfig};
+use crate::mcp::spawner::generate_mcp_config;
+use crate::mcp::{ReviewVerdict, SubmittedReview};
 use crate::state::{FeedbackStatus, ResumeStrategy, State};
 use crate::tui::SessionEventSender;
 use anyhow::Result;
 use regex::Regex;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
 
 fn extract_plan_feedback(output: &str) -> String {
     let re = Regex::new(r"(?s)<plan-feedback>\s*(.*?)\s*</plan-feedback>").unwrap();
@@ -17,6 +18,106 @@ fn extract_plan_feedback(output: &str) -> String {
     }
 
     output.to_string()
+}
+
+/// Try to parse a structured review from agent output
+/// Looks for JSON-like structured review or parses from <plan-feedback> tags
+fn try_parse_mcp_review(output: &str) -> Option<SubmittedReview> {
+    // First, try to extract from <plan-feedback> tags
+    let feedback = extract_plan_feedback(output);
+
+    // Try to parse as JSON (if agent returned structured output)
+    if let Ok(review) = serde_json::from_str::<SubmittedReview>(&feedback) {
+        return Some(review);
+    }
+
+    // Otherwise, parse the verdict from the feedback text and construct SubmittedReview
+    let verdict_result = parse_verdict(&feedback);
+    match verdict_result {
+        VerdictParseResult::Approved => Some(SubmittedReview {
+            verdict: ReviewVerdict::Approved,
+            summary: extract_summary_from_feedback(&feedback),
+            critical_issues: vec![],
+            recommendations: extract_recommendations_from_feedback(&feedback),
+            full_feedback: Some(feedback),
+        }),
+        VerdictParseResult::NeedsRevision => Some(SubmittedReview {
+            verdict: ReviewVerdict::NeedsRevision,
+            summary: extract_summary_from_feedback(&feedback),
+            critical_issues: extract_critical_issues_from_feedback(&feedback),
+            recommendations: extract_recommendations_from_feedback(&feedback),
+            full_feedback: Some(feedback),
+        }),
+        VerdictParseResult::ParseFailure(_) => None,
+    }
+}
+
+/// Extract a summary from feedback text
+fn extract_summary_from_feedback(feedback: &str) -> String {
+    // Try to find a summary section
+    let summary_re = Regex::new(r"(?is)##?\s*(?:summary|review summary|executive summary)[:\s]*\n+(.*?)(?:\n\n|\n##|\z)").unwrap();
+    if let Some(captures) = summary_re.captures(feedback) {
+        if let Some(content) = captures.get(1) {
+            let summary = content.as_str().trim();
+            if !summary.is_empty() {
+                return summary.to_string();
+            }
+        }
+    }
+
+    // Fall back to first paragraph
+    feedback
+        .lines()
+        .find(|line| !line.trim().is_empty() && !line.trim().starts_with('#'))
+        .unwrap_or("Review completed")
+        .trim()
+        .to_string()
+}
+
+/// Extract critical issues from feedback text
+fn extract_critical_issues_from_feedback(feedback: &str) -> Vec<String> {
+    let mut issues = vec![];
+
+    // Look for critical issues section
+    let issues_re = Regex::new(r"(?is)##?\s*(?:critical\s+issues?|blocking\s+issues?|major\s+issues?)[:\s]*\n+(.*?)(?:\n##|\z)").unwrap();
+    if let Some(captures) = issues_re.captures(feedback) {
+        if let Some(content) = captures.get(1) {
+            for line in content.as_str().lines() {
+                let trimmed = line.trim();
+                if trimmed.starts_with('-') || trimmed.starts_with('*') || trimmed.starts_with("•") {
+                    let issue = trimmed.trim_start_matches(['-', '*', '•', ' '].as_ref()).trim();
+                    if !issue.is_empty() {
+                        issues.push(issue.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    issues
+}
+
+/// Extract recommendations from feedback text
+fn extract_recommendations_from_feedback(feedback: &str) -> Vec<String> {
+    let mut recs = vec![];
+
+    // Look for recommendations section
+    let recs_re = Regex::new(r"(?is)##?\s*(?:recommendations?|suggestions?|improvements?)[:\s]*\n+(.*?)(?:\n##|\z)").unwrap();
+    if let Some(captures) = recs_re.captures(feedback) {
+        if let Some(content) = captures.get(1) {
+            for line in content.as_str().lines() {
+                let trimmed = line.trim();
+                if trimmed.starts_with('-') || trimmed.starts_with('*') || trimmed.starts_with("•") {
+                    let rec = trimmed.trim_start_matches(['-', '*', '•', ' '].as_ref()).trim();
+                    if !rec.is_empty() {
+                        recs.push(rec.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    recs
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -86,15 +187,10 @@ pub async fn run_multi_agent_review_with_context(
     }
 
     session_sender.send_output(format!(
-        "[review] Running {} reviewer(s) in parallel: {}",
+        "[review] Running {} reviewer(s) in parallel with MCP: {}",
         agent_names.len(),
         agent_names.join(", ")
     ));
-
-    let total_reviewers = agent_names.len();
-    // state.feedback_file is now an absolute path (in ~/.planning-agent/plans/)
-    // Clone to avoid borrow issues with state mutations below
-    let base_feedback_path = state.feedback_file.clone();
 
     let phase_name = format!("Reviewing #{}", iteration);
 
@@ -122,39 +218,41 @@ pub async fn run_multi_agent_review_with_context(
     state.set_updated_at();
     state.save_atomic(state_path)?;
 
-    let agents: Vec<(String, AgentType, PathBuf, Option<String>, ResumeStrategy)> = agent_names
+    let agents: Vec<(String, AgentType, Option<String>, ResumeStrategy)> = agent_names
         .iter()
         .zip(agent_contexts.into_iter())
         .map(|(name, (_, session_key, resume_strategy))| {
             let agent_config = config
                 .get_agent(name)
                 .ok_or_else(|| anyhow::anyhow!("Review agent '{}' not found in config", name))?;
-            // feedback_path_for_agent returns an absolute path since base_feedback_path is absolute
-            let feedback_path =
-                feedback_path_for_agent(&base_feedback_path, name, total_reviewers);
             Ok((
                 name.to_string(),
                 AgentType::from_config(name, agent_config, working_dir.to_path_buf())?,
-                feedback_path,
                 session_key,
                 resume_strategy,
             ))
         })
         .collect::<Result<Vec<_>>>()?;
 
-    // state.plan_file is now an absolute path (in ~/.planning-agent/plans/)
+    // Read plan content for MCP server
     let plan_path = state.plan_file.clone();
+    let plan_content = fs::read_to_string(&plan_path)?;
+
+    // Pre-build prompts outside the closure to avoid borrow issues
+    let mcp_review_prompt = build_mcp_review_prompt(state);
+    let agent_prompt = build_mcp_agent_prompt(state);
 
     let futures: Vec<_> = agents
         .into_iter()
-        .map(|(agent_name, agent, feedback_path, session_key, resume_strategy)| {
-            let p = build_review_prompt(state, &plan_path, &feedback_path);
+        .map(|(agent_name, agent, session_key, resume_strategy)| {
+            let plan = plan_content.clone();
+            let review_prompt = mcp_review_prompt.clone();
+            let prompt = agent_prompt.clone();
             let sender = session_sender.clone();
             let phase = format!("Reviewing #{}", iteration);
 
             async move {
-                sender.send_output(format!("[review:{}] Starting review...", agent_name));
-                let started_at = SystemTime::now();
+                sender.send_output(format!("[review:{}] Starting MCP review...", agent_name));
 
                 let context = AgentContext {
                     session_sender: sender.clone(),
@@ -163,17 +261,49 @@ pub async fn run_multi_agent_review_with_context(
                     resume_strategy,
                 };
 
-                let result = agent
-                    .execute_streaming_with_context(
-                        p,
-                        Some(REVIEW_SYSTEM_PROMPT.to_string()),
-                        None,
-                        context,
-                    )
-                    .await;
+                // Generate MCP config for this agent
+                let mcp_config = match generate_mcp_config(&plan, &review_prompt) {
+                    Ok(cfg) => cfg,
+                    Err(e) => {
+                        return (
+                            agent_name,
+                            Err(anyhow::anyhow!("Failed to generate MCP config: {}", e)),
+                        );
+                    }
+                };
+
+                // Execute agent with MCP config (Claude supports it, others fall back)
+                let result = if agent.supports_mcp() {
+                    sender.send_output(format!(
+                        "[review:{}] Using MCP for structured feedback",
+                        agent_name
+                    ));
+                    agent
+                        .execute_streaming_with_mcp(
+                            prompt,
+                            Some(REVIEW_SYSTEM_PROMPT.to_string()),
+                            None,
+                            context,
+                            &mcp_config,
+                        )
+                        .await
+                } else {
+                    sender.send_output(format!(
+                        "[review:{}] Agent does not support MCP, using standard review",
+                        agent_name
+                    ));
+                    agent
+                        .execute_streaming_with_context(
+                            prompt,
+                            Some(REVIEW_SYSTEM_PROMPT.to_string()),
+                            None,
+                            context,
+                        )
+                        .await
+                };
 
                 sender.send_output(format!("[review:{}] Review complete", agent_name));
-                (agent_name, feedback_path, started_at, result)
+                (agent_name, result)
             }
         })
         .collect();
@@ -182,136 +312,61 @@ pub async fn run_multi_agent_review_with_context(
 
     let mut reviews = Vec::new();
     let mut failures = Vec::new();
-    for (agent_name, feedback_path, started_at, result) in results {
+
+    for (agent_name, result) in results {
         match result {
             Ok(agent_result) => {
-                let mut output = agent_result.output;
-                let mut feedback_source: Option<PathBuf> = None;
+                let output = agent_result.output;
 
                 if output.trim().is_empty() {
-                    let read_recent = |path: &Path| -> Result<Option<String>> {
-                        let metadata = fs::metadata(path)?;
-                        let modified = metadata.modified()?;
-                        if modified.duration_since(started_at).is_ok() {
-                            Ok(Some(fs::read_to_string(path)?))
-                        } else {
-                            Ok(None)
-                        }
-                    };
-
-                    match read_recent(&feedback_path) {
-                        Ok(Some(content)) => {
-                            output = content;
-                            feedback_source = Some(feedback_path.clone());
-                        }
-                        Ok(None) | Err(_) => {
-                            if feedback_path != base_feedback_path {
-                                if let Ok(Some(content)) = read_recent(&base_feedback_path) {
-                                    output = content;
-                                    feedback_source = Some(base_feedback_path.clone());
-                                    session_sender.send_output(format!(
-                                        "[review:{}] WARNING: feedback written to {} (expected {})",
-                                        agent_name,
-                                        base_feedback_path.display(),
-                                        feedback_path.display()
-                                    ));
-                                }
-                            }
-                        }
-                    }
-                }
-
-                let extracted = extract_plan_feedback(&output);
-                let has_tags = extracted != output;
-                let require_tags = config.workflow.reviewing.require_plan_feedback_tags;
-
-                let feedback = if has_tags {
-                    session_sender.send_output(format!(
-                        "[review:{}] Extracted feedback from <plan-feedback> tags",
-                        agent_name
-                    ));
-                    extracted
-                } else if require_tags {
-                    // When require_plan_feedback_tags is true, missing tags is a parse failure
-                    let error = "No <plan-feedback> tags found (required by config)".to_string();
+                    let error = "No output from reviewer".to_string();
                     session_sender.send_output(format!(
                         "[review:{}] ERROR: {}",
                         agent_name, error
                     ));
                     failures.push(ReviewFailure { agent_name, error });
                     continue;
-                } else {
-                    session_sender.send_output(format!(
-                        "[review:{}] WARNING: No <plan-feedback> tags found, using raw output",
-                        agent_name
-                    ));
-                    output
-                };
-
-                let trimmed_feedback = feedback.trim();
-                if trimmed_feedback.is_empty() {
-                    let error = "No feedback produced".to_string();
-                    session_sender.send_output(format!(
-                        "[review:{}] ERROR: {}",
-                        agent_name, error
-                    ));
-                    failures.push(ReviewFailure { agent_name, error });
-                    continue;
-                }
-
-                if let Some(source) = feedback_source {
-                    session_sender.send_output(format!(
-                        "[review:{}] Loaded feedback from {}",
-                        agent_name,
-                        source.display()
-                    ));
                 }
 
                 if agent_result.is_error {
                     session_sender.send_output(format!(
-                        "[review:{}] WARNING: reviewer reported an error; using available feedback",
+                        "[review:{}] WARNING: reviewer reported an error; attempting to parse output",
                         agent_name
                     ));
                 }
 
-                let verdict = parse_verdict(&feedback);
-                match verdict {
-                    VerdictParseResult::Approved => {
-                        session_sender.send_output(format!(
-                            "[review:{}] Verdict: APPROVED",
-                            agent_name
-                        ));
-                        reviews.push(ReviewResult {
-                            agent_name,
-                            needs_revision: false,
-                            feedback,
-                        });
-                    }
-                    VerdictParseResult::NeedsRevision => {
-                        session_sender.send_output(format!(
-                            "[review:{}] Verdict: NEEDS REVISION",
-                            agent_name
-                        ));
-                        reviews.push(ReviewResult {
-                            agent_name,
-                            needs_revision: true,
-                            feedback,
-                        });
-                    }
-                    VerdictParseResult::ParseFailure(ref err) => {
-                        session_sender.send_output(format!(
-                            "[review:{}] WARNING: Could not parse verdict from feedback: {}",
-                            agent_name, err
-                        ));
-                        failures.push(ReviewFailure {
-                            agent_name,
-                            error: format!("Verdict parse failure: {}", err),
-                        });
-                    }
+                // Try to parse MCP review from output
+                if let Some(mcp_review) = try_parse_mcp_review(&output) {
+                    let needs_revision = mcp_review.needs_revision();
+                    let feedback = mcp_review.feedback_content();
+
+                    let verdict_str = if needs_revision {
+                        "NEEDS REVISION"
+                    } else {
+                        "APPROVED"
+                    };
+
+                    session_sender.send_output(format!(
+                        "[review:{}] Verdict: {} (via MCP)",
+                        agent_name, verdict_str
+                    ));
+
+                    reviews.push(ReviewResult {
+                        agent_name,
+                        needs_revision,
+                        feedback,
+                    });
+                } else {
+                    // Failed to parse review - this is an error with MCP-only mode
+                    let error = "Failed to parse review verdict from output. Agent must use submit_review MCP tool or include 'Overall Assessment: APPROVED/NEEDS REVISION' in output.".to_string();
+                    session_sender.send_output(format!(
+                        "[review:{}] ERROR: {}",
+                        agent_name, error
+                    ));
+                    failures.push(ReviewFailure { agent_name, error });
                 }
             }
             Err(e) => {
-
                 session_sender.send_output(format!(
                     "[error] {} review failed: {}",
                     agent_name, e
@@ -327,6 +382,63 @@ pub async fn run_multi_agent_review_with_context(
     Ok(ReviewBatchResult { reviews, failures })
 }
 
+/// Build the review prompt that will be embedded in the MCP server's get_plan response
+fn build_mcp_review_prompt(state: &State) -> String {
+    format!(
+        r###"User objective (used to create the plan):
+```text
+{}
+```
+
+Please review the implementation plan above for:
+1. Technical correctness and feasibility
+2. Completeness (does it address all requirements?)
+3. Potential risks or issues
+4. Code quality and best practices
+
+After your review, you MUST submit your feedback using the `submit_review` MCP tool with:
+- verdict: "APPROVED" or "NEEDS_REVISION"
+- summary: A brief one-paragraph summary
+- critical_issues: Array of blocking issues (if any)
+- recommendations: Array of non-blocking suggestions"###,
+        state.objective
+    )
+}
+
+/// Build the prompt that instructs the agent to use the MCP tools
+fn build_mcp_agent_prompt(state: &State) -> String {
+    format!(
+        r###"You are reviewing an implementation plan. Follow these steps:
+
+1. Use the `get_plan` MCP tool to retrieve the plan content and review instructions
+2. Read and analyze the plan thoroughly
+3. Submit your review using the `submit_review` MCP tool
+
+User objective: {}
+
+IMPORTANT: You MUST use the MCP tools to complete this review:
+- First call `get_plan` to get the plan content
+- Then call `submit_review` with your verdict and feedback
+
+After submitting your review via MCP, wrap your final assessment in <plan-feedback> tags:
+
+<plan-feedback>
+## Summary
+[Your review summary]
+
+## Critical Issues
+[List any blocking issues, or "None" if approved]
+
+## Recommendations
+[Non-blocking suggestions]
+
+## Overall Assessment: [APPROVED or NEEDS REVISION]
+</plan-feedback>"###,
+        state.objective
+    )
+}
+
+#[allow(dead_code)]
 fn build_review_prompt(state: &State, plan_path_abs: &Path, feedback_path_abs: &Path) -> String {
     format!(
         r###"User objective (used to create the plan):

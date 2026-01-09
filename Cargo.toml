@@ -42,6 +42,9 @@ serde_yaml = "0.9"
 async-trait = "0.1"
 regex = "1.12.2"
 
+# MCP server
+base64 = "0.22"
+
 # Auto-update
 ureq = "3"
 
