@@ -115,20 +115,75 @@ impl AccountUsage {
     }
 }
 
+/// Fetch usage from a single provider with a timeout wrapper.
+/// Returns None if the fetch exceeds the given timeout.
+fn fetch_with_timeout<T, F>(fetch_fn: F, timeout: std::time::Duration) -> Option<T>
+where
+    F: FnOnce() -> T + Send + 'static,
+    T: Send + 'static,
+{
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let result = fetch_fn();
+        let _ = tx.send(result);
+    });
+
+    rx.recv_timeout(timeout).ok()
+}
+
+/// Fetch all provider usage with independent timeouts per provider.
+/// If one provider times out, the others still update.
 pub fn fetch_all_provider_usage_sync() -> AccountUsage {
     let mut account_usage = AccountUsage::new();
 
-    let claude_usage = claude_usage::fetch_claude_usage_sync();
-    account_usage.update(ProviderUsage::from_claude_usage(claude_usage));
+    // Per-provider timeout (30 seconds each to allow for slow CLI startup)
+    let provider_timeout = std::time::Duration::from_secs(30);
 
-    if gemini_usage::is_gemini_available() {
-        let gemini = gemini_usage::fetch_gemini_usage_sync();
-        account_usage.update(ProviderUsage::from_gemini_usage(gemini));
+    // Fetch Claude usage (always attempted, independent timeout)
+    if claude_usage::is_claude_available() {
+        match fetch_with_timeout(claude_usage::fetch_claude_usage_sync, provider_timeout) {
+            Some(usage) => {
+                account_usage.update(ProviderUsage::from_claude_usage(usage));
+            }
+            None => {
+                // Claude fetch timed out, add error status but don't block others
+                account_usage.update(ProviderUsage::from_claude_usage(
+                    ClaudeUsage::with_error("Fetch timed out".to_string()),
+                ));
+            }
+        }
+    } else {
+        account_usage.update(ProviderUsage::from_claude_usage(
+            ClaudeUsage::claude_not_available(),
+        ));
     }
 
+    // Fetch Gemini usage (independent timeout)
+    if gemini_usage::is_gemini_available() {
+        match fetch_with_timeout(gemini_usage::fetch_gemini_usage_sync, provider_timeout) {
+            Some(usage) => {
+                account_usage.update(ProviderUsage::from_gemini_usage(usage));
+            }
+            None => {
+                account_usage.update(ProviderUsage::from_gemini_usage(
+                    GeminiUsage::with_error("Fetch timed out".to_string()),
+                ));
+            }
+        }
+    }
+
+    // Fetch Codex usage (independent timeout)
     if codex_usage::is_codex_available() {
-        let codex = codex_usage::fetch_codex_usage_sync();
-        account_usage.update(ProviderUsage::from_codex_usage(codex));
+        match fetch_with_timeout(codex_usage::fetch_codex_usage_sync, provider_timeout) {
+            Some(usage) => {
+                account_usage.update(ProviderUsage::from_codex_usage(usage));
+            }
+            None => {
+                account_usage.update(ProviderUsage::from_codex_usage(
+                    CodexUsage::with_error("Fetch timed out".to_string()),
+                ));
+            }
+        }
     }
 
     account_usage
