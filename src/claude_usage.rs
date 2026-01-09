@@ -112,7 +112,8 @@ impl DebugLogger {
     fn log_output_snapshot(&mut self, label: &str, output: &str, max_bytes: usize) {
         if self.enabled {
             let truncated = if output.len() > max_bytes {
-                format!("{}... (truncated, {} total bytes)", &output[..max_bytes], output.len())
+                let prefix = truncate_to_bytes_boundary(output, max_bytes);
+                format!("{}... (truncated, {} total bytes)", prefix, output.len())
             } else {
                 output.to_string()
             };
@@ -216,11 +217,7 @@ fn detect_cli_state(output: &str) -> CliState {
 
     // Return Unknown with sanitized excerpt for diagnostic purposes
     let sanitized = strip_ansi_codes(output);
-    let excerpt = if sanitized.len() > 100 {
-        format!("{}...", &sanitized[..100])
-    } else {
-        sanitized
-    };
+    let excerpt = truncate_for_excerpt(&sanitized, 100);
     CliState::Unknown(excerpt)
 }
 
@@ -481,6 +478,32 @@ fn strip_ansi_codes(text: &str) -> String {
         }
     }
     result
+}
+
+fn truncate_to_bytes_boundary(text: &str, max_bytes: usize) -> &str {
+    if text.len() <= max_bytes {
+        return text;
+    }
+
+    let mut last_index = 0;
+    for (idx, ch) in text.char_indices() {
+        let next = idx + ch.len_utf8();
+        if next > max_bytes {
+            break;
+        }
+        last_index = next;
+    }
+    &text[..last_index]
+}
+
+fn truncate_for_excerpt(text: &str, max_chars: usize) -> String {
+    let mut chars = text.chars();
+    let truncated: String = chars.by_ref().take(max_chars).collect();
+    if chars.next().is_some() {
+        format!("{}...", truncated)
+    } else {
+        truncated
+    }
 }
 
 pub fn fetch_claude_usage_sync() -> ClaudeUsage {
