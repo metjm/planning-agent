@@ -21,7 +21,6 @@ pub struct CodexUsage {
 }
 
 impl CodexUsage {
-    #[cfg(test)]
     pub fn with_error(error: String) -> Self {
         Self {
             error_message: Some(error),
@@ -193,7 +192,7 @@ mod tests {
 
     #[test]
     fn test_codex_usage_with_error_sets_fetched_at() {
-        let usage = CodexUsage::with_error("Test error".to_string());
+        let usage = super::CodexUsage::with_error("Test error".to_string());
         assert!(usage.fetched_at.is_some());
         assert_eq!(usage.error_message, Some("Test error".to_string()));
     }
