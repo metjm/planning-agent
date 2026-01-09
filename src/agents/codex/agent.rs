@@ -3,6 +3,7 @@ use crate::agents::log::AgentLogger;
 use crate::agents::runner::{run_agent_process, ContextEmitter, EventEmitter, RunnerConfig};
 use crate::agents::{AgentContext, AgentResult};
 use crate::config::AgentConfig;
+use crate::mcp::McpServerConfig;
 use anyhow::Result;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -44,7 +45,20 @@ impl CodexAgent {
         context: AgentContext,
     ) -> Result<AgentResult> {
         let emitter = ContextEmitter::new(context.clone(), self.name.clone());
-        self.execute_streaming_internal(prompt, &emitter, true).await
+        self.execute_streaming_internal(prompt, &emitter, true, None).await
+    }
+
+    /// Execute with MCP config for review feedback collection
+    pub async fn execute_streaming_with_mcp(
+        &self,
+        prompt: String,
+        _system_prompt: Option<String>,
+        _max_turns: Option<u32>,
+        context: AgentContext,
+        mcp_config: &McpServerConfig,
+    ) -> Result<AgentResult> {
+        let emitter = ContextEmitter::new(context.clone(), self.name.clone());
+        self.execute_streaming_internal(prompt, &emitter, true, Some(mcp_config)).await
     }
 
     async fn execute_streaming_internal(
@@ -52,11 +66,12 @@ impl CodexAgent {
         prompt: String,
         emitter: &dyn EventEmitter,
         has_context: bool,
+        mcp_config: Option<&McpServerConfig>,
     ) -> Result<AgentResult> {
         let logger = AgentLogger::new(&self.name, &self.working_dir);
-        self.log_start(&logger, &prompt, has_context);
+        self.log_start(&logger, &prompt, has_context, mcp_config.is_some());
 
-        let cmd = self.build_command(&prompt);
+        let cmd = self.build_command(&prompt, mcp_config);
         let config = RunnerConfig::new(self.name.clone(), self.working_dir.clone())
             .with_activity_timeout(self.activity_timeout)
             .with_overall_timeout(self.overall_timeout);
@@ -66,24 +81,36 @@ impl CodexAgent {
         Ok(output.into())
     }
 
-    fn build_command(&self, prompt: &str) -> Command {
+    fn build_command(&self, prompt: &str, mcp_config: Option<&McpServerConfig>) -> Command {
         let mut cmd = Command::new(&self.config.command);
+
+        // Add MCP config arguments first if provided
+        // These must come before the subcommand (exec)
+        if let Some(mcp) = mcp_config {
+            for arg in mcp.to_codex_config_args() {
+                cmd.arg(arg);
+            }
+        }
+
+        // Add the regular config args (including subcommand like "exec")
         for arg in &self.config.args {
             cmd.arg(arg);
         }
+
         cmd.arg(prompt);
         cmd
     }
 
-    fn log_start(&self, logger: &Option<AgentLogger>, prompt: &str, has_context: bool) {
+    fn log_start(&self, logger: &Option<AgentLogger>, prompt: &str, has_context: bool, has_mcp: bool) {
         if let Some(ref logger) = logger {
             let args = if self.config.args.is_empty() {
                 String::new()
             } else {
                 format!(" {}", self.config.args.join(" "))
             };
-            let suffix = if has_context { " (with context)" } else { "" };
-            logger.log_line("start", &format!("command: {}{}{}", self.config.command, args, suffix));
+            let context_suffix = if has_context { " (with context)" } else { "" };
+            let mcp_suffix = if has_mcp { " (with MCP)" } else { "" };
+            logger.log_line("start", &format!("command: {}{}{}{}", self.config.command, args, context_suffix, mcp_suffix));
             logger.log_line("prompt", &prompt.chars().take(200).collect::<String>());
         }
     }

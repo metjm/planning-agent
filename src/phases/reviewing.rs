@@ -1,6 +1,6 @@
 use crate::agents::{AgentContext, AgentType};
 use crate::config::{AggregationMode, WorkflowConfig};
-use crate::mcp::spawner::generate_mcp_config;
+use crate::mcp::spawner::generate_mcp_server_config;
 use crate::mcp::{ReviewVerdict, SubmittedReview};
 use crate::state::{FeedbackStatus, ResumeStrategy, State};
 use crate::tui::SessionEventSender;
@@ -238,14 +238,10 @@ pub async fn run_multi_agent_review_with_context(
     // Read plan content for MCP server
     let plan_path = state.plan_file.clone();
     let plan_content = fs::read_to_string(&plan_path)?;
-    let objective = state.objective.clone();
-    let base_feedback_path = state.feedback_file.clone();
-    let total_reviewers = agent_names.len();
 
     // Pre-build prompts outside the closure to avoid borrow issues
     let mcp_review_prompt = build_mcp_review_prompt(state, working_dir);
     let mcp_agent_prompt = build_mcp_agent_prompt(state, working_dir);
-    let working_dir_owned = working_dir.to_path_buf();
 
     let futures: Vec<_> = agents
         .into_iter()
@@ -253,12 +249,8 @@ pub async fn run_multi_agent_review_with_context(
             let plan = plan_content.clone();
             let review_prompt = mcp_review_prompt.clone();
             let mcp_prompt = mcp_agent_prompt.clone();
-            let objective = objective.clone();
-            let plan_path = plan_path.clone();
-            let base_feedback_path = base_feedback_path.clone();
             let sender = session_sender.clone();
             let phase = format!("Reviewing #{}", iteration);
-            let working_dir_for_closure = working_dir_owned.clone();
 
             async move {
                 sender.send_output(format!("[review:{}] Starting MCP review...", agent_name));
@@ -271,56 +263,30 @@ pub async fn run_multi_agent_review_with_context(
                 };
 
                 // Generate MCP config for this agent
-                let mcp_config = match generate_mcp_config(&plan, &review_prompt) {
+                let mcp_config = match generate_mcp_server_config(&plan, &review_prompt) {
                     Ok(cfg) => cfg,
                     Err(e) => {
                         return (
                             agent_name,
-                            Err(anyhow::anyhow!("Failed to generate MCP config: {}", e)),
+                            Err(anyhow::anyhow!("MCP config injection failed: {}", e)),
                         );
                     }
                 };
 
-                let prompt = if agent.supports_mcp() {
-                    mcp_prompt.clone()
-                } else {
-                    let feedback_path = feedback_path_for_agent(
-                        &base_feedback_path,
-                        &agent_name,
-                        total_reviewers,
-                    );
-                    build_review_prompt_for_agent(&objective, &plan_path, &feedback_path, &working_dir_for_closure)
-                };
-
-                // Execute agent with MCP config (Claude supports it, others fall back)
-                let result = if agent.supports_mcp() {
-                    sender.send_output(format!(
-                        "[review:{}] Using MCP for structured feedback",
-                        agent_name
-                    ));
-                    agent
-                        .execute_streaming_with_mcp(
-                            prompt,
-                            Some(REVIEW_SYSTEM_PROMPT.to_string()),
-                            None,
-                            context,
-                            &mcp_config,
-                        )
-                        .await
-                } else {
-                    sender.send_output(format!(
-                        "[review:{}] Agent does not support MCP, using standard review",
-                        agent_name
-                    ));
-                    agent
-                        .execute_streaming_with_context(
-                            prompt,
-                            Some(REVIEW_SYSTEM_PROMPT.to_string()),
-                            None,
-                            context,
-                        )
-                        .await
-                };
+                // Execute agent with MCP - all agents use MCP, no fallbacks
+                sender.send_output(format!(
+                    "[review:{}] Using MCP for structured feedback (server: {})",
+                    agent_name, mcp_config.server_name
+                ));
+                let result = agent
+                    .execute_streaming_with_mcp(
+                        mcp_prompt.clone(),
+                        Some(REVIEW_SYSTEM_PROMPT.to_string()),
+                        None,
+                        context,
+                        &mcp_config,
+                    )
+                    .await;
 
                 sender.send_output(format!("[review:{}] Review complete", agent_name));
                 (agent_name, result)
@@ -467,6 +433,7 @@ After submitting your review via MCP, wrap your final assessment in <plan-feedba
     )
 }
 
+#[allow(dead_code)]
 fn build_review_prompt_for_agent(
     objective: &str,
     plan_path_abs: &Path,

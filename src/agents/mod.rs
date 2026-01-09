@@ -5,8 +5,8 @@ pub(crate) mod log;
 pub mod protocol;
 pub mod runner;
 
-
 use crate::config::AgentConfig;
+use crate::mcp::McpServerConfig;
 use crate::state::ResumeStrategy;
 use crate::tui::SessionEventSender;
 use anyhow::Result;
@@ -98,15 +98,15 @@ impl AgentType {
         }
     }
 
-    /// Execute with MCP config for review feedback collection (Claude only)
-    /// For non-Claude agents, this falls back to regular execution
+    /// Execute with MCP config for review feedback collection
+    /// All agents (Claude, Codex, Gemini) support MCP - no fallbacks
     pub async fn execute_streaming_with_mcp(
         &self,
         prompt: String,
         system_prompt: Option<String>,
         max_turns: Option<u32>,
         context: AgentContext,
-        mcp_config: &str,
+        mcp_config: &McpServerConfig,
     ) -> Result<AgentResult> {
         match self {
             Self::Claude(agent) => {
@@ -114,23 +114,17 @@ impl AgentType {
                     .execute_streaming_with_mcp(prompt, system_prompt, max_turns, context, mcp_config)
                     .await
             }
-            // Codex and Gemini don't support dynamic MCP config, fall back to regular execution
             Self::Codex(agent) => {
                 agent
-                    .execute_streaming_with_context(prompt, system_prompt, max_turns, context)
+                    .execute_streaming_with_mcp(prompt, system_prompt, max_turns, context, mcp_config)
                     .await
             }
             Self::Gemini(agent) => {
                 agent
-                    .execute_streaming_with_context(prompt, system_prompt, max_turns, context)
+                    .execute_streaming_with_mcp(prompt, system_prompt, max_turns, context, mcp_config)
                     .await
             }
         }
-    }
-
-    /// Returns true if this agent type supports MCP config injection
-    pub fn supports_mcp(&self) -> bool {
-        matches!(self, Self::Claude(_))
     }
 }
 
