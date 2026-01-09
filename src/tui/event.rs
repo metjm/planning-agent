@@ -163,6 +163,14 @@ pub enum Event {
 
     /// File index ready for @-mention auto-complete
     FileIndexReady(FileIndex),
+
+    /// Slash command execution result
+    SlashCommandResult {
+        session_id: usize,
+        command: String,
+        summary: String,
+        error: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone)]

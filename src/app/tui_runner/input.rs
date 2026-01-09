@@ -16,6 +16,8 @@ use crate::tui::{
 };
 use crate::update;
 use anyhow::{Context, Result};
+
+use super::slash_commands::{apply_dangerous_defaults, parse_slash_command, SlashCommand};
 use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::text::Line;
 use std::path::Path;
@@ -278,31 +280,80 @@ async fn handle_naming_tab_input(
                 !session.tab_input.trim().is_empty() || session.has_tab_input_pastes();
             let input_text = session.tab_input.trim().to_string();
 
-            if input_text == "/update" {
-                session.tab_input.clear();
-                session.tab_input_cursor = 0;
-                session.tab_input_scroll = 0;
+            // Check for slash commands (only if no paste blocks)
+            if !session.has_tab_input_pastes() {
+                if let Some((cmd, _args)) = parse_slash_command(&input_text) {
+                    // Clear input for all slash commands
+                    session.tab_input.clear();
+                    session.tab_input_cursor = 0;
+                    session.tab_input_scroll = 0;
+                    session.tab_mention_state.clear();
 
-                if let update::UpdateStatus::UpdateAvailable(_) = &tab_manager.update_status {
-                    tab_manager.update_error = None;
-                    tab_manager.update_in_progress = true;
-                    tab_manager.update_spinner_frame = 0;
+                    match cmd {
+                        SlashCommand::Update => {
+                            if let update::UpdateStatus::UpdateAvailable(_) = &tab_manager.update_status {
+                                tab_manager.update_error = None;
+                                tab_manager.update_in_progress = true;
+                                tab_manager.update_spinner_frame = 0;
 
-                    let update_tx = output_tx.clone();
-                    tokio::spawn(async move {
-                        let result = tokio::task::spawn_blocking(update::perform_update)
-                            .await
-                            .unwrap_or_else(|_| {
-                                update::UpdateResult::InstallFailed(
-                                    "Update task panicked".to_string(),
-                                )
+                                let update_tx = output_tx.clone();
+                                tokio::spawn(async move {
+                                    let result = tokio::task::spawn_blocking(update::perform_update)
+                                        .await
+                                        .unwrap_or_else(|_| {
+                                            update::UpdateResult::InstallFailed(
+                                                "Update task panicked".to_string(),
+                                            )
+                                        });
+                                    let _ = update_tx.send(Event::UpdateInstallFinished(result));
+                                });
+                            } else {
+                                tab_manager.update_error = Some("No update available".to_string());
+                            }
+                        }
+                        SlashCommand::ConfigDangerous => {
+                            // Get session_id before accessing tab_manager
+                            let session_id = session.id;
+
+                            // Clear any previous command state
+                            tab_manager.command_error = None;
+                            tab_manager.command_notice = None;
+                            tab_manager.command_in_progress = true;
+
+                            let cmd_tx = output_tx.clone();
+                            tokio::spawn(async move {
+                                let result = tokio::task::spawn_blocking(apply_dangerous_defaults)
+                                    .await
+                                    .map_err(|e| format!("Task panicked: {}", e));
+
+                                match result {
+                                    Ok(config_result) => {
+                                        let error = if config_result.has_errors() {
+                                            Some("Some configurations failed".to_string())
+                                        } else {
+                                            None
+                                        };
+                                        let _ = cmd_tx.send(Event::SlashCommandResult {
+                                            session_id,
+                                            command: "config-dangerous".to_string(),
+                                            summary: config_result.summary(),
+                                            error,
+                                        });
+                                    }
+                                    Err(e) => {
+                                        let _ = cmd_tx.send(Event::SlashCommandResult {
+                                            session_id,
+                                            command: "config-dangerous".to_string(),
+                                            summary: String::new(),
+                                            error: Some(e),
+                                        });
+                                    }
+                                }
                             });
-                        let _ = update_tx.send(Event::UpdateInstallFinished(result));
-                    });
-                } else {
-                    tab_manager.update_error = Some("No update available".to_string());
+                        }
+                    }
+                    return Ok(false);
                 }
-                return Ok(false);
             }
 
             if has_content {
@@ -359,12 +410,16 @@ async fn handle_naming_tab_input(
         }
         KeyCode::Esc => {
             tab_manager.update_error = None;
+            tab_manager.command_notice = None;
+            tab_manager.command_error = None;
             tab_manager.close_current_if_empty();
         }
         KeyCode::Char(c) => {
             session.insert_tab_input_char(c);
             session.last_key_was_backslash = c == '\\';
             tab_manager.update_error = None;
+            tab_manager.command_notice = None;
+            tab_manager.command_error = None;
         }
         KeyCode::Backspace => {
             session.last_key_was_backslash = false;

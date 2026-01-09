@@ -3,6 +3,7 @@ mod approval_input;
 mod events;
 mod implementation_input;
 mod input;
+pub mod slash_commands;
 
 use crate::app::cli::Cli;
 use crate::app::headless::extract_feature_name;
