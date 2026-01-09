@@ -1,6 +1,6 @@
 use super::file_index::FileIndex;
 use super::session::Session;
-use crate::update::UpdateStatus;
+use crate::update::{UpdateStatus, VersionInfo};
 
 pub struct TabManager {
     pub sessions: Vec<Session>,
@@ -28,6 +28,9 @@ pub struct TabManager {
 
     /// Whether a slash command is currently executing
     pub command_in_progress: bool,
+
+    /// Cached version info for the current build (short SHA and commit date)
+    pub version_info: Option<VersionInfo>,
 }
 
 /// TabManager provides the full API surface for multi-tab management.
@@ -48,6 +51,7 @@ impl TabManager {
             command_notice: None,
             command_error: None,
             command_in_progress: false,
+            version_info: None,
         };
 
         manager.add_session();

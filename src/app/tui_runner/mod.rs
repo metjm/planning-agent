@@ -142,6 +142,18 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
         debug_log(start, "update check task spawned");
     }
 
+    // Spawn background version info fetch task
+    {
+        let version_tx = event_handler.sender();
+        tokio::spawn(async move {
+            let version_info = tokio::task::spawn_blocking(update::get_cached_or_fetch_version_info)
+                .await
+                .unwrap_or(None);
+            let _ = version_tx.send(Event::VersionInfoReceived(version_info));
+        });
+        debug_log(start, "version info task spawned");
+    }
+
     // Spawn background file index task for @-mention auto-complete
     {
         let file_index_tx = event_handler.sender();

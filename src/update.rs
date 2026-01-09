@@ -1,9 +1,22 @@
 use crate::planning_paths;
 use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
 use std::process::Command;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub const BUILD_SHA: &str = env!("PLANNING_AGENT_GIT_SHA");
+
+/// Cache TTL for version info (24 hours)
+const VERSION_CACHE_TTL_SECS: u64 = 86_400;
+
+/// Version information for the current build, including commit date.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VersionInfo {
+    pub build_sha: String,
+    pub short_sha: String,
+    pub commit_date: String,
+    pub fetched_at_epoch: u64,
+}
 
 #[derive(Debug, Clone)]
 pub struct UpdateInfo {
@@ -127,6 +140,124 @@ fn format_commit_date(iso_date: &str) -> String {
         }
     }
     iso_date.to_string()
+}
+
+/// Read version cache from disk. Returns None if cache is missing, corrupt, stale, or for a different build.
+fn read_version_cache() -> Option<VersionInfo> {
+    let cache_path = planning_paths::version_cache_path().ok()?;
+    let content = std::fs::read_to_string(&cache_path).ok()?;
+    let info: VersionInfo = serde_json::from_str(&content).ok()?;
+
+    // Check if cache is for the current build
+    if info.build_sha != BUILD_SHA {
+        return None;
+    }
+
+    // Check if cache is still fresh
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()?
+        .as_secs();
+    if now.saturating_sub(info.fetched_at_epoch) > VERSION_CACHE_TTL_SECS {
+        return None;
+    }
+
+    Some(info)
+}
+
+/// Write version cache to disk. Errors are silently ignored.
+fn write_version_cache(info: &VersionInfo) {
+    if let Ok(cache_path) = planning_paths::version_cache_path() {
+        if let Ok(content) = serde_json::to_string_pretty(info) {
+            let _ = std::fs::write(&cache_path, content);
+        }
+    }
+}
+
+/// Fetch commit info for a specific SHA from GitHub.
+fn fetch_commit_info(sha: &str) -> Result<VersionInfo> {
+    let config = ureq::Agent::config_builder()
+        .timeout_global(Some(Duration::from_secs(10)))
+        .build();
+    let agent: ureq::Agent = config.into();
+
+    let url = format!("https://api.github.com/repos/metjm/planning-agent/commits/{}", sha);
+
+    let mut request = agent.get(&url)
+        .header("User-Agent", format!("planning-agent/{}", env!("CARGO_PKG_VERSION")))
+        .header("Accept", "application/vnd.github+json");
+
+    if let Ok(token) = std::env::var("GITHUB_TOKEN") {
+        request = request.header("Authorization", format!("Bearer {}", token));
+    }
+
+    let body = request
+        .call()
+        .context("Failed to fetch commit from GitHub")?
+        .body_mut()
+        .read_to_string()
+        .context("Failed to read response body")?;
+
+    let response: serde_json::Value = serde_json::from_str(&body)
+        .context("Failed to parse GitHub response")?;
+
+    let full_sha = response["sha"]
+        .as_str()
+        .context("Missing sha field")?
+        .to_string();
+
+    let short_sha: String = full_sha.chars().take(7).collect();
+
+    let commit_date = response["commit"]["author"]["date"]
+        .as_str()
+        .map(format_commit_date)
+        .unwrap_or_else(|| "Unknown".to_string());
+
+    let fetched_at_epoch = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    Ok(VersionInfo {
+        build_sha: BUILD_SHA.to_string(),
+        short_sha,
+        commit_date,
+        fetched_at_epoch,
+    })
+}
+
+/// Get version info from cache or fetch from GitHub.
+/// Returns None if BUILD_SHA is "unknown" or if fetch fails.
+pub fn get_cached_or_fetch_version_info() -> Option<VersionInfo> {
+    if BUILD_SHA == "unknown" {
+        return None;
+    }
+
+    // Try reading from cache first
+    if let Some(cached) = read_version_cache() {
+        return Some(cached);
+    }
+
+    // Fetch from GitHub
+    match fetch_commit_info(BUILD_SHA) {
+        Ok(info) => {
+            write_version_cache(&info);
+            Some(info)
+        }
+        Err(_) => {
+            // On error, return a basic version info with "Unknown" date
+            let fetched_at_epoch = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            Some(VersionInfo {
+                build_sha: BUILD_SHA.to_string(),
+                short_sha: BUILD_SHA.chars().take(7).collect(),
+                commit_date: "Unknown".to_string(),
+                fetched_at_epoch,
+            })
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
