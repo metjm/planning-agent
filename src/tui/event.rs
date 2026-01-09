@@ -6,6 +6,7 @@ use tokio::sync::mpsc;
 
 use crate::cli_usage::AccountUsage;
 use crate::state::State;
+use crate::tui::file_index::FileIndex;
 use crate::tui::session::TodoItem;
 use crate::update::{UpdateResult, UpdateStatus};
 
@@ -159,6 +160,9 @@ pub enum Event {
     SessionFixingCompleted { session_id: usize },
     /// Verification workflow result
     SessionVerificationResult { session_id: usize, approved: bool, iterations_used: u32 },
+
+    /// File index ready for @-mention auto-complete
+    FileIndexReady(FileIndex),
 }
 
 #[derive(Debug, Clone)]

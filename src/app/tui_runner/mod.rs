@@ -120,6 +120,24 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
         debug_log(start, "update check task spawned");
     }
 
+    // Spawn background file index task for @-mention auto-complete
+    {
+        let file_index_tx = event_handler.sender();
+        let file_index_working_dir = cli
+            .working_dir
+            .clone()
+            .unwrap_or_else(|| std::env::current_dir().expect("Failed to get current directory"));
+        tokio::spawn(async move {
+            let index = tokio::task::spawn_blocking(move || {
+                crate::tui::file_index::build_file_index(&file_index_working_dir)
+            })
+            .await
+            .unwrap_or_else(|_| crate::tui::file_index::FileIndex::with_error("Task panicked".to_string()));
+            let _ = file_index_tx.send(Event::FileIndexReady(index));
+        });
+        debug_log(start, "file index task spawned");
+    }
+
     let working_dir = cli
         .working_dir
         .clone()

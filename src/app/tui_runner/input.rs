@@ -4,6 +4,8 @@ use crate::app::workflow_common::pre_create_plan_files;
 use crate::config::WorkflowConfig;
 use crate::planning_paths;
 use crate::state::State;
+use crate::tui::file_index::FileIndex;
+use crate::tui::mention::update_mention_state;
 use crate::tui::ui::util::{
     compute_summary_panel_inner_size, compute_wrapped_line_count,
     compute_wrapped_line_count_text,
@@ -200,8 +202,10 @@ pub async fn handle_key_event(
         }
     }
 
+    // Clone file_index for mention handling
+    let file_index = tab_manager.file_index.clone();
     let session = tab_manager.active_mut();
-    should_quit = handle_approval_mode_input(key, session, terminal, working_dir, output_tx).await?;
+    should_quit = handle_approval_mode_input(key, session, terminal, working_dir, output_tx, &file_index).await?;
 
     Ok(should_quit)
 }
@@ -223,7 +227,38 @@ async fn handle_naming_tab_input(
         return Ok(false);
     }
 
+    // Clone file_index before getting mutable session reference
+    let file_index = tab_manager.file_index.clone();
     let session = tab_manager.active_mut();
+
+    // Handle @-mention dropdown navigation when active
+    if session.tab_mention_state.active && !session.tab_mention_state.matches.is_empty() {
+        match key.code {
+            KeyCode::Up | KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                session.tab_mention_state.select_prev();
+                return Ok(false);
+            }
+            KeyCode::Down | KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                session.tab_mention_state.select_next();
+                return Ok(false);
+            }
+            KeyCode::Tab => {
+                session.accept_tab_mention();
+                update_mention_state(
+                    &mut session.tab_mention_state,
+                    &session.tab_input,
+                    session.tab_input_cursor,
+                    &file_index,
+                );
+                return Ok(false);
+            }
+            KeyCode::Esc => {
+                session.tab_mention_state.clear();
+                return Ok(false);
+            }
+            _ => {}
+        }
+    }
 
     match key.code {
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -354,6 +389,15 @@ async fn handle_naming_tab_input(
         _ => {}
     }
 
+    // Update @-mention state after any input change
+    let session = tab_manager.active_mut();
+    update_mention_state(
+        &mut session.tab_mention_state,
+        &session.tab_input,
+        session.tab_input_cursor,
+        &file_index,
+    );
+
     Ok(false)
 }
 
@@ -404,12 +448,13 @@ async fn handle_approval_mode_input(
     terminal: &mut ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io::Stdout>>,
     working_dir: &PathBuf,
     output_tx: &mpsc::UnboundedSender<Event>,
+    file_index: &FileIndex,
 ) -> Result<bool> {
     match session.approval_mode {
         ApprovalMode::AwaitingChoice => {
             handle_awaiting_choice_input(key, session, terminal, working_dir, output_tx).await
         }
-        ApprovalMode::EnteringFeedback => handle_entering_feedback_input(key, session).await,
+        ApprovalMode::EnteringFeedback => handle_entering_feedback_input(key, session, file_index).await,
         ApprovalMode::None => handle_none_mode_input(key, session),
     }
 }

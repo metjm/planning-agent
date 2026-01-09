@@ -445,6 +445,9 @@ async fn handle_session_event(
         Event::UpdateStatusReceived(status) => {
             tab_manager.update_status = status;
         }
+        Event::FileIndexReady(index) => {
+            tab_manager.file_index = index;
+        }
         // Handle verification workflow events
         Event::SessionVerificationStarted { session_id, iteration } => {
             if let Some(session) = tab_manager.session_by_id_mut(session_id) {

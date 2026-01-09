@@ -1,5 +1,7 @@
 //! Approval-related input handling for the TUI.
 
+use crate::tui::file_index::FileIndex;
+use crate::tui::mention::update_mention_state;
 use crate::tui::{
     ApprovalContext, ApprovalMode, Event, FeedbackTarget, Session, SessionStatus,
     UserApprovalResponse, WorkflowCommand,
@@ -265,7 +267,38 @@ pub async fn handle_user_override_input(
 pub async fn handle_entering_feedback_input(
     key: crossterm::event::KeyEvent,
     session: &mut Session,
+    file_index: &FileIndex,
 ) -> Result<bool> {
+    // Handle @-mention dropdown navigation when active
+    if session.feedback_mention_state.active && !session.feedback_mention_state.matches.is_empty() {
+        match key.code {
+            KeyCode::Up | KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                session.feedback_mention_state.select_prev();
+                return Ok(false);
+            }
+            KeyCode::Down | KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                session.feedback_mention_state.select_next();
+                return Ok(false);
+            }
+            KeyCode::Tab => {
+                session.accept_feedback_mention();
+                update_mention_state(
+                    &mut session.feedback_mention_state,
+                    &session.user_feedback,
+                    session.cursor_position,
+                    file_index,
+                );
+                return Ok(false);
+            }
+            KeyCode::Esc => {
+                // If mention is active, Esc closes the dropdown instead of exiting feedback mode
+                session.feedback_mention_state.clear();
+                return Ok(false);
+            }
+            _ => {}
+        }
+    }
+
     match key.code {
         KeyCode::Enter if key.modifiers.contains(KeyModifiers::SHIFT) => {
             session.insert_feedback_newline();
@@ -341,5 +374,14 @@ pub async fn handle_entering_feedback_input(
         }
         _ => {}
     }
+
+    // Update @-mention state after any input change
+    update_mention_state(
+        &mut session.feedback_mention_state,
+        &session.user_feedback,
+        session.cursor_position,
+        file_index,
+    );
+
     Ok(false)
 }

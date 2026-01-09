@@ -11,6 +11,7 @@ use crate::cli_usage::AccountUsage;
 use crate::state::{Phase, State};
 use crate::tui::embedded_terminal::EmbeddedTerminal;
 use crate::tui::event::{TokenUsage, WorkflowCommand};
+use crate::tui::mention::MentionState;
 use anyhow::Result;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -139,6 +140,11 @@ pub struct Session {
 
     /// Embedded implementation terminal (runtime-only, not serialized)
     pub implementation_terminal: Option<EmbeddedTerminal>,
+
+    /// @-mention state for tab input field
+    pub tab_mention_state: MentionState,
+    /// @-mention state for feedback input field
+    pub feedback_mention_state: MentionState,
 }
 
 /// Session provides the full API surface for session management.
@@ -221,6 +227,9 @@ impl Session {
             todo_scroll_position: 0,
 
             implementation_terminal: None,
+
+            tab_mention_state: MentionState::new(),
+            feedback_mention_state: MentionState::new(),
         }
     }
 
@@ -659,6 +668,48 @@ impl Session {
         }
         self.input_mode = InputMode::Normal;
         self.focused_panel = FocusedPanel::Output;
+    }
+
+    /// Accept the currently selected mention in the tab input field.
+    /// Replaces the @query with the selected file path.
+    pub fn accept_tab_mention(&mut self) {
+        if let Some(selected) = self.tab_mention_state.selected_match() {
+            let path = selected.path.clone();
+            let start = self.tab_mention_state.start_byte;
+            let end = self.tab_input_cursor;
+
+            // Replace @query with the file path
+            let before = &self.tab_input[..start];
+            let after = &self.tab_input[end..];
+            self.tab_input = format!("{}{} {}", before, path, after);
+
+            // Move cursor to after the inserted path + space
+            self.tab_input_cursor = start + path.len() + 1;
+
+            // Clear mention state
+            self.tab_mention_state.clear();
+        }
+    }
+
+    /// Accept the currently selected mention in the feedback input field.
+    /// Replaces the @query with the selected file path.
+    pub fn accept_feedback_mention(&mut self) {
+        if let Some(selected) = self.feedback_mention_state.selected_match() {
+            let path = selected.path.clone();
+            let start = self.feedback_mention_state.start_byte;
+            let end = self.cursor_position;
+
+            // Replace @query with the file path
+            let before = &self.user_feedback[..start];
+            let after = &self.user_feedback[end..];
+            self.user_feedback = format!("{}{} {}", before, path, after);
+
+            // Move cursor to after the inserted path + space
+            self.cursor_position = start + path.len() + 1;
+
+            // Clear mention state
+            self.feedback_mention_state.clear();
+        }
     }
 }
 
