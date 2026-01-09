@@ -229,6 +229,76 @@ pub fn build_approval_summary(plan_path: &Path, approval_overridden: bool, itera
     summary
 }
 
+/// Builds a shell-safe resume command for a stopped session.
+///
+/// The command includes the session ID and working directory, with proper
+/// shell quoting for paths that contain spaces or special characters.
+pub fn build_resume_command(session_id: &str, working_dir: &Path) -> String {
+    let quoted_dir = shell_quote_path(working_dir);
+    format!(
+        "planning --resume-session {} --working-dir {}",
+        session_id, quoted_dir
+    )
+}
+
+/// Quotes a path for safe use in shell commands.
+///
+/// - Returns the path as-is if it contains only safe characters
+/// - Wraps in double quotes and escapes internal double quotes/backslashes
+///   if the path contains spaces or special characters
+fn shell_quote_path(path: &Path) -> String {
+    let s = path.display().to_string();
+
+    // Check if quoting is needed
+    let needs_quoting = s.chars().any(|c| {
+        matches!(
+            c,
+            ' ' | '\t'
+                | '\n'
+                | '"'
+                | '\''
+                | '\\'
+                | '$'
+                | '`'
+                | '!'
+                | '&'
+                | '|'
+                | ';'
+                | '('
+                | ')'
+                | '<'
+                | '>'
+                | '*'
+                | '?'
+                | '['
+                | ']'
+                | '{'
+                | '}'
+                | '#'
+                | '~'
+        )
+    });
+
+    if !needs_quoting {
+        return s;
+    }
+
+    // Use double quotes, escaping internal double quotes and backslashes
+    let mut quoted = String::with_capacity(s.len() + 10);
+    quoted.push('"');
+    for c in s.chars() {
+        match c {
+            '"' | '\\' | '$' | '`' => {
+                quoted.push('\\');
+                quoted.push(c);
+            }
+            _ => quoted.push(c),
+        }
+    }
+    quoted.push('"');
+    quoted
+}
+
 pub fn format_window_title(tab_manager: &TabManager) -> String {
     use crate::tui::SessionStatus;
 
@@ -426,5 +496,86 @@ mod tests {
         assert!(summary.contains("Issue B"));
         assert!(summary.contains("Issue C"));
         assert!(summary.contains("Looks good to me"));
+    }
+
+    #[test]
+    fn test_build_resume_command_simple_path() {
+        let path = Path::new("/home/user/projects/myapp");
+        let cmd = super::build_resume_command("abc123", path);
+        assert_eq!(
+            cmd,
+            "planning --resume-session abc123 --working-dir /home/user/projects/myapp"
+        );
+    }
+
+    #[test]
+    fn test_build_resume_command_path_with_spaces() {
+        let path = Path::new("/home/user/My Projects/my app");
+        let cmd = super::build_resume_command("abc123", path);
+        assert_eq!(
+            cmd,
+            "planning --resume-session abc123 --working-dir \"/home/user/My Projects/my app\""
+        );
+    }
+
+    #[test]
+    fn test_build_resume_command_path_with_special_chars() {
+        // Path with dollar sign, backtick, and double quote
+        let path = Path::new("/home/user/$project/test`dir/quote\"here");
+        let cmd = super::build_resume_command("xyz789", path);
+        assert_eq!(
+            cmd,
+            "planning --resume-session xyz789 --working-dir \"/home/user/\\$project/test\\`dir/quote\\\"here\""
+        );
+    }
+
+    #[test]
+    fn test_build_resume_command_path_with_backslash() {
+        let path = Path::new("/home/user/path\\with\\backslash");
+        let cmd = super::build_resume_command("def456", path);
+        assert_eq!(
+            cmd,
+            "planning --resume-session def456 --working-dir \"/home/user/path\\\\with\\\\backslash\""
+        );
+    }
+
+    #[test]
+    fn test_build_resume_command_path_with_single_quote() {
+        let path = Path::new("/home/user/it's a path");
+        let cmd = super::build_resume_command("test123", path);
+        // Single quote doesn't need escaping in double quotes
+        assert_eq!(
+            cmd,
+            "planning --resume-session test123 --working-dir \"/home/user/it's a path\""
+        );
+    }
+
+    #[test]
+    fn test_shell_quote_path_no_quoting_needed() {
+        let path = Path::new("/simple/path/here");
+        let quoted = super::shell_quote_path(path);
+        assert_eq!(quoted, "/simple/path/here");
+    }
+
+    #[test]
+    fn test_shell_quote_path_with_tilde() {
+        // Tilde is a shell metacharacter
+        let path = Path::new("~/projects");
+        let quoted = super::shell_quote_path(path);
+        assert_eq!(quoted, "\"~/projects\"");
+    }
+
+    #[test]
+    fn test_shell_quote_path_with_ampersand() {
+        let path = Path::new("/path/with&special");
+        let quoted = super::shell_quote_path(path);
+        assert_eq!(quoted, "\"/path/with&special\"");
+    }
+
+    #[test]
+    fn test_shell_quote_path_with_glob() {
+        let path = Path::new("/path/with*glob");
+        let quoted = super::shell_quote_path(path);
+        assert_eq!(quoted, "\"/path/with*glob\"");
     }
 }

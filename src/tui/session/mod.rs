@@ -245,6 +245,7 @@ impl Session {
         self.error_state = Some(error.to_string());
         self.error_scroll = 0;
         self.workflow_handle = None;
+        self.workflow_control_tx = None;
         self.status = SessionStatus::Error;
     }
 
