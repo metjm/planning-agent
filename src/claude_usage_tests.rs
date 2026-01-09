@@ -156,6 +156,10 @@ fn test_detect_cli_state_false_positive_prevention() {
     assert!(matches!(detect_cli_state("I'll configure the database for you"), CliState::Unknown(_)));
     assert!(matches!(detect_cli_state("Here's how to configure eslint"), CliState::Unknown(_)));
     assert!(matches!(detect_cli_state("You can configure the settings in config.json"), CliState::Unknown(_)));
+    // Claude CLI welcome screen sidebar text should NOT trigger FirstRun
+    // The sidebar always shows "Tips for getting started" even for configured users
+    assert!(matches!(detect_cli_state("Tips for getting started"), CliState::Unknown(_)));
+    assert!(matches!(detect_cli_state("Welcome back! Tips for getting started with your project"), CliState::Unknown(_)));
 }
 
 #[test]
