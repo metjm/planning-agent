@@ -6,7 +6,7 @@ mod input;
 
 use crate::app::cli::Cli;
 use crate::app::headless::extract_feature_name;
-use crate::app::util::{debug_log, format_window_title};
+use crate::app::util::{build_resume_command, debug_log, format_window_title};
 use crate::app::workflow::run_workflow_with_config;
 use crate::app::workflow_common::pre_create_plan_files;
 use crate::cli_usage;
@@ -15,6 +15,7 @@ use crate::planning_paths;
 use crate::state::State;
 use crate::tui::{
     Event, EventHandler, InputMode, SessionStatus, TabManager, TerminalTitleManager,
+    WorkflowCommand,
 };
 use crate::update;
 use anyhow::{Context, Result};
@@ -22,7 +23,7 @@ use crossterm::event::{
     KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
 };
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 pub use events::{check_workflow_completions, handle_init_completion, process_event};
 
@@ -30,6 +31,26 @@ pub type InitHandle = Option<(
     usize,
     tokio::task::JoinHandle<Result<(State, PathBuf, String)>>,
 )>;
+
+/// State machine for handling graceful quit with active workflows.
+#[derive(Clone)]
+enum QuitState {
+    /// Normal operation, not quitting.
+    Running,
+    /// Quit requested, waiting for workflows to stop.
+    Quitting {
+        requested_at: Instant,
+        stop_sent: bool,
+    },
+}
+
+/// Information about a session that was successfully stopped and can be resumed.
+#[derive(Clone)]
+pub struct ResumableSession {
+    pub feature_name: String,
+    pub session_id: String,
+    pub working_dir: PathBuf,
+}
 
 pub fn restore_terminal(
     terminal: &mut ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io::Stdout>>,
@@ -296,14 +317,15 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
 
         init_handle = Some((first_session_id, handle));
     }
-    let mut should_quit = false;
+    let mut quit_state = QuitState::Running;
+    let mut resumable_sessions: Vec<ResumableSession> = Vec::new();
 
     debug_log(start, "entering main loop");
 
     const MAX_EVENTS_PER_FRAME: usize = 50;
+    const QUIT_TIMEOUT: Duration = Duration::from_secs(5);
 
     loop {
-
         terminal.draw(|frame| crate::tui::ui::draw(frame, &tab_manager))?;
 
         let first_event = event_handler.next().await?;
@@ -331,7 +353,12 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
             .await?;
 
             if quit_requested {
-                should_quit = true;
+                if matches!(quit_state, QuitState::Running) {
+                    quit_state = QuitState::Quitting {
+                        requested_at: Instant::now(),
+                        stop_sent: false,
+                    };
+                }
             }
         }
 
@@ -339,10 +366,6 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
         if new_title != last_title {
             title_manager.set_title(&new_title);
             last_title = new_title;
-        }
-
-        if should_quit {
-            break;
         }
 
         if let Some((session_id, handle)) = init_handle.take() {
@@ -361,17 +384,67 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
             }
         }
 
-        check_workflow_completions(
+        // Check workflow completions and collect resumable sessions
+        let completed = check_workflow_completions(
             &mut tab_manager,
             &working_dir,
             &workflow_config,
             &output_tx,
         )
         .await;
+        resumable_sessions.extend(completed);
+
+        // Handle quit state machine
+        match &mut quit_state {
+            QuitState::Running => {
+                // Normal operation, continue the loop
+            }
+            QuitState::Quitting {
+                requested_at,
+                stop_sent,
+            } => {
+                // Send stop commands to all sessions with active workflows (first time only)
+                if !*stop_sent {
+                    for session in tab_manager.sessions_mut() {
+                        if session.workflow_handle.is_some() {
+                            if let Some(ref tx) = session.workflow_control_tx {
+                                let _ = tx.try_send(WorkflowCommand::Stop);
+                            }
+                        }
+                    }
+                    *stop_sent = true;
+                }
+
+                // Check if all workflows have completed
+                let any_active = tab_manager
+                    .sessions
+                    .iter()
+                    .any(|s| s.workflow_handle.is_some());
+
+                // Check for timeout
+                let timed_out = requested_at.elapsed() > QUIT_TIMEOUT;
+
+                if !any_active || timed_out {
+                    if timed_out && any_active {
+                        debug_log(start, "quit timeout reached with active workflows");
+                    }
+                    break;
+                }
+            }
+        }
     }
 
     title_manager.restore_title();
     restore_terminal(&mut terminal)?;
+
+    // Print resume commands for sessions that were successfully stopped
+    if !resumable_sessions.is_empty() {
+        println!();
+        for session in &resumable_sessions {
+            let cmd = build_resume_command(&session.session_id, &session.working_dir);
+            println!("To resume '{}': {}", session.feature_name, cmd);
+        }
+    }
 
     Ok(())
 }
