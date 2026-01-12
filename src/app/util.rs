@@ -69,9 +69,18 @@ pub fn build_review_failure_summary(
     }
 
     summary.push_str("Failed reviewers:\n");
+    let mut has_bundles = false;
     for failure in failures {
         let error = truncate_for_summary(&failure.error, 200);
         summary.push_str(&format!("- {}: {}\n", failure.agent_name, error));
+        if let Some(ref path) = failure.bundle_path {
+            summary.push_str(&format!("  Diagnostics bundle: {}\n", path.display()));
+            has_bundles = true;
+        }
+    }
+
+    if has_bundles {
+        summary.push_str("\n**Note:** Diagnostics bundles may contain sensitive information from logs.\n");
     }
 
     summary.push_str(

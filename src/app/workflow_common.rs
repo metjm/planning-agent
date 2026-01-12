@@ -103,6 +103,7 @@ mod tests {
         let failures = vec![ReviewFailure {
             agent_name: "test".to_string(),
             error: "error".to_string(),
+            bundle_path: None,
         }];
         let reviews: Vec<ReviewResult> = vec![];
         assert!(should_retry_review(0, &failures, &reviews));
@@ -113,6 +114,7 @@ mod tests {
         let failures = vec![ReviewFailure {
             agent_name: "test".to_string(),
             error: "error".to_string(),
+            bundle_path: None,
         }];
         let reviews: Vec<ReviewResult> = vec![];
         assert!(!should_retry_review(REVIEW_FAILURE_RETRY_LIMIT, &failures, &reviews));
@@ -123,6 +125,7 @@ mod tests {
         let failures = vec![ReviewFailure {
             agent_name: "test".to_string(),
             error: "error".to_string(),
+            bundle_path: None,
         }];
         let reviews = vec![ReviewResult {
             agent_name: "claude".to_string(),

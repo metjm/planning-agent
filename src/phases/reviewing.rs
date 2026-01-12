@@ -1,154 +1,21 @@
 use crate::agents::{AgentContext, AgentType};
 use crate::config::{AggregationMode, WorkflowConfig};
+use crate::diagnostics::{create_mcp_review_bundle, AttemptTimestamp, BundleConfig};
 use crate::mcp::spawner::generate_mcp_server_config;
-use crate::mcp::{ReviewVerdict, SubmittedReview};
-use crate::prompt_format::PromptBuilder;
+use crate::mcp::{McpServerConfig, SubmittedReview};
+use crate::phases::review_parser::parse_mcp_review;
+use crate::phases::review_prompts::{
+    build_mcp_agent_prompt, build_mcp_recovery_prompt, build_mcp_review_prompt, REVIEW_SYSTEM_PROMPT,
+};
 use crate::state::{FeedbackStatus, ResumeStrategy, State};
 use crate::tui::SessionEventSender;
 use anyhow::Result;
-use regex::Regex;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-fn extract_plan_feedback(output: &str) -> String {
-    let re = Regex::new(r"(?s)<plan-feedback>\s*(.*?)\s*</plan-feedback>").unwrap();
-    if let Some(captures) = re.captures(output) {
-        if let Some(content) = captures.get(1) {
-            return content.as_str().to_string();
-        }
-    }
-
-    output.to_string()
-}
-
-/// Try to parse a structured review from agent output
-/// Looks for JSON-like structured review or parses from <plan-feedback> tags
-fn try_parse_mcp_review(output: &str) -> Option<SubmittedReview> {
-    // First, try to extract from <plan-feedback> tags
-    let feedback = extract_plan_feedback(output);
-
-    // Try to parse as JSON (if agent returned structured output)
-    if let Ok(review) = serde_json::from_str::<SubmittedReview>(&feedback) {
-        return Some(review);
-    }
-
-    // Otherwise, parse the verdict from the feedback text and construct SubmittedReview
-    let verdict_result = parse_verdict(&feedback);
-    match verdict_result {
-        VerdictParseResult::Approved => Some(SubmittedReview {
-            verdict: ReviewVerdict::Approved,
-            summary: extract_summary_from_feedback(&feedback),
-            critical_issues: vec![],
-            recommendations: extract_recommendations_from_feedback(&feedback),
-            full_feedback: Some(feedback),
-        }),
-        VerdictParseResult::NeedsRevision => Some(SubmittedReview {
-            verdict: ReviewVerdict::NeedsRevision,
-            summary: extract_summary_from_feedback(&feedback),
-            critical_issues: extract_critical_issues_from_feedback(&feedback),
-            recommendations: extract_recommendations_from_feedback(&feedback),
-            full_feedback: Some(feedback),
-        }),
-        VerdictParseResult::ParseFailure(_) => None,
-    }
-}
-
-/// Extract a summary from feedback text
-fn extract_summary_from_feedback(feedback: &str) -> String {
-    // Try to find a summary section
-    let summary_re = Regex::new(r"(?is)##?\s*(?:summary|review summary|executive summary)[:\s]*\n+(.*?)(?:\n\n|\n##|\z)").unwrap();
-    if let Some(captures) = summary_re.captures(feedback) {
-        if let Some(content) = captures.get(1) {
-            let summary = content.as_str().trim();
-            if !summary.is_empty() {
-                return summary.to_string();
-            }
-        }
-    }
-
-    // Fall back to first paragraph
-    feedback
-        .lines()
-        .find(|line| !line.trim().is_empty() && !line.trim().starts_with('#'))
-        .unwrap_or("Review completed")
-        .trim()
-        .to_string()
-}
-
-/// Extract critical issues from feedback text
-fn extract_critical_issues_from_feedback(feedback: &str) -> Vec<String> {
-    let mut issues = vec![];
-
-    // Look for critical issues section
-    let issues_re = Regex::new(r"(?is)##?\s*(?:critical\s+issues?|blocking\s+issues?|major\s+issues?)[:\s]*\n+(.*?)(?:\n##|\z)").unwrap();
-    if let Some(captures) = issues_re.captures(feedback) {
-        if let Some(content) = captures.get(1) {
-            for line in content.as_str().lines() {
-                let trimmed = line.trim();
-                if trimmed.starts_with('-') || trimmed.starts_with('*') || trimmed.starts_with("•") {
-                    let issue = trimmed.trim_start_matches(['-', '*', '•', ' '].as_ref()).trim();
-                    if !issue.is_empty() {
-                        issues.push(issue.to_string());
-                    }
-                }
-            }
-        }
-    }
-
-    issues
-}
-
-/// Extract recommendations from feedback text
-fn extract_recommendations_from_feedback(feedback: &str) -> Vec<String> {
-    let mut recs = vec![];
-
-    // Look for recommendations section
-    let recs_re = Regex::new(r"(?is)##?\s*(?:recommendations?|suggestions?|improvements?)[:\s]*\n+(.*?)(?:\n##|\z)").unwrap();
-    if let Some(captures) = recs_re.captures(feedback) {
-        if let Some(content) = captures.get(1) {
-            for line in content.as_str().lines() {
-                let trimmed = line.trim();
-                if trimmed.starts_with('-') || trimmed.starts_with('*') || trimmed.starts_with("•") {
-                    let rec = trimmed.trim_start_matches(['-', '*', '•', ' '].as_ref()).trim();
-                    if !rec.is_empty() {
-                        recs.push(rec.to_string());
-                    }
-                }
-            }
-        }
-    }
-
-    recs
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum VerdictParseResult {
-    Approved,
-    NeedsRevision,
-    ParseFailure(String),
-}
-
-pub fn parse_verdict(feedback: &str) -> VerdictParseResult {
-    let re = Regex::new(r"(?i)overall\s+assessment[:\*\s]*\**\s*(APPROVED|NEEDS\s*_?\s*REVISION|MAJOR\s+ISSUES)")
-        .unwrap();
-
-    if let Some(captures) = re.captures(feedback) {
-        if let Some(verdict_match) = captures.get(1) {
-            let verdict = verdict_match.as_str().to_uppercase();
-            let normalized = verdict.replace('_', " ").replace("  ", " ");
-
-            if normalized == "APPROVED" {
-                return VerdictParseResult::Approved;
-            } else if (normalized.contains("NEEDS") && normalized.contains("REVISION"))
-                || (normalized.contains("MAJOR") && normalized.contains("ISSUES"))
-            {
-                return VerdictParseResult::NeedsRevision;
-            }
-        }
-    }
-
-    VerdictParseResult::ParseFailure("No valid Overall Assessment found".to_string())
-}
+// Re-export VerdictParseResult and parse_verdict for external use (used in tests)
+#[allow(unused_imports)]
+pub use crate::phases::review_parser::{parse_verdict, VerdictParseResult};
 
 #[derive(Debug, Clone)]
 pub struct ReviewResult {
@@ -161,6 +28,8 @@ pub struct ReviewResult {
 pub struct ReviewFailure {
     pub agent_name: String,
     pub error: String,
+    /// Path to the diagnostics bundle (if created after retry failure)
+    pub bundle_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone)]
@@ -169,11 +38,32 @@ pub struct ReviewBatchResult {
     pub failures: Vec<ReviewFailure>,
 }
 
-const REVIEW_SYSTEM_PROMPT: &str = r#"You are a technical plan reviewer.
-Review the plan for correctness, completeness, and technical accuracy.
-Use the "plan-review" skill to review.
-IMPORTANT: Use absolute paths for all file references in your feedback.
-"#;
+/// Result from executing a single review attempt
+struct ReviewAttemptResult {
+    output: String,
+    #[allow(dead_code)]
+    is_error: bool,
+    started_at: String,
+    ended_at: String,
+}
+
+/// Result from the full review execution (possibly including retry)
+enum ReviewExecutionResult {
+    /// Successfully parsed review
+    Success(SubmittedReview),
+    /// Failed to parse even after retry - includes both outputs and metadata for bundle
+    ParseFailure {
+        error: String,
+        plan_feedback_found: bool,
+        verdict_found: bool,
+        initial_output: String,
+        retry_output: Option<String>,
+        attempt_timestamps: Vec<AttemptTimestamp>,
+        mcp_server_name: String,
+    },
+    /// Agent execution error (not a parse failure)
+    ExecutionError(String),
+}
 
 pub async fn run_multi_agent_review_with_context(
     state: &mut State,
@@ -256,20 +146,16 @@ pub async fn run_multi_agent_review_with_context(
             async move {
                 sender.send_output(format!("[review:{}] Starting MCP review...", agent_name));
 
-                let context = AgentContext {
-                    session_sender: sender.clone(),
-                    phase,
-                    session_key,
-                    resume_strategy,
-                };
-
                 // Generate MCP config for this agent
                 let mcp_config = match generate_mcp_server_config(&plan, &review_prompt) {
                     Ok(cfg) => cfg,
                     Err(e) => {
                         return (
                             agent_name,
-                            Err(anyhow::anyhow!("MCP config injection failed: {}", e)),
+                            ReviewExecutionResult::ExecutionError(format!(
+                                "MCP config injection failed: {}",
+                                e
+                            )),
                         );
                     }
                 };
@@ -279,88 +165,224 @@ pub async fn run_multi_agent_review_with_context(
                     "[review:{}] Using MCP for structured feedback (server: {})",
                     agent_name, mcp_config.server_name
                 ));
-                let result = agent
-                    .execute_streaming_with_mcp(
-                        mcp_prompt.clone(),
-                        Some(REVIEW_SYSTEM_PROMPT.to_string()),
-                        None,
-                        context,
-                        &mcp_config,
-                    )
-                    .await;
 
-                sender.send_output(format!("[review:{}] Review complete", agent_name));
-                (agent_name, result)
+                // First attempt
+                let attempt1_result = execute_review_attempt(
+                    &agent,
+                    &mcp_prompt,
+                    &session_key,
+                    &resume_strategy,
+                    &sender,
+                    &phase,
+                    &mcp_config,
+                )
+                .await;
+
+                let (initial_output, attempt1_timestamp) = match attempt1_result {
+                    Ok(result) => (result.output, AttemptTimestamp {
+                        attempt: 1,
+                        started_at: result.started_at,
+                        ended_at: result.ended_at,
+                    }),
+                    Err(e) => {
+                        return (
+                            agent_name,
+                            ReviewExecutionResult::ExecutionError(e.to_string()),
+                        );
+                    }
+                };
+
+                if initial_output.trim().is_empty() {
+                    return (
+                        agent_name,
+                        ReviewExecutionResult::ExecutionError("No output from reviewer".to_string()),
+                    );
+                }
+
+                // Try to parse the initial output
+                match parse_mcp_review(&initial_output) {
+                    Ok(review) => {
+                        sender.send_output(format!("[review:{}] Review complete", agent_name));
+                        return (agent_name, ReviewExecutionResult::Success(review));
+                    }
+                    Err(parse_failure) => {
+                        // Initial attempt failed to parse - try recovery
+                        sender.send_output(format!(
+                            "[review:{}] Failed to parse verdict: {}. Attempting recovery...",
+                            agent_name, parse_failure.error
+                        ));
+
+                        // Build recovery prompt with context
+                        let recovery_prompt = build_mcp_recovery_prompt(
+                            &mcp_config.server_name,
+                            &initial_output,
+                            &parse_failure.error,
+                        );
+
+                        // Execute retry attempt
+                        let attempt2_result = execute_review_attempt(
+                            &agent,
+                            &recovery_prompt,
+                            &session_key,
+                            &resume_strategy,
+                            &sender,
+                            &format!("{} (recovery)", phase),
+                            &mcp_config,
+                        )
+                        .await;
+
+                        let (retry_output, attempt2_timestamp) = match attempt2_result {
+                            Ok(result) => (
+                                Some(result.output.clone()),
+                                Some(AttemptTimestamp {
+                                    attempt: 2,
+                                    started_at: result.started_at,
+                                    ended_at: result.ended_at,
+                                }),
+                            ),
+                            Err(e) => {
+                                sender.send_output(format!(
+                                    "[review:{}] Recovery attempt failed: {}",
+                                    agent_name, e
+                                ));
+                                (None, None)
+                            }
+                        };
+
+                        // Try to parse retry output
+                        if let Some(ref retry_out) = retry_output {
+                            if !retry_out.trim().is_empty() {
+                                if let Ok(review) = parse_mcp_review(retry_out) {
+                                    sender.send_output(format!(
+                                        "[review:{}] Recovery succeeded!",
+                                        agent_name
+                                    ));
+                                    return (agent_name, ReviewExecutionResult::Success(review));
+                                }
+                            }
+                        }
+
+                        // Both attempts failed - prepare for bundle creation
+                        let mut timestamps = vec![attempt1_timestamp];
+                        if let Some(ts) = attempt2_timestamp {
+                            timestamps.push(ts);
+                        }
+
+                        // Get the most recent parse failure info
+                        let final_parse_result = retry_output
+                            .as_ref()
+                            .and_then(|out| parse_mcp_review(out).err())
+                            .unwrap_or(parse_failure);
+
+                        sender.send_output(format!(
+                            "[review:{}] Recovery failed. Diagnostics bundle will be created.",
+                            agent_name
+                        ));
+
+                        return (
+                            agent_name,
+                            ReviewExecutionResult::ParseFailure {
+                                error: final_parse_result.error,
+                                plan_feedback_found: final_parse_result.plan_feedback_found,
+                                verdict_found: final_parse_result.verdict_found,
+                                initial_output,
+                                retry_output,
+                                attempt_timestamps: timestamps,
+                                mcp_server_name: mcp_config.server_name.clone(),
+                            },
+                        );
+                    }
+                }
             }
         })
         .collect();
 
     let results = futures::future::join_all(futures).await;
 
+    // Get run_id for bundle creation
+    let run_id = crate::app::util::get_run_id();
+
     let mut reviews = Vec::new();
     let mut failures = Vec::new();
 
     for (agent_name, result) in results {
         match result {
-            Ok(agent_result) => {
-                let output = agent_result.output;
+            ReviewExecutionResult::Success(mcp_review) => {
+                let needs_revision = mcp_review.needs_revision();
+                let feedback = mcp_review.feedback_content();
 
-                if output.trim().is_empty() {
-                    let error = "No output from reviewer".to_string();
-                    session_sender.send_output(format!(
-                        "[review:{}] ERROR: {}",
-                        agent_name, error
-                    ));
-                    failures.push(ReviewFailure { agent_name, error });
-                    continue;
-                }
-
-                if agent_result.is_error {
-                    session_sender.send_output(format!(
-                        "[review:{}] WARNING: reviewer reported an error; attempting to parse output",
-                        agent_name
-                    ));
-                }
-
-                // Try to parse MCP review from output
-                if let Some(mcp_review) = try_parse_mcp_review(&output) {
-                    let needs_revision = mcp_review.needs_revision();
-                    let feedback = mcp_review.feedback_content();
-
-                    let verdict_str = if needs_revision {
-                        "NEEDS REVISION"
-                    } else {
-                        "APPROVED"
-                    };
-
-                    session_sender.send_output(format!(
-                        "[review:{}] Verdict: {} (via MCP)",
-                        agent_name, verdict_str
-                    ));
-
-                    reviews.push(ReviewResult {
-                        agent_name,
-                        needs_revision,
-                        feedback,
-                    });
+                let verdict_str = if needs_revision {
+                    "NEEDS REVISION"
                 } else {
-                    // Failed to parse review - this is an error with MCP-only mode
-                    let error = "Failed to parse review verdict from output. Agent must use submit_review MCP tool or include 'Overall Assessment: APPROVED/NEEDS REVISION' in output.".to_string();
-                    session_sender.send_output(format!(
-                        "[review:{}] ERROR: {}",
-                        agent_name, error
-                    ));
-                    failures.push(ReviewFailure { agent_name, error });
-                }
-            }
-            Err(e) => {
+                    "APPROVED"
+                };
+
                 session_sender.send_output(format!(
-                    "[error] {} review failed: {}",
-                    agent_name, e
+                    "[review:{}] Verdict: {} (via MCP)",
+                    agent_name, verdict_str
                 ));
+
+                reviews.push(ReviewResult {
+                    agent_name,
+                    needs_revision,
+                    feedback,
+                });
+            }
+            ReviewExecutionResult::ParseFailure {
+                error,
+                plan_feedback_found,
+                verdict_found,
+                initial_output,
+                retry_output,
+                attempt_timestamps,
+                mcp_server_name,
+            } => {
+                // Create diagnostics bundle
+                let bundle_config = BundleConfig {
+                    working_dir,
+                    agent_name: &agent_name,
+                    failure_reason: &error,
+                    mcp_server_name: &mcp_server_name,
+                    run_id: &run_id,
+                    plan_feedback_found,
+                    verdict_found,
+                    attempt_timestamps,
+                    initial_output: Some(&initial_output),
+                    retry_output: retry_output.as_deref(),
+                    state_path: Some(state_path),
+                    plan_file: Some(&state.plan_file),
+                    feedback_file: Some(&state.feedback_file),
+                    workflow_session_id: Some(&state.workflow_session_id),
+                };
+
+                let bundle_path = create_mcp_review_bundle(bundle_config);
+
+                if let Some(ref path) = bundle_path {
+                    session_sender.send_output(format!(
+                        "[review:{}] Diagnostics bundle created: {}",
+                        agent_name,
+                        path.display()
+                    ));
+                }
+
+                let full_error = format!(
+                    "Failed to parse review verdict after retry. {}",
+                    error
+                );
+                session_sender.send_output(format!("[review:{}] ERROR: {}", agent_name, full_error));
+
                 failures.push(ReviewFailure {
                     agent_name,
-                    error: e.to_string(),
+                    error: full_error,
+                    bundle_path,
+                });
+            }
+            ReviewExecutionResult::ExecutionError(error) => {
+                session_sender.send_output(format!("[error] {} review failed: {}", agent_name, error));
+                failures.push(ReviewFailure {
+                    agent_name,
+                    error,
+                    bundle_path: None,
                 });
             }
         }
@@ -369,97 +391,43 @@ pub async fn run_multi_agent_review_with_context(
     Ok(ReviewBatchResult { reviews, failures })
 }
 
-/// Build the review prompt that will be embedded in the MCP server's get_plan response
-fn build_mcp_review_prompt(state: &State, working_dir: &Path) -> String {
-    PromptBuilder::new()
-        .phase("reviewing")
-        .instructions(r#"Review the implementation plan above for:
-1. Technical correctness and feasibility
-2. Completeness (does it address all requirements?)
-3. Potential risks or issues
-4. Code quality and best practices
+/// Execute a single review attempt and track timing
+async fn execute_review_attempt(
+    agent: &AgentType,
+    prompt: &str,
+    session_key: &Option<String>,
+    resume_strategy: &ResumeStrategy,
+    sender: &SessionEventSender,
+    phase: &str,
+    mcp_config: &McpServerConfig,
+) -> Result<ReviewAttemptResult> {
+    let started_at = chrono::Utc::now().to_rfc3339();
 
-After your review, you MUST submit your feedback using the `submit_review` MCP tool with:
-- verdict: "APPROVED" or "NEEDS_REVISION"
-- summary: A brief one-paragraph summary
-- critical_issues: Array of blocking issues (if any)
-- recommendations: Array of non-blocking suggestions"#)
-        .input("workspace-root", &working_dir.display().to_string())
-        .input("objective", &state.objective)
-        .constraint("Use absolute paths for all file references in your feedback")
-        .build()
-}
+    let context = AgentContext {
+        session_sender: sender.clone(),
+        phase: phase.to_string(),
+        session_key: session_key.clone(),
+        resume_strategy: resume_strategy.clone(),
+    };
 
-/// Build the prompt that instructs the agent to use the MCP tools
-fn build_mcp_agent_prompt(state: &State, working_dir: &Path) -> String {
-    PromptBuilder::new()
-        .phase("reviewing")
-        .instructions(r#"You are reviewing an implementation plan. Follow these steps:
+    let result = agent
+        .execute_streaming_with_mcp(
+            prompt.to_string(),
+            Some(REVIEW_SYSTEM_PROMPT.to_string()),
+            None,
+            context,
+            mcp_config,
+        )
+        .await?;
 
-1. Use the `get_plan` MCP tool to retrieve the plan content and review instructions
-2. Read and analyze the plan thoroughly
-3. Submit your review using the `submit_review` MCP tool
+    let ended_at = chrono::Utc::now().to_rfc3339();
 
-You MUST use the MCP tools to complete this review:
-- First call `get_plan` to get the plan content
-- Then call `submit_review` with your verdict and feedback"#)
-        .input("workspace-root", &working_dir.display().to_string())
-        .input("objective", &state.objective)
-        .constraint("Use absolute paths for all file references in your feedback")
-        .output_format(r#"After submitting your review via MCP, wrap your final assessment in <plan-feedback> tags:
-
-<plan-feedback>
-## Summary
-[Your review summary]
-
-## Critical Issues
-[List any blocking issues, or "None" if approved]
-
-## Recommendations
-[Non-blocking suggestions]
-
-## Overall Assessment: [APPROVED or NEEDS REVISION]
-</plan-feedback>"#)
-        .build()
-}
-
-#[allow(dead_code)]
-fn build_review_prompt_for_agent(
-    objective: &str,
-    plan_path_abs: &Path,
-    feedback_path_abs: &Path,
-    working_dir: &Path,
-) -> String {
-    PromptBuilder::new()
-        .phase("reviewing")
-        .instructions(r#"Review the implementation plan for technical correctness and completeness.
-
-Read the plan file first, then provide your detailed review.
-
-Provide your assessment with one of these verdicts:
-- "APPROVED" - if the plan is ready for implementation
-- "NEEDS REVISION" - if the plan has issues that need to be fixed
-
-Include specific feedback about any issues found."#)
-        .input("workspace-root", &working_dir.display().to_string())
-        .input("objective", objective)
-        .input("plan-path", &plan_path_abs.display().to_string())
-        .input("feedback-output-path", &feedback_path_abs.display().to_string())
-        .constraint("Use absolute paths for all file references in your feedback")
-        .constraint("Your feedback MUST include 'Overall Assessment:** APPROVED' or 'Overall Assessment:** NEEDS REVISION'")
-        .output_format(r#"CRITICAL: You MUST wrap your final feedback in <plan-feedback> tags. Only the content inside these tags will be saved as the review feedback. Everything outside these tags (thinking, tool calls, intermediate steps) will be ignored.
-
-Example format:
-<plan-feedback>
-## Review Summary
-...your assessment here...
-
-## Issues Found
-...specific issues (use absolute paths)...
-
-## Overall Assessment: APPROVED/NEEDS REVISION
-</plan-feedback>"#)
-        .build()
+    Ok(ReviewAttemptResult {
+        output: result.output,
+        is_error: result.is_error,
+        started_at,
+        ended_at,
+    })
 }
 
 pub fn aggregate_reviews(reviews: &[ReviewResult], mode: &AggregationMode) -> FeedbackStatus {
@@ -705,98 +673,5 @@ mod tests {
             aggregate_reviews(&reviews, &AggregationMode::AnyRejects),
             FeedbackStatus::NeedsRevision
         );
-    }
-
-    #[test]
-    fn test_parse_verdict_approved() {
-        let feedback = "## Review Summary\nLooks good!\n\n## Overall Assessment:** APPROVED";
-        assert_eq!(parse_verdict(feedback), VerdictParseResult::Approved);
-    }
-
-    #[test]
-    fn test_parse_verdict_needs_revision() {
-        let feedback = "## Issues Found\nSome problems.\n\n## Overall Assessment:** NEEDS REVISION";
-        assert_eq!(parse_verdict(feedback), VerdictParseResult::NeedsRevision);
-    }
-
-    #[test]
-    fn test_parse_verdict_needs_revision_underscore() {
-        let feedback = "## Overall Assessment:** NEEDS_REVISION";
-        assert_eq!(parse_verdict(feedback), VerdictParseResult::NeedsRevision);
-    }
-
-    #[test]
-    fn test_parse_verdict_major_issues() {
-        let feedback = "## Overall Assessment: MAJOR ISSUES\n\nSevere problems found.";
-        assert_eq!(parse_verdict(feedback), VerdictParseResult::NeedsRevision);
-    }
-
-    #[test]
-    fn test_parse_verdict_case_insensitive() {
-        let feedback = "overall assessment: approved";
-        assert_eq!(parse_verdict(feedback), VerdictParseResult::Approved);
-    }
-
-    #[test]
-    fn test_parse_verdict_malformed_no_verdict() {
-        let feedback = "## Overall Assessment:\nSome text but no verdict keyword.";
-        assert!(matches!(
-            parse_verdict(feedback),
-            VerdictParseResult::ParseFailure(_)
-        ));
-    }
-
-    #[test]
-    fn test_parse_verdict_missing_overall_assessment() {
-        let feedback = "This feedback has no overall assessment line at all.\nJust random content.";
-        assert!(matches!(
-            parse_verdict(feedback),
-            VerdictParseResult::ParseFailure(_)
-        ));
-    }
-
-    #[test]
-    fn test_parse_verdict_conflicting_content() {
-        let feedback = "The plan is APPROVED in some areas but has issues.\n\n## Overall Assessment:** NEEDS REVISION";
-        assert_eq!(parse_verdict(feedback), VerdictParseResult::NeedsRevision);
-    }
-
-    #[test]
-    fn test_parse_verdict_no_major_issues_in_body() {
-        let feedback = "I found no major issues in this plan.\n\n## Overall Assessment:** APPROVED";
-        assert_eq!(parse_verdict(feedback), VerdictParseResult::Approved);
-    }
-
-    #[test]
-    fn test_parse_verdict_with_markdown_formatting() {
-        let feedback = "### Overall Assessment: **APPROVED**\n\nReady for implementation.";
-        assert_eq!(parse_verdict(feedback), VerdictParseResult::Approved);
-    }
-
-    #[test]
-    fn test_build_review_prompt_for_agent() {
-        let prompt = build_review_prompt_for_agent(
-            "Ship the feature safely",
-            Path::new("/tmp/plan.md"),
-            Path::new("/tmp/feedback.md"),
-            Path::new("/workspaces/myproject"),
-        );
-
-        // Check XML structure
-        assert!(prompt.starts_with("<user-prompt>"));
-        assert!(prompt.ends_with("</user-prompt>"));
-        assert!(prompt.contains("<phase>reviewing</phase>"));
-        // Check inputs are present
-        assert!(prompt.contains("<objective>Ship the feature safely</objective>"));
-        assert!(prompt.contains("<plan-path>/tmp/plan.md</plan-path>"));
-        assert!(prompt.contains("<feedback-output-path>/tmp/feedback.md</feedback-output-path>"));
-        assert!(prompt.contains("<workspace-root>/workspaces/myproject</workspace-root>"));
-        // Check required output tags are preserved
-        assert!(prompt.contains("<plan-feedback>"));
-        // Check constraints are present
-        assert!(prompt.contains("Use absolute paths"));
-        // Ensure MCP tools are not mentioned in non-MCP prompt
-        assert!(!prompt.contains("submit_review"));
-        assert!(!prompt.contains("get_plan"));
     }
 }

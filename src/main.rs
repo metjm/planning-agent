@@ -4,6 +4,7 @@ mod claude_usage;
 mod cli_usage;
 mod codex_usage;
 mod config;
+mod diagnostics;
 mod gemini_usage;
 mod mcp;
 mod phases;

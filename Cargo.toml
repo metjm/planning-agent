@@ -45,6 +45,9 @@ regex = "1.12.2"
 # MCP server
 base64 = "0.22"
 
+# Diagnostics bundle
+zip = "2"
+
 # Auto-update
 ureq = "3"
 
