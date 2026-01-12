@@ -1,4 +1,6 @@
 
+mod dropdowns;
+mod error_overlay;
 mod objective;
 mod overlays;
 mod panels;
@@ -37,7 +39,7 @@ pub fn draw(frame: &mut Frame, tab_manager: &TabManager) {
         overlays::draw_tab_input_overlay(frame, session, tab_manager);
     }
     if session.error_state.is_some() {
-        overlays::draw_error_overlay(frame, session);
+        error_overlay::draw_error_overlay(frame, session);
     }
 }
 

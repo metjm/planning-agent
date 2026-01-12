@@ -6,6 +6,7 @@ use crate::planning_paths;
 use crate::state::State;
 use crate::tui::file_index::FileIndex;
 use crate::tui::mention::update_mention_state;
+use crate::tui::slash::update_slash_state;
 use crate::tui::ui::util::{
     compute_summary_panel_inner_size, compute_wrapped_line_count,
     compute_wrapped_line_count_text,
@@ -231,7 +232,7 @@ async fn handle_naming_tab_input(
     let file_index = tab_manager.file_index.clone();
     let session = tab_manager.active_mut();
 
-    // Handle @-mention dropdown navigation when active
+    // Handle @-mention dropdown navigation when active (takes priority over slash)
     if session.tab_mention_state.active && !session.tab_mention_state.matches.is_empty() {
         match key.code {
             KeyCode::Up | KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -254,6 +255,38 @@ async fn handle_naming_tab_input(
             }
             KeyCode::Esc => {
                 session.tab_mention_state.clear();
+                return Ok(false);
+            }
+            _ => {}
+        }
+    }
+
+    // Handle slash command dropdown navigation when active (only if mention not active)
+    // Disabled when paste blocks exist
+    if !session.has_tab_input_pastes()
+        && session.tab_slash_state.active
+        && !session.tab_slash_state.matches.is_empty()
+    {
+        match key.code {
+            KeyCode::Up | KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                session.tab_slash_state.select_prev();
+                return Ok(false);
+            }
+            KeyCode::Down | KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                session.tab_slash_state.select_next();
+                return Ok(false);
+            }
+            KeyCode::Tab => {
+                session.accept_tab_slash();
+                update_slash_state(
+                    &mut session.tab_slash_state,
+                    &session.tab_input,
+                    session.tab_input_cursor,
+                );
+                return Ok(false);
+            }
+            KeyCode::Esc => {
+                session.tab_slash_state.clear();
                 return Ok(false);
             }
             _ => {}
@@ -288,6 +321,7 @@ async fn handle_naming_tab_input(
                     session.tab_input_cursor = 0;
                     session.tab_input_scroll = 0;
                     session.tab_mention_state.clear();
+                    session.tab_slash_state.clear();
 
                     match cmd {
                         SlashCommand::Update => {
@@ -450,6 +484,17 @@ async fn handle_naming_tab_input(
         session.tab_input_cursor,
         &file_index,
     );
+
+    // Update slash command state after any input change (only if no paste blocks)
+    if !session.has_tab_input_pastes() {
+        update_slash_state(
+            &mut session.tab_slash_state,
+            &session.tab_input,
+            session.tab_input_cursor,
+        );
+    } else {
+        session.tab_slash_state.clear();
+    }
 
     Ok(false)
 }

@@ -1,12 +1,12 @@
 
-use super::util::{compute_wrapped_line_count, compute_wrapped_line_count_text, parse_markdown_line, wrap_text_at_width};
+use super::dropdowns::{draw_mention_dropdown, draw_slash_dropdown};
+use super::util::{compute_wrapped_line_count, parse_markdown_line, wrap_text_at_width};
 use crate::state::Phase;
-use crate::tui::mention::MentionState;
 use crate::tui::{ApprovalContext, ApprovalMode, FeedbackTarget, Session, TabManager};
 use crate::update::UpdateStatus;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::{Color, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap},
     Frame,
@@ -595,7 +595,7 @@ pub fn draw_tab_input_overlay(frame: &mut Frame, session: &Session, tab_manager:
         cursor_screen_y = inner.y;
     }
 
-    // Draw @-mention dropdown if active
+    // Draw @-mention dropdown if active (takes priority)
     draw_mention_dropdown(
         frame,
         &session.tab_mention_state,
@@ -603,6 +603,17 @@ pub fn draw_tab_input_overlay(frame: &mut Frame, session: &Session, tab_manager:
         cursor_screen_y,
         popup_width,
     );
+
+    // Draw slash command dropdown if active (only when mention dropdown not showing)
+    if !session.tab_mention_state.active {
+        draw_slash_dropdown(
+            frame,
+            &session.tab_slash_state,
+            cursor_screen_x,
+            cursor_screen_y,
+            popup_width,
+        );
+    }
 
     let help = Paragraph::new(Line::from(vec![
         Span::styled("[Enter]", Style::default().fg(Color::Green)),
@@ -702,179 +713,4 @@ fn render_command_line(tab_manager: &TabManager) -> ratatui::text::Text<'static>
     } else {
         ratatui::text::Text::from("")
     }
-}
-
-pub fn draw_error_overlay(frame: &mut Frame, session: &Session) {
-    if let Some(ref error) = session.error_state {
-        let area = frame.area();
-
-        let popup_width = (area.width as f32 * 0.6).min(70.0) as u16;
-        // Calculate inner width for wrapping (popup width minus borders)
-        let inner_width = popup_width.saturating_sub(2);
-
-        // Compute wrapped line count for the error text
-        let wrapped_error_lines = compute_wrapped_line_count_text(error, inner_width);
-
-        // Error layout: border (1) + empty line (1) + error text + empty line (1) + instructions (1) + border (1)
-        // = 5 + wrapped_error_lines
-        // Cap popup height at 80% of terminal height
-        let max_popup_height = (area.height as f32 * 0.8) as u16;
-        let min_popup_height = 8u16;
-        let ideal_popup_height = (wrapped_error_lines as u16).saturating_add(5);
-        let popup_height = ideal_popup_height.clamp(min_popup_height, max_popup_height);
-
-        let popup_x = (area.width.saturating_sub(popup_width)) / 2;
-        let popup_y = (area.height.saturating_sub(popup_height)) / 2;
-
-        let popup_area = Rect::new(popup_x, popup_y, popup_width, popup_height);
-
-        frame.render_widget(Clear, popup_area);
-
-        // Split into error content and instructions
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Min(0),     // Error content (scrollable)
-                Constraint::Length(1),  // Instructions
-            ])
-            .split(popup_area);
-
-        let error_block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Red))
-            .title(" Error (j/k to scroll) ");
-
-        let inner_area = error_block.inner(chunks[0]);
-        let visible_height = inner_area.height as usize;
-
-        // Total lines = 1 (empty) + error lines + 1 (empty)
-        let total_content_lines = wrapped_error_lines + 2;
-        let max_scroll = total_content_lines.saturating_sub(visible_height);
-        let scroll_pos = session.error_scroll.min(max_scroll);
-
-        let error_paragraph = Paragraph::new(vec![
-            Line::from(""),
-            Line::from(Span::styled(error.clone(), Style::default().fg(Color::Red))),
-            Line::from(""),
-        ])
-        .block(error_block)
-        .wrap(Wrap { trim: false })
-        .scroll((scroll_pos as u16, 0));
-        frame.render_widget(error_paragraph, chunks[0]);
-
-        // Show scrollbar if content exceeds visible area
-        if total_content_lines > visible_height {
-            let mut scrollbar_state = ScrollbarState::new(total_content_lines).position(scroll_pos);
-            frame.render_stateful_widget(
-                Scrollbar::new(ScrollbarOrientation::VerticalRight)
-                    .begin_symbol(Some("↑"))
-                    .end_symbol(Some("↓")),
-                chunks[0],
-                &mut scrollbar_state,
-            );
-        }
-
-        // Instructions line
-        let instructions = Paragraph::new(Line::from(vec![
-            Span::styled("  [Esc]", Style::default().fg(Color::Yellow)),
-            Span::raw(" Close  "),
-            Span::styled("[Ctrl+W]", Style::default().fg(Color::Red)),
-            Span::raw(" Close Tab"),
-        ]));
-        frame.render_widget(instructions, chunks[1]);
-    }
-}
-
-/// Draw the @-mention dropdown below the given cursor position.
-/// The dropdown shows matching files and allows selection.
-fn draw_mention_dropdown(
-    frame: &mut Frame,
-    mention_state: &MentionState,
-    cursor_x: u16,
-    cursor_y: u16,
-    max_width: u16,
-) {
-    if !mention_state.active || mention_state.matches.is_empty() {
-        return;
-    }
-
-    let screen_area = frame.area();
-    let matches = &mention_state.matches;
-    let selected_idx = mention_state.selected_idx;
-
-    // Dropdown dimensions
-    let dropdown_height = (matches.len() as u16).min(10) + 2; // +2 for borders
-    let max_path_width = matches
-        .iter()
-        .map(|m| m.path.width())
-        .max()
-        .unwrap_or(20) as u16;
-    let dropdown_width = (max_path_width + 4).min(max_width).max(30); // +4 for padding and selection indicator
-
-    // Position dropdown below cursor, but flip above if not enough space below
-    let space_below = screen_area.height.saturating_sub(cursor_y + 1);
-    let space_above = cursor_y;
-
-    let (dropdown_y, fits_below) = if space_below >= dropdown_height {
-        (cursor_y + 1, true)
-    } else if space_above >= dropdown_height {
-        (cursor_y.saturating_sub(dropdown_height), false)
-    } else {
-        // Not enough space either way, prefer below with truncation
-        (cursor_y + 1, true)
-    };
-
-    let actual_height = if fits_below {
-        dropdown_height.min(space_below)
-    } else {
-        dropdown_height.min(space_above)
-    };
-
-    // Adjust x position if dropdown would extend past screen edge
-    let dropdown_x = if cursor_x + dropdown_width > screen_area.width {
-        screen_area.width.saturating_sub(dropdown_width)
-    } else {
-        cursor_x
-    };
-
-    let dropdown_area = Rect::new(dropdown_x, dropdown_y, dropdown_width, actual_height);
-
-    // Clear background
-    frame.render_widget(Clear, dropdown_area);
-
-    // Build dropdown content
-    let visible_matches = (actual_height.saturating_sub(2)) as usize;
-    let scroll_offset = if selected_idx >= visible_matches {
-        selected_idx.saturating_sub(visible_matches - 1)
-    } else {
-        0
-    };
-
-    let items: Vec<Line> = matches
-        .iter()
-        .enumerate()
-        .skip(scroll_offset)
-        .take(visible_matches)
-        .map(|(i, m)| {
-            let is_selected = i == selected_idx;
-            let prefix = if is_selected { "› " } else { "  " };
-            let style = if is_selected {
-                Style::default()
-                    .fg(Color::Black)
-                    .bg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(Color::White)
-            };
-            Line::from(Span::styled(format!("{}{}", prefix, m.path), style))
-        })
-        .collect();
-
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Cyan))
-        .title(" Files & Folders (Tab to select) ");
-
-    let dropdown = Paragraph::new(items).block(block);
-    frame.render_widget(dropdown, dropdown_area);
 }
