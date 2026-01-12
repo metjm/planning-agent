@@ -447,6 +447,32 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
         }
     }
 
+    // Cleanup: Abort any still-active workflow handles to prevent zombie processes
+    // This is especially important when we exit due to timeout with active workflows
+    let mut abort_handles = Vec::new();
+    for session in tab_manager.sessions_mut() {
+        if let Some(handle) = session.workflow_handle.take() {
+            handle.abort();
+            abort_handles.push(handle);
+        }
+    }
+
+    // Wait briefly for aborted tasks to finish cleanup (with timeout)
+    if !abort_handles.is_empty() {
+        debug_log(start, &format!("Waiting for {} workflow(s) to abort", abort_handles.len()));
+        let cleanup_timeout = tokio::time::timeout(
+            Duration::from_millis(500),
+            async {
+                for handle in abort_handles {
+                    // Ignore the result - we just want the task to stop
+                    let _ = handle.await;
+                }
+            }
+        );
+        let _ = cleanup_timeout.await;
+        debug_log(start, "Workflow cleanup complete");
+    }
+
     title_manager.restore_title();
     restore_terminal(&mut terminal)?;
 
