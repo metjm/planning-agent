@@ -280,7 +280,10 @@ pub async fn handle_entering_feedback_input(
                 session.feedback_mention_state.select_next();
                 return Ok(false);
             }
-            KeyCode::Tab => {
+            KeyCode::Tab | KeyCode::Enter
+                if key.code == KeyCode::Tab
+                    || !key.modifiers.contains(KeyModifiers::SHIFT) =>
+            {
                 session.accept_feedback_mention();
                 update_mention_state(
                     &mut session.feedback_mention_state,
