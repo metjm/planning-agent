@@ -502,6 +502,21 @@ async fn run_reviewing_phase(
                 pending_reviewers = failed_names;
                 continue;
             }
+            // Output bundle paths before aborting
+            let mut has_bundles = false;
+            for failure in &batch.failures {
+                if let Some(ref path) = failure.bundle_path {
+                    sender.send_output(format!(
+                        "[diagnostics] {}: {}",
+                        failure.agent_name,
+                        path.display()
+                    ));
+                    has_bundles = true;
+                }
+            }
+            if has_bundles {
+                sender.send_output("[warning] Bundles may contain sensitive information from logs.".to_string());
+            }
             sender.send_output("[error] All reviewers failed; aborting review.".to_string());
             anyhow::bail!("All reviewers failed to complete review");
         }

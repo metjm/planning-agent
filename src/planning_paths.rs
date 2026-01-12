@@ -166,6 +166,30 @@ pub fn snapshot_path(session_id: &str) -> Result<PathBuf> {
     Ok(sessions_dir()?.join(format!("{}.json", session_id)))
 }
 
+/// Returns the diagnostics directory for a working directory: `~/.planning-agent/diagnostics/<wd-hash>/`
+///
+/// Creates the directory if it doesn't exist.
+pub fn diagnostics_dir(working_dir: &Path) -> Result<PathBuf> {
+    let hash = working_dir_hash(working_dir);
+    let dir = planning_agent_home_dir()?.join("diagnostics").join(&hash);
+    fs::create_dir_all(&dir)
+        .with_context(|| format!("Failed to create diagnostics directory: {}", dir.display()))?;
+    Ok(dir)
+}
+
+/// Returns the path for an MCP review diagnostics bundle.
+///
+/// Format: `~/.planning-agent/diagnostics/<wd-hash>/mcp-review-<agent>-<timestamp>-<suffix>.zip`
+pub fn mcp_review_bundle_path(
+    working_dir: &Path,
+    agent_name: &str,
+    timestamp: &str,
+    suffix: &str,
+) -> Result<PathBuf> {
+    let filename = format!("mcp-review-{}-{}-{}.zip", agent_name, timestamp, suffix);
+    Ok(diagnostics_dir(working_dir)?.join(filename))
+}
+
 /// Metadata about a plan folder for listing purposes.
 #[derive(Debug, Clone)]
 pub struct PlanInfo {

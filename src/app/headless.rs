@@ -193,12 +193,24 @@ pub async fn run_headless_with_config(
                         .map(|f| f.agent_name.clone())
                         .collect::<Vec<_>>();
 
+                    let mut has_bundles = false;
                     for failure in &batch.failures {
                         sender.send_output(format!(
                             "[review:{}] failed: {}",
                             failure.agent_name,
                             truncate_for_summary(&failure.error, 160)
                         ));
+                        if let Some(ref path) = failure.bundle_path {
+                            sender.send_output(format!(
+                                "[diagnostics:{}] Bundle: {}",
+                                failure.agent_name,
+                                path.display()
+                            ));
+                            has_bundles = true;
+                        }
+                    }
+                    if has_bundles {
+                        sender.send_output("[warning] Diagnostics bundles may contain sensitive information from logs.".to_string());
                     }
 
                     if reviews_by_agent.is_empty() {
@@ -210,6 +222,16 @@ pub async fn run_headless_with_config(
                             ));
                             pending_reviewers = failed_names;
                             continue;
+                        }
+                        // Output bundle paths before bailing
+                        for failure in &batch.failures {
+                            if let Some(ref path) = failure.bundle_path {
+                                sender.send_output(format!(
+                                    "[diagnostics] {}: {}",
+                                    failure.agent_name,
+                                    path.display()
+                                ));
+                            }
                         }
                         anyhow::bail!("All reviewers failed to complete review");
                     }
