@@ -272,11 +272,19 @@ pub async fn handle_entering_feedback_input(
     // Handle @-mention dropdown navigation when active
     if session.feedback_mention_state.active && !session.feedback_mention_state.matches.is_empty() {
         match key.code {
-            KeyCode::Up | KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            KeyCode::Up => {
                 session.feedback_mention_state.select_prev();
                 return Ok(false);
             }
-            KeyCode::Down | KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            KeyCode::Down => {
+                session.feedback_mention_state.select_next();
+                return Ok(false);
+            }
+            KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                session.feedback_mention_state.select_prev();
+                return Ok(false);
+            }
+            KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 session.feedback_mention_state.select_next();
                 return Ok(false);
             }

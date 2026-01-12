@@ -10,6 +10,8 @@ const PLANNING_SYSTEM_PROMPT: &str = r#"You are a technical planning agent.
 Create a detailed implementation plan for the given objective.
 Use the available tools to read the codebase and understand the existing structure.
 
+When replacing or refactoring functionality, your plan must remove the old code entirely—no backward compatibility shims, re-exports, or conversion methods are allowed.
+
 Use the "planning" skill to create the plan.
 Before finalizing your plan, perform a self-review against the "plan-review" skill criteria, so you can be confident that it will pass review.
 Your plan should be structured to pass review without requiring revision cycles."#;
@@ -86,7 +88,8 @@ Requirements:
 2. Identify all files that need to be modified or created (use absolute paths)
 3. Break down the implementation into clear, actionable steps
 4. Consider edge cases and potential issues
-5. Include a testing strategy"#)
+5. Include a testing strategy
+6. When replacing functionality, remove old code entirely—update all callers and do not add backward-compatibility shims or re-exports"#)
         .input("workspace-root", &working_dir.display().to_string())
         .input("feature-name", &state.feature_name)
         .input("objective", &state.objective)
@@ -94,4 +97,54 @@ Requirements:
         .constraint("Use absolute paths for all file references in your plan")
         .tools("Use the Read, Glob, and Grep tools to explore the codebase as needed.")
         .build()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::Phase;
+    use std::collections::HashMap;
+    use std::path::PathBuf;
+
+    fn minimal_state() -> State {
+        State {
+            phase: Phase::Planning,
+            iteration: 1,
+            max_iterations: 3,
+            feature_name: "test-feature".to_string(),
+            objective: "Test objective".to_string(),
+            plan_file: PathBuf::from("/tmp/test-plan.md"),
+            feedback_file: PathBuf::from("/tmp/test-feedback.md"),
+            last_feedback_status: None,
+            approval_overridden: false,
+            workflow_session_id: "test-session".to_string(),
+            agent_sessions: HashMap::new(),
+            invocations: Vec::new(),
+            updated_at: String::new(),
+        }
+    }
+
+    #[test]
+    fn planning_prompt_includes_no_backward_compatibility_directive() {
+        assert!(
+            PLANNING_SYSTEM_PROMPT.contains("no backward compatibility"),
+            "PLANNING_SYSTEM_PROMPT should contain 'no backward compatibility'"
+        );
+    }
+
+    #[test]
+    fn build_planning_prompt_includes_deletion_requirement() {
+        let state = minimal_state();
+        let working_dir = PathBuf::from("/tmp/workspace");
+        let prompt = build_planning_prompt(&state, &working_dir);
+
+        assert!(
+            prompt.contains("remove old code entirely"),
+            "Planning prompt should contain 'remove old code entirely'"
+        );
+        assert!(
+            prompt.contains("backward-compatibility shims"),
+            "Planning prompt should contain 'backward-compatibility shims'"
+        );
+    }
 }

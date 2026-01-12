@@ -235,11 +235,19 @@ async fn handle_naming_tab_input(
     // Handle @-mention dropdown navigation when active (takes priority over slash)
     if session.tab_mention_state.active && !session.tab_mention_state.matches.is_empty() {
         match key.code {
-            KeyCode::Up | KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            KeyCode::Up => {
                 session.tab_mention_state.select_prev();
                 return Ok(false);
             }
-            KeyCode::Down | KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            KeyCode::Down => {
+                session.tab_mention_state.select_next();
+                return Ok(false);
+            }
+            KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                session.tab_mention_state.select_prev();
+                return Ok(false);
+            }
+            KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 session.tab_mention_state.select_next();
                 return Ok(false);
             }
@@ -271,11 +279,19 @@ async fn handle_naming_tab_input(
         && !session.tab_slash_state.matches.is_empty()
     {
         match key.code {
-            KeyCode::Up | KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            KeyCode::Up => {
                 session.tab_slash_state.select_prev();
                 return Ok(false);
             }
-            KeyCode::Down | KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            KeyCode::Down => {
+                session.tab_slash_state.select_next();
+                return Ok(false);
+            }
+            KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                session.tab_slash_state.select_prev();
+                return Ok(false);
+            }
+            KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 session.tab_slash_state.select_next();
                 return Ok(false);
             }
