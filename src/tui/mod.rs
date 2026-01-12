@@ -3,6 +3,7 @@ mod event;
 pub mod file_index;
 pub mod mention;
 pub mod session;
+pub mod slash;
 mod tabs;
 mod title;
 pub mod ui;

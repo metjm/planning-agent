@@ -12,6 +12,7 @@ use crate::state::{Phase, State};
 use crate::tui::embedded_terminal::EmbeddedTerminal;
 use crate::tui::event::{TokenUsage, WorkflowCommand};
 use crate::tui::mention::MentionState;
+use crate::tui::slash::SlashState;
 use anyhow::Result;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -145,6 +146,8 @@ pub struct Session {
     pub tab_mention_state: MentionState,
     /// @-mention state for feedback input field
     pub feedback_mention_state: MentionState,
+    /// Slash command autocomplete state for tab input field
+    pub tab_slash_state: SlashState,
 }
 
 /// Session provides the full API surface for session management.
@@ -230,6 +233,7 @@ impl Session {
 
             tab_mention_state: MentionState::new(),
             feedback_mention_state: MentionState::new(),
+            tab_slash_state: SlashState::new(),
         }
     }
 
@@ -710,6 +714,27 @@ impl Session {
 
             // Clear mention state
             self.feedback_mention_state.clear();
+        }
+    }
+
+    /// Accept the currently selected slash command in the tab input field.
+    /// Replaces the command token with the selected command.
+    pub fn accept_tab_slash(&mut self) {
+        if let Some(selected) = self.tab_slash_state.selected_match() {
+            let insert = selected.insert.clone();
+            let start = self.tab_slash_state.start_byte;
+            let end = self.tab_slash_state.end_byte;
+
+            // Replace the command token with the selected command
+            let before = &self.tab_input[..start];
+            let after = &self.tab_input[end..];
+            self.tab_input = format!("{}{}{}", before, insert, after);
+
+            // Move cursor to the end of the inserted command
+            self.tab_input_cursor = start + insert.len();
+
+            // Clear slash state
+            self.tab_slash_state.clear();
         }
     }
 }

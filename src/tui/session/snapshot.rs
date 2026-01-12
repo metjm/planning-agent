@@ -7,6 +7,7 @@ use super::{FocusedPanel, InputMode, Session};
 use crate::session_store::SessionUiState;
 use crate::state::State;
 use crate::tui::mention::MentionState;
+use crate::tui::slash::SlashState;
 use std::collections::HashMap;
 use std::time::Instant;
 
@@ -143,6 +144,7 @@ impl Session {
             implementation_terminal: None, // Runtime-only, reset on resume
             tab_mention_state: MentionState::new(), // Runtime-only, reset on resume
             feedback_mention_state: MentionState::new(), // Runtime-only, reset on resume
+            tab_slash_state: SlashState::new(), // Runtime-only, reset on resume
         }
     }
 }
