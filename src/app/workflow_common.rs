@@ -131,6 +131,7 @@ mod tests {
             agent_name: "claude".to_string(),
             needs_revision: false,
             feedback: "APPROVED".to_string(),
+            summary: "Plan looks good".to_string(),
         }];
         assert!(!should_retry_review(0, &failures, &reviews));
     }

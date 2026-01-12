@@ -22,6 +22,8 @@ pub struct ReviewResult {
     pub agent_name: String,
     pub needs_revision: bool,
     pub feedback: String,
+    /// Short summary of the review (from MCP or extracted from feedback)
+    pub summary: String,
 }
 
 #[derive(Debug, Clone)]
@@ -322,10 +324,18 @@ pub async fn run_multi_agent_review_with_context(
                     agent_name, verdict_str
                 ));
 
+                // Use MCP summary, with fallback to default if empty
+                let summary = if mcp_review.summary.trim().is_empty() {
+                    "Review completed".to_string()
+                } else {
+                    mcp_review.summary.clone()
+                };
+
                 reviews.push(ReviewResult {
                     agent_name,
                     needs_revision,
                     feedback,
+                    summary,
                 });
             }
             ReviewExecutionResult::ParseFailure {
@@ -541,11 +551,13 @@ mod tests {
                 agent_name: "claude".to_string(),
                 needs_revision: false,
                 feedback: "APPROVED".to_string(),
+                summary: "Plan looks good".to_string(),
             },
             ReviewResult {
                 agent_name: "codex".to_string(),
                 needs_revision: false,
                 feedback: "APPROVED".to_string(),
+                summary: "No issues found".to_string(),
             },
         ];
         assert_eq!(
@@ -561,11 +573,13 @@ mod tests {
                 agent_name: "claude".to_string(),
                 needs_revision: false,
                 feedback: "APPROVED".to_string(),
+                summary: "Plan looks good".to_string(),
             },
             ReviewResult {
                 agent_name: "codex".to_string(),
                 needs_revision: true,
                 feedback: "NEEDS REVISION".to_string(),
+                summary: "Missing error handling".to_string(),
             },
         ];
         assert_eq!(
@@ -581,11 +595,13 @@ mod tests {
                 agent_name: "claude".to_string(),
                 needs_revision: false,
                 feedback: "APPROVED".to_string(),
+                summary: "Plan looks good".to_string(),
             },
             ReviewResult {
                 agent_name: "codex".to_string(),
                 needs_revision: true,
                 feedback: "NEEDS REVISION".to_string(),
+                summary: "Missing error handling".to_string(),
             },
         ];
         assert_eq!(
@@ -601,11 +617,13 @@ mod tests {
                 agent_name: "claude".to_string(),
                 needs_revision: true,
                 feedback: "NEEDS REVISION".to_string(),
+                summary: "Architecture concerns".to_string(),
             },
             ReviewResult {
                 agent_name: "codex".to_string(),
                 needs_revision: true,
                 feedback: "NEEDS REVISION".to_string(),
+                summary: "Missing error handling".to_string(),
             },
         ];
         assert_eq!(
@@ -621,16 +639,19 @@ mod tests {
                 agent_name: "claude".to_string(),
                 needs_revision: false,
                 feedback: "APPROVED".to_string(),
+                summary: "Plan looks good".to_string(),
             },
             ReviewResult {
                 agent_name: "codex".to_string(),
                 needs_revision: false,
                 feedback: "APPROVED".to_string(),
+                summary: "No issues found".to_string(),
             },
             ReviewResult {
                 agent_name: "gemini".to_string(),
                 needs_revision: true,
                 feedback: "NEEDS REVISION".to_string(),
+                summary: "Minor issues found".to_string(),
             },
         ];
 
@@ -647,16 +668,19 @@ mod tests {
                 agent_name: "claude".to_string(),
                 needs_revision: true,
                 feedback: "NEEDS REVISION".to_string(),
+                summary: "Architecture concerns".to_string(),
             },
             ReviewResult {
                 agent_name: "codex".to_string(),
                 needs_revision: true,
                 feedback: "NEEDS REVISION".to_string(),
+                summary: "Missing error handling".to_string(),
             },
             ReviewResult {
                 agent_name: "gemini".to_string(),
                 needs_revision: false,
                 feedback: "APPROVED".to_string(),
+                summary: "Plan looks good".to_string(),
             },
         ];
 
