@@ -299,13 +299,22 @@ async fn handle_naming_tab_input(
                 if key.code == KeyCode::Tab
                     || !key.modifiers.contains(KeyModifiers::SHIFT) =>
             {
-                session.accept_tab_slash();
-                update_slash_state(
-                    &mut session.tab_slash_state,
-                    &session.tab_input,
-                    session.tab_input_cursor,
-                );
-                return Ok(false);
+                // If Enter is pressed and the input is already a valid slash command,
+                // skip autocomplete acceptance and let it fall through to submit.
+                // This allows Enter to execute `/update` without requiring a trailing space.
+                let is_complete_slash_command = key.code == KeyCode::Enter
+                    && parse_slash_command(session.tab_input.trim()).is_some();
+
+                if !is_complete_slash_command {
+                    session.accept_tab_slash();
+                    update_slash_state(
+                        &mut session.tab_slash_state,
+                        &session.tab_input,
+                        session.tab_input_cursor,
+                    );
+                    return Ok(false);
+                }
+                // Fall through to submit block for complete slash commands
             }
             KeyCode::Esc => {
                 session.tab_slash_state.clear();
