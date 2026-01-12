@@ -23,10 +23,7 @@ pub fn extract_plan_feedback(output: &str) -> String {
 /// Looks for JSON-like structured review or parses from <plan-feedback> tags
 #[allow(dead_code)]
 pub fn try_parse_mcp_review(output: &str) -> Option<SubmittedReview> {
-    match parse_mcp_review(output) {
-        Ok(review) => Some(review),
-        Err(_) => None,
-    }
+    parse_mcp_review(output).ok()
 }
 
 /// Parse MCP review from agent output, returning detailed failure info on error
