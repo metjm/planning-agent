@@ -243,7 +243,10 @@ async fn handle_naming_tab_input(
                 session.tab_mention_state.select_next();
                 return Ok(false);
             }
-            KeyCode::Tab => {
+            KeyCode::Tab | KeyCode::Enter
+                if key.code == KeyCode::Tab
+                    || !key.modifiers.contains(KeyModifiers::SHIFT) =>
+            {
                 session.accept_tab_mention();
                 update_mention_state(
                     &mut session.tab_mention_state,
@@ -276,7 +279,10 @@ async fn handle_naming_tab_input(
                 session.tab_slash_state.select_next();
                 return Ok(false);
             }
-            KeyCode::Tab => {
+            KeyCode::Tab | KeyCode::Enter
+                if key.code == KeyCode::Tab
+                    || !key.modifiers.contains(KeyModifiers::SHIFT) =>
+            {
                 session.accept_tab_slash();
                 update_slash_state(
                     &mut session.tab_slash_state,

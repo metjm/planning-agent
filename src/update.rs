@@ -116,30 +116,54 @@ fn fetch_latest_commit() -> Result<UpdateInfo> {
 }
 
 fn format_commit_date(iso_date: &str) -> String {
+    // Split by 'T' to get date and time parts
+    let mut split = iso_date.split('T');
+    let date_part = match split.next() {
+        Some(d) => d,
+        None => return iso_date.to_string(),
+    };
+    let time_part = split.next();
 
-    if let Some(date_part) = iso_date.split('T').next() {
-        let parts: Vec<&str> = date_part.split('-').collect();
-        if parts.len() == 3 {
-            let month = match parts[1] {
-                "01" => "Jan",
-                "02" => "Feb",
-                "03" => "Mar",
-                "04" => "Apr",
-                "05" => "May",
-                "06" => "Jun",
-                "07" => "Jul",
-                "08" => "Aug",
-                "09" => "Sep",
-                "10" => "Oct",
-                "11" => "Nov",
-                "12" => "Dec",
-                _ => return iso_date.to_string(),
-            };
-            let day = parts[2].trim_start_matches('0');
-            return format!("{} {}", month, day);
+    let date_parts: Vec<&str> = date_part.split('-').collect();
+    if date_parts.len() != 3 {
+        return iso_date.to_string();
+    }
+
+    let month = match date_parts[1] {
+        "01" => "Jan",
+        "02" => "Feb",
+        "03" => "Mar",
+        "04" => "Apr",
+        "05" => "May",
+        "06" => "Jun",
+        "07" => "Jul",
+        "08" => "Aug",
+        "09" => "Sep",
+        "10" => "Oct",
+        "11" => "Nov",
+        "12" => "Dec",
+        _ => return iso_date.to_string(),
+    };
+    let day = date_parts[2].trim_start_matches('0');
+
+    // Extract HH:MM from time part if available (e.g., "10:30:00Z" -> "10:30")
+    if let Some(time) = time_part {
+        // Remove trailing timezone suffix (Z or +00:00 etc) and take HH:MM
+        let time_clean = time
+            .trim_end_matches('Z')
+            .split('+')
+            .next()
+            .unwrap_or(time)
+            .split('-')
+            .next()
+            .unwrap_or(time);
+        if time_clean.len() >= 5 {
+            let hh_mm = &time_clean[..5];
+            return format!("{} {} {}", month, day, hh_mm);
         }
     }
-    iso_date.to_string()
+
+    format!("{} {}", month, day)
 }
 
 /// Read version cache from disk. Returns None if cache is missing, corrupt, stale, or for a different build.
@@ -351,9 +375,20 @@ mod tests {
 
     #[test]
     fn test_format_commit_date() {
-        assert_eq!(format_commit_date("2024-12-20T10:30:00Z"), "Dec 20");
-        assert_eq!(format_commit_date("2024-01-05T00:00:00Z"), "Jan 5");
+        // Date + time format
+        assert_eq!(format_commit_date("2024-12-20T10:30:00Z"), "Dec 20 10:30");
+        assert_eq!(format_commit_date("2024-01-05T00:00:00Z"), "Jan 5 00:00");
+        assert_eq!(format_commit_date("2024-06-15T23:59:59Z"), "Jun 15 23:59");
+        // With timezone offset instead of Z
+        assert_eq!(
+            format_commit_date("2024-03-10T14:25:00+00:00"),
+            "Mar 10 14:25"
+        );
+        // Date only (no time part) falls back to date-only format
+        assert_eq!(format_commit_date("2024-07-04"), "Jul 4");
+        // Invalid formats
         assert_eq!(format_commit_date("invalid"), "invalid");
+        assert_eq!(format_commit_date(""), "");
     }
 
     #[test]

@@ -101,7 +101,7 @@ pub fn draw_mention_dropdown(
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Cyan))
-        .title(" Files & Folders (Tab to select) ");
+        .title(" Files & Folders (Tab/Enter to select) ");
 
     let dropdown = Paragraph::new(items).block(block);
     frame.render_widget(dropdown, dropdown_area);
@@ -238,7 +238,7 @@ pub fn draw_slash_dropdown(
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Yellow))
-        .title(" Slash Commands (Tab to select) ");
+        .title(" Slash Commands (Tab/Enter to select) ");
 
     let dropdown = Paragraph::new(items).block(block);
     frame.render_widget(dropdown, dropdown_area);
