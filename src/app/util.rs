@@ -107,6 +107,63 @@ pub fn build_max_iterations_summary(
     }
 
     if !last_reviews.is_empty() {
+        // New top section: Review Summary with verdict grouping
+        summary.push_str("---\n\n## Review Summary\n\n");
+
+        // Count verdicts
+        let needs_revision_count = last_reviews.iter().filter(|r| r.needs_revision).count();
+        let approved_count = last_reviews.len() - needs_revision_count;
+
+        summary.push_str(&format!(
+            "**{} reviewer(s):** {} needs revision, {} approved\n\n",
+            last_reviews.len(),
+            needs_revision_count,
+            approved_count
+        ));
+
+        // Group reviewers by verdict
+        let needs_revision: Vec<_> = last_reviews
+            .iter()
+            .filter(|r| r.needs_revision)
+            .collect();
+        let approved: Vec<_> = last_reviews
+            .iter()
+            .filter(|r| !r.needs_revision)
+            .collect();
+
+        if !needs_revision.is_empty() {
+            let names: Vec<_> = needs_revision
+                .iter()
+                .map(|r| r.agent_name.to_uppercase())
+                .collect();
+            summary.push_str(&format!("**Needs Revision:** {}\n\n", names.join(", ")));
+        }
+
+        if !approved.is_empty() {
+            let names: Vec<_> = approved
+                .iter()
+                .map(|r| r.agent_name.to_uppercase())
+                .collect();
+            summary.push_str(&format!("**Approved:** {}\n\n", names.join(", ")));
+        }
+
+        // Per-agent summary bullets
+        for review in last_reviews {
+            let verdict = if review.needs_revision {
+                "NEEDS REVISION"
+            } else {
+                "APPROVED"
+            };
+            let truncated_summary = truncate_for_summary(&review.summary, 120);
+            summary.push_str(&format!(
+                "- **{}** - **{}**: {}\n",
+                review.agent_name.to_uppercase(),
+                verdict,
+                truncated_summary
+            ));
+        }
+        summary.push('\n');
+
         // Preview section: concise cut-off view
         summary.push_str("---\n\n## Latest Review Feedback (Preview)\n\n");
         summary.push_str("_Scroll down for full feedback_\n\n");
@@ -427,9 +484,16 @@ mod tests {
             agent_name: "test-reviewer".to_string(),
             needs_revision: true,
             feedback: long_feedback.to_string(),
+            summary: "Multiple issues found in the plan".to_string(),
         }];
 
         let summary = build_max_iterations_summary(&state, working_dir, &reviews);
+
+        // Verify new Review Summary section at top
+        assert!(summary.contains("## Review Summary"));
+        assert!(summary.contains("**1 reviewer(s):** 1 needs revision, 0 approved"));
+        assert!(summary.contains("**Needs Revision:** TEST-REVIEWER"));
+        assert!(summary.contains("- **TEST-REVIEWER** - **NEEDS REVISION**: Multiple issues found in the plan"));
 
         // Verify preview section exists with truncated content
         assert!(summary.contains("## Latest Review Feedback (Preview)"));
@@ -463,7 +527,8 @@ mod tests {
         // Verify empty reviews message
         assert!(summary.contains("No review feedback available"));
 
-        // Should NOT contain preview or full feedback sections
+        // Should NOT contain any review sections
+        assert!(!summary.contains("## Review Summary"));
         assert!(!summary.contains("## Latest Review Feedback (Preview)"));
         assert!(!summary.contains("## Full Review Feedback"));
 
@@ -486,15 +551,27 @@ mod tests {
                 agent_name: "reviewer-1".to_string(),
                 needs_revision: true,
                 feedback: "Issue A\nIssue B\nIssue C".to_string(),
+                summary: "Several issues need addressing".to_string(),
             },
             phases::ReviewResult {
                 agent_name: "reviewer-2".to_string(),
                 needs_revision: false,
                 feedback: "Looks good to me".to_string(),
+                summary: "Plan is well structured".to_string(),
             },
         ];
 
         let summary = build_max_iterations_summary(&state, working_dir, &reviews);
+
+        // Verify new Review Summary section with verdict grouping
+        assert!(summary.contains("## Review Summary"));
+        assert!(summary.contains("**2 reviewer(s):** 1 needs revision, 1 approved"));
+        assert!(summary.contains("**Needs Revision:** REVIEWER-1"));
+        assert!(summary.contains("**Approved:** REVIEWER-2"));
+
+        // Verify per-agent summary bullets with verdicts
+        assert!(summary.contains("- **REVIEWER-1** - **NEEDS REVISION**: Several issues need addressing"));
+        assert!(summary.contains("- **REVIEWER-2** - **APPROVED**: Plan is well structured"));
 
         // Verify both reviewers appear in preview
         assert!(summary.contains("REVIEWER-1 (NEEDS REVISION)"));

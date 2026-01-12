@@ -118,11 +118,13 @@ mod tests {
                 agent_name: "claude".to_string(),
                 needs_revision: true,
                 feedback: "Issue 1: Missing tests".to_string(),
+                summary: "Missing test coverage".to_string(),
             },
             ReviewResult {
                 agent_name: "codex".to_string(),
                 needs_revision: true,
                 feedback: "Issue 2: Unclear architecture".to_string(),
+                summary: "Architecture needs clarification".to_string(),
             },
         ];
 
