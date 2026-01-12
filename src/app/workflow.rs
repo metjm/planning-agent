@@ -1,3 +1,39 @@
+//! Workflow execution engine.
+//!
+//! # Important Pattern: Channel Handling
+//!
+//! When waiting on channel receives in this module, **ALWAYS use `tokio::select!`**
+//! to simultaneously check both `approval_rx` AND `control_rx` channels.
+//!
+//! The `control_rx` channel receives `WorkflowCommand::Stop` when the user quits
+//! the TUI. If a function only awaits on `approval_rx.recv()`, it will block
+//! indefinitely when the user quits, causing the "quit timeout reached with
+//! active workflows" freeze bug.
+//!
+//! Good pattern (see `wait_for_review_decision` in workflow_decisions.rs):
+//! ```ignore
+//! loop {
+//!     tokio::select! {
+//!         Some(cmd) = control_rx.recv() => {
+//!             if matches!(cmd, WorkflowCommand::Stop) {
+//!                 return Ok(WorkflowResult::Stopped);
+//!             }
+//!         }
+//!         response = approval_rx.recv() => {
+//!             // Handle approval response
+//!         }
+//!     }
+//! }
+//! ```
+//!
+//! Bad pattern (causes freeze):
+//! ```ignore
+//! loop {
+//!     match approval_rx.recv().await {  // WRONG: doesn't check control_rx!
+//!         // ...
+//!     }
+//! }
+//! ```
 
 use crate::app::util::{build_approval_summary, build_plan_failure_summary, build_review_failure_summary, log_workflow};
 use crate::app::workflow_common::{plan_file_has_content, REVIEW_FAILURE_RETRY_LIMIT};
@@ -230,6 +266,7 @@ pub async fn run_workflow_with_config(
             &working_dir,
             &sender,
             &mut approval_rx,
+            &mut control_rx,
         )
         .await;
     }
@@ -704,6 +741,7 @@ async fn handle_completion(
     working_dir: &Path,
     sender: &SessionEventSender,
     approval_rx: &mut mpsc::Receiver<UserApprovalResponse>,
+    control_rx: &mut mpsc::Receiver<WorkflowCommand>,
 ) -> Result<WorkflowResult> {
     log_workflow(working_dir, ">>> Plan complete - requesting user approval");
 
@@ -730,68 +768,86 @@ async fn handle_completion(
 
     log_workflow(working_dir, "Waiting for user approval response...");
     loop {
-        match approval_rx.recv().await {
-            Some(UserApprovalResponse::Accept) => {
-                log_workflow(working_dir, "User ACCEPTED the plan");
-                sender.send_output("[planning] User accepted the plan!".to_string());
-                return Ok(WorkflowResult::Accepted);
+        tokio::select! {
+            Some(cmd) = control_rx.recv() => {
+                match cmd {
+                    WorkflowCommand::Stop => {
+                        log_workflow(working_dir, "Stop command received during approval wait");
+                        sender.send_output("[workflow] Stopping during approval...".to_string());
+                        return Ok(WorkflowResult::Stopped);
+                    }
+                    WorkflowCommand::Interrupt { feedback } => {
+                        log_workflow(working_dir, &format!("Interrupt received during approval: {}", feedback));
+                        sender.send_output("[workflow] Interrupted during approval".to_string());
+                        return Ok(WorkflowResult::NeedsRestart { user_feedback: feedback });
+                    }
+                }
             }
-            Some(UserApprovalResponse::Decline(feedback)) => {
-                log_workflow(
-                    working_dir,
-                    &format!("User DECLINED with feedback: {}", feedback),
-                );
-                sender.send_output(format!("[planning] User requested changes: {}", feedback));
-                return Ok(WorkflowResult::NeedsRestart {
-                    user_feedback: feedback,
-                });
-            }
-            Some(UserApprovalResponse::ReviewRetry)
-            | Some(UserApprovalResponse::ReviewContinue) => {
-                log_workflow(
-                    working_dir,
-                    "Received review decision while awaiting plan approval, ignoring",
-                );
-                continue;
-            }
-            Some(UserApprovalResponse::PlanGenerationRetry) => {
-                log_workflow(
-                    working_dir,
-                    "Received PlanGenerationRetry while awaiting plan approval, ignoring",
-                );
-                continue;
-            }
-            Some(UserApprovalResponse::PlanGenerationContinue) => {
-                log_workflow(
-                    working_dir,
-                    "Received PlanGenerationContinue while awaiting plan approval, ignoring",
-                );
-                continue;
-            }
-            Some(UserApprovalResponse::AbortWorkflow) => {
-                log_workflow(
-                    working_dir,
-                    "Received AbortWorkflow while awaiting plan approval, ignoring",
-                );
-                continue;
-            }
-            Some(UserApprovalResponse::ProceedWithoutApproval) => {
-                log_workflow(
-                    working_dir,
-                    "Received ProceedWithoutApproval while awaiting plan approval, ignoring",
-                );
-                continue;
-            }
-            Some(UserApprovalResponse::ContinueReviewing) => {
-                log_workflow(
-                    working_dir,
-                    "Received ContinueReviewing while awaiting plan approval, ignoring",
-                );
-                continue;
-            }
-            None => {
-                log_workflow(working_dir, "Approval channel closed - treating as accept");
-                return Ok(WorkflowResult::Accepted);
+            response = approval_rx.recv() => {
+                match response {
+                    Some(UserApprovalResponse::Accept) => {
+                        log_workflow(working_dir, "User ACCEPTED the plan");
+                        sender.send_output("[planning] User accepted the plan!".to_string());
+                        return Ok(WorkflowResult::Accepted);
+                    }
+                    Some(UserApprovalResponse::Decline(feedback)) => {
+                        log_workflow(
+                            working_dir,
+                            &format!("User DECLINED with feedback: {}", feedback),
+                        );
+                        sender.send_output(format!("[planning] User requested changes: {}", feedback));
+                        return Ok(WorkflowResult::NeedsRestart {
+                            user_feedback: feedback,
+                        });
+                    }
+                    Some(UserApprovalResponse::ReviewRetry)
+                    | Some(UserApprovalResponse::ReviewContinue) => {
+                        log_workflow(
+                            working_dir,
+                            "Received review decision while awaiting plan approval, ignoring",
+                        );
+                        continue;
+                    }
+                    Some(UserApprovalResponse::PlanGenerationRetry) => {
+                        log_workflow(
+                            working_dir,
+                            "Received PlanGenerationRetry while awaiting plan approval, ignoring",
+                        );
+                        continue;
+                    }
+                    Some(UserApprovalResponse::PlanGenerationContinue) => {
+                        log_workflow(
+                            working_dir,
+                            "Received PlanGenerationContinue while awaiting plan approval, ignoring",
+                        );
+                        continue;
+                    }
+                    Some(UserApprovalResponse::AbortWorkflow) => {
+                        log_workflow(
+                            working_dir,
+                            "Received AbortWorkflow while awaiting plan approval, ignoring",
+                        );
+                        continue;
+                    }
+                    Some(UserApprovalResponse::ProceedWithoutApproval) => {
+                        log_workflow(
+                            working_dir,
+                            "Received ProceedWithoutApproval while awaiting plan approval, ignoring",
+                        );
+                        continue;
+                    }
+                    Some(UserApprovalResponse::ContinueReviewing) => {
+                        log_workflow(
+                            working_dir,
+                            "Received ContinueReviewing while awaiting plan approval, ignoring",
+                        );
+                        continue;
+                    }
+                    None => {
+                        log_workflow(working_dir, "Approval channel closed - treating as accept");
+                        return Ok(WorkflowResult::Accepted);
+                    }
+                }
             }
         }
     }

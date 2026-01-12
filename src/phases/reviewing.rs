@@ -205,7 +205,7 @@ pub async fn run_multi_agent_review_with_context(
                 match parse_mcp_review(&initial_output) {
                     Ok(review) => {
                         sender.send_output(format!("[review:{}] Review complete", agent_name));
-                        return (agent_name, ReviewExecutionResult::Success(review));
+                        (agent_name, ReviewExecutionResult::Success(review))
                     }
                     Err(parse_failure) => {
                         // Initial attempt failed to parse - try recovery
@@ -281,7 +281,7 @@ pub async fn run_multi_agent_review_with_context(
                             agent_name
                         ));
 
-                        return (
+                        (
                             agent_name,
                             ReviewExecutionResult::ParseFailure {
                                 error: final_parse_result.error,
@@ -292,7 +292,7 @@ pub async fn run_multi_agent_review_with_context(
                                 attempt_timestamps: timestamps,
                                 mcp_server_name: mcp_config.server_name.clone(),
                             },
-                        );
+                        )
                     }
                 }
             }

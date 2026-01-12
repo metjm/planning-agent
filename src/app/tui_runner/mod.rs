@@ -365,13 +365,11 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
             )
             .await?;
 
-            if quit_requested {
-                if matches!(quit_state, QuitState::Running) {
-                    quit_state = QuitState::Quitting {
-                        requested_at: Instant::now(),
-                        stop_sent: false,
-                    };
-                }
+            if quit_requested && matches!(quit_state, QuitState::Running) {
+                quit_state = QuitState::Quitting {
+                    requested_at: Instant::now(),
+                    stop_sent: false,
+                };
             }
         }
 
@@ -423,6 +421,11 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                             if let Some(ref tx) = session.workflow_control_tx {
                                 let _ = tx.try_send(WorkflowCommand::Stop);
                             }
+                            // Also drop the approval channel to unblock any waiting recv()
+                            // This is a belt-and-suspenders approach - the workflow should
+                            // handle Stop via control_rx, but dropping approval_tx ensures
+                            // the channel closes even if there's some edge case
+                            session.approval_tx = None;
                         }
                     }
                     *stop_sent = true;
