@@ -135,19 +135,12 @@ impl CodexAgent {
         let mut cmd = Command::new(&self.config.command);
 
         // Set HOME to temp directory if using MCP
-        // Codex reads config from ~/.codex/config.toml
+        // Codex reads config from ~/.codex/config.toml which contains the MCP server settings
+        // No --enable flag needed - MCP is configured via config.toml, not a feature flag
         if let Some(temp) = temp_config {
             cmd.env("HOME", temp.home_dir());
         }
-
-        // Add --allowed-mcp-server-names to restrict to our server only
-        if let Some(mcp) = mcp_config {
-            cmd.arg("--enable");
-            cmd.arg("mcp");
-            // Note: Codex doesn't have --allowed-mcp-server-names like Gemini
-            // The server is already isolated via the temp config
-            let _ = mcp; // silence unused warning
-        }
+        let _ = mcp_config; // MCP config is used via temp_config's config.toml
 
         // Add the regular config args (including subcommand like "exec")
         for arg in &self.config.args {
