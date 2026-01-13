@@ -195,8 +195,8 @@ pub async fn handle_key_event(
         }
     }
 
-    // Handle F2 to toggle plan modal (global hotkey, works from any mode except error state)
-    if key.code == KeyCode::F(2) && session.workflow_state.is_some() {
+    // Handle 'p' to toggle plan modal (global hotkey, works from any mode except error state)
+    if key.code == KeyCode::Char('p') && session.workflow_state.is_some() {
         session.toggle_plan_modal(working_dir);
         return Ok(false);
     }
@@ -205,7 +205,7 @@ pub async fn handle_key_event(
     if session.plan_modal_open {
         let content = session.plan_modal_content.clone();
         match key.code {
-            KeyCode::Esc | KeyCode::F(2) => {
+            KeyCode::Esc | KeyCode::Char('p') => {
                 session.close_plan_modal();
             }
             KeyCode::Char('j') | KeyCode::Down => {

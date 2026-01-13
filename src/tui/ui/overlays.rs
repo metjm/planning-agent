@@ -82,11 +82,11 @@ pub fn draw_footer(frame: &mut Frame, session: &Session, tab_manager: &TabManage
         ));
     }
 
-    // Show F2 Plan hint when workflow is active
+    // Show 'p' Plan hint when workflow is active
     if session.workflow_state.is_some() {
         spans.push(Span::styled(" │ ", Style::default().fg(Color::DarkGray)));
         spans.push(Span::styled(
-            "[F2] Plan",
+            "[p] Plan",
             Style::default().fg(Color::Blue),
         ));
     }
@@ -788,7 +788,7 @@ pub fn draw_plan_modal(frame: &mut Frame, session: &Session) {
         Span::raw("Top/Bottom  "),
         Span::styled("  [PgUp/Dn] ", Style::default().fg(Color::Cyan).bold()),
         Span::raw("Page  "),
-        Span::styled("  [Esc/F2] ", Style::default().fg(Color::Yellow).bold()),
+        Span::styled("  [Esc/p] ", Style::default().fg(Color::Yellow).bold()),
         Span::raw("Close"),
     ]))
     .block(
