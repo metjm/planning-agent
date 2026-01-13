@@ -12,6 +12,9 @@ pub const REVIEW_SYSTEM_PROMPT: &str = r#"You are a technical plan reviewer.
 Review the plan for correctness, completeness, and technical accuracy.
 Use the "plan-review" skill to review.
 IMPORTANT: Use absolute paths for all file references in your feedback.
+
+CRITICAL: You MUST call the `get_plan` MCP tool to retrieve the plan you are reviewing.
+Do NOT search for or read plan files from the filesystem - the plan is ONLY available via the `get_plan` MCP tool.
 "#;
 
 /// Build the review prompt that will be embedded in the MCP server's get_plan response
@@ -39,15 +42,21 @@ After your review, you MUST submit your feedback using the `submit_review` MCP t
 pub fn build_mcp_agent_prompt(state: &State, working_dir: &Path) -> String {
     PromptBuilder::new()
         .phase("reviewing")
-        .instructions(r#"You are reviewing an implementation plan. Follow these steps:
+        .instructions(r#"You are reviewing an implementation plan.
 
-1. Use the `get_plan` MCP tool to retrieve the plan content and review instructions
-2. Read and analyze the plan thoroughly
-3. Submit your review using the `submit_review` MCP tool
+CRITICAL - FIRST STEP: Call the `get_plan` MCP tool to retrieve the plan content.
+The plan is ONLY available via the `get_plan` MCP tool.
+Do NOT search for or read plan files from the filesystem - they are stored in a location you cannot guess.
+
+Follow these steps:
+1. Call `get_plan` MCP tool FIRST to retrieve the plan content and review instructions
+2. Read and analyze the plan content returned by `get_plan`
+3. You may read codebase files to verify the plan's technical claims
+4. Submit your review using the `submit_review` MCP tool
 
 You MUST use the MCP tools to complete this review:
-- First call `get_plan` to get the plan content
-- Then call `submit_review` with your verdict and feedback"#)
+- FIRST: Call `get_plan` to get the plan content (this is the ONLY way to get the plan)
+- THEN: Call `submit_review` with your verdict and feedback"#)
         .input("workspace-root", &working_dir.display().to_string())
         .input("objective", &state.objective)
         .constraint("Use absolute paths for all file references in your feedback")
