@@ -64,6 +64,8 @@ impl Session {
             account_usage: self.account_usage.clone(),
             spinner_frame: self.spinner_frame,
             current_run_id: self.current_run_id,
+            plan_modal_open: self.plan_modal_open,
+            plan_modal_scroll: self.plan_modal_scroll,
         }
     }
 
@@ -145,6 +147,9 @@ impl Session {
             tab_mention_state: MentionState::new(), // Runtime-only, reset on resume
             feedback_mention_state: MentionState::new(), // Runtime-only, reset on resume
             tab_slash_state: SlashState::new(), // Runtime-only, reset on resume
+            plan_modal_open: ui_state.plan_modal_open,
+            plan_modal_scroll: ui_state.plan_modal_scroll,
+            plan_modal_content: String::new(), // Content is re-read from disk when modal opens
         }
     }
 }
