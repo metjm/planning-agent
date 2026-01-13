@@ -20,7 +20,7 @@ struct TempCodexConfigDir {
 
 impl TempCodexConfigDir {
     /// Create a new temp config directory with MCP settings
-    /// Codex looks for config at ~/.codex/config.toml
+    /// Copies the real ~/.codex directory and adds MCP config on top
     fn new(mcp_config: &McpServerConfig) -> Result<Self> {
         let uuid = mcp_config
             .server_name
@@ -28,13 +28,43 @@ impl TempCodexConfigDir {
             .unwrap_or(&mcp_config.server_name);
         let base_path = std::env::temp_dir().join(format!("codex-mcp-{}", uuid));
         let codex_dir = base_path.join(".codex");
-        std::fs::create_dir_all(&codex_dir)?;
 
-        // Write the config.toml file
+        // Copy the real ~/.codex directory to preserve auth, skills, etc.
+        if let Some(real_home) = std::env::var_os("HOME") {
+            let real_codex_dir = PathBuf::from(real_home).join(".codex");
+            if real_codex_dir.exists() {
+                Self::copy_dir_recursive(&real_codex_dir, &codex_dir)?;
+            } else {
+                std::fs::create_dir_all(&codex_dir)?;
+            }
+        } else {
+            std::fs::create_dir_all(&codex_dir)?;
+        }
+
+        // Append MCP config to the config.toml file
         let config_path = codex_dir.join("config.toml");
-        std::fs::write(&config_path, mcp_config.to_codex_config_toml())?;
+        let mut config_content = std::fs::read_to_string(&config_path).unwrap_or_default();
+        config_content.push_str("\n\n# MCP server injected by planning-agent\n");
+        config_content.push_str(&mcp_config.to_codex_config_toml());
+        std::fs::write(&config_path, config_content)?;
 
         Ok(Self { path: base_path })
+    }
+
+    /// Recursively copy a directory
+    fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
+        std::fs::create_dir_all(dst)?;
+        for entry in std::fs::read_dir(src)? {
+            let entry = entry?;
+            let src_path = entry.path();
+            let dst_path = dst.join(entry.file_name());
+            if src_path.is_dir() {
+                Self::copy_dir_recursive(&src_path, &dst_path)?;
+            } else {
+                std::fs::copy(&src_path, &dst_path)?;
+            }
+        }
+        Ok(())
     }
 
     /// Get the path to use as HOME for codex
