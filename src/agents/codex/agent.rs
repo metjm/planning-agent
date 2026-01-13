@@ -5,12 +5,50 @@ use crate::agents::{AgentContext, AgentResult};
 use crate::config::AgentConfig;
 use crate::mcp::McpServerConfig;
 use anyhow::Result;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tokio::process::Command;
 
 const DEFAULT_ACTIVITY_TIMEOUT: Duration = Duration::from_secs(300);
 const DEFAULT_OVERALL_TIMEOUT: Duration = Duration::from_secs(21600); // 6 hours
+
+/// RAII guard for temporary Codex config directory
+/// Cleans up the directory when dropped
+struct TempCodexConfigDir {
+    path: PathBuf,
+}
+
+impl TempCodexConfigDir {
+    /// Create a new temp config directory with MCP settings
+    /// Codex looks for config at ~/.codex/config.toml
+    fn new(mcp_config: &McpServerConfig) -> Result<Self> {
+        let uuid = mcp_config
+            .server_name
+            .strip_prefix("planning-agent-review-")
+            .unwrap_or(&mcp_config.server_name);
+        let base_path = std::env::temp_dir().join(format!("codex-mcp-{}", uuid));
+        let codex_dir = base_path.join(".codex");
+        std::fs::create_dir_all(&codex_dir)?;
+
+        // Write the config.toml file
+        let config_path = codex_dir.join("config.toml");
+        std::fs::write(&config_path, mcp_config.to_codex_config_toml())?;
+
+        Ok(Self { path: base_path })
+    }
+
+    /// Get the path to use as HOME for codex
+    fn home_dir(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for TempCodexConfigDir {
+    fn drop(&mut self) {
+        // Best-effort cleanup
+        let _ = std::fs::remove_dir_all(&self.path);
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct CodexAgent {
@@ -71,25 +109,44 @@ impl CodexAgent {
         let logger = AgentLogger::new(&self.name, &self.working_dir);
         self.log_start(&logger, &prompt, has_context, mcp_config.is_some());
 
-        let cmd = self.build_command(&prompt, mcp_config);
+        // Create temp config dir if using MCP (will be cleaned up when dropped)
+        let _temp_config = match mcp_config {
+            Some(mcp) => Some(TempCodexConfigDir::new(mcp)?),
+            None => None,
+        };
+
+        let cmd = self.build_command(&prompt, mcp_config, _temp_config.as_ref());
         let config = RunnerConfig::new(self.name.clone(), self.working_dir.clone())
             .with_activity_timeout(self.activity_timeout)
             .with_overall_timeout(self.overall_timeout);
         let mut parser = CodexParser::new();
 
         let output = run_agent_process(cmd, &config, &mut parser, emitter).await?;
+        // _temp_config dropped here, cleaning up the temp directory
         Ok(output.into())
     }
 
-    fn build_command(&self, prompt: &str, mcp_config: Option<&McpServerConfig>) -> Command {
+    fn build_command(
+        &self,
+        prompt: &str,
+        mcp_config: Option<&McpServerConfig>,
+        temp_config: Option<&TempCodexConfigDir>,
+    ) -> Command {
         let mut cmd = Command::new(&self.config.command);
 
-        // Add MCP config arguments first if provided
-        // These must come before the subcommand (exec)
+        // Set HOME to temp directory if using MCP
+        // Codex reads config from ~/.codex/config.toml
+        if let Some(temp) = temp_config {
+            cmd.env("HOME", temp.home_dir());
+        }
+
+        // Add --allowed-mcp-server-names to restrict to our server only
         if let Some(mcp) = mcp_config {
-            for arg in mcp.to_codex_config_args() {
-                cmd.arg(arg);
-            }
+            cmd.arg("--enable");
+            cmd.arg("mcp");
+            // Note: Codex doesn't have --allowed-mcp-server-names like Gemini
+            // The server is already isolated via the temp config
+            let _ = mcp; // silence unused warning
         }
 
         // Add the regular config args (including subcommand like "exec")
