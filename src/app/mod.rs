@@ -1,5 +1,6 @@
 
 pub mod cli;
+pub mod failure;
 pub mod headless;
 pub mod tui_runner;
 pub mod util;

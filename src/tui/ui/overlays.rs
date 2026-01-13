@@ -209,6 +209,13 @@ fn draw_choice_popup(frame: &mut Frame, session: &Session, area: Rect) {
                 " Final Confirmation ",
                 " Override Summary (j/k to scroll) ",
             ),
+            ApprovalContext::AllReviewersFailed => (
+                " ✗ All Reviewers Failed ",
+                Color::Red,
+                Color::Red,
+                " Recovery Options ",
+                " Failure Details (j/k to scroll) ",
+            ),
         };
 
     let title = Paragraph::new(Line::from(vec![Span::styled(
@@ -300,6 +307,16 @@ fn draw_choice_popup(frame: &mut Frame, session: &Session, area: Rect) {
             Span::raw("Implement  "),
             Span::styled("  [d] ", Style::default().fg(Color::Yellow).bold()),
             Span::raw("Decline  "),
+            Span::styled("  [j/k] ", Style::default().fg(Color::Cyan).bold()),
+            Span::raw("Scroll"),
+        ])]),
+        ApprovalContext::AllReviewersFailed => Paragraph::new(vec![Line::from(vec![
+            Span::styled("  [r] ", Style::default().fg(Color::Yellow).bold()),
+            Span::raw("Retry  "),
+            Span::styled("  [s] ", Style::default().fg(Color::Blue).bold()),
+            Span::raw("Stop & Save  "),
+            Span::styled("  [a] ", Style::default().fg(Color::Red).bold()),
+            Span::raw("Abort  "),
             Span::styled("  [j/k] ", Style::default().fg(Color::Cyan).bold()),
             Span::raw("Scroll"),
         ])]),

@@ -40,6 +40,25 @@ pub enum NewEvent { ... }
 pub enum NewEvent { ... }
 ```
 
+## File Size Limits
+
+**This project enforces a 750-line maximum per file via `build.rs`.**
+
+When a file exceeds 750 lines:
+1. **Split into modules** - Extract cohesive functionality into submodules
+2. **Don't compress code** - Never use hacky tricks to reduce line count (removing blank lines, combining statements, etc.)
+3. **Follow existing patterns** - See `src/tui/ui/` and `src/tui/session/` for examples of split modules
+
+### How to Split a File
+
+When `src/foo/bar.rs` exceeds the limit:
+1. Create `src/foo/bar/mod.rs` (rename the original file)
+2. Extract related functions into `src/foo/bar/helpers.rs`, `src/foo/bar/types.rs`, etc.
+3. Re-export public items from `mod.rs` to maintain the same external API
+4. Each new file should have a clear, focused responsibility
+
+See `docs/plans/file-line-limit.md` for detailed guidance.
+
 ## General Principles
 
 1. **Make changes fully** - Don't leave partial migrations or TODO comments for "later"

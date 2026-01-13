@@ -1,6 +1,7 @@
 use crate::app::cli::Cli;
+use crate::app::failure::{FailureContext, FailureKind, OnAllReviewersFailed};
 use crate::app::util::truncate_for_summary;
-use crate::app::workflow_common::{plan_file_has_content, pre_create_plan_files, REVIEW_FAILURE_RETRY_LIMIT, PLANNING_FAILURE_RETRY_LIMIT};
+use crate::app::workflow_common::{plan_file_has_content, pre_create_plan_files};
 use crate::config::WorkflowConfig;
 use crate::phases::{
     self, aggregate_reviews, merge_feedback, run_multi_agent_review_with_context,
@@ -109,7 +110,8 @@ pub async fn run_headless_with_config(
                                         .to_string(),
                                 );
                                 planning_attempts += 1;
-                                if planning_attempts > PLANNING_FAILURE_RETRY_LIMIT {
+                                let max_retries = config.failure_policy.max_retries as usize;
+                                if planning_attempts > max_retries {
                                     anyhow::bail!(
                                         "Plan file empty after {} attempts (headless mode does not support interactive recovery)",
                                         planning_attempts
@@ -117,7 +119,7 @@ pub async fn run_headless_with_config(
                                 }
                                 sender.send_output(format!(
                                     "[planning] Retrying plan generation ({}/{})...",
-                                    planning_attempts, PLANNING_FAILURE_RETRY_LIMIT
+                                    planning_attempts, max_retries
                                 ));
                                 continue;
                             }
@@ -135,7 +137,8 @@ pub async fn run_headless_with_config(
                             }
 
                             planning_attempts += 1;
-                            if planning_attempts > PLANNING_FAILURE_RETRY_LIMIT {
+                            let max_retries = config.failure_policy.max_retries as usize;
+                            if planning_attempts > max_retries {
                                 anyhow::bail!(
                                     "Planning failed after {} attempts: {} (headless mode does not support interactive recovery)",
                                     planning_attempts,
@@ -144,7 +147,7 @@ pub async fn run_headless_with_config(
                             }
                             sender.send_output(format!(
                                 "[planning] Retrying plan generation ({}/{})...",
-                                planning_attempts, PLANNING_FAILURE_RETRY_LIMIT
+                                planning_attempts, max_retries
                             ));
                             continue;
                         }
@@ -214,16 +217,17 @@ pub async fn run_headless_with_config(
                     }
 
                     if reviews_by_agent.is_empty() {
-                        if retry_attempts < REVIEW_FAILURE_RETRY_LIMIT {
+                        let max_retries = config.failure_policy.max_retries as usize;
+                        if retry_attempts < max_retries {
                             retry_attempts += 1;
                             sender.send_output(format!(
                                 "[review] All reviewers failed; retrying ({}/{})...",
-                                retry_attempts, REVIEW_FAILURE_RETRY_LIMIT
+                                retry_attempts, max_retries
                             ));
                             pending_reviewers = failed_names;
                             continue;
                         }
-                        // Output bundle paths before bailing
+                        // Output bundle paths before applying policy
                         for failure in &batch.failures {
                             if let Some(ref path) = failure.bundle_path {
                                 sender.send_output(format!(
@@ -233,7 +237,59 @@ pub async fn run_headless_with_config(
                                 ));
                             }
                         }
-                        anyhow::bail!("All reviewers failed to complete review");
+
+                        // Apply failure policy
+                        match config.failure_policy.on_all_reviewers_failed {
+                            OnAllReviewersFailed::SaveState => {
+                                // Set failure context for later recovery
+                                state.set_failure(FailureContext {
+                                    kind: FailureKind::AllReviewersFailed,
+                                    phase: state.phase.clone(),
+                                    agent_name: None,
+                                    retry_count: retry_attempts as u32,
+                                    max_retries: max_retries as u32,
+                                    failed_at: chrono::Utc::now().to_rfc3339(),
+                                    recovery_action: None,
+                                });
+                                state.set_updated_at();
+                                state.save_atomic(&state_path)?;
+
+                                sender.send_output("[error] All reviewers failed after retries.".to_string());
+                                sender.send_output(format!("[save] State saved to: {}", state_path.display()));
+                                sender.send_output(format!(
+                                    "[info] To recover in TUI mode, run: planning-agent --continue --name {}",
+                                    state.feature_name
+                                ));
+                                return Ok(());
+                            }
+                            OnAllReviewersFailed::ContinueWithoutReview => {
+                                sender.send_output("[warning] All reviewers failed - continuing without review".to_string());
+                                // Transition directly to revision phase without feedback
+                                if state.iteration >= state.max_iterations {
+                                    sender.send_output("[planning] Max iterations reached".to_string());
+                                    break;
+                                }
+                                state.transition(Phase::Revising)?;
+                                state.set_updated_at();
+                                state.save_atomic(&state_path)?;
+                                break; // Exit the review loop
+                            }
+                            OnAllReviewersFailed::Abort => {
+                                // Set failure context for diagnostics before bailing
+                                state.set_failure(FailureContext {
+                                    kind: FailureKind::AllReviewersFailed,
+                                    phase: state.phase.clone(),
+                                    agent_name: None,
+                                    retry_count: retry_attempts as u32,
+                                    max_retries: max_retries as u32,
+                                    failed_at: chrono::Utc::now().to_rfc3339(),
+                                    recovery_action: None,
+                                });
+                                state.set_updated_at();
+                                let _ = state.save_atomic(&state_path);
+                                anyhow::bail!("All reviewers failed to complete review");
+                            }
+                        }
                     }
 
                     sender.send_output(format!(

@@ -384,6 +384,11 @@ async fn handle_session_event(
                 session.start_user_override_approval(summary);
             }
         }
+        Event::SessionAllReviewersFailed { session_id, summary } => {
+            if let Some(session) = tab_manager.session_by_id_mut(session_id) {
+                session.start_all_reviewers_failed(summary);
+            }
+        }
         Event::SessionAgentMessage {
             session_id,
             agent_name,
@@ -561,6 +566,15 @@ pub async fn handle_init_completion(
             if let Some(session) = tab_manager.session_by_id_mut(session_id) {
                 session.name = feature_name;
                 session.workflow_state = Some(state.clone());
+
+                // Check if state has a failure that needs recovery
+                // This happens when resuming a session that was stopped with a failure
+                if let Some(ref failure) = state.last_failure {
+                    let summary = crate::app::util::build_resume_failure_summary(failure);
+                    session.start_all_reviewers_failed(summary);
+                    session.add_output("[planning] Session has unresolved failure - awaiting recovery decision".to_string());
+                    return;
+                }
 
                 let (new_approval_tx, new_approval_rx) =
                     mpsc::channel::<UserApprovalResponse>(1);

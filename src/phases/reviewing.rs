@@ -1,4 +1,6 @@
 use crate::agents::{AgentContext, AgentType};
+use crate::app::failure::FailureKind;
+use crate::app::workflow_common::is_network_error;
 use crate::config::{AggregationMode, WorkflowConfig};
 use crate::diagnostics::{create_mcp_review_bundle, AttemptTimestamp, BundleConfig};
 use crate::mcp::spawner::generate_mcp_server_config;
@@ -32,6 +34,17 @@ pub struct ReviewFailure {
     pub error: String,
     /// Path to the diagnostics bundle (if created after retry failure)
     pub bundle_path: Option<PathBuf>,
+    /// Classified failure type for recovery decisions
+    #[allow(dead_code)]
+    pub kind: FailureKind,
+}
+
+impl ReviewFailure {
+    /// Returns true if this failure is potentially recoverable via retry.
+    #[allow(dead_code)]
+    pub fn is_retryable(&self) -> bool {
+        self.kind.is_retryable()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -383,16 +396,20 @@ pub async fn run_multi_agent_review_with_context(
 
                 failures.push(ReviewFailure {
                     agent_name,
-                    error: full_error,
+                    error: full_error.clone(),
                     bundle_path,
+                    kind: FailureKind::ParseFailure(full_error),
                 });
             }
             ReviewExecutionResult::ExecutionError(error) => {
                 session_sender.send_output(format!("[error] {} review failed: {}", agent_name, error));
+                // Classify the error based on its content
+                let kind = classify_execution_error(&error);
                 failures.push(ReviewFailure {
                     agent_name,
                     error,
                     bundle_path: None,
+                    kind,
                 });
             }
         }
@@ -438,6 +455,49 @@ async fn execute_review_attempt(
         started_at,
         ended_at,
     })
+}
+
+/// Classifies an execution error into a FailureKind based on error message patterns.
+fn classify_execution_error(error: &str) -> FailureKind {
+    let error_lower = error.to_lowercase();
+
+    // Check for timeout patterns
+    if error_lower.contains("timeout")
+        || error_lower.contains("no output for")
+        || error_lower.contains("unresponsive")
+    {
+        return FailureKind::Timeout;
+    }
+
+    // Check for network errors
+    if is_network_error(error) {
+        return FailureKind::Network;
+    }
+
+    // Check for empty output patterns
+    if error_lower.contains("empty output")
+        || error_lower.contains("no content")
+        || error_lower.contains("empty response")
+    {
+        return FailureKind::EmptyOutput;
+    }
+
+    // Check for process exit patterns (e.g., "exit code 1")
+    if let Some(captures) = regex::Regex::new(r"exit\s*(?:code|status)?\s*[:\s]?\s*(\d+)")
+        .ok()
+        .and_then(|re| re.captures(&error_lower))
+    {
+        if let Some(code_str) = captures.get(1) {
+            if let Ok(code) = code_str.as_str().parse::<i32>() {
+                if code != 0 {
+                    return FailureKind::ProcessExit(code);
+                }
+            }
+        }
+    }
+
+    // Fallback to unknown
+    FailureKind::Unknown(error.chars().take(500).collect())
 }
 
 pub fn aggregate_reviews(reviews: &[ReviewResult], mode: &AggregationMode) -> FeedbackStatus {

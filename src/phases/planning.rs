@@ -121,6 +121,8 @@ mod tests {
             agent_sessions: HashMap::new(),
             invocations: Vec::new(),
             updated_at: String::new(),
+            last_failure: None,
+            failure_history: Vec::new(),
         }
     }
 

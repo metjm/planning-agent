@@ -140,7 +140,7 @@ pub async fn handle_key_event(
     output_tx: &mpsc::UnboundedSender<Event>,
     working_dir: &Path,
     cli: &Cli,
-    _workflow_config: &WorkflowConfig,
+    workflow_config: &WorkflowConfig,
     init_handle: &mut InitHandle,
 ) -> Result<bool> {
     #[allow(unused_assignments)]
@@ -206,7 +206,7 @@ pub async fn handle_key_event(
     // Clone file_index for mention handling
     let file_index = tab_manager.file_index.clone();
     let session = tab_manager.active_mut();
-    should_quit = handle_approval_mode_input(key, session, terminal, working_dir, output_tx, &file_index).await?;
+    should_quit = handle_approval_mode_input(key, session, terminal, working_dir, output_tx, workflow_config, &file_index).await?;
 
     Ok(should_quit)
 }
@@ -577,11 +577,12 @@ async fn handle_approval_mode_input(
     terminal: &mut ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io::Stdout>>,
     working_dir: &Path,
     output_tx: &mpsc::UnboundedSender<Event>,
+    workflow_config: &WorkflowConfig,
     file_index: &FileIndex,
 ) -> Result<bool> {
     match session.approval_mode {
         ApprovalMode::AwaitingChoice => {
-            handle_awaiting_choice_input(key, session, terminal, working_dir, output_tx).await
+            handle_awaiting_choice_input(key, session, terminal, working_dir, output_tx, workflow_config).await
         }
         ApprovalMode::EnteringFeedback => handle_entering_feedback_input(key, session, file_index).await,
         ApprovalMode::None => handle_none_mode_input(key, session),

@@ -44,6 +44,17 @@ workflow:
   revising:
     agent: claude
 
+# Failure handling policy
+# Controls how transient failures and recovery are handled
+failure_policy:
+  max_retries: 2           # Maximum retry attempts for transient failures
+  backoff_secs: 5          # Backoff multiplier in seconds between retries
+  # Action when all reviewers fail after retries:
+  # - abort: Stop workflow with error (default)
+  # - save_state: Save state for later recovery in TUI mode
+  # - continue_without_review: Proceed to revision phase without reviews
+  on_all_reviewers_failed: abort
+
 # Optional: Post-implementation verification workflow
 # Uncomment to enable verification after implementation
 #verification:
