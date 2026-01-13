@@ -19,7 +19,7 @@ use tokio::time::Instant;
 pub const DEFAULT_ACTIVITY_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// Default overall timeout for the entire agent execution.
-pub const DEFAULT_OVERALL_TIMEOUT: Duration = Duration::from_secs(1800);
+pub const DEFAULT_OVERALL_TIMEOUT: Duration = Duration::from_secs(21600); // 6 hours
 
 /// Timeout for waiting for the process to exit after streams close.
 pub const PROCESS_WAIT_TIMEOUT: Duration = Duration::from_secs(30);

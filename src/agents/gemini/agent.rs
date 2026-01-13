@@ -10,7 +10,7 @@ use std::time::Duration;
 use tokio::process::Command;
 
 const DEFAULT_ACTIVITY_TIMEOUT: Duration = Duration::from_secs(300);
-const DEFAULT_OVERALL_TIMEOUT: Duration = Duration::from_secs(1800);
+const DEFAULT_OVERALL_TIMEOUT: Duration = Duration::from_secs(21600); // 6 hours
 
 /// RAII guard for temporary Gemini config directory
 /// Cleans up the directory when dropped
