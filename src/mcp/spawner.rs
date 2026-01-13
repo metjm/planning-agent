@@ -50,17 +50,29 @@ impl McpServerConfig {
         config.to_string()
     }
 
-    /// Generate Codex CLI --config arguments for MCP server injection
-    /// Returns a vector of argument pairs to prepend to the command
-    pub fn to_codex_config_args(&self) -> Vec<String> {
-        let args_json = serde_json::to_string(&self.args).unwrap_or_else(|_| "[]".to_string());
+    /// Generate Codex config.toml content with MCP server configuration
+    /// Codex expects a TOML file at ~/.codex/config.toml
+    pub fn to_codex_config_toml(&self) -> String {
+        // Escape the command path for TOML (handle backslashes in paths)
+        let escaped_command = self.command.replace('\\', "\\\\");
 
-        vec![
-            "--config".to_string(),
-            format!("mcp_servers.{}.command={}", self.server_name, self.command),
-            "--config".to_string(),
-            format!("mcp_servers.{}.args={}", self.server_name, args_json),
-        ]
+        // Convert args to TOML array format
+        let args_toml: Vec<String> = self.args
+            .iter()
+            .map(|arg| format!("\"{}\"", arg.replace('\\', "\\\\").replace('"', "\\\"")))
+            .collect();
+        let args_array = format!("[{}]", args_toml.join(", "));
+
+        format!(
+            r#"# Temporary MCP server configuration for planning-agent review
+[mcp_servers.{}]
+command = "{}"
+args = {}
+"#,
+            self.server_name,
+            escaped_command,
+            args_array
+        )
     }
 
     /// Generate Gemini settings.json content for MCP server
@@ -148,17 +160,17 @@ mod tests {
     }
 
     #[test]
-    fn test_mcp_server_config_to_codex_args() {
+    fn test_mcp_server_config_to_codex_toml() {
         let config = McpServerConfig::new("# Test Plan", "Review this").unwrap();
-        let args = config.to_codex_config_args();
+        let toml_str = config.to_codex_config_toml();
 
-        assert_eq!(args.len(), 4);
-        assert_eq!(args[0], "--config");
-        assert!(args[1].starts_with("mcp_servers.planning-agent-review-"));
-        assert!(args[1].contains(".command="));
-        assert_eq!(args[2], "--config");
-        assert!(args[3].starts_with("mcp_servers.planning-agent-review-"));
-        assert!(args[3].contains(".args="));
+        // Should contain valid TOML with mcp_servers section
+        assert!(toml_str.contains("[mcp_servers.planning-agent-review-"));
+        assert!(toml_str.contains("command = \""));
+        assert!(toml_str.contains("args = [\"--internal-mcp-server\""));
+        // Should have all 5 args (command + 4 positional args)
+        assert!(toml_str.contains("--plan-content-b64"));
+        assert!(toml_str.contains("--review-prompt-b64"));
     }
 
     #[test]
