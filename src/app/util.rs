@@ -89,6 +89,67 @@ pub fn build_review_failure_summary(
     summary
 }
 
+/// Builds a summary for all-reviewers-failed scenario.
+/// This is separate from build_review_failure_summary because there are no partial reviews
+/// to continue with - we need different action options.
+pub fn build_all_reviewers_failed_summary(
+    failures: &[phases::ReviewFailure],
+    retry_attempts: usize,
+    max_retries: usize,
+) -> String {
+    let mut summary = String::new();
+    summary.push_str("# All Reviewers Failed\n\n");
+    summary.push_str(&format!(
+        "All {} reviewer(s) failed after {} retry attempt(s) (max: {}).\n\n",
+        failures.len(),
+        retry_attempts,
+        max_retries
+    ));
+
+    summary.push_str("## Failed Reviewers\n\n");
+    let mut has_bundles = false;
+    for failure in failures {
+        let error = truncate_for_summary(&failure.error, 200);
+        let failure_type = failure.kind.display_name();
+        summary.push_str(&format!("- **{}** ({}): {}\n", failure.agent_name, failure_type, error));
+        if let Some(ref path) = failure.bundle_path {
+            summary.push_str(&format!("  Diagnostics bundle: {}\n", path.display()));
+            has_bundles = true;
+        }
+    }
+
+    if has_bundles {
+        summary.push_str("\n**Note:** Diagnostics bundles may contain sensitive information from logs.\n");
+    }
+
+    summary.push_str("\n## Recovery Options\n\n");
+    summary.push_str("- **Retry**: Try running all reviewers again\n");
+    summary.push_str("- **Stop**: Save state and resume later\n");
+    summary.push_str("- **Abort**: Abort the workflow\n");
+
+    summary
+}
+
+/// Build a summary for a failure context from a resumed session.
+/// This is used when resuming a session that was stopped with an unresolved failure.
+pub fn build_resume_failure_summary(failure: &crate::app::failure::FailureContext) -> String {
+    let mut s = String::new();
+    s.push_str("# Unresolved Workflow Failure\n\n");
+    s.push_str(&format!("**Type**: {}\n", failure.kind.display_name()));
+    s.push_str(&format!("**Phase**: {:?}\n", failure.phase));
+    if let Some(ref agent) = failure.agent_name {
+        s.push_str(&format!("**Agent**: {}\n", agent));
+    }
+    s.push_str(&format!("**Retries**: {}/{}\n", failure.retry_count, failure.max_retries));
+    s.push_str(&format!("**Failed at**: {}\n\n", failure.failed_at));
+    s.push_str("This session was stopped with an unresolved failure.\n\n");
+    s.push_str("## Recovery Options\n\n");
+    s.push_str("- **Retry**: Retry the failed operation\n");
+    s.push_str("- **Stop**: Keep session stopped for later\n");
+    s.push_str("- **Abort**: Abort the workflow\n");
+    s
+}
+
 pub fn build_max_iterations_summary(
     state: &State,
     working_dir: &Path,

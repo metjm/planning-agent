@@ -1,3 +1,4 @@
+use crate::app::failure::FailurePolicy;
 use crate::state::ResumeStrategy;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -12,6 +13,9 @@ pub struct WorkflowConfig {
     /// When present and enabled, allows post-implementation verification.
     #[serde(default)]
     pub verification: VerificationConfig,
+    /// Failure handling policy for transient failures and recovery.
+    #[serde(default)]
+    pub failure_policy: FailurePolicy,
 }
 
 /// Configuration for the post-implementation verification workflow.
@@ -167,6 +171,9 @@ impl WorkflowConfig {
                 }
             }
         }
+
+        // Validate failure policy
+        self.failure_policy.validate()?;
 
         Ok(())
     }

@@ -71,6 +71,8 @@ pub enum ApprovalContext {
     PlanGenerationFailed,
     MaxIterationsReached,
     UserOverrideApproval,
+    /// All reviewers failed after retries - prompts for retry, stop, or abort.
+    AllReviewersFailed,
 }
 
 /// Indicates the target of feedback entry mode.

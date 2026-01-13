@@ -22,6 +22,19 @@ pub enum PlanFailureDecision {
     Stopped,
 }
 
+/// Decision for handling when all reviewers fail (no partial reviews available).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum AllReviewersFailedDecision {
+    /// User chose to retry all reviewers.
+    Retry,
+    /// User chose to stop and save state for later resume.
+    Stop,
+    /// User chose to abort the workflow.
+    Abort,
+    /// Workflow was stopped via control channel.
+    Stopped,
+}
+
 pub async fn wait_for_review_decision(
     working_dir: &Path,
     approval_rx: &mut mpsc::Receiver<UserApprovalResponse>,
@@ -117,6 +130,51 @@ pub async fn wait_for_plan_failure_decision(
                     None => {
                         log_workflow(working_dir, "Approval channel closed during plan failure prompt - aborting");
                         return PlanFailureDecision::Abort;
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Waits for user decision when all reviewers have failed.
+/// This is different from `wait_for_review_decision` because there are no partial reviews
+/// to continue with - the only options are retry, stop, or abort.
+pub async fn wait_for_all_reviewers_failed_decision(
+    working_dir: &Path,
+    approval_rx: &mut mpsc::Receiver<UserApprovalResponse>,
+    control_rx: &mut mpsc::Receiver<WorkflowCommand>,
+) -> AllReviewersFailedDecision {
+    loop {
+        tokio::select! {
+            Some(cmd) = control_rx.recv() => {
+                if matches!(cmd, WorkflowCommand::Stop) {
+                    log_workflow(working_dir, "Stop command received during all reviewers failed decision wait");
+                    return AllReviewersFailedDecision::Stopped;
+                }
+            }
+            response = approval_rx.recv() => {
+                match response {
+                    Some(UserApprovalResponse::ReviewRetry) => {
+                        log_workflow(working_dir, "User chose to retry all reviewers");
+                        return AllReviewersFailedDecision::Retry;
+                    }
+                    Some(UserApprovalResponse::AbortWorkflow) => {
+                        log_workflow(working_dir, "User chose to abort workflow after all reviewers failed");
+                        return AllReviewersFailedDecision::Abort;
+                    }
+                    // Stop and save for later resume
+                    Some(UserApprovalResponse::Accept) => {
+                        log_workflow(working_dir, "User chose to stop and save state");
+                        return AllReviewersFailedDecision::Stop;
+                    }
+                    Some(other) => {
+                        log_workflow(working_dir, &format!("Ignoring unexpected response {:?} during all reviewers failed prompt", other));
+                        continue;
+                    }
+                    None => {
+                        log_workflow(working_dir, "Approval channel closed during all reviewers failed prompt - aborting");
+                        return AllReviewersFailedDecision::Abort;
                     }
                 }
             }

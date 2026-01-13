@@ -99,6 +99,9 @@ pub enum Event {
 
     SessionPlanGenerationFailed { session_id: usize, error: String },
 
+    /// All reviewers failed after retry exhaustion - prompts for recovery decision
+    SessionAllReviewersFailed { session_id: usize, summary: String },
+
     SessionMaxIterationsReached { session_id: usize, summary: String },
 
     SessionUserOverrideApproval { session_id: usize, summary: String },
@@ -417,6 +420,13 @@ impl SessionEventSender {
         let _ = self.inner.send(Event::SessionPlanGenerationFailed {
             session_id: self.session_id,
             error,
+        });
+    }
+
+    pub fn send_all_reviewers_failed(&self, summary: String) {
+        let _ = self.inner.send(Event::SessionAllReviewersFailed {
+            session_id: self.session_id,
+            summary,
         });
     }
 

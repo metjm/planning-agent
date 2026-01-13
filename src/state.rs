@@ -1,3 +1,4 @@
+use crate::app::failure::{FailureContext, MAX_FAILURE_HISTORY};
 use crate::planning_paths;
 use anyhow::{Context, Result};
 use chrono::Utc;
@@ -208,6 +209,16 @@ pub struct State {
     /// Used for conflict detection between session snapshots and state files.
     #[serde(default)]
     pub updated_at: String,
+
+    /// Current failure context if the workflow is in a failed state.
+    /// Used for recovery prompts and resume-time failure handling.
+    #[serde(default)]
+    pub last_failure: Option<FailureContext>,
+
+    /// History of failures encountered during this workflow.
+    /// Limited to MAX_FAILURE_HISTORY entries to prevent unbounded growth.
+    #[serde(default)]
+    pub failure_history: Vec<FailureContext>,
 }
 
 impl State {
@@ -241,6 +252,8 @@ impl State {
             agent_sessions: HashMap::new(),
             invocations: Vec::new(),
             updated_at: Utc::now().to_rfc3339(),
+            last_failure: None,
+            failure_history: Vec::new(),
         })
     }
 
@@ -406,6 +419,32 @@ impl State {
             return false;
         }
         self.iteration <= self.max_iterations
+    }
+
+    /// Sets the current failure context and adds it to history.
+    /// Trims history if it exceeds MAX_FAILURE_HISTORY.
+    #[allow(dead_code)]
+    pub fn set_failure(&mut self, failure: FailureContext) {
+        self.failure_history.push(failure.clone());
+        // Trim history if it exceeds the limit
+        if self.failure_history.len() > MAX_FAILURE_HISTORY {
+            let excess = self.failure_history.len() - MAX_FAILURE_HISTORY;
+            self.failure_history.drain(0..excess);
+        }
+        self.last_failure = Some(failure);
+    }
+
+    /// Clears the current failure context (called after successful recovery).
+    /// The failure remains in history for auditing.
+    #[allow(dead_code)]
+    pub fn clear_failure(&mut self) {
+        self.last_failure = None;
+    }
+
+    /// Returns true if there's an active failure requiring recovery.
+    #[allow(dead_code)]
+    pub fn has_failure(&self) -> bool {
+        self.last_failure.is_some()
     }
 }
 
@@ -732,5 +771,119 @@ mod tests {
         // updated_at should default to empty string
         assert!(state.updated_at.is_empty());
         assert!(!state.has_updated_at());
+    }
+
+    #[test]
+    fn test_set_failure() {
+        use crate::app::failure::{FailureContext, FailureKind};
+
+        let mut state = State::new("test", "test objective", 3).unwrap();
+        assert!(!state.has_failure());
+        assert!(state.last_failure.is_none());
+        assert!(state.failure_history.is_empty());
+
+        let failure = FailureContext::new(
+            FailureKind::Network,
+            Phase::Reviewing,
+            Some("codex".to_string()),
+            2,
+        );
+        state.set_failure(failure);
+
+        assert!(state.has_failure());
+        assert!(state.last_failure.is_some());
+        assert_eq!(state.failure_history.len(), 1);
+
+        let last = state.last_failure.as_ref().unwrap();
+        assert_eq!(last.kind, FailureKind::Network);
+        assert_eq!(last.phase, Phase::Reviewing);
+        assert_eq!(last.agent_name, Some("codex".to_string()));
+    }
+
+    #[test]
+    fn test_clear_failure() {
+        use crate::app::failure::{FailureContext, FailureKind};
+
+        let mut state = State::new("test", "test objective", 3).unwrap();
+        let failure = FailureContext::new(FailureKind::Timeout, Phase::Planning, None, 2);
+        state.set_failure(failure);
+
+        assert!(state.has_failure());
+        state.clear_failure();
+
+        assert!(!state.has_failure());
+        assert!(state.last_failure.is_none());
+        // History should still have the failure
+        assert_eq!(state.failure_history.len(), 1);
+    }
+
+    #[test]
+    fn test_failure_history_trimming() {
+        use crate::app::failure::{FailureContext, FailureKind, MAX_FAILURE_HISTORY};
+
+        let mut state = State::new("test", "test objective", 3).unwrap();
+
+        // Add more failures than the limit
+        for i in 0..(MAX_FAILURE_HISTORY + 10) {
+            let failure = FailureContext::new(
+                FailureKind::Network,
+                Phase::Reviewing,
+                Some(format!("agent-{}", i)),
+                2,
+            );
+            state.set_failure(failure);
+        }
+
+        // History should be trimmed to MAX_FAILURE_HISTORY
+        assert_eq!(state.failure_history.len(), MAX_FAILURE_HISTORY);
+
+        // The oldest failures should have been removed
+        // The first remaining failure should be agent-10 (since we added 60 and kept 50)
+        let first = &state.failure_history[0];
+        assert_eq!(first.agent_name, Some("agent-10".to_string()));
+    }
+
+    #[test]
+    fn test_state_serialization_with_failure() {
+        use crate::app::failure::{FailureContext, FailureKind};
+
+        let mut state = State::new("test", "test objective", 3).unwrap();
+        let failure = FailureContext::new(
+            FailureKind::AllReviewersFailed,
+            Phase::Reviewing,
+            None,
+            3,
+        );
+        state.set_failure(failure);
+
+        let json = serde_json::to_string(&state).unwrap();
+        let loaded: State = serde_json::from_str(&json).unwrap();
+
+        assert!(loaded.has_failure());
+        assert_eq!(loaded.failure_history.len(), 1);
+        let last = loaded.last_failure.as_ref().unwrap();
+        assert_eq!(last.kind, FailureKind::AllReviewersFailed);
+    }
+
+    #[test]
+    fn test_backward_compatibility_without_failure_fields() {
+        // Simulate loading a state without failure fields (pre-failure-handling state)
+        let old_state_json = r#"{
+            "phase": "reviewing",
+            "iteration": 2,
+            "max_iterations": 3,
+            "feature_name": "existing-feature",
+            "objective": "Some objective",
+            "plan_file": "docs/plans/existing-feature.md",
+            "feedback_file": "docs/plans/existing-feature_feedback.md",
+            "last_feedback_status": "needs_revision",
+            "approval_overridden": false
+        }"#;
+
+        let state: State = serde_json::from_str(old_state_json).unwrap();
+        // Failure fields should default properly
+        assert!(state.last_failure.is_none());
+        assert!(state.failure_history.is_empty());
+        assert!(!state.has_failure());
     }
 }
