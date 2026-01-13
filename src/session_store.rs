@@ -121,6 +121,12 @@ pub struct SessionUiState {
     // UI state
     pub spinner_frame: u8,
     pub current_run_id: u64,
+
+    // Plan modal state (content is re-read from disk on restore, not persisted)
+    #[serde(default)]
+    pub plan_modal_open: bool,
+    #[serde(default)]
+    pub plan_modal_scroll: usize,
 }
 
 /// Information about a session snapshot for listing purposes.
@@ -373,6 +379,8 @@ mod tests {
             account_usage: AccountUsage::default(),
             spinner_frame: 0,
             current_run_id: 1,
+            plan_modal_open: false,
+            plan_modal_scroll: 0,
         }
     }
 

@@ -38,6 +38,10 @@ pub fn draw(frame: &mut Frame, tab_manager: &TabManager) {
     if session.input_mode == InputMode::NamingTab {
         overlays::draw_tab_input_overlay(frame, session, tab_manager);
     }
+    // Render plan modal BEFORE error overlay so errors always take precedence
+    if session.plan_modal_open {
+        overlays::draw_plan_modal(frame, session);
+    }
     if session.error_state.is_some() {
         error_overlay::draw_error_overlay(frame, session);
     }

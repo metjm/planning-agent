@@ -27,7 +27,7 @@ use tokio::sync::mpsc;
 use super::approval_input::{handle_awaiting_choice_input, handle_entering_feedback_input};
 use super::implementation_input::handle_implementation_terminal_input;
 use super::InitHandle;
-use crate::tui::ui::util::parse_markdown_line;
+use crate::tui::ui::util::{compute_plan_modal_inner_size, parse_markdown_line};
 
 /// Compute the max scroll for the run-tab summary panel based on wrapped lines and terminal size.
 fn compute_run_tab_summary_max_scroll(summary_text: &str) -> usize {
@@ -106,6 +106,24 @@ fn is_todo_panel_visible(session: &Session) -> bool {
     visible
 }
 
+/// Compute the max scroll for the plan modal based on wrapped lines and terminal size.
+fn compute_plan_modal_max_scroll(content: &str) -> usize {
+    let (term_width, term_height) = crossterm::terminal::size().unwrap_or((80, 24));
+    let (inner_width, visible_height) = compute_plan_modal_inner_size(term_width, term_height);
+
+    let content_lines: Vec<Line> = content.lines().map(parse_markdown_line).collect();
+    let total_lines = compute_wrapped_line_count(&content_lines, inner_width);
+
+    total_lines.saturating_sub(visible_height as usize)
+}
+
+/// Compute the visible height of the plan modal for page scrolling.
+fn compute_plan_modal_visible_height() -> usize {
+    let (term_width, term_height) = crossterm::terminal::size().unwrap_or((80, 24));
+    let (_, visible_height) = compute_plan_modal_inner_size(term_width, term_height);
+    visible_height as usize
+}
+
 /// Compute the max scroll for the error overlay based on wrapped lines and terminal size.
 fn compute_error_overlay_max_scroll(error: &str) -> usize {
     let (term_width, term_height) = crossterm::terminal::size().unwrap_or((80, 24));
@@ -175,6 +193,47 @@ pub async fn handle_key_event(
             }
             _ => return Ok(false),
         }
+    }
+
+    // Handle F2 to toggle plan modal (global hotkey, works from any mode except error state)
+    if key.code == KeyCode::F(2) && session.workflow_state.is_some() {
+        session.toggle_plan_modal(working_dir);
+        return Ok(false);
+    }
+
+    // Handle plan modal input when it's open (intercept keys before other handlers)
+    if session.plan_modal_open {
+        let content = session.plan_modal_content.clone();
+        match key.code {
+            KeyCode::Esc | KeyCode::F(2) => {
+                session.close_plan_modal();
+            }
+            KeyCode::Char('j') | KeyCode::Down => {
+                let max_scroll = compute_plan_modal_max_scroll(&content);
+                session.plan_modal_scroll_down(max_scroll);
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                session.plan_modal_scroll_up();
+            }
+            KeyCode::Char('g') => {
+                session.plan_modal_scroll_to_top();
+            }
+            KeyCode::Char('G') => {
+                let max_scroll = compute_plan_modal_max_scroll(&content);
+                session.plan_modal_scroll_to_bottom(max_scroll);
+            }
+            KeyCode::PageDown => {
+                let visible_height = compute_plan_modal_visible_height();
+                let max_scroll = compute_plan_modal_max_scroll(&content);
+                session.plan_modal_page_down(visible_height, max_scroll);
+            }
+            KeyCode::PageUp => {
+                let visible_height = compute_plan_modal_visible_height();
+                session.plan_modal_page_up(visible_height);
+            }
+            _ => {}
+        }
+        return Ok(false);
     }
 
     if session.input_mode == InputMode::NamingTab {

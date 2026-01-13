@@ -246,3 +246,28 @@ pub fn compute_summary_panel_inner_size(terminal_width: u16, terminal_height: u1
     (inner_width, inner_height)
 }
 
+/// Compute the inner dimensions of the plan modal for scroll calculations.
+///
+/// This replicates the layout logic used in `draw_plan_modal`:
+/// - Modal is 80% of terminal size
+/// - Layout: Title (3), Content (Min), Instructions (3)
+/// - Content block has 1-row borders on top and bottom
+///
+/// Returns (inner_width, visible_height) of the content area.
+pub fn compute_plan_modal_inner_size(terminal_width: u16, terminal_height: u16) -> (u16, u16) {
+    let popup_width = (terminal_width as f32 * 0.8) as u16;
+    let popup_height = (terminal_height as f32 * 0.8) as u16;
+
+    // Layout: [Title: 3] [Content: Min(0)] [Instructions: 3]
+    // So content height = popup_height - 3 - 3 = popup_height - 6
+    let content_height = popup_height.saturating_sub(6);
+
+    // Content block has borders (1 row each for top/bottom)
+    let inner_height = content_height.saturating_sub(2);
+
+    // Content block has borders (1 col each for left/right)
+    let inner_width = popup_width.saturating_sub(2);
+
+    (inner_width, inner_height)
+}
+
