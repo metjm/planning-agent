@@ -1,20 +1,13 @@
-
-use crate::app::util::{build_resume_command, shorten_model_name};
-use crate::app::workflow::{WorkflowResult, WorkflowRunConfig};
+use crate::app::util::shorten_model_name;
 use crate::config::WorkflowConfig;
-use crate::planning_paths;
-use crate::state::{Phase, State};
-use crate::tui::{
-    ApprovalMode, Event, InputMode, SessionStatus, TabManager, UserApprovalResponse,
-    WorkflowCommand,
-};
+use crate::tui::{ApprovalMode, Event, InputMode, SessionStatus, TabManager};
 use crate::update;
 use anyhow::Result;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use tokio::sync::mpsc;
 
 use super::input::handle_key_event;
-use super::{restore_terminal, run_workflow_with_config, InitHandle, ResumableSession};
+use super::{restore_terminal, InitHandle};
 
 #[allow(clippy::too_many_arguments)]
 pub async fn process_event(
@@ -389,6 +382,11 @@ async fn handle_session_event(
                 session.start_all_reviewers_failed(summary);
             }
         }
+        Event::SessionWorkflowFailure { session_id, summary } => {
+            if let Some(session) = tab_manager.session_by_id_mut(session_id) {
+                session.start_workflow_failure(summary);
+            }
+        }
         Event::SessionAgentMessage {
             session_id,
             agent_name,
@@ -551,261 +549,4 @@ async fn handle_session_event(
         _ => {}
     }
     Ok(())
-}
-
-pub async fn handle_init_completion(
-    session_id: usize,
-    handle: tokio::task::JoinHandle<anyhow::Result<(State, PathBuf, String)>>,
-    tab_manager: &mut TabManager,
-    working_dir: &Path,
-    workflow_config: &WorkflowConfig,
-    output_tx: &mpsc::UnboundedSender<Event>,
-) {
-    match handle.await {
-        Ok(Ok((state, state_path, feature_name))) => {
-            if let Some(session) = tab_manager.session_by_id_mut(session_id) {
-                session.name = feature_name;
-                session.workflow_state = Some(state.clone());
-
-                // Check if state has a failure that needs recovery
-                // This happens when resuming a session that was stopped with a failure
-                if let Some(ref failure) = state.last_failure {
-                    let summary = crate::app::util::build_resume_failure_summary(failure);
-                    session.start_all_reviewers_failed(summary);
-                    session.add_output("[planning] Session has unresolved failure - awaiting recovery decision".to_string());
-                    return;
-                }
-
-                let (new_approval_tx, new_approval_rx) =
-                    mpsc::channel::<UserApprovalResponse>(1);
-                session.approval_tx = Some(new_approval_tx);
-
-                // Create control channel for workflow interrupts
-                let (new_control_tx, new_control_rx) =
-                    mpsc::channel::<WorkflowCommand>(1);
-                session.workflow_control_tx = Some(new_control_tx);
-
-                // Increment run_id for this new workflow
-                session.current_run_id += 1;
-                let run_id = session.current_run_id;
-
-                let cfg = workflow_config.clone();
-                let workflow_handle = tokio::spawn({
-                    let working_dir = working_dir.to_path_buf();
-                    let tx = output_tx.clone();
-                    let sid = session_id;
-                    async move {
-                        run_workflow_with_config(
-                            state,
-                            WorkflowRunConfig {
-                                working_dir,
-                                state_path,
-                                config: cfg,
-                                output_tx: tx,
-                                approval_rx: new_approval_rx,
-                                control_rx: new_control_rx,
-                                session_id: sid,
-                                run_id,
-                            },
-                        )
-                        .await
-                    }
-                });
-
-                session.workflow_handle = Some(workflow_handle);
-            }
-        }
-        Ok(Err(e)) => {
-            if let Some(session) = tab_manager.session_by_id_mut(session_id) {
-                session.handle_error(&format!("Initialization failed: {}", e));
-            }
-        }
-        Err(e) => {
-            if let Some(session) = tab_manager.session_by_id_mut(session_id) {
-                session.handle_error(&format!("Initialization panicked: {}", e));
-            }
-        }
-    }
-}
-
-pub async fn check_workflow_completions(
-    tab_manager: &mut TabManager,
-    working_dir: &Path,
-    workflow_config: &WorkflowConfig,
-    output_tx: &mpsc::UnboundedSender<Event>,
-) -> Vec<ResumableSession> {
-    let mut resumable_sessions = Vec::new();
-
-    for session in tab_manager.sessions_mut() {
-        if let Some(handle) = session.workflow_handle.take() {
-            let handle: tokio::task::JoinHandle<anyhow::Result<WorkflowResult>> = handle;
-            if handle.is_finished() {
-                match handle.await {
-                    Ok(Ok(WorkflowResult::Accepted)) => {
-                        session.status = SessionStatus::Complete;
-                        session.running = false;
-                        session.workflow_control_tx = None;
-                    }
-                    Ok(Ok(WorkflowResult::Aborted { reason })) => {
-                        session.status = SessionStatus::Error;
-                        session.running = false;
-                        session.error_state = Some(reason);
-                        session.workflow_control_tx = None;
-                    }
-                    Ok(Ok(WorkflowResult::NeedsRestart { user_feedback })) => {
-                        session.add_output("".to_string());
-                        session.add_output("=== RESTARTING WITH YOUR FEEDBACK ===".to_string());
-                        session.add_output(format!("Changes requested: {}", user_feedback));
-
-                        session.streaming_lines.clear();
-                        session.clear_todos();
-                        // Clear run tabs for clean restart
-                        session.run_tabs.clear();
-                        session.active_run_tab = 0;
-                        session.chat_follow_mode = true;
-                        session.status = SessionStatus::Planning;
-
-                        if let Some(ref mut state) = session.workflow_state {
-                            state.phase = Phase::Planning;
-                            state.iteration = 1;
-                            state.approval_overridden = false;
-                            state.objective = format!(
-                                "{}\n\nUSER FEEDBACK: The previous plan was reviewed and needs changes:\n{}",
-                                state.objective,
-                                user_feedback
-                            );
-                            let state_path = match planning_paths::state_path(working_dir, &state.feature_name) {
-                                Ok(p) => p,
-                                Err(e) => {
-                                    session.handle_error(&format!("Failed to get state path: {}", e));
-                                    continue;
-                                }
-                            };
-                            state.set_updated_at();
-                            let _ = state.save(&state_path);
-
-                            let (new_approval_tx, new_approval_rx) =
-                                mpsc::channel::<UserApprovalResponse>(1);
-                            session.approval_tx = Some(new_approval_tx);
-
-                            // Create control channel for workflow interrupts
-                            let (new_control_tx, new_control_rx) =
-                                mpsc::channel::<WorkflowCommand>(1);
-                            session.workflow_control_tx = Some(new_control_tx);
-
-                            // Increment run_id to invalidate any stale summary events
-                            session.current_run_id += 1;
-                            let run_id = session.current_run_id;
-
-                            let cfg = workflow_config.clone();
-                            let new_handle = tokio::spawn({
-                                let state = state.clone();
-                                let working_dir = working_dir.to_path_buf();
-                                let tx = output_tx.clone();
-                                let sid = session.id;
-                                async move {
-                                    run_workflow_with_config(
-                                        state,
-                                        WorkflowRunConfig {
-                                            working_dir,
-                                            state_path,
-                                            config: cfg,
-                                            output_tx: tx,
-                                            approval_rx: new_approval_rx,
-                                            control_rx: new_control_rx,
-                                            session_id: sid,
-                                            run_id,
-                                        },
-                                    )
-                                    .await
-                                }
-                            });
-
-                            session.workflow_handle = Some(new_handle);
-                        }
-                    }
-                    Ok(Ok(WorkflowResult::Stopped)) => {
-                        // Save snapshot before marking as stopped
-                        let mut snapshot_saved = false;
-                        if let Some(ref state) = session.workflow_state {
-                            let ui_state = session.to_ui_state();
-                            let state_path = match planning_paths::state_path(working_dir, &state.feature_name) {
-                                Ok(p) => p,
-                                Err(e) => {
-                                    session.add_output(format!("[planning] Warning: Failed to get state path: {}", e));
-                                    session.status = SessionStatus::Stopped;
-                                    session.running = false;
-                                    session.workflow_control_tx = None;
-                                    continue;
-                                }
-                            };
-                            let now = chrono::Utc::now().to_rfc3339();
-                            let mut state_copy = state.clone();
-                            state_copy.set_updated_at_with(&now);
-                            let elapsed = session.start_time.elapsed().as_millis() as u64;
-
-                            let snapshot = crate::session_store::SessionSnapshot::new_with_timestamp(
-                                working_dir.to_path_buf(),
-                                state.workflow_session_id.clone(),
-                                state_path,
-                                state_copy,
-                                ui_state,
-                                elapsed,
-                                now,
-                            );
-
-                            match crate::session_store::save_snapshot(working_dir, &snapshot) {
-                                Ok(path) => {
-                                    session.add_output(format!("[planning] Session saved: {}", path.display()));
-                                    snapshot_saved = true;
-                                }
-                                Err(e) => {
-                                    session.add_output(format!("[planning] Warning: Failed to save: {}", e));
-                                }
-                            }
-                        }
-
-                        session.status = SessionStatus::Stopped;
-                        session.running = false;
-                        session.workflow_control_tx = None;
-                        session.add_output("".to_string());
-                        session.add_output("=== SESSION STOPPED ===".to_string());
-
-                        // Extract info from workflow_state before calling add_output
-                        let session_info = session.workflow_state.as_ref().map(|state| {
-                            (
-                                state.workflow_session_id.clone(),
-                                state.feature_name.clone(),
-                            )
-                        });
-
-                        if let Some((workflow_session_id, feature_name)) = session_info {
-                            session.add_output(format!("Session ID: {}", workflow_session_id));
-                            let resume_cmd = build_resume_command(&workflow_session_id, working_dir);
-                            session.add_output(format!("To resume: {}", resume_cmd));
-
-                            // Only add to resumable sessions if snapshot was saved successfully
-                            if snapshot_saved {
-                                resumable_sessions.push(ResumableSession {
-                                    feature_name,
-                                    session_id: workflow_session_id,
-                                    working_dir: working_dir.to_path_buf(),
-                                });
-                            }
-                        }
-                    }
-                    Ok(Err(e)) => {
-                        session.handle_error(&format!("Workflow failed: {}", e));
-                    }
-                    Err(e) => {
-                        session.handle_error(&format!("Workflow panicked: {}", e));
-                    }
-                }
-            } else {
-                session.workflow_handle = Some(handle);
-            }
-        }
-    }
-
-    resumable_sessions
 }

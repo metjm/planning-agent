@@ -109,9 +109,12 @@ pub enum Event {
     SessionAgentMessage {
         session_id: usize,
         agent_name: String,
-        phase: String,   
+        phase: String,
         message: String,
     },
+
+    /// Generic workflow failure that can be recovered via retry/stop/abort
+    SessionWorkflowFailure { session_id: usize, summary: String },
 
     SessionTodosUpdate {
         session_id: usize,
@@ -190,6 +193,11 @@ pub enum UserApprovalResponse {
     AbortWorkflow,
     ProceedWithoutApproval,
     ContinueReviewing,
+
+    // Workflow failure recovery responses
+    WorkflowFailureRetry,
+    WorkflowFailureStop,
+    WorkflowFailureAbort,
 }
 
 pub struct EventHandler {
@@ -425,6 +433,13 @@ impl SessionEventSender {
 
     pub fn send_all_reviewers_failed(&self, summary: String) {
         let _ = self.inner.send(Event::SessionAllReviewersFailed {
+            session_id: self.session_id,
+            summary,
+        });
+    }
+
+    pub fn send_workflow_failure(&self, summary: String) {
+        let _ = self.inner.send(Event::SessionWorkflowFailure {
             session_id: self.session_id,
             summary,
         });

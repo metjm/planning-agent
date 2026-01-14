@@ -369,6 +369,16 @@ impl Session {
         self.status = SessionStatus::AwaitingApproval;
     }
 
+    pub fn start_workflow_failure(&mut self, summary: String) {
+        self.plan_summary = summary;
+        self.plan_summary_scroll = 0;
+        self.approval_mode = ApprovalMode::AwaitingChoice;
+        self.approval_context = ApprovalContext::WorkflowFailure;
+        self.user_feedback.clear();
+        self.cursor_position = 0;
+        self.status = SessionStatus::AwaitingApproval;
+    }
+
     pub fn scroll_summary_up(&mut self) {
         self.plan_summary_scroll = self.plan_summary_scroll.saturating_sub(1);
     }

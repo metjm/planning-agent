@@ -73,6 +73,8 @@ pub enum ApprovalContext {
     UserOverrideApproval,
     /// All reviewers failed after retries - prompts for retry, stop, or abort.
     AllReviewersFailed,
+    /// Generic workflow failure (agent errors in revising, etc.) - prompts for retry, stop, or abort.
+    WorkflowFailure,
 }
 
 /// Indicates the target of feedback entry mode.

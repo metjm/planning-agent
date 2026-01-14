@@ -195,13 +195,15 @@ pub async fn run_workflow_with_config(
                     &state_path,
                     &config,
                     &sender,
+                    &mut approval_rx,
                     &mut control_rx,
                     &mut last_reviews,
                 )
                 .await;
 
                 match result {
-                    Ok(()) => {}
+                    Ok(Some(workflow_result)) => return Ok(workflow_result),
+                    Ok(None) => {}
                     Err(e) if e.downcast_ref::<CancellationError>().is_some() => {
                         if let Ok(cmd) = control_rx.try_recv() {
                             match cmd {

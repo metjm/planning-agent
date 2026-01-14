@@ -35,6 +35,19 @@ pub enum AllReviewersFailedDecision {
     Stopped,
 }
 
+/// Decision for handling generic workflow failures (agent crashes, timeouts, etc.).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum WorkflowFailureDecision {
+    /// User chose to retry the failed operation.
+    Retry,
+    /// User chose to stop and save state for later resume.
+    Stop,
+    /// User chose to abort the workflow.
+    Abort,
+    /// Workflow was stopped via control channel.
+    Stopped,
+}
+
 pub async fn wait_for_review_decision(
     working_dir: &Path,
     approval_rx: &mut mpsc::Receiver<UserApprovalResponse>,
@@ -78,6 +91,12 @@ pub async fn wait_for_review_decision(
                     }
                     Some(UserApprovalResponse::ContinueReviewing) => {
                         log_workflow(working_dir, "Received ContinueReviewing while awaiting review decision, treating as continue");
+                        ReviewDecision::Continue
+                    }
+                    Some(UserApprovalResponse::WorkflowFailureRetry)
+                    | Some(UserApprovalResponse::WorkflowFailureStop)
+                    | Some(UserApprovalResponse::WorkflowFailureAbort) => {
+                        log_workflow(working_dir, "Received workflow failure response while awaiting review decision, treating as continue");
                         ReviewDecision::Continue
                     }
                     None => {
@@ -175,6 +194,49 @@ pub async fn wait_for_all_reviewers_failed_decision(
                     None => {
                         log_workflow(working_dir, "Approval channel closed during all reviewers failed prompt - aborting");
                         return AllReviewersFailedDecision::Abort;
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Waits for user decision when a generic workflow failure occurs.
+/// Used for agent crashes, timeouts, and other non-reviewer failures.
+pub async fn wait_for_workflow_failure_decision(
+    working_dir: &Path,
+    approval_rx: &mut mpsc::Receiver<UserApprovalResponse>,
+    control_rx: &mut mpsc::Receiver<WorkflowCommand>,
+) -> WorkflowFailureDecision {
+    loop {
+        tokio::select! {
+            Some(cmd) = control_rx.recv() => {
+                if matches!(cmd, WorkflowCommand::Stop) {
+                    log_workflow(working_dir, "Stop command received during workflow failure decision wait");
+                    return WorkflowFailureDecision::Stopped;
+                }
+            }
+            response = approval_rx.recv() => {
+                match response {
+                    Some(UserApprovalResponse::WorkflowFailureRetry) => {
+                        log_workflow(working_dir, "User chose to retry after workflow failure");
+                        return WorkflowFailureDecision::Retry;
+                    }
+                    Some(UserApprovalResponse::WorkflowFailureStop) => {
+                        log_workflow(working_dir, "User chose to stop and save after workflow failure");
+                        return WorkflowFailureDecision::Stop;
+                    }
+                    Some(UserApprovalResponse::WorkflowFailureAbort) => {
+                        log_workflow(working_dir, "User chose to abort after workflow failure");
+                        return WorkflowFailureDecision::Abort;
+                    }
+                    Some(other) => {
+                        log_workflow(working_dir, &format!("Ignoring unexpected response {:?} during workflow failure prompt", other));
+                        continue;
+                    }
+                    None => {
+                        log_workflow(working_dir, "Approval channel closed during workflow failure prompt - aborting");
+                        return WorkflowFailureDecision::Abort;
                     }
                 }
             }
