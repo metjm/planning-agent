@@ -482,8 +482,13 @@ pub async fn run_headless(cli: Cli) -> Result<()> {
         }
     };
     let workflow_config = workflow_config.unwrap_or_else(|| {
-        eprintln!("[planning-agent] Using built-in multi-agent workflow config");
-        WorkflowConfig::default_config()
+        if cli.claude {
+            eprintln!("[planning-agent] Using Claude-only workflow config");
+            WorkflowConfig::claude_only_config()
+        } else {
+            eprintln!("[planning-agent] Using built-in multi-agent workflow config");
+            WorkflowConfig::default_config()
+        }
     });
 
     let objective = cli.objective.join(" ");
