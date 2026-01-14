@@ -31,6 +31,11 @@ pub const SLASH_COMMANDS: &[SlashCommandInfo] = &[
         description: "Configure CLI tools to bypass approvals",
         aliases: &["/config dangerous"],
     },
+    SlashCommandInfo {
+        command: "/sessions",
+        description: "View and resume workflow sessions",
+        aliases: &[],
+    },
 ];
 
 /// A match result for slash command autocomplete.

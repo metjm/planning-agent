@@ -10,7 +10,9 @@ mod mcp;
 mod phases;
 mod planning_paths;
 pub mod prompt_format;
+mod session_daemon;
 mod session_store;
+mod session_tracking;
 mod skills;
 mod state;
 mod tui;
@@ -51,6 +53,11 @@ async fn main() -> Result<()> {
         return run_mcp_server(&cli);
     }
 
+    // Handle session daemon mode (internal, used by connect-or-spawn)
+    if cli.session_daemon {
+        return session_daemon::run_daemon().await;
+    }
+
     // Handle session management commands first (no TUI needed)
     let working_dir = cli
         .working_dir
@@ -58,7 +65,7 @@ async fn main() -> Result<()> {
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
 
     if cli.list_sessions {
-        return list_sessions(&working_dir);
+        return list_sessions(&working_dir).await;
     }
 
     if cli.cleanup_sessions {
@@ -161,35 +168,140 @@ fn list_plans() -> Result<()> {
     Ok(())
 }
 
-/// Lists available session snapshots
-fn list_sessions(working_dir: &Path) -> Result<()> {
-    let snapshots = session_store::list_snapshots(working_dir)?;
+/// A unified session entry for display (merges live daemon data with disk snapshots)
+struct SessionDisplayEntry {
+    session_id: String,
+    feature_name: String,
+    phase: String,
+    iteration: u32,
+    workflow_status: String,
+    liveness: String,
+    last_seen: String,
+    last_seen_at: String, // Raw timestamp for sorting
+    is_live: bool,
+}
 
-    if snapshots.is_empty() {
-        println!("No session snapshots found.");
-        println!("Snapshots are created when you stop a running workflow.");
+/// Formats a timestamp as relative time (e.g., "2m ago", "1h ago")
+fn format_relative_time(timestamp: &str) -> String {
+    let parsed = chrono::DateTime::parse_from_rfc3339(timestamp)
+        .or_else(|_| {
+            // Try parsing without timezone (some timestamps are ISO format without tz)
+            chrono::NaiveDateTime::parse_from_str(timestamp, "%Y-%m-%dT%H:%M:%S")
+                .or_else(|_| chrono::NaiveDateTime::parse_from_str(&timestamp[..19], "%Y-%m-%dT%H:%M:%S"))
+                .map(|dt| dt.and_utc().fixed_offset())
+        });
+
+    match parsed {
+        Ok(dt) => {
+            let now = chrono::Utc::now();
+            let duration = now.signed_duration_since(dt.with_timezone(&chrono::Utc));
+
+            if duration.num_seconds() < 60 {
+                "just now".to_string()
+            } else if duration.num_minutes() < 60 {
+                format!("{}m ago", duration.num_minutes())
+            } else if duration.num_hours() < 24 {
+                format!("{}h ago", duration.num_hours())
+            } else {
+                format!("{}d ago", duration.num_days())
+            }
+        }
+        Err(_) => "unknown".to_string(),
+    }
+}
+
+/// Lists available sessions (live from daemon + disk snapshots)
+async fn list_sessions(working_dir: &Path) -> Result<()> {
+    let mut entries: Vec<SessionDisplayEntry> = Vec::new();
+    let mut seen_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    // Try to get live sessions from daemon
+    let daemon_client = session_daemon::client::SessionDaemonClient::new(false);
+    let daemon_connected = daemon_client.is_connected();
+
+    if daemon_connected {
+        if let Ok(live_sessions) = daemon_client.list().await {
+            for record in live_sessions {
+                seen_ids.insert(record.workflow_session_id.clone());
+                entries.push(SessionDisplayEntry {
+                    session_id: record.workflow_session_id,
+                    feature_name: record.feature_name,
+                    phase: record.phase,
+                    iteration: record.iteration,
+                    workflow_status: record.workflow_status,
+                    liveness: format!("{}", record.liveness),
+                    last_seen: format_relative_time(&record.last_heartbeat_at),
+                    last_seen_at: record.last_heartbeat_at,
+                    is_live: record.liveness == session_daemon::LivenessState::Running,
+                });
+            }
+        }
+    }
+
+    // Load disk snapshots and merge (add ones not already in live list)
+    if let Ok(snapshots) = session_store::list_snapshots(working_dir) {
+        for snapshot in snapshots {
+            if !seen_ids.contains(&snapshot.workflow_session_id) {
+                seen_ids.insert(snapshot.workflow_session_id.clone());
+                entries.push(SessionDisplayEntry {
+                    session_id: snapshot.workflow_session_id,
+                    feature_name: snapshot.feature_name,
+                    phase: snapshot.phase,
+                    iteration: snapshot.iteration,
+                    workflow_status: "Stopped".to_string(),
+                    liveness: "Stopped".to_string(),
+                    last_seen: format_relative_time(&snapshot.saved_at),
+                    last_seen_at: snapshot.saved_at,
+                    is_live: false,
+                });
+            }
+        }
+    }
+
+    // Show daemon connection status
+    if daemon_connected {
+        println!("Daemon: Connected");
+    } else {
+        println!("Daemon: Offline (showing snapshots only)");
+    }
+
+    if entries.is_empty() {
+        println!("\nNo sessions found.");
+        println!("Sessions are created when you start a workflow.");
         return Ok(());
     }
 
-    println!("Available session snapshots:\n");
-    println!(
-        "{:<40} {:<20} {:<12} {:<8} Saved At",
-        "Session ID", "Feature", "Phase", "Iter"
-    );
-    println!("{}", "-".repeat(100));
+    // Sort: live/running first, then by last_seen_at (most recent first)
+    entries.sort_by(|a, b| {
+        match (a.is_live, b.is_live) {
+            (true, false) => std::cmp::Ordering::Less,
+            (false, true) => std::cmp::Ordering::Greater,
+            _ => b.last_seen_at.cmp(&a.last_seen_at), // Secondary sort by timestamp (descending)
+        }
+    });
 
-    for snapshot in snapshots {
+    println!("\nSessions:\n");
+    println!(
+        "{:<36} {:<16} {:<12} {:<4} {:<10} {:<12} Last Seen",
+        "Session ID", "Feature", "Phase", "Iter", "Status", "Liveness"
+    );
+    println!("{}", "-".repeat(105));
+
+    for entry in entries {
         println!(
-            "{:<40} {:<20} {:<12} {:<8} {}",
-            snapshot.workflow_session_id,
-            truncate_string(&snapshot.feature_name, 18),
-            snapshot.phase,
-            snapshot.iteration,
-            &snapshot.saved_at[..19].replace('T', " "), // Format timestamp
+            "{:<36} {:<16} {:<12} {:<4} {:<10} {:<12} {}",
+            truncate_string(&entry.session_id, 34),
+            truncate_string(&entry.feature_name, 14),
+            truncate_string(&entry.phase, 10),
+            entry.iteration,
+            truncate_string(&entry.workflow_status, 8),
+            entry.liveness,
+            entry.last_seen,
         );
     }
 
     println!("\nTo resume a session: planning --resume-session <session-id>");
+    println!("Note: Use /sessions in the TUI for an interactive browser.");
     Ok(())
 }
 

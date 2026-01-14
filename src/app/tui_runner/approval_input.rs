@@ -252,6 +252,7 @@ pub async fn handle_all_reviewers_failed_input(
                                     control_rx: new_control_rx,
                                     session_id: sid,
                                     run_id,
+                                    no_daemon: false,
                                 },
                             )
                             .await
@@ -382,6 +383,7 @@ pub async fn handle_workflow_failure_input(
                                     control_rx: new_control_rx,
                                     session_id: sid,
                                     run_id,
+                                    no_daemon: false,
                                 },
                             )
                             .await

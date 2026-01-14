@@ -1,5 +1,6 @@
 use super::file_index::FileIndex;
 use super::session::Session;
+use super::session_browser::SessionBrowserState;
 use crate::update::{UpdateStatus, VersionInfo};
 
 pub struct TabManager {
@@ -31,6 +32,9 @@ pub struct TabManager {
 
     /// Cached version info for the current build (short SHA and commit date)
     pub version_info: Option<VersionInfo>,
+
+    /// Session browser overlay state
+    pub session_browser: SessionBrowserState,
 }
 
 /// TabManager provides the full API surface for multi-tab management.
@@ -52,6 +56,7 @@ impl TabManager {
             command_error: None,
             command_in_progress: false,
             version_info: None,
+            session_browser: SessionBrowserState::new(),
         };
 
         manager.add_session();

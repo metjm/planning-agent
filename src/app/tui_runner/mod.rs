@@ -3,7 +3,9 @@ mod approval_input;
 mod events;
 mod implementation_input;
 mod input;
+mod session_browser_input;
 pub mod slash_commands;
+pub mod snapshot_helper;
 mod workflow_lifecycle;
 
 use crate::app::cli::Cli;
@@ -232,44 +234,35 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
             snapshot.ui_state.clone(),
             Some(restored_state.clone()),
         );
+        first_session.name = restored_state.feature_name.clone();
         first_session.add_output(format!("[planning] Resumed session: {}", session_id));
         first_session.add_output(format!(
             "[planning] Feature: {}, Phase: {:?}, Iteration: {}",
             restored_state.feature_name, restored_state.phase, restored_state.iteration
         ));
-
-        // Set up for workflow continuation
-        first_session.status = SessionStatus::Planning;
-        first_session.input_mode = InputMode::Normal;
-
-        // Spawn workflow continuation
-        let init_tx = output_tx.clone();
-        let state_path = snapshot.state_path.clone();
-        let mut state = snapshot.workflow_state;
-
-        // Note: total_elapsed_before_resume_ms can be used for elapsed time tracking
-        let _total_elapsed_before = snapshot.total_elapsed_before_resume_ms;
-
-        let handle = tokio::spawn(async move {
-            let _ = init_tx.send(Event::Output("[planning] Continuing workflow...".to_string()));
-
-            // Save state to ensure state file is in sync with snapshot
-            state.set_updated_at();
-            state.save(&state_path)?;
-
-            let _ = init_tx.send(Event::StateUpdate(state.clone()));
-
-            let feature_name = state.feature_name.clone();
-            Ok::<_, anyhow::Error>((state, state_path, feature_name))
-        });
-        debug_log(start, "resume init task spawned");
-
-        init_handle = Some((first_session_id, handle));
+        first_session.add_output("[planning] Continuing workflow...".to_string());
 
         // Store the elapsed time from before resume for cost tracking
-        if let Some(session) = tab_manager.sessions.iter_mut().find(|s| s.id == first_session_id) {
-            session.total_cost = snapshot.ui_state.total_cost;
-        }
+        first_session.total_cost = snapshot.ui_state.total_cost;
+
+        // Save state to ensure state file is in sync with snapshot
+        let state_path = snapshot.state_path.clone();
+        let mut state = snapshot.workflow_state;
+        state.set_updated_at();
+        state.save(&state_path)?;
+
+        let _ = output_tx.send(Event::StateUpdate(state.clone()));
+
+        // Use the shared resume helper (same as /sessions overlay)
+        workflow_lifecycle::start_resumed_workflow(
+            first_session,
+            state,
+            state_path,
+            &working_dir,
+            &workflow_config,
+            &output_tx,
+        );
+        debug_log(start, "resume workflow started via start_resumed_workflow");
     } else if objective.is_empty() {
 
         let first_session = tab_manager.active_mut();

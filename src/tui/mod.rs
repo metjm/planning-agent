@@ -3,8 +3,10 @@ mod event;
 pub mod file_index;
 pub mod mention;
 pub mod session;
+pub mod session_browser;
 pub mod slash;
 mod tabs;
+pub mod terminal_spawn;
 mod title;
 pub mod ui;
 
