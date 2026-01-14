@@ -4,6 +4,7 @@ mod error_overlay;
 mod objective;
 mod overlays;
 mod panels;
+mod session_browser_overlay;
 mod stats;
 pub mod util;
 
@@ -41,6 +42,10 @@ pub fn draw(frame: &mut Frame, tab_manager: &TabManager) {
     // Render plan modal BEFORE error overlay so errors always take precedence
     if session.plan_modal_open {
         overlays::draw_plan_modal(frame, session);
+    }
+    // Render session browser overlay
+    if tab_manager.session_browser.open {
+        session_browser_overlay::draw_session_browser_overlay(frame, tab_manager);
     }
     if session.error_state.is_some() {
         error_overlay::draw_error_overlay(frame, session);

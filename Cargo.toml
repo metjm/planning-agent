@@ -51,6 +51,12 @@ zip = "2"
 # Auto-update
 ureq = "3"
 
+# Cross-platform file locking for session daemon
+fs2 = "0.4"
+
+# Random token generation for Windows session daemon auth
+rand = "0.8"
+
 [lints.rust]
 warnings = "deny"
 
@@ -59,3 +65,4 @@ all = { level = "deny", priority = -1 }
 
 [dev-dependencies]
 tempfile = "3"
+proptest = "1"

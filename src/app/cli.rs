@@ -64,4 +64,12 @@ pub struct Cli {
     /// Internal: Base64-encoded review prompt for MCP server
     #[arg(long, hide = true)]
     pub review_prompt_b64: Option<String>,
+
+    /// Internal: Run as session daemon (used by connect-or-spawn)
+    #[arg(long, hide = true)]
+    pub session_daemon: bool,
+
+    /// Disable session tracking (useful for debugging)
+    #[arg(long)]
+    pub no_daemon: bool,
 }

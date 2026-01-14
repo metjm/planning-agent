@@ -9,11 +9,64 @@ use crate::app::workflow::{WorkflowResult, WorkflowRunConfig};
 use crate::config::WorkflowConfig;
 use crate::planning_paths;
 use crate::state::{Phase, State};
-use crate::tui::{SessionStatus, TabManager, UserApprovalResponse, WorkflowCommand};
+use crate::tui::{Session, SessionStatus, TabManager, UserApprovalResponse, WorkflowCommand};
 use std::path::{Path, PathBuf};
 use tokio::sync::mpsc;
 
+use super::snapshot_helper::create_and_save_snapshot;
 use super::{run_workflow_with_config, ResumableSession};
+
+/// Starts a workflow for a resumed session.
+///
+/// This helper sets up the workflow channels and spawns the workflow task.
+/// Used by both CLI --resume and /sessions overlay resume.
+pub fn start_resumed_workflow(
+    session: &mut Session,
+    state: State,
+    state_path: PathBuf,
+    working_dir: &Path,
+    workflow_config: &WorkflowConfig,
+    output_tx: &mpsc::UnboundedSender<crate::tui::Event>,
+) {
+    session.workflow_state = Some(state.clone());
+    session.status = SessionStatus::Planning;
+    session.running = true;
+
+    let (new_approval_tx, new_approval_rx) = mpsc::channel::<UserApprovalResponse>(1);
+    session.approval_tx = Some(new_approval_tx);
+
+    let (new_control_tx, new_control_rx) = mpsc::channel::<WorkflowCommand>(1);
+    session.workflow_control_tx = Some(new_control_tx);
+
+    session.current_run_id += 1;
+    let run_id = session.current_run_id;
+
+    let cfg = workflow_config.clone();
+    let workflow_handle = tokio::spawn({
+        let working_dir = working_dir.to_path_buf();
+        let tx = output_tx.clone();
+        let sid = session.id;
+        async move {
+            run_workflow_with_config(
+                state,
+                WorkflowRunConfig {
+                    working_dir,
+                    state_path,
+                    config: cfg,
+                    output_tx: tx,
+                    approval_rx: new_approval_rx,
+                    control_rx: new_control_rx,
+                    session_id: sid,
+                    run_id,
+                    no_daemon: false,
+                },
+            )
+            .await
+        }
+    });
+
+    session.workflow_handle = Some(workflow_handle);
+}
 
 /// Handles the completion of session initialization.
 ///
@@ -75,6 +128,7 @@ pub async fn handle_init_completion(
                                 control_rx: new_control_rx,
                                 session_id: sid,
                                 run_id,
+                                no_daemon: false,
                             },
                         )
                         .await
@@ -215,6 +269,7 @@ fn handle_workflow_restart(
                         control_rx: new_control_rx,
                         session_id: sid,
                         run_id,
+                        no_daemon: false,
                     },
                 )
                 .await
@@ -233,33 +288,7 @@ fn handle_workflow_stopped(
 ) -> Option<ResumableSession> {
     let mut snapshot_saved = false;
     if let Some(ref state) = session.workflow_state {
-        let ui_state = session.to_ui_state();
-        let state_path = match planning_paths::state_path(working_dir, &state.feature_name) {
-            Ok(p) => p,
-            Err(e) => {
-                session.add_output(format!("[planning] Warning: Failed to get state path: {}", e));
-                session.status = SessionStatus::Stopped;
-                session.running = false;
-                session.workflow_control_tx = None;
-                return None;
-            }
-        };
-        let now = chrono::Utc::now().to_rfc3339();
-        let mut state_copy = state.clone();
-        state_copy.set_updated_at_with(&now);
-        let elapsed = session.start_time.elapsed().as_millis() as u64;
-
-        let snapshot = crate::session_store::SessionSnapshot::new_with_timestamp(
-            working_dir.to_path_buf(),
-            state.workflow_session_id.clone(),
-            state_path,
-            state_copy,
-            ui_state,
-            elapsed,
-            now,
-        );
-
-        match crate::session_store::save_snapshot(working_dir, &snapshot) {
+        match create_and_save_snapshot(session, state, working_dir) {
             Ok(path) => {
                 session.add_output(format!("[planning] Session saved: {}", path.display()));
                 snapshot_saved = true;

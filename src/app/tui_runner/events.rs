@@ -1,5 +1,6 @@
 use crate::app::util::shorten_model_name;
 use crate::config::WorkflowConfig;
+use crate::session_daemon;
 use crate::tui::{ApprovalMode, Event, InputMode, SessionStatus, TabManager};
 use crate::update;
 use anyhow::Result;
@@ -7,6 +8,7 @@ use std::path::Path;
 use tokio::sync::mpsc;
 
 use super::input::handle_key_event;
+use super::snapshot_helper::create_and_save_snapshot;
 use super::{restore_terminal, InitHandle};
 
 #[allow(clippy::too_many_arguments)]
@@ -38,7 +40,7 @@ pub async fn process_event(
             .await?;
         }
         Event::Tick => {
-            handle_tick_event(tab_manager);
+            handle_tick_event(tab_manager, output_tx, working_dir);
         }
         Event::Resize => {
             // Resize any active implementation terminals
@@ -157,7 +159,7 @@ pub async fn process_event(
     Ok(should_quit)
 }
 
-fn handle_tick_event(tab_manager: &mut TabManager) {
+fn handle_tick_event(tab_manager: &mut TabManager, output_tx: &mpsc::UnboundedSender<Event>, working_dir: &Path) {
     for session in tab_manager.sessions_mut() {
         if session.status == SessionStatus::GeneratingSummary {
             session.spinner_frame = session.spinner_frame.wrapping_add(1);
@@ -166,6 +168,22 @@ fn handle_tick_event(tab_manager: &mut TabManager) {
     }
     if tab_manager.update_in_progress {
         tab_manager.update_spinner_frame = tab_manager.update_spinner_frame.wrapping_add(1);
+    }
+
+    // Auto-refresh session browser if open and due for refresh
+    if tab_manager.session_browser.open && tab_manager.session_browser.should_auto_refresh() {
+        tab_manager.session_browser.loading = true;
+        let wd = working_dir.to_path_buf();
+        let tx = output_tx.clone();
+        tokio::spawn(async move {
+            let (entries, daemon_connected, error) =
+                crate::tui::session_browser::SessionBrowserState::refresh_async(&wd).await;
+            let _ = tx.send(Event::SessionBrowserRefreshComplete {
+                entries,
+                daemon_connected,
+                error,
+            });
+        });
     }
 }
 
@@ -349,6 +367,16 @@ async fn handle_session_event(
             if let Some(session) = tab_manager.session_by_id_mut(session_id) {
                 session.status = SessionStatus::Complete;
                 session.running = false;
+
+                // Save a snapshot for completed sessions so they appear in /sessions history
+                if let Some(ref state) = session.workflow_state {
+                    if let Err(e) = create_and_save_snapshot(session, state, working_dir) {
+                        session.add_output(format!(
+                            "[planning] Warning: Failed to save completion snapshot: {}",
+                            e
+                        ));
+                    }
+                }
             }
         }
         Event::SessionWorkflowError { session_id, error } => {
@@ -498,12 +526,31 @@ async fn handle_session_event(
                 session.handle_verification_result(approved, iterations_used);
             }
         }
+        Event::SessionBrowserRefreshComplete {
+            entries,
+            daemon_connected,
+            error,
+        } => {
+            tab_manager
+                .session_browser
+                .apply_refresh(entries, daemon_connected, error);
+        }
         Event::UpdateInstallFinished(result) => {
             tab_manager.update_in_progress = false;
 
             match result {
                 update::UpdateResult::Success(binary_path) => {
                     let _ = update::write_update_marker(working_dir);
+
+                    // Shutdown the session daemon before exec'ing new binary
+                    // This ensures the daemon persists its registry and exits cleanly
+                    // The new binary will spawn a fresh daemon on startup
+                    let client = session_daemon::client::SessionDaemonClient::new(false);
+                    if client.is_connected() {
+                        let _ = client.shutdown().await;
+                        // Give daemon a moment to persist registry and exit
+                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    }
 
                     restore_terminal(terminal)?;
 

@@ -166,6 +166,49 @@ pub fn snapshot_path(session_id: &str) -> Result<PathBuf> {
     Ok(sessions_dir()?.join(format!("{}.json", session_id)))
 }
 
+// ============================================================================
+// Session Daemon Paths
+// ============================================================================
+
+/// Returns the session daemon socket path: `~/.planning-agent/sessiond.sock` (Unix only)
+#[cfg(unix)]
+pub fn sessiond_socket_path() -> Result<PathBuf> {
+    Ok(planning_agent_home_dir()?.join("sessiond.sock"))
+}
+
+/// Returns the session daemon PID file path: `~/.planning-agent/sessiond.pid`
+pub fn sessiond_pid_path() -> Result<PathBuf> {
+    Ok(planning_agent_home_dir()?.join("sessiond.pid"))
+}
+
+/// Returns the session daemon lock file path: `~/.planning-agent/sessiond.lock`
+#[allow(dead_code)]
+pub fn sessiond_lock_path() -> Result<PathBuf> {
+    Ok(planning_agent_home_dir()?.join("sessiond.lock"))
+}
+
+/// Returns the session daemon build SHA file path: `~/.planning-agent/sessiond.sha`
+///
+/// Used for version detection when daemon is unresponsive.
+pub fn sessiond_build_sha_path() -> Result<PathBuf> {
+    Ok(planning_agent_home_dir()?.join("sessiond.sha"))
+}
+
+/// Returns the session daemon port file path: `~/.planning-agent/sessiond.port` (Windows)
+///
+/// Contains JSON with port number and authentication token.
+#[cfg(windows)]
+pub fn sessiond_port_path() -> Result<PathBuf> {
+    Ok(planning_agent_home_dir()?.join("sessiond.port"))
+}
+
+/// Returns the session daemon registry file path: `~/.planning-agent/sessiond.registry.json`
+///
+/// Used for faster recovery after daemon restart.
+pub fn sessiond_registry_path() -> Result<PathBuf> {
+    Ok(planning_agent_home_dir()?.join("sessiond.registry.json"))
+}
+
 /// Returns the diagnostics directory for a working directory: `~/.planning-agent/diagnostics/<wd-hash>/`
 ///
 /// Creates the directory if it doesn't exist.

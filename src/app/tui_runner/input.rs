@@ -170,6 +170,14 @@ pub async fn handle_key_event(
         tab_manager.update_notice = None;
     }
 
+    // Handle session browser overlay input when it's open
+    if tab_manager.session_browser.open {
+        should_quit = super::session_browser_input::handle_session_browser_input(
+            key, tab_manager, working_dir, workflow_config, output_tx
+        ).await?;
+        return Ok(should_quit);
+    }
+
     let session = tab_manager.active_mut();
 
     if let Some(ref error) = session.error_state.clone() {
@@ -476,6 +484,10 @@ async fn handle_naming_tab_input(
                                     }
                                 }
                             });
+                        }
+                        SlashCommand::Sessions => {
+                            // Open the session browser overlay
+                            tab_manager.session_browser.open(working_dir);
                         }
                     }
                     return Ok(false);

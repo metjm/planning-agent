@@ -179,6 +179,13 @@ pub enum Event {
         summary: String,
         error: Option<String>,
     },
+
+    /// Session browser async refresh completed
+    SessionBrowserRefreshComplete {
+        entries: Vec<crate::tui::session_browser::SessionEntry>,
+        daemon_connected: bool,
+        error: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone)]

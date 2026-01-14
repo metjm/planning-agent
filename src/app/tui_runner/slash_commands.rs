@@ -13,6 +13,8 @@ pub enum SlashCommand {
     Update,
     /// Configure CLI tools to bypass approvals/sandbox.
     ConfigDangerous,
+    /// View and resume workflow sessions.
+    Sessions,
 }
 
 /// Parse a slash command from input text.
@@ -39,6 +41,7 @@ pub fn parse_slash_command(input: &str) -> Option<(SlashCommand, Vec<String>)> {
     match command {
         "/update" => Some((SlashCommand::Update, args)),
         "/config-dangerous" => Some((SlashCommand::ConfigDangerous, args)),
+        "/sessions" => Some((SlashCommand::Sessions, args)),
         "/config" => {
             // Check for "/config dangerous" variant
             if args.first().map(|s| s.as_str()) == Some("dangerous") {

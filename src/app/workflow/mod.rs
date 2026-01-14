@@ -42,10 +42,12 @@ mod revising;
 
 use crate::app::util::log_workflow;
 use crate::config::WorkflowConfig;
+use crate::session_tracking::SessionTracker;
 use crate::state::{Phase, State};
 use crate::tui::{CancellationError, Event, SessionEventSender, UserApprovalResponse, WorkflowCommand};
 use anyhow::Result;
 use std::path::PathBuf;
+use std::sync::Arc;
 use tokio::sync::mpsc;
 
 use completion::handle_completion;
@@ -70,6 +72,9 @@ pub struct WorkflowRunConfig {
     pub control_rx: mpsc::Receiver<WorkflowCommand>,
     pub session_id: usize,
     pub run_id: u64,
+    /// If true, disable session daemon tracking (for tests/headless mode)
+    #[allow(dead_code)]
+    pub no_daemon: bool,
 }
 
 pub async fn run_workflow_with_config(
@@ -85,9 +90,29 @@ pub async fn run_workflow_with_config(
         mut control_rx,
         session_id,
         run_id,
+        no_daemon,
     } = run_config;
 
     let sender = SessionEventSender::new(session_id, run_id, output_tx);
+
+    // Create session tracker for daemon integration
+    let tracker = Arc::new(SessionTracker::new(no_daemon));
+
+    // Register session with daemon
+    if let Err(e) = tracker
+        .register(
+            state.workflow_session_id.clone(),
+            state.feature_name.clone(),
+            working_dir.clone(),
+            state_path.clone(),
+            format!("{:?}", state.phase),
+            state.iteration,
+            format!("{:?}", state.phase),
+        )
+        .await
+    {
+        log_workflow(&working_dir, &format!("Session registration failed (non-fatal): {}", e));
+    }
 
     log_workflow(
         &working_dir,
@@ -125,8 +150,21 @@ pub async fn run_workflow_with_config(
                 .await;
 
                 match result {
-                    Ok(Some(workflow_result)) => return Ok(workflow_result),
-                    Ok(None) => {}
+                    Ok(Some(workflow_result)) => {
+                        let _ = tracker.mark_stopped(&state.workflow_session_id).await;
+                        return Ok(workflow_result);
+                    }
+                    Ok(None) => {
+                        // Phase completed - update session state
+                        let _ = tracker
+                            .update(
+                                &state.workflow_session_id,
+                                format!("{:?}", state.phase),
+                                state.iteration,
+                                format!("{:?}", state.phase),
+                            )
+                            .await;
+                    }
                     Err(e) if e.downcast_ref::<CancellationError>().is_some() => {
                         // Phase was cancelled - check for command
                         if let Ok(cmd) = control_rx.try_recv() {
@@ -137,11 +175,13 @@ pub async fn run_workflow_with_config(
                                 }
                                 WorkflowCommand::Stop => {
                                     log_workflow(&working_dir, "Planning phase cancelled for stop");
+                                    let _ = tracker.mark_stopped(&state.workflow_session_id).await;
                                     return Ok(WorkflowResult::Stopped);
                                 }
                             }
                         }
                         // Cancellation without command - shouldn't happen, but treat as abort
+                        let _ = tracker.mark_stopped(&state.workflow_session_id).await;
                         return Ok(WorkflowResult::Aborted {
                             reason: "Cancelled without feedback".to_string(),
                         });
@@ -161,8 +201,20 @@ pub async fn run_workflow_with_config(
                 .await;
 
                 match result {
-                    Ok(Some(workflow_result)) => return Ok(workflow_result),
+                    Ok(Some(workflow_result)) => {
+                        let _ = tracker.mark_stopped(&state.workflow_session_id).await;
+                        return Ok(workflow_result);
+                    }
                     Ok(None) => {
+                        // Phase completed - update session state
+                        let _ = tracker
+                            .update(
+                                &state.workflow_session_id,
+                                format!("{:?}", state.phase),
+                                state.iteration,
+                                format!("{:?}", state.phase),
+                            )
+                            .await;
                         if state.phase == Phase::Complete {
                             break;
                         }
@@ -176,10 +228,12 @@ pub async fn run_workflow_with_config(
                                 }
                                 WorkflowCommand::Stop => {
                                     log_workflow(&working_dir, "Reviewing phase cancelled for stop");
+                                    let _ = tracker.mark_stopped(&state.workflow_session_id).await;
                                     return Ok(WorkflowResult::Stopped);
                                 }
                             }
                         }
+                        let _ = tracker.mark_stopped(&state.workflow_session_id).await;
                         return Ok(WorkflowResult::Aborted {
                             reason: "Cancelled without feedback".to_string(),
                         });
@@ -202,8 +256,21 @@ pub async fn run_workflow_with_config(
                 .await;
 
                 match result {
-                    Ok(Some(workflow_result)) => return Ok(workflow_result),
-                    Ok(None) => {}
+                    Ok(Some(workflow_result)) => {
+                        let _ = tracker.mark_stopped(&state.workflow_session_id).await;
+                        return Ok(workflow_result);
+                    }
+                    Ok(None) => {
+                        // Phase completed - update session state
+                        let _ = tracker
+                            .update(
+                                &state.workflow_session_id,
+                                format!("{:?}", state.phase),
+                                state.iteration,
+                                format!("{:?}", state.phase),
+                            )
+                            .await;
+                    }
                     Err(e) if e.downcast_ref::<CancellationError>().is_some() => {
                         if let Ok(cmd) = control_rx.try_recv() {
                             match cmd {
@@ -213,10 +280,12 @@ pub async fn run_workflow_with_config(
                                 }
                                 WorkflowCommand::Stop => {
                                     log_workflow(&working_dir, "Revising phase cancelled for stop");
+                                    let _ = tracker.mark_stopped(&state.workflow_session_id).await;
                                     return Ok(WorkflowResult::Stopped);
                                 }
                             }
                         }
+                        let _ = tracker.mark_stopped(&state.workflow_session_id).await;
                         return Ok(WorkflowResult::Aborted {
                             reason: "Cancelled without feedback".to_string(),
                         });
@@ -240,7 +309,7 @@ pub async fn run_workflow_with_config(
     );
 
     if state.phase == Phase::Complete {
-        return handle_completion(
+        let result = handle_completion(
             &state,
             &working_dir,
             &sender,
@@ -248,11 +317,16 @@ pub async fn run_workflow_with_config(
             &mut control_rx,
         )
         .await;
+        // Mark session stopped after completion handling
+        let _ = tracker.mark_stopped(&state.workflow_session_id).await;
+        return result;
     }
 
     sender.send_output("".to_string());
     sender.send_output("=== WORKFLOW COMPLETE ===".to_string());
     sender.send_output("Max iterations reached. Manual review recommended.".to_string());
 
+    // Mark session stopped
+    let _ = tracker.mark_stopped(&state.workflow_session_id).await;
     Ok(WorkflowResult::Accepted)
 }

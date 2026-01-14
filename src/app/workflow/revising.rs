@@ -12,6 +12,7 @@ use anyhow::Result;
 use std::path::Path;
 use tokio::sync::mpsc;
 
+#[allow(clippy::too_many_arguments)]
 pub async fn run_revising_phase(
     state: &mut State,
     working_dir: &Path,
