@@ -195,8 +195,10 @@ pub async fn handle_key_event(
         }
     }
 
-    // Handle 'p' to toggle plan modal (global hotkey, works from any mode except error state)
-    if key.code == KeyCode::Char('p') && session.workflow_state.is_some() {
+    // Handle 'p' to toggle plan modal (global hotkey, works from any mode except error state or input areas)
+    let in_text_input = session.input_mode != InputMode::Normal
+        || session.approval_mode == ApprovalMode::EnteringFeedback;
+    if key.code == KeyCode::Char('p') && session.workflow_state.is_some() && !in_text_input {
         session.toggle_plan_modal(working_dir);
         return Ok(false);
     }

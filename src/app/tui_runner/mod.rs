@@ -4,6 +4,7 @@ mod events;
 mod implementation_input;
 mod input;
 pub mod slash_commands;
+mod workflow_lifecycle;
 
 use crate::app::cli::Cli;
 use crate::app::headless::extract_feature_name;
@@ -26,7 +27,8 @@ use crossterm::event::{
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-pub use events::{check_workflow_completions, handle_init_completion, process_event};
+pub use events::process_event;
+pub use workflow_lifecycle::{check_workflow_completions, handle_init_completion};
 
 pub type InitHandle = Option<(
     usize,

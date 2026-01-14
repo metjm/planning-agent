@@ -337,16 +337,74 @@ pub async fn run_headless_with_config(
                     state.iteration
                 ));
                 let iteration = state.iteration;
-                run_revision_phase_with_context(
-                    &mut state,
-                    &working_dir,
-                    &config,
-                    &last_reviews,
-                    sender.clone(),
-                    iteration,
-                    &state_path,
-                )
-                .await?;
+                let mut revising_attempts = 0usize;
+                let max_retries = config.failure_policy.max_retries as usize;
+
+                loop {
+                    let revision_result = run_revision_phase_with_context(
+                        &mut state,
+                        &working_dir,
+                        &config,
+                        &last_reviews,
+                        sender.clone(),
+                        iteration,
+                        &state_path,
+                    )
+                    .await;
+
+                    match revision_result {
+                        Ok(()) => break,
+                        Err(e) => {
+                            let error_msg = format!("{}", e);
+                            sender.send_output(format!("[revision] Failed: {}", error_msg));
+
+                            revising_attempts += 1;
+                            if revising_attempts > max_retries {
+                                // Apply failure policy for revising failures
+                                match config.failure_policy.on_all_reviewers_failed {
+                                    OnAllReviewersFailed::SaveState => {
+                                        state.set_failure(FailureContext {
+                                            kind: FailureKind::Unknown(error_msg),
+                                            phase: state.phase.clone(),
+                                            agent_name: Some(config.workflow.revising.agent.clone()),
+                                            retry_count: revising_attempts as u32,
+                                            max_retries: max_retries as u32,
+                                            failed_at: chrono::Utc::now().to_rfc3339(),
+                                            recovery_action: None,
+                                        });
+                                        state.set_updated_at();
+                                        state.save_atomic(&state_path)?;
+
+                                        sender.send_output("[error] Revision failed after retries.".to_string());
+                                        sender.send_output(format!("[save] State saved to: {}", state_path.display()));
+                                        sender.send_output(format!(
+                                            "[info] To recover in TUI mode, run: planning-agent --continue --name {}",
+                                            state.feature_name
+                                        ));
+                                        return Ok(());
+                                    }
+                                    OnAllReviewersFailed::ContinueWithoutReview => {
+                                        sender.send_output("[warning] Revision failed - skipping to review phase".to_string());
+                                        break;
+                                    }
+                                    OnAllReviewersFailed::Abort => {
+                                        anyhow::bail!(
+                                            "Revision failed after {} attempts: {} (headless mode does not support interactive recovery)",
+                                            revising_attempts,
+                                            error_msg
+                                        );
+                                    }
+                                }
+                            }
+                            sender.send_output(format!(
+                                "[revision] Retrying ({}/{})...",
+                                revising_attempts, max_retries
+                            ));
+                            continue;
+                        }
+                    }
+                }
+
                 last_reviews.clear();
 
                 // Keep old feedback files - don't cleanup

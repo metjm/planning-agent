@@ -54,6 +54,9 @@ pub async fn handle_awaiting_choice_input(
         ApprovalContext::AllReviewersFailed => {
             handle_all_reviewers_failed_input(key, session, working_dir, output_tx, workflow_config).await
         }
+        ApprovalContext::WorkflowFailure => {
+            handle_workflow_failure_input(key, session, working_dir, output_tx, workflow_config).await
+        }
     }
 }
 
@@ -296,6 +299,136 @@ pub async fn handle_all_reviewers_failed_input(
             session.approval_mode = ApprovalMode::None;
             session.status = SessionStatus::Error;
             session.error_state = Some("All reviewers failed - user aborted".to_string());
+        }
+        KeyCode::Char('j') | KeyCode::Down => {
+            let max_scroll = compute_plan_summary_max_scroll(&session.plan_summary);
+            session.scroll_summary_down(max_scroll);
+        }
+        KeyCode::Char('k') | KeyCode::Up => {
+            session.scroll_summary_up();
+        }
+        KeyCode::Char('q') | KeyCode::Esc => {
+            return Ok(true);
+        }
+        _ => {}
+    }
+    Ok(false)
+}
+
+/// Handle input for the WorkflowFailure context (generic agent/workflow failures).
+/// This is similar to AllReviewersFailed but used for non-reviewer failures.
+pub async fn handle_workflow_failure_input(
+    key: crossterm::event::KeyEvent,
+    session: &mut Session,
+    working_dir: &Path,
+    output_tx: &mpsc::UnboundedSender<Event>,
+    workflow_config: &WorkflowConfig,
+) -> Result<bool> {
+    // Check if we're in recovery mode (no workflow running)
+    // This happens when resuming a session that was stopped with a failure
+    let is_recovery_mode = session.workflow_handle.is_none() && session.approval_tx.is_none();
+
+    match key.code {
+        KeyCode::Char('r') | KeyCode::Char('R') => {
+            if is_recovery_mode {
+                // Recovery mode: spawn a new workflow
+                if let Some(ref mut state) = session.workflow_state {
+                    // Clear the failure before continuing
+                    state.clear_failure();
+
+                    // Compute state_path from working_dir and feature_name
+                    let state_path = match planning_paths::state_path(working_dir, &state.feature_name) {
+                        Ok(p) => p,
+                        Err(e) => {
+                            session.handle_error(&format!("Failed to get state path: {}", e));
+                            return Ok(false);
+                        }
+                    };
+
+                    // Save state with cleared failure
+                    state.set_updated_at();
+                    if let Err(e) = state.save(&state_path) {
+                        session.handle_error(&format!("Failed to save state: {}", e));
+                        return Ok(false);
+                    }
+
+                    // Set up channels
+                    let (new_approval_tx, new_approval_rx) = mpsc::channel::<UserApprovalResponse>(1);
+                    session.approval_tx = Some(new_approval_tx);
+
+                    let (new_control_tx, new_control_rx) = mpsc::channel::<WorkflowCommand>(1);
+                    session.workflow_control_tx = Some(new_control_tx);
+
+                    // Increment run_id
+                    session.current_run_id += 1;
+                    let run_id = session.current_run_id;
+
+                    // Spawn workflow
+                    let cfg = workflow_config.clone();
+                    let workflow_handle = tokio::spawn({
+                        let working_dir = working_dir.to_path_buf();
+                        let tx = output_tx.clone();
+                        let sid = session.id;
+                        let state = state.clone();
+                        async move {
+                            run_workflow_with_config(
+                                state,
+                                WorkflowRunConfig {
+                                    working_dir,
+                                    state_path,
+                                    config: cfg,
+                                    output_tx: tx,
+                                    approval_rx: new_approval_rx,
+                                    control_rx: new_control_rx,
+                                    session_id: sid,
+                                    run_id,
+                                },
+                            )
+                            .await
+                        }
+                    });
+
+                    session.workflow_handle = Some(workflow_handle);
+                    session.add_output("[planning] Retrying workflow after recovery...".to_string());
+                }
+            } else {
+                // Normal mode: send via approval channel
+                if let Some(tx) = session.approval_tx.clone() {
+                    let _ = tx.send(UserApprovalResponse::WorkflowFailureRetry).await;
+                }
+            }
+            session.approval_mode = ApprovalMode::None;
+            session.status = SessionStatus::Planning;
+            session.approval_context = ApprovalContext::PlanApproval;
+        }
+        KeyCode::Char('s') | KeyCode::Char('S') => {
+            if is_recovery_mode {
+                // Recovery mode: already stopped, just update UI
+                session.add_output("[planning] Session remains stopped.".to_string());
+            } else {
+                // Normal mode: stop and save state
+                if let Some(tx) = session.approval_tx.clone() {
+                    let _ = tx.send(UserApprovalResponse::WorkflowFailureStop).await;
+                }
+            }
+            session.approval_mode = ApprovalMode::None;
+            session.status = SessionStatus::Stopped;
+        }
+        KeyCode::Char('a') | KeyCode::Char('A') => {
+            if is_recovery_mode {
+                // Recovery mode: clear failure and mark as error
+                if let Some(ref mut state) = session.workflow_state {
+                    state.clear_failure();
+                }
+            } else {
+                // Normal mode: send abort via channel
+                if let Some(tx) = session.approval_tx.clone() {
+                    let _ = tx.send(UserApprovalResponse::WorkflowFailureAbort).await;
+                }
+            }
+            session.approval_mode = ApprovalMode::None;
+            session.status = SessionStatus::Error;
+            session.error_state = Some("Workflow failed - user aborted".to_string());
         }
         KeyCode::Char('j') | KeyCode::Down => {
             let max_scroll = compute_plan_summary_max_scroll(&session.plan_summary);

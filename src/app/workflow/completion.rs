@@ -115,6 +115,15 @@ pub async fn handle_completion(
                         );
                         continue;
                     }
+                    Some(UserApprovalResponse::WorkflowFailureRetry)
+                    | Some(UserApprovalResponse::WorkflowFailureStop)
+                    | Some(UserApprovalResponse::WorkflowFailureAbort) => {
+                        log_workflow(
+                            working_dir,
+                            "Received workflow failure response while awaiting plan approval, ignoring",
+                        );
+                        continue;
+                    }
                     None => {
                         log_workflow(working_dir, "Approval channel closed - treating as accept");
                         return Ok(WorkflowResult::Accepted);

@@ -150,6 +150,43 @@ pub fn build_resume_failure_summary(failure: &crate::app::failure::FailureContex
     s
 }
 
+/// Build a summary for a generic workflow failure (agent crash, timeout, etc.).
+/// This is shown in the TUI when a phase fails and needs user decision.
+pub fn build_workflow_failure_summary(
+    phase: &str,
+    error: &str,
+    agent_name: Option<&str>,
+    retry_attempts: usize,
+    max_retries: usize,
+    bundle_path: Option<&Path>,
+) -> String {
+    let mut summary = String::new();
+    summary.push_str("# Workflow Failed\n\n");
+    summary.push_str(&format!("**Phase**: {}\n", phase));
+    if let Some(agent) = agent_name {
+        summary.push_str(&format!("**Agent**: {}\n", agent));
+    }
+    summary.push_str(&format!(
+        "**Retry attempts**: {}/{}\n\n",
+        retry_attempts, max_retries
+    ));
+
+    summary.push_str("## Error\n\n");
+    summary.push_str(&format!("{}\n\n", truncate_for_summary(error, 500)));
+
+    if let Some(path) = bundle_path {
+        summary.push_str(&format!("**Diagnostics bundle**: {}\n\n", path.display()));
+        summary.push_str("_Note: Diagnostics bundles may contain sensitive information from logs._\n\n");
+    }
+
+    summary.push_str("## Recovery Options\n\n");
+    summary.push_str("- **[r] Retry**: Retry the failed operation\n");
+    summary.push_str("- **[s] Stop**: Save state and resume later\n");
+    summary.push_str("- **[a] Abort**: Abort the workflow\n");
+
+    summary
+}
+
 pub fn build_max_iterations_summary(
     state: &State,
     working_dir: &Path,
