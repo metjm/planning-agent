@@ -123,6 +123,14 @@ impl WorkflowConfig {
             .expect("Failed to parse embedded workflow.yaml - this is a bug in the workflow.yaml file")
     }
 
+    /// Returns a Claude-only workflow configuration (no Codex or other agents)
+    pub fn claude_only_config() -> Self {
+        const CLAUDE_ONLY_YAML: &str = include_str!("../workflow-claude-only.yaml");
+
+        serde_yaml::from_str(CLAUDE_ONLY_YAML)
+            .expect("Failed to parse embedded workflow-claude-only.yaml - this is a bug")
+    }
+
     fn validate(&self) -> Result<()> {
 
         if !self.agents.contains_key(&self.workflow.planning.agent) {
@@ -205,6 +213,24 @@ mod tests {
     #[test]
     fn test_default_config_validates() {
         let config = WorkflowConfig::default_config();
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_claude_only_config() {
+        let config = WorkflowConfig::claude_only_config();
+
+        // Should only have claude agent
+        assert!(config.agents.contains_key("claude"));
+        assert!(!config.agents.contains_key("codex"));
+        assert!(!config.agents.contains_key("gemini"));
+
+        // All phases should use claude
+        assert_eq!(config.workflow.planning.agent, "claude");
+        assert_eq!(config.workflow.revising.agent, "claude");
+        assert_eq!(config.workflow.reviewing.agents, vec!["claude"]);
+
+        // Should validate successfully
         assert!(config.validate().is_ok());
     }
 

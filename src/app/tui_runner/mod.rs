@@ -557,9 +557,15 @@ fn load_workflow_config(
                     debug_log(start, "Falling back to built-in multi-agent workflow config");
                 }
             }
+        } else if cli.claude {
+            debug_log(start, "Using Claude-only workflow config");
         } else {
             debug_log(start, "Using built-in multi-agent workflow config");
         }
     }
-    WorkflowConfig::default_config()
+    if cli.claude {
+        WorkflowConfig::claude_only_config()
+    } else {
+        WorkflowConfig::default_config()
+    }
 }

@@ -27,6 +27,10 @@ pub struct Cli {
     #[arg(long)]
     pub config: Option<PathBuf>,
 
+    /// Use Claude-only workflow (no Codex or other agents)
+    #[arg(long)]
+    pub claude: bool,
+
     /// Resume a stopped session by its ID
     #[arg(long)]
     pub resume_session: Option<String>,
