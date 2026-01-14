@@ -176,6 +176,43 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
         debug_log(start, "file index task spawned");
     }
 
+    // Spawn daemon subscription task for push notifications
+    {
+        let daemon_tx = event_handler.sender();
+        tokio::spawn(async move {
+            loop {
+                // Try to connect and subscribe
+                if let Some(mut subscription) =
+                    crate::session_daemon::DaemonSubscription::connect().await
+                {
+                    let _ = daemon_tx.send(Event::DaemonReconnected);
+
+                    // Forward all push notifications to event system
+                    while let Some(msg) = subscription.recv().await {
+                        match msg {
+                            crate::session_daemon::protocol::DaemonMessage::SessionChanged(
+                                record,
+                            ) => {
+                                let _ = daemon_tx.send(Event::DaemonSessionChanged(record));
+                            }
+                            crate::session_daemon::protocol::DaemonMessage::Restarting { .. } => {
+                                // Daemon is restarting, will reconnect
+                                break;
+                            }
+                            _ => {}
+                        }
+                    }
+
+                    let _ = daemon_tx.send(Event::DaemonDisconnected);
+                }
+
+                // Wait before retry
+                tokio::time::sleep(Duration::from_secs(2)).await;
+            }
+        });
+        debug_log(start, "daemon subscription task spawned");
+    }
+
     let working_dir = cli
         .working_dir
         .clone()

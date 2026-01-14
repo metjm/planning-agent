@@ -104,113 +104,103 @@ fn spawn_terminal_linux(dir: &str, command: &str) -> Result<()> {
     let xterm_cmd = format!("cd '{}' && {}; exec bash", dir, command);
 
     // Try gnome-terminal
-    if which::which("gnome-terminal").is_ok() {
-        if Command::new("gnome-terminal")
+    if which::which("gnome-terminal").is_ok()
+        && Command::new("gnome-terminal")
             .args(["--working-directory", dir, "--", "bash", "-c", &exec_bash_cmd])
             .spawn()
             .is_ok()
-        {
-            return Ok(());
-        }
+    {
+        return Ok(());
     }
 
     // Try konsole
-    if which::which("konsole").is_ok() {
-        if Command::new("konsole")
+    if which::which("konsole").is_ok()
+        && Command::new("konsole")
             .args(["--workdir", dir, "-e", "bash", "-c", &exec_bash_cmd])
             .spawn()
             .is_ok()
-        {
-            return Ok(());
-        }
+    {
+        return Ok(());
     }
 
     // Try xfce4-terminal
-    if which::which("xfce4-terminal").is_ok() {
-        if Command::new("xfce4-terminal")
+    if which::which("xfce4-terminal").is_ok()
+        && Command::new("xfce4-terminal")
             .args(["--working-directory", dir, "-e", &bash_c_cmd])
             .spawn()
             .is_ok()
-        {
-            return Ok(());
-        }
+    {
+        return Ok(());
     }
 
     // Try mate-terminal
-    if which::which("mate-terminal").is_ok() {
-        if Command::new("mate-terminal")
+    if which::which("mate-terminal").is_ok()
+        && Command::new("mate-terminal")
             .args(["--working-directory", dir, "-e", &bash_c_cmd])
             .spawn()
             .is_ok()
-        {
-            return Ok(());
-        }
+    {
+        return Ok(());
     }
 
     // Try terminator
-    if which::which("terminator").is_ok() {
-        if Command::new("terminator")
+    if which::which("terminator").is_ok()
+        && Command::new("terminator")
             .args(["--working-directory", dir, "-e", &bash_c_cmd])
             .spawn()
             .is_ok()
-        {
-            return Ok(());
-        }
+    {
+        return Ok(());
     }
 
     // Try alacritty
-    if which::which("alacritty").is_ok() {
-        if Command::new("alacritty")
+    if which::which("alacritty").is_ok()
+        && Command::new("alacritty")
             .args(["--working-directory", dir, "-e", "bash", "-c", &exec_bash_cmd])
             .spawn()
             .is_ok()
-        {
-            return Ok(());
-        }
+    {
+        return Ok(());
     }
 
     // Try kitty
-    if which::which("kitty").is_ok() {
-        if Command::new("kitty")
+    if which::which("kitty").is_ok()
+        && Command::new("kitty")
             .args(["--directory", dir, "bash", "-c", &exec_bash_cmd])
             .spawn()
             .is_ok()
-        {
-            return Ok(());
-        }
+    {
+        return Ok(());
     }
 
     // Try tilix
-    if which::which("tilix").is_ok() {
-        if Command::new("tilix")
+    if which::which("tilix").is_ok()
+        && Command::new("tilix")
             .args(["--working-directory", dir, "-e", &bash_c_cmd])
             .spawn()
             .is_ok()
-        {
-            return Ok(());
-        }
+    {
+        return Ok(());
     }
 
     // Try xterm
-    if which::which("xterm").is_ok() {
-        if Command::new("xterm")
+    if which::which("xterm").is_ok()
+        && Command::new("xterm")
             .args(["-e", &xterm_cmd])
             .spawn()
             .is_ok()
-        {
-            return Ok(());
-        }
+    {
+        return Ok(());
     }
 
     // Last resort: try x-terminal-emulator (Debian/Ubuntu alternative system)
-    if which::which("x-terminal-emulator").is_ok() {
-        if Command::new("x-terminal-emulator")
+    if which::which("x-terminal-emulator").is_ok()
+        && Command::new("x-terminal-emulator")
             .args(["-e", "bash", "-c", &xterm_cmd])
             .spawn()
             .is_ok()
-        {
-            return Ok(());
-        }
+    {
+        return Ok(());
     }
 
     Err(anyhow!(

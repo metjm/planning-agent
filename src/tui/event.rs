@@ -186,6 +186,15 @@ pub enum Event {
         daemon_connected: bool,
         error: Option<String>,
     },
+
+    /// Push notification from daemon: session state changed
+    DaemonSessionChanged(crate::session_daemon::SessionRecord),
+
+    /// Daemon subscription disconnected
+    DaemonDisconnected,
+
+    /// Daemon subscription reconnected
+    DaemonReconnected,
 }
 
 #[derive(Debug, Clone)]

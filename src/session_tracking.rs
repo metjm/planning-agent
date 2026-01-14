@@ -278,10 +278,10 @@ mod integration_tests {
     use crate::session_daemon::LivenessState;
     use std::time::Duration;
 
-    /// Helper to cleanup after tests
-    async fn cleanup_tracker(tracker: &SessionTracker) {
-        let _ = tracker.shutdown_daemon().await;
-        tokio::time::sleep(Duration::from_millis(100)).await;
+    /// Helper to clean up a specific session (marks it as stopped).
+    /// Does NOT shut down the daemon - other tests may be using it.
+    async fn cleanup_session(tracker: &SessionTracker, session_id: &str) {
+        let _ = tracker.force_stop(session_id).await;
     }
 
     #[tokio::test]
@@ -318,7 +318,7 @@ mod integration_tests {
         let found = sessions.iter().any(|s| s.workflow_session_id == session_id);
         assert!(found, "Session not found in list");
 
-        cleanup_tracker(&tracker).await;
+        cleanup_session(&tracker, session_id).await;
     }
 
     #[tokio::test]
@@ -362,7 +362,7 @@ mod integration_tests {
         assert_eq!(session.phase, "Reviewing");
         assert_eq!(session.iteration, 2);
 
-        cleanup_tracker(&tracker).await;
+        cleanup_session(&tracker, session_id).await;
     }
 
     #[tokio::test]
@@ -402,8 +402,7 @@ mod integration_tests {
             .expect("Session not found");
 
         assert_eq!(session.liveness, LivenessState::Stopped);
-
-        cleanup_tracker(&tracker).await;
+        // Already stopped, no additional cleanup needed
     }
 
     #[tokio::test]
@@ -443,8 +442,7 @@ mod integration_tests {
             .expect("Session not found");
 
         assert_eq!(session.liveness, LivenessState::Stopped);
-
-        cleanup_tracker(&tracker).await;
+        // Already stopped, no additional cleanup needed
     }
 
     #[tokio::test]
@@ -513,7 +511,7 @@ mod integration_tests {
             .await
             .expect("Update to Complete failed");
 
-        // 5. Mark stopped at workflow end
+        // 5. Mark stopped at workflow end - this also serves as cleanup
         tracker
             .mark_stopped(session_id)
             .await
@@ -526,8 +524,7 @@ mod integration_tests {
             .expect("Session not found");
         assert_eq!(session.phase, "Complete");
         assert_eq!(session.liveness, LivenessState::Stopped);
-
-        cleanup_tracker(&tracker).await;
+        // Already stopped, no additional cleanup needed
     }
 
     #[tokio::test]
@@ -565,6 +562,6 @@ mod integration_tests {
         let found = sessions.iter().any(|s| s.workflow_session_id == session_id);
         assert!(found, "Session not found after reconnect");
 
-        cleanup_tracker(&tracker).await;
+        cleanup_session(&tracker, session_id).await;
     }
 }

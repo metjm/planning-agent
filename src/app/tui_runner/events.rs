@@ -535,6 +535,16 @@ async fn handle_session_event(
                 .session_browser
                 .apply_refresh(entries, daemon_connected, error);
         }
+        Event::DaemonSessionChanged(record) => {
+            // Push notification: update session browser with new session state
+            tab_manager.session_browser.apply_session_update(record);
+        }
+        Event::DaemonDisconnected => {
+            tab_manager.session_browser.daemon_connected = false;
+        }
+        Event::DaemonReconnected => {
+            tab_manager.session_browser.daemon_connected = true;
+        }
         Event::UpdateInstallFinished(result) => {
             tab_manager.update_in_progress = false;
 
