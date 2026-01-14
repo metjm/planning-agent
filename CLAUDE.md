@@ -98,3 +98,28 @@ The build enforces a 750-line limit per file (see `build.rs`). When a file excee
 - **DON'T**: Compress code with hacky tricks like removing comments, shortening names, or condensing logic
 
 Proper extraction maintains readability and creates logical module boundaries.
+
+### Code Quality Standards
+
+**No shortcuts. No laziness. No excuses.**
+
+This is non-negotiable. Every problem must be properly investigated and fixed. When something breaks, you fix it correctly - you do not:
+
+- Dismiss failures as "flaky" or "pre-existing" without investigation
+- Claim something is an "environment issue" to avoid doing the work
+- Create wrapper functions or shims to avoid proper refactoring
+- Mark tests as ignored instead of fixing them
+- Add `#[allow(...)]` attributes to silence legitimate warnings
+- Hand-wave problems away with vague explanations
+
+When tests fail, you investigate why they fail and fix the root cause. When refactoring is needed, you do the refactoring properly. When something is broken, you take ownership and fix it.
+
+**Specific requirements:**
+
+- **DO**: Properly extract code into new modules with correct visibility (`pub(crate)`)
+- **DO**: Update all call sites when refactoring function signatures
+- **DO**: Write proper tests that use the actual API, not test-only wrappers
+- **DO**: Investigate every test failure and fix the underlying issue
+- **DO**: Take the time to understand problems before proposing solutions
+
+The lazy path is never acceptable. If a task requires significant effort, that effort must be made. Quality and correctness are not optional.

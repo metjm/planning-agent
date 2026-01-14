@@ -17,7 +17,21 @@
 pub mod client;
 pub mod protocol;
 pub mod server;
+pub mod subscription;
+
+#[cfg(test)]
+mod server_tests;
+
+#[cfg(test)]
+#[cfg(unix)]
+mod client_tests;
+
+#[cfg(test)]
+#[cfg(unix)]
+mod subscription_tests;
 
 pub use client::SessionDaemonClient;
 pub use protocol::{LivenessState, SessionRecord};
 pub use server::run_daemon;
+#[allow(unused_imports)]
+pub use subscription::DaemonSubscription;

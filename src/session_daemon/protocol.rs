@@ -126,6 +126,10 @@ pub enum ClientMessage {
     ForceStop {
         session_id: String,
     },
+    /// Subscribe to push notifications for session changes
+    Subscribe,
+    /// Unsubscribe from push notifications
+    Unsubscribe,
 }
 
 /// Messages sent from daemon to client.
@@ -144,6 +148,12 @@ pub enum DaemonMessage {
     },
     /// Error response
     Error(String),
+    /// Subscription confirmed
+    Subscribed,
+    /// Unsubscription confirmed
+    Unsubscribed,
+    /// Push notification: session state changed
+    SessionChanged(SessionRecord),
 }
 
 /// Windows-only: Port file content with authentication token.

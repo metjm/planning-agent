@@ -131,9 +131,7 @@ fn format_relative_time(timestamp: &str) -> String {
             let now = chrono::Utc::now();
             let duration = now.signed_duration_since(dt);
 
-            if duration.num_seconds() < 0 {
-                "just now".to_string()
-            } else if duration.num_seconds() < 60 {
+            if duration.num_seconds() < 60 {
                 "just now".to_string()
             } else if duration.num_minutes() < 60 {
                 format!("{}m ago", duration.num_minutes())
@@ -245,7 +243,9 @@ impl SessionBrowserState {
 
         self.sort_entries();
         self.loading = false;
-        self.last_refresh_at = Some(Instant::now());
+        // Don't set last_refresh_at here - leave it None so should_auto_refresh()
+        // triggers immediately to fetch live sessions from daemon.
+        // last_refresh_at will be set by apply_refresh() after async completes.
     }
 
     /// Asynchronous refresh - loads from daemon AND snapshots.
@@ -428,14 +428,68 @@ impl SessionBrowserState {
         entries.get(self.selected_idx).copied()
     }
 
-    /// Check if auto-refresh is due (every 5 seconds).
+    /// Check if initial async refresh is needed.
+    /// Returns true only on first open (to fetch live sessions from daemon).
+    /// Subsequent updates come via push notifications, not polling.
     pub fn should_auto_refresh(&self) -> bool {
         if !self.open || self.loading || self.confirmation_pending.is_some() {
             return false;
         }
-        match self.last_refresh_at {
-            Some(last) => last.elapsed().as_secs() >= 5,
-            None => true,
+        // Only trigger on initial open, not every 5 seconds
+        // Push notifications handle all subsequent updates
+        self.last_refresh_at.is_none()
+    }
+
+    /// Apply a session update from a daemon push notification.
+    /// Updates an existing entry or inserts a new one.
+    pub fn apply_session_update(&mut self, record: SessionRecord) {
+        let current_dir_canonical = std::fs::canonicalize(&self.current_working_dir)
+            .unwrap_or_else(|_| self.current_working_dir.clone());
+
+        let record_dir_canonical = std::fs::canonicalize(&record.working_dir)
+            .unwrap_or_else(|_| record.working_dir.clone());
+        let is_current_dir = record_dir_canonical == current_dir_canonical;
+
+        // Check if we have a snapshot for this session
+        let has_snapshot = self
+            .entries
+            .iter()
+            .find(|e| e.session_id == record.workflow_session_id)
+            .map(|e| e.has_snapshot)
+            .unwrap_or(false);
+
+        // Find existing entry by session ID
+        if let Some(entry) = self
+            .entries
+            .iter_mut()
+            .find(|e| e.session_id == record.workflow_session_id)
+        {
+            // Update existing entry
+            entry.feature_name = record.feature_name.clone();
+            entry.phase = record.phase.clone();
+            entry.iteration = record.iteration;
+            entry.workflow_status = record.workflow_status.clone();
+            entry.liveness = record.liveness;
+            entry.last_seen_at = record.last_heartbeat_at.clone();
+            entry.last_seen_relative = format_relative_time(&record.last_heartbeat_at);
+            entry.working_dir = record.working_dir.clone();
+            entry.is_current_dir = is_current_dir;
+            entry.is_resumable = entry.has_snapshot && record.liveness != LivenessState::Running;
+            entry.pid = Some(record.pid);
+            entry.is_live = true;
+        } else {
+            // Insert new entry
+            let new_entry = SessionEntry::from_live(&record, is_current_dir, has_snapshot);
+            self.entries.push(new_entry);
+        }
+
+        // Re-sort entries
+        self.sort_entries();
+
+        // Ensure selection is still valid
+        let filtered_len = self.filtered_entries().len();
+        if self.selected_idx >= filtered_len && filtered_len > 0 {
+            self.selected_idx = filtered_len - 1;
         }
     }
 
@@ -584,5 +638,154 @@ mod tests {
             ..entry.clone()
         };
         assert!(entry2.is_resumable);
+    }
+
+    fn create_test_record(id: &str, phase: &str, iteration: u32) -> SessionRecord {
+        SessionRecord::new(
+            id.to_string(),
+            format!("{}-feature", id),
+            PathBuf::from("/tmp/test"),
+            PathBuf::from("/tmp/test/state.json"),
+            phase.to_string(),
+            iteration,
+            phase.to_string(),
+            std::process::id(),
+        )
+    }
+
+    fn create_test_entry(id: &str, phase: &str, iteration: u32) -> SessionEntry {
+        SessionEntry {
+            session_id: id.to_string(),
+            feature_name: format!("{}-feature", id),
+            phase: phase.to_string(),
+            iteration,
+            workflow_status: phase.to_string(),
+            liveness: LivenessState::Running,
+            last_seen_at: "2024-01-01T00:00:00Z".to_string(),
+            last_seen_relative: "just now".to_string(),
+            working_dir: PathBuf::from("/tmp/test"),
+            is_current_dir: false,
+            has_snapshot: false,
+            is_resumable: false,
+            pid: Some(std::process::id()),
+            is_live: true,
+        }
+    }
+
+    #[test]
+    fn test_apply_session_update_new_entry() {
+        let mut state = SessionBrowserState::new();
+        state.current_working_dir = PathBuf::from("/tmp/test");
+        assert!(state.entries.is_empty());
+
+        // Apply update for new session
+        let record = create_test_record("new-session", "Planning", 1);
+        state.apply_session_update(record);
+
+        // Should have added entry
+        assert_eq!(state.entries.len(), 1);
+        assert_eq!(state.entries[0].session_id, "new-session");
+        assert_eq!(state.entries[0].phase, "Planning");
+        assert_eq!(state.entries[0].iteration, 1);
+        assert!(state.entries[0].is_live);
+    }
+
+    #[test]
+    fn test_apply_session_update_existing_entry() {
+        let mut state = SessionBrowserState::new();
+        state.current_working_dir = PathBuf::from("/tmp/test");
+
+        // Add initial entry
+        state.entries.push(create_test_entry("existing-session", "Planning", 1));
+        assert_eq!(state.entries.len(), 1);
+
+        // Apply update - should update existing entry
+        let mut record = create_test_record("existing-session", "Reviewing", 2);
+        record.workflow_status = "Reviewing".to_string();
+        state.apply_session_update(record);
+
+        // Should still have 1 entry, but updated
+        assert_eq!(state.entries.len(), 1);
+        assert_eq!(state.entries[0].session_id, "existing-session");
+        assert_eq!(state.entries[0].phase, "Reviewing");
+        assert_eq!(state.entries[0].iteration, 2);
+    }
+
+    #[test]
+    fn test_apply_session_update_preserves_has_snapshot() {
+        let mut state = SessionBrowserState::new();
+        state.current_working_dir = PathBuf::from("/tmp/test");
+
+        // Add entry with snapshot
+        let mut entry = create_test_entry("snapshot-session", "Planning", 1);
+        entry.has_snapshot = true;
+        state.entries.push(entry);
+
+        // Apply update - should preserve has_snapshot
+        let record = create_test_record("snapshot-session", "Reviewing", 1);
+        state.apply_session_update(record);
+
+        assert_eq!(state.entries.len(), 1);
+        assert!(state.entries[0].has_snapshot);
+    }
+
+    #[test]
+    fn test_apply_session_update_updates_liveness() {
+        let mut state = SessionBrowserState::new();
+        state.current_working_dir = PathBuf::from("/tmp/test");
+
+        // Add running entry
+        state.entries.push(create_test_entry("live-session", "Planning", 1));
+
+        // Create stopped record
+        let mut record = create_test_record("live-session", "Planning", 1);
+        record.liveness = LivenessState::Stopped;
+        state.apply_session_update(record);
+
+        assert_eq!(state.entries[0].liveness, LivenessState::Stopped);
+    }
+
+    #[test]
+    fn test_apply_session_update_resumability() {
+        let mut state = SessionBrowserState::new();
+        state.current_working_dir = PathBuf::from("/tmp/test");
+
+        // Add entry with snapshot, running
+        let mut entry = create_test_entry("resumable-session", "Planning", 1);
+        entry.has_snapshot = true;
+        entry.liveness = LivenessState::Running;
+        entry.is_resumable = false; // Running = not resumable
+        state.entries.push(entry);
+
+        // When stopped, should become resumable
+        let mut record = create_test_record("resumable-session", "Planning", 1);
+        record.liveness = LivenessState::Stopped;
+        state.apply_session_update(record);
+
+        // has_snapshot=true + Stopped = resumable
+        assert!(state.entries[0].is_resumable);
+    }
+
+    #[test]
+    fn test_apply_session_update_multiple_sessions() {
+        let mut state = SessionBrowserState::new();
+        state.current_working_dir = PathBuf::from("/tmp/test");
+
+        // Add two entries
+        state.entries.push(create_test_entry("session-a", "Planning", 1));
+        state.entries.push(create_test_entry("session-b", "Planning", 1));
+
+        // Update only session-b
+        let record = create_test_record("session-b", "Reviewing", 2);
+        state.apply_session_update(record);
+
+        // session-a unchanged, session-b updated
+        let session_a = state.entries.iter().find(|e| e.session_id == "session-a").unwrap();
+        let session_b = state.entries.iter().find(|e| e.session_id == "session-b").unwrap();
+
+        assert_eq!(session_a.phase, "Planning");
+        assert_eq!(session_a.iteration, 1);
+        assert_eq!(session_b.phase, "Reviewing");
+        assert_eq!(session_b.iteration, 2);
     }
 }
