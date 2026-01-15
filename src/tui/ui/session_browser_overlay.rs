@@ -1,6 +1,9 @@
 //! Session browser overlay for viewing and resuming workflow sessions.
 
 use crate::session_daemon::LivenessState;
+
+/// Spinner characters for animated running session indicators.
+const SPINNER_CHARS: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 use crate::tui::session_browser::ConfirmationState;
 use crate::tui::TabManager;
 use ratatui::{
@@ -29,8 +32,8 @@ fn liveness_style(liveness: &LivenessState) -> Style {
 pub fn draw_session_browser_overlay(frame: &mut Frame, tab_manager: &TabManager) {
     let area = frame.area();
 
-    let popup_width = (area.width as f32 * 0.85).min(100.0) as u16;
-    let popup_height = (area.height as f32 * 0.8).min(35.0) as u16;
+    let popup_width = (area.width as f32 * 0.90).min(120.0) as u16;
+    let popup_height = (area.height as f32 * 0.85).min(50.0) as u16;
     let popup_x = (area.width.saturating_sub(popup_width)) / 2;
     let popup_y = (area.height.saturating_sub(popup_height)) / 2;
 
@@ -49,6 +52,7 @@ pub fn draw_session_browser_overlay(frame: &mut Frame, tab_manager: &TabManager)
         .constraints([
             Constraint::Length(3), // Title
             Constraint::Length(1), // Filter/status info
+            Constraint::Length(1), // Selected session detail (working dir)
             Constraint::Length(2), // Column headers
             Constraint::Min(0),    // Session list
             Constraint::Length(3), // Instructions
@@ -134,11 +138,32 @@ pub fn draw_session_browser_overlay(frame: &mut Frame, tab_manager: &TabManager)
     let filter_line = Paragraph::new(Line::from(status_spans));
     frame.render_widget(filter_line, chunks[1]);
 
+    // Selected session detail (working directory)
+    let detail_line = if !entries.is_empty() {
+        let selected_idx = tab_manager.session_browser.selected_idx.min(entries.len().saturating_sub(1));
+        let selected = &entries[selected_idx];
+        let dir_str = selected.working_dir.display().to_string();
+        let max_len = popup_width.saturating_sub(6) as usize; // " → " prefix + margins
+        let truncated_dir = if dir_str.len() > max_len {
+            format!("...{}", &dir_str[dir_str.len() - max_len + 3..])
+        } else {
+            dir_str
+        };
+        Paragraph::new(Line::from(vec![
+            Span::styled(" → ", Style::default().fg(Color::DarkGray)),
+            Span::styled(truncated_dir, Style::default().fg(Color::Cyan)),
+        ]))
+    } else {
+        Paragraph::new(Line::from(vec![]))
+    };
+    frame.render_widget(detail_line, chunks[2]);
+
     // Column headers
+    // Layout: prefix (3) + dir (1) + snapshot (1) + feature (23) = 28 chars before first separator
     let header_line = Paragraph::new(Line::from(vec![
-        Span::styled("   ", Style::default()),
+        Span::styled("     ", Style::default()), // prefix (3) + dir (1) + snapshot (1)
         Span::styled(
-            format!("{:<18}", "Feature"),
+            format!("{:<23}", "Feature"),
             Style::default()
                 .fg(Color::White)
                 .add_modifier(Modifier::BOLD),
@@ -179,7 +204,7 @@ pub fn draw_session_browser_overlay(frame: &mut Frame, tab_manager: &TabManager)
                 .add_modifier(Modifier::BOLD),
         ),
     ]));
-    frame.render_widget(header_line, chunks[2]);
+    frame.render_widget(header_line, chunks[3]);
 
     // Session list
     let list_block = Block::default()
@@ -187,7 +212,7 @@ pub fn draw_session_browser_overlay(frame: &mut Frame, tab_manager: &TabManager)
         .border_style(Style::default().fg(Color::Blue))
         .title(" Sessions (j/k navigate, Enter resume, s force-stop) ");
 
-    let inner_area = list_block.inner(chunks[3]);
+    let inner_area = list_block.inner(chunks[4]);
 
     // Check for error
     if let Some(ref error) = tab_manager.session_browser.error {
@@ -201,14 +226,14 @@ pub fn draw_session_browser_overlay(frame: &mut Frame, tab_manager: &TabManager)
             Span::styled(error.clone(), Style::default().fg(Color::Red)),
         ]))
         .block(list_block);
-        frame.render_widget(error_para, chunks[3]);
+        frame.render_widget(error_para, chunks[4]);
     } else if entries.is_empty() {
         let empty_para = Paragraph::new(Line::from(vec![Span::styled(
             " No sessions found. ",
             Style::default().fg(Color::DarkGray),
         )]))
         .block(list_block);
-        frame.render_widget(empty_para, chunks[3]);
+        frame.render_widget(empty_para, chunks[4]);
     } else {
         // Render the session list
         let visible_height = inner_area.height as usize;
@@ -225,11 +250,21 @@ pub fn draw_session_browser_overlay(frame: &mut Frame, tab_manager: &TabManager)
         {
             let is_selected = i == selected_idx;
 
-            let prefix = if is_selected { " > " } else { "   " };
+            // Show spinner for Running sessions, selection indicator otherwise
+            let prefix = if entry.liveness == LivenessState::Running {
+                let spinner_char = SPINNER_CHARS[(tab_manager.update_spinner_frame as usize) % SPINNER_CHARS.len()];
+                format!(" {} ", spinner_char)
+            } else if is_selected {
+                " > ".to_string()
+            } else {
+                "   ".to_string()
+            };
             let dir_indicator = if entry.is_current_dir { "*" } else { " " };
+            // Snapshot indicator for resumable sessions
+            let snapshot_indicator = if entry.has_snapshot { "◉" } else { " " };
 
-            // Truncate feature name if too long
-            let max_name_len = 16;
+            // Truncate feature name if too long (expanded from 16 to 23 chars)
+            let max_name_len = 23;
             let feature_name: String = if entry.feature_name.len() > max_name_len {
                 format!("{}...", &entry.feature_name[..max_name_len - 3])
             } else {
@@ -265,18 +300,34 @@ pub fn draw_session_browser_overlay(frame: &mut Frame, tab_manager: &TabManager)
                 _ => Style::default().fg(Color::White),
             };
 
-            // Liveness style with color
-            let liveness_str = format!("{}", entry.liveness);
+            // Liveness style with color - show PID for running sessions
+            let liveness_str = if entry.liveness == LivenessState::Running {
+                if let Some(pid) = entry.pid {
+                    format!("Run {}", pid)  // "Run 12345" fits in 12 chars
+                } else {
+                    "Running".to_string()
+                }
+            } else {
+                format!("{}", entry.liveness)
+            };
             let live_style = liveness_style(&entry.liveness);
 
             // Truncate workflow_status and phase
             let phase_display = truncate_str(&entry.phase, 10);
             let status_display = truncate_str(&entry.workflow_status, 10);
 
+            // Style the prefix based on whether it's a spinner or selection indicator
+            let prefix_style = if entry.liveness == LivenessState::Running {
+                Style::default().fg(Color::Green)
+            } else {
+                style
+            };
+
             lines.push(Line::from(vec![
-                Span::styled(prefix, style),
+                Span::styled(prefix, prefix_style),
                 Span::styled(dir_indicator, Style::default().fg(Color::Magenta)),
-                Span::styled(format!("{:<17}", feature_name), style),
+                Span::styled(snapshot_indicator, Style::default().fg(Color::Blue)),
+                Span::styled(format!("{:<23}", feature_name), style),
                 Span::styled(" │ ", Style::default().fg(Color::DarkGray)),
                 Span::styled(format!("{:<10}", phase_display), phase_style),
                 Span::styled(" │ ", Style::default().fg(Color::DarkGray)),
@@ -297,7 +348,7 @@ pub fn draw_session_browser_overlay(frame: &mut Frame, tab_manager: &TabManager)
         }
 
         let list_para = Paragraph::new(lines).block(list_block);
-        frame.render_widget(list_para, chunks[3]);
+        frame.render_widget(list_para, chunks[4]);
 
         // Scrollbar if needed
         if entries.len() > visible_height {
@@ -306,7 +357,7 @@ pub fn draw_session_browser_overlay(frame: &mut Frame, tab_manager: &TabManager)
                 Scrollbar::new(ScrollbarOrientation::VerticalRight)
                     .begin_symbol(Some("↑"))
                     .end_symbol(Some("↓")),
-                chunks[3],
+                chunks[4],
                 &mut scrollbar_state,
             );
         }
@@ -362,7 +413,7 @@ pub fn draw_session_browser_overlay(frame: &mut Frame, tab_manager: &TabManager)
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::DarkGray)),
     );
-    frame.render_widget(instructions, chunks[4]);
+    frame.render_widget(instructions, chunks[5]);
 }
 
 /// Draw a confirmation dialog overlay.
