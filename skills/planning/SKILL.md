@@ -32,6 +32,59 @@ When referencing existing code as a pattern to copy or mirror:
 
 **"Code exists" ≠ "Code works". Always verify existing patterns function correctly before proposing to replicate them.**
 
+## Code Quality Principles (CRITICAL)
+
+### No Mocking - Ever
+
+All tests must use real infrastructure and real data. No mocks, stubs, fakes, or test doubles of any kind.
+
+- **DO**: Write integration tests that hit real databases, real APIs, real file systems
+- **DO**: Set up actual test infrastructure (containers, test databases, staging environments)
+- **DO NOT**: Mock database calls, HTTP clients, file systems, or any external dependencies
+- **DO NOT**: Create "test doubles" or "fake implementations"
+- **DO NOT**: Use mocking libraries (mockito, mockall, mock, unittest.mock, jest.mock, etc.)
+
+If a test cannot run against real infrastructure, the architecture needs to change - not the test.
+
+### Strong Types - Always
+
+Use the type system to prevent errors at compile time, not runtime.
+
+- **DO**: Create dedicated types for domain concepts (UserId, not String; Money, not f64)
+- **DO**: Use enums for finite sets of values
+- **DO**: Make invalid states unrepresentable through type design
+- **DO NOT**: Use String when a more specific type is appropriate
+- **DO NOT**: Use HashMap<String, Value> when a struct is more appropriate
+- **DO NOT**: Use Option/Result to paper over design issues
+
+### Clean Code - No Exceptions
+
+The lazy path is never acceptable.
+
+- **DO**: Properly refactor when the code needs it, even if extensive
+- **DO**: Remove all dead code, unused imports, and commented-out code
+- **DO NOT**: Leave code "for backwards compatibility" - update all callers instead
+- **DO NOT**: Create shims, wrappers, or adapters to avoid refactoring
+- **DO NOT**: Add #[allow(...)] or similar to silence legitimate warnings
+- **DO NOT**: Leave TODO comments - fix the issue or create a tracked ticket
+
+### Linter Rules - Prevent Recurrence
+
+When a plan addresses an issue that could have been caught by a linter rule, propose adding that rule.
+
+- **DO**: Identify if the issue represents a class of bugs preventable by static analysis
+- **DO**: Propose specific clippy/eslint/pylint rules that would catch this issue
+- **DO**: Propose custom lint rules if no built-in rule exists
+- **DO NOT**: Rely solely on code review to catch preventable issues
+- **DO NOT**: Skip the linter rule because "it's just this one case"
+
+**Common issues that warrant linter rules:**
+- Unused variables, imports, or dead code → `unused_*` rules
+- Missing error handling → `unwrap_used`, `expect_used` in production code
+- Type coercion issues → strict type checking rules
+- Potential null/undefined access → strict null checks
+- String formatting vulnerabilities → format string checks
+
 ## Workflow
 
 ### Phase 1: Research and Analysis
@@ -79,6 +132,10 @@ Write the plan to the `plan-output-path` provided in the inputs. The plan should
 - Think through error handling and edge cases
 - **Only break into incremental steps when complexity requires it**
 - **Simple tasks can be implemented in a single step**
+- **NEVER propose tests that use mocks** - all tests must use real infrastructure
+- **ALWAYS use strong types** - plans must specify concrete types, not generic strings/maps
+- **NEVER leave backwards-compatibility code** - plans must update all callers
+- **ALWAYS propose linter rules** when the issue being addressed is preventable by static analysis
 
 ## Output Format
 
@@ -138,12 +195,37 @@ Write the plan to the `plan-output-path` provided in the inputs. Use this struct
 
 ## Testing Strategy
 
-### Unit Tests
-- Test case 1: [Description and expected outcome]
-- Test case 2: [Edge case handling]
+### Real Integration Tests (No Mocks)
 
-### Integration Tests
-- Scenario 1: [End-to-end workflow validation]
+Every test must run against real infrastructure. List specific tests:
+
+- **Test 1: [Descriptive name]**
+  - Infrastructure: [Real database/API/service being tested]
+  - Setup: [Actual data/state required]
+  - Execution: [Exact steps]
+  - Verification: [What to assert against real results]
+
+- **Test 2: [Descriptive name]**
+  - Infrastructure: [...]
+  - Setup: [...]
+  - Execution: [...]
+  - Verification: [...]
+
+### Test Infrastructure Requirements
+
+- [ ] Required services: [List containers, databases, etc.]
+- [ ] Test data: [How to seed real data]
+- [ ] Cleanup: [How to reset state between tests]
+
+## Proposed Linter Rules (if applicable)
+
+If this change fixes or prevents an issue that could be caught by static analysis, propose linter rules:
+
+| Rule | Tool | Purpose | Configuration |
+|------|------|---------|---------------|
+| [rule_name] | [clippy/eslint/etc.] | [What it prevents] | [How to enable] |
+
+If no linter rules apply, state "No linter rules required - this issue is not catchable by static analysis."
 
 ## Validation Checklist
 - [ ] All existing tests pass

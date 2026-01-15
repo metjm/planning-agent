@@ -33,6 +33,48 @@ The methodical approach:
 4. Create integration tests to invalidate each hypothesis
 5. Let the tests tell you what's actually wrong
 
+## Code Quality Principles
+
+When fixing bugs, maintain the highest code quality standards:
+
+### Strong Types Catch Bugs
+
+Many bugs stem from weak typing. When investigating and fixing:
+
+- Look for String where a domain type should exist
+- Look for HashMap<String, Value> where structs should exist
+- Consider whether stronger types would have prevented the bug
+- Propose type improvements as part of the fix
+
+### Clean Fixes Only
+
+Fixes must be clean, not band-aids:
+
+- **DO**: Fix the root cause, even if it requires significant refactoring
+- **DO**: Update all affected code paths
+- **DO NOT**: Add special-case handling that works around the bug
+- **DO NOT**: Leave the broken code "for backwards compatibility"
+- **DO NOT**: Add flags or conditions to switch between old and new behavior
+- **DO NOT**: Claim "too risky to change" - proper testing makes changes safe
+
+### Linter Rules - Prevent Recurrence
+
+When fixing a bug, always ask: "Could a linter rule have caught this?"
+
+- **DO**: Identify the class of bugs this represents
+- **DO**: Research if a linter rule exists that catches this pattern
+- **DO**: Propose enabling the rule (or a custom rule) as part of the fix
+- **DO**: Ensure the rule is added to CI/pre-commit hooks
+
+**Examples of bug-to-rule mappings:**
+- Off-by-one errors → bounds checking lints
+- Null pointer dereference → strict null checks, `unwrap_used` clippy lint
+- Resource leaks → `must_use` attributes, leak detection lints
+- Concurrency issues → thread safety lints, `Send`/`Sync` enforcement
+- SQL injection → parameterized query enforcement lints
+
+A fix is not complete until the linter rule (if applicable) is proposed and configured.
+
 ## Phase 1: Parallel Investigation (Use 10 Sub-Agents)
 
 Launch up to 10 sub-agents simultaneously, each investigating a different angle:
@@ -142,12 +184,33 @@ After all sub-agents complete, synthesize findings:
 
 Create a plan to systematically invalidate hypotheses using **integration tests only** (no unit tests).
 
-### Why Integration Tests?
+### Why Real Integration Tests? (No Mocks - Ever)
 
-- Unit tests can pass while the real system fails
-- Integration tests verify actual behavior in realistic conditions
-- Bugs often occur at integration boundaries
-- Real infrastructure (database, cache, network) can reveal issues mocks would hide
+Mocks are debugging poison. They hide the exact interactions where bugs live.
+
+**Why mocks fail for debugging:**
+- Mocks encode assumptions about behavior - bugs often violate those assumptions
+- Mocks pass when real systems fail - giving false confidence
+- Integration boundaries are where bugs hide - mocks remove those boundaries
+- Mocks test your assumptions, not reality
+
+**Real tests reveal truth:**
+- Real databases expose connection, query, and transaction issues
+- Real APIs expose timeout, retry, and format issues
+- Real file systems expose permission, path, and encoding issues
+- Real message queues expose ordering, acknowledgment, and failure issues
+
+**Non-negotiable requirements:**
+- Use real databases (Postgres, Redis, etc. in containers)
+- Use real HTTP calls (to actual services or staging)
+- Use real file systems (actual files, not in-memory)
+- Use real message queues (actual brokers, not fakes)
+
+**Explicitly forbidden:**
+- Mocking libraries (mockito, mockall, unittest.mock, jest.mock)
+- Test doubles, fakes, stubs, or spies
+- In-memory implementations of external services
+- Any abstraction whose sole purpose is testability via mocking
 
 ### Test Plan Structure
 
@@ -274,11 +337,16 @@ Generate debugging analysis in this structure:
 ## Constraints
 
 - DO NOT jump to fixes without systematic investigation
-- DO NOT use unit tests - only integration tests with real infrastructure
+- DO NOT use mocks of any kind - only real integration tests with real infrastructure
+- DO NOT use unit tests for hypothesis validation - integration tests only
 - DO NOT abandon the process when frustrated - trust the methodology
+- DO NOT propose "safe" workarounds - fix the actual problem
+- DO NOT leave backwards-compatibility code - update all callers
 - ALWAYS use sub-agents for parallel investigation
 - ALWAYS document findings and reasoning
 - ALWAYS start with the most likely hypothesis when testing
+- ALWAYS consider if stronger types would prevent the bug class
+- ALWAYS propose linter rules that would prevent the bug class from recurring
 - Be thorough - a bug that escapes this process will be very hard to find
 
 ## Thinking Mode
