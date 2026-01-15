@@ -1,7 +1,7 @@
 use crate::agents::{AgentContext, AgentType};
 use crate::app::failure::FailureKind;
 use crate::app::workflow_common::is_network_error;
-use crate::config::{AggregationMode, WorkflowConfig};
+use crate::config::{AgentRef, AggregationMode, WorkflowConfig};
 use crate::diagnostics::{create_mcp_review_bundle, AttemptTimestamp, BundleConfig};
 use crate::mcp::spawner::generate_mcp_server_config;
 use crate::mcp::{McpServerConfig, SubmittedReview};
@@ -84,25 +84,32 @@ pub async fn run_multi_agent_review_with_context(
     state: &mut State,
     working_dir: &Path,
     config: &WorkflowConfig,
-    agent_names: &[String],
+    agent_refs: &[AgentRef],
     session_sender: SessionEventSender,
     iteration: u32,
     state_path: &Path,
 ) -> Result<ReviewBatchResult> {
-    if agent_names.is_empty() {
+    if agent_refs.is_empty() {
         anyhow::bail!("No reviewers configured");
     }
 
+    let display_ids: Vec<&str> = agent_refs.iter().map(|r| r.display_id()).collect();
     session_sender.send_output(format!(
         "[review] Running {} reviewer(s) in parallel with MCP: {}",
-        agent_names.len(),
-        agent_names.join(", ")
+        agent_refs.len(),
+        display_ids.join(", ")
     ));
 
     let phase_name = format!("Reviewing #{}", iteration);
 
-    let mut agent_contexts: Vec<(String, Option<String>, ResumeStrategy)> = Vec::new();
-    for agent_name in agent_names {
+    // Build agent contexts: (display_id, session_key, resume_strategy, custom_prompt)
+    let mut agent_contexts: Vec<(String, Option<String>, ResumeStrategy, Option<String>)> =
+        Vec::new();
+    for agent_ref in agent_refs {
+        let display_id = agent_ref.display_id().to_string();
+        let agent_name = agent_ref.agent_name();
+        let custom_prompt = agent_ref.custom_prompt().map(|s| s.to_string());
+
         // Get the configured resume strategy for this agent
         let configured_strategy = config
             .get_agent(agent_name)
@@ -114,32 +121,41 @@ pub async fn run_multi_agent_review_with_context(
                 }
             })
             .unwrap_or(ResumeStrategy::Stateless);
-        let agent_session = state.get_or_create_agent_session(agent_name, configured_strategy);
+        // Use display_id for session tracking to ensure unique sessions per instance
+        let agent_session = state.get_or_create_agent_session(&display_id, configured_strategy);
         agent_contexts.push((
-            agent_name.clone(),
+            display_id.clone(),
             agent_session.session_key.clone(),
             agent_session.resume_strategy.clone(),
+            custom_prompt,
         ));
-        state.record_invocation(agent_name, &phase_name);
+        state.record_invocation(&display_id, &phase_name);
     }
     state.set_updated_at();
     state.save_atomic(state_path)?;
 
-    let agents: Vec<(String, AgentType, Option<String>, ResumeStrategy)> = agent_names
-        .iter()
-        .zip(agent_contexts.into_iter())
-        .map(|(name, (_, session_key, resume_strategy))| {
-            let agent_config = config
-                .get_agent(name)
-                .ok_or_else(|| anyhow::anyhow!("Review agent '{}' not found in config", name))?;
-            Ok((
-                name.to_string(),
-                AgentType::from_config(name, agent_config, working_dir.to_path_buf())?,
-                session_key,
-                resume_strategy,
-            ))
-        })
-        .collect::<Result<Vec<_>>>()?;
+    // Build agents: (display_id, AgentType, session_key, resume_strategy, custom_prompt)
+    #[allow(clippy::type_complexity)]
+    let agents: Vec<(String, AgentType, Option<String>, ResumeStrategy, Option<String>)> =
+        agent_refs
+            .iter()
+            .zip(agent_contexts.into_iter())
+            .map(
+                |(agent_ref, (display_id, session_key, resume_strategy, custom_prompt))| {
+                    let agent_name = agent_ref.agent_name();
+                    let agent_config = config.get_agent(agent_name).ok_or_else(|| {
+                        anyhow::anyhow!("Review agent '{}' not found in config", agent_name)
+                    })?;
+                    Ok((
+                        display_id,
+                        AgentType::from_config(agent_name, agent_config, working_dir.to_path_buf())?,
+                        session_key,
+                        resume_strategy,
+                        custom_prompt,
+                    ))
+                },
+            )
+            .collect::<Result<Vec<_>>>()?;
 
     // Read plan content for MCP server
     let plan_path = state.plan_file.clone();
@@ -151,22 +167,28 @@ pub async fn run_multi_agent_review_with_context(
 
     let futures: Vec<_> = agents
         .into_iter()
-        .map(|(agent_name, agent, session_key, resume_strategy)| {
+        .map(|(display_id, agent, session_key, resume_strategy, custom_prompt)| {
             let plan = plan_content.clone();
             let review_prompt = mcp_review_prompt.clone();
             let mcp_prompt = mcp_agent_prompt.clone();
             let sender = session_sender.clone();
             let phase = format!("Reviewing #{}", iteration);
 
+            // Build the system prompt, appending custom prompt if present
+            let system_prompt = match &custom_prompt {
+                Some(custom) => format!("{}\n\n{}", REVIEW_SYSTEM_PROMPT, custom),
+                None => REVIEW_SYSTEM_PROMPT.to_string(),
+            };
+
             async move {
-                sender.send_output(format!("[review:{}] Starting MCP review...", agent_name));
+                sender.send_output(format!("[review:{}] Starting MCP review...", display_id));
 
                 // Generate MCP config for this agent
                 let mcp_config = match generate_mcp_server_config(&plan, &review_prompt) {
                     Ok(cfg) => cfg,
                     Err(e) => {
                         return (
-                            agent_name,
+                            display_id,
                             ReviewExecutionResult::ExecutionError(format!(
                                 "MCP config injection failed: {}",
                                 e
@@ -178,7 +200,7 @@ pub async fn run_multi_agent_review_with_context(
                 // Execute agent with MCP - all agents use MCP, no fallbacks
                 sender.send_output(format!(
                     "[review:{}] Using MCP for structured feedback (server: {})",
-                    agent_name, mcp_config.server_name
+                    display_id, mcp_config.server_name
                 ));
 
                 // First attempt
@@ -190,6 +212,7 @@ pub async fn run_multi_agent_review_with_context(
                     &sender,
                     &phase,
                     &mcp_config,
+                    &system_prompt,
                 )
                 .await;
 
@@ -201,7 +224,7 @@ pub async fn run_multi_agent_review_with_context(
                     }),
                     Err(e) => {
                         return (
-                            agent_name,
+                            display_id,
                             ReviewExecutionResult::ExecutionError(e.to_string()),
                         );
                     }
@@ -209,7 +232,7 @@ pub async fn run_multi_agent_review_with_context(
 
                 if initial_output.trim().is_empty() {
                     return (
-                        agent_name,
+                        display_id,
                         ReviewExecutionResult::ExecutionError("No output from reviewer".to_string()),
                     );
                 }
@@ -217,14 +240,14 @@ pub async fn run_multi_agent_review_with_context(
                 // Try to parse the initial output
                 match parse_mcp_review(&initial_output) {
                     Ok(review) => {
-                        sender.send_output(format!("[review:{}] Review complete", agent_name));
-                        (agent_name, ReviewExecutionResult::Success(review))
+                        sender.send_output(format!("[review:{}] Review complete", display_id));
+                        (display_id, ReviewExecutionResult::Success(review))
                     }
                     Err(parse_failure) => {
                         // Initial attempt failed to parse - try recovery
                         sender.send_output(format!(
                             "[review:{}] Failed to parse verdict: {}. Attempting recovery...",
-                            agent_name, parse_failure.error
+                            display_id, parse_failure.error
                         ));
 
                         // Build recovery prompt with context
@@ -243,6 +266,7 @@ pub async fn run_multi_agent_review_with_context(
                             &sender,
                             &format!("{} (recovery)", phase),
                             &mcp_config,
+                            &system_prompt,
                         )
                         .await;
 
@@ -258,7 +282,7 @@ pub async fn run_multi_agent_review_with_context(
                             Err(e) => {
                                 sender.send_output(format!(
                                     "[review:{}] Recovery attempt failed: {}",
-                                    agent_name, e
+                                    display_id, e
                                 ));
                                 (None, None)
                             }
@@ -270,9 +294,9 @@ pub async fn run_multi_agent_review_with_context(
                                 if let Ok(review) = parse_mcp_review(retry_out) {
                                     sender.send_output(format!(
                                         "[review:{}] Recovery succeeded!",
-                                        agent_name
+                                        display_id
                                     ));
-                                    return (agent_name, ReviewExecutionResult::Success(review));
+                                    return (display_id, ReviewExecutionResult::Success(review));
                                 }
                             }
                         }
@@ -291,11 +315,11 @@ pub async fn run_multi_agent_review_with_context(
 
                         sender.send_output(format!(
                             "[review:{}] Recovery failed. Diagnostics bundle will be created.",
-                            agent_name
+                            display_id
                         ));
 
                         (
-                            agent_name,
+                            display_id,
                             ReviewExecutionResult::ParseFailure {
                                 error: final_parse_result.error,
                                 plan_feedback_found: final_parse_result.plan_feedback_found,
@@ -419,6 +443,7 @@ pub async fn run_multi_agent_review_with_context(
 }
 
 /// Execute a single review attempt and track timing
+#[allow(clippy::too_many_arguments)]
 async fn execute_review_attempt(
     agent: &AgentType,
     prompt: &str,
@@ -427,6 +452,7 @@ async fn execute_review_attempt(
     sender: &SessionEventSender,
     phase: &str,
     mcp_config: &McpServerConfig,
+    system_prompt: &str,
 ) -> Result<ReviewAttemptResult> {
     let started_at = chrono::Utc::now().to_rfc3339();
 
@@ -440,7 +466,7 @@ async fn execute_review_attempt(
     let result = agent
         .execute_streaming_with_mcp(
             prompt.to_string(),
-            Some(REVIEW_SYSTEM_PROMPT.to_string()),
+            Some(system_prompt.to_string()),
             None,
             context,
             mcp_config,
@@ -601,161 +627,7 @@ pub fn merge_feedback(reviews: &[ReviewResult], output_path: &Path) -> Result<()
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
+#[path = "reviewing_tests.rs"]
+mod reviewing_tests;
 
-    #[test]
-    fn test_aggregate_any_rejects_none() {
-        let reviews = vec![
-            ReviewResult {
-                agent_name: "claude".to_string(),
-                needs_revision: false,
-                feedback: "APPROVED".to_string(),
-                summary: "Plan looks good".to_string(),
-            },
-            ReviewResult {
-                agent_name: "codex".to_string(),
-                needs_revision: false,
-                feedback: "APPROVED".to_string(),
-                summary: "No issues found".to_string(),
-            },
-        ];
-        assert_eq!(
-            aggregate_reviews(&reviews, &AggregationMode::AnyRejects),
-            FeedbackStatus::Approved
-        );
-    }
-
-    #[test]
-    fn test_aggregate_any_rejects_one() {
-        let reviews = vec![
-            ReviewResult {
-                agent_name: "claude".to_string(),
-                needs_revision: false,
-                feedback: "APPROVED".to_string(),
-                summary: "Plan looks good".to_string(),
-            },
-            ReviewResult {
-                agent_name: "codex".to_string(),
-                needs_revision: true,
-                feedback: "NEEDS REVISION".to_string(),
-                summary: "Missing error handling".to_string(),
-            },
-        ];
-        assert_eq!(
-            aggregate_reviews(&reviews, &AggregationMode::AnyRejects),
-            FeedbackStatus::NeedsRevision
-        );
-    }
-
-    #[test]
-    fn test_aggregate_all_reject_partial() {
-        let reviews = vec![
-            ReviewResult {
-                agent_name: "claude".to_string(),
-                needs_revision: false,
-                feedback: "APPROVED".to_string(),
-                summary: "Plan looks good".to_string(),
-            },
-            ReviewResult {
-                agent_name: "codex".to_string(),
-                needs_revision: true,
-                feedback: "NEEDS REVISION".to_string(),
-                summary: "Missing error handling".to_string(),
-            },
-        ];
-        assert_eq!(
-            aggregate_reviews(&reviews, &AggregationMode::AllReject),
-            FeedbackStatus::Approved
-        );
-    }
-
-    #[test]
-    fn test_aggregate_all_reject_full() {
-        let reviews = vec![
-            ReviewResult {
-                agent_name: "claude".to_string(),
-                needs_revision: true,
-                feedback: "NEEDS REVISION".to_string(),
-                summary: "Architecture concerns".to_string(),
-            },
-            ReviewResult {
-                agent_name: "codex".to_string(),
-                needs_revision: true,
-                feedback: "NEEDS REVISION".to_string(),
-                summary: "Missing error handling".to_string(),
-            },
-        ];
-        assert_eq!(
-            aggregate_reviews(&reviews, &AggregationMode::AllReject),
-            FeedbackStatus::NeedsRevision
-        );
-    }
-
-    #[test]
-    fn test_aggregate_majority_one_of_three() {
-        let reviews = vec![
-            ReviewResult {
-                agent_name: "claude".to_string(),
-                needs_revision: false,
-                feedback: "APPROVED".to_string(),
-                summary: "Plan looks good".to_string(),
-            },
-            ReviewResult {
-                agent_name: "codex".to_string(),
-                needs_revision: false,
-                feedback: "APPROVED".to_string(),
-                summary: "No issues found".to_string(),
-            },
-            ReviewResult {
-                agent_name: "gemini".to_string(),
-                needs_revision: true,
-                feedback: "NEEDS REVISION".to_string(),
-                summary: "Minor issues found".to_string(),
-            },
-        ];
-
-        assert_eq!(
-            aggregate_reviews(&reviews, &AggregationMode::Majority),
-            FeedbackStatus::Approved
-        );
-    }
-
-    #[test]
-    fn test_aggregate_majority_two_of_three() {
-        let reviews = vec![
-            ReviewResult {
-                agent_name: "claude".to_string(),
-                needs_revision: true,
-                feedback: "NEEDS REVISION".to_string(),
-                summary: "Architecture concerns".to_string(),
-            },
-            ReviewResult {
-                agent_name: "codex".to_string(),
-                needs_revision: true,
-                feedback: "NEEDS REVISION".to_string(),
-                summary: "Missing error handling".to_string(),
-            },
-            ReviewResult {
-                agent_name: "gemini".to_string(),
-                needs_revision: false,
-                feedback: "APPROVED".to_string(),
-                summary: "Plan looks good".to_string(),
-            },
-        ];
-
-        assert_eq!(
-            aggregate_reviews(&reviews, &AggregationMode::Majority),
-            FeedbackStatus::NeedsRevision
-        );
-    }
-
-    #[test]
-    fn test_aggregate_empty_reviews() {
-        let reviews: Vec<ReviewResult> = vec![];
-        assert_eq!(
-            aggregate_reviews(&reviews, &AggregationMode::AnyRejects),
-            FeedbackStatus::NeedsRevision
-        );
-    }
-}
+// Tests moved to reviewing_tests.rs to keep this file under the line limit

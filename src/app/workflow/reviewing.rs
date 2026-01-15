@@ -6,7 +6,7 @@ use crate::app::workflow_decisions::{
     handle_max_iterations, wait_for_all_reviewers_failed_decision, wait_for_review_decision,
     AllReviewersFailedDecision, ReviewDecision,
 };
-use crate::config::WorkflowConfig;
+use crate::config::{AgentRef, WorkflowConfig};
 use crate::phases::{
     self, aggregate_reviews, merge_feedback, run_multi_agent_review_with_context,
     write_feedback_files,
@@ -49,13 +49,17 @@ pub async fn run_reviewing_phase(
         "=== REVIEW PHASE (Iteration {}) ===",
         state.iteration
     ));
-    sender.send_output(format!(
-        "Reviewers: {}",
-        config.workflow.reviewing.agents.join(", ")
-    ));
+    let reviewer_display_names: Vec<&str> = config
+        .workflow
+        .reviewing
+        .agents
+        .iter()
+        .map(|r| r.display_id())
+        .collect();
+    sender.send_output(format!("Reviewers: {}", reviewer_display_names.join(", ")));
 
     let mut reviews_by_agent: HashMap<String, phases::ReviewResult> = HashMap::new();
-    let mut pending_reviewers = config.workflow.reviewing.agents.clone();
+    let mut pending_reviewers: Vec<AgentRef> = config.workflow.reviewing.agents.clone();
     let mut retry_attempts = 0usize;
 
     loop {
@@ -75,9 +79,11 @@ pub async fn run_reviewing_phase(
             }
         }
 
+        let pending_display_ids: Vec<&str> =
+            pending_reviewers.iter().map(|r| r.display_id()).collect();
         log_workflow(
             working_dir,
-            &format!("Running reviewers: {:?}", pending_reviewers),
+            &format!("Running reviewers: {:?}", pending_display_ids),
         );
         let batch = run_multi_agent_review_with_context(
             state,
@@ -108,11 +114,22 @@ pub async fn run_reviewing_phase(
             break;
         }
 
-        let failed_names = batch
+        // Collect failed display_ids
+        let failed_display_ids: Vec<String> = batch
             .failures
             .iter()
             .map(|f| f.agent_name.clone())
-            .collect::<Vec<_>>();
+            .collect();
+
+        // Find the AgentRef objects that match failed display_ids
+        let failed_agent_refs: Vec<AgentRef> = config
+            .workflow
+            .reviewing
+            .agents
+            .iter()
+            .filter(|r| failed_display_ids.contains(&r.display_id().to_string()))
+            .cloned()
+            .collect();
 
         if reviews_by_agent.is_empty() {
             let max_retries = config.failure_policy.max_retries as usize;
@@ -122,7 +139,7 @@ pub async fn run_reviewing_phase(
                     "[review] All reviewers failed; retrying ({}/{})...",
                     retry_attempts, max_retries
                 ));
-                pending_reviewers = failed_names;
+                pending_reviewers = failed_agent_refs.clone();
                 continue;
             }
 
@@ -144,7 +161,7 @@ pub async fn run_reviewing_phase(
                 AllReviewersFailedDecision::Retry => {
                     log_workflow(working_dir, "User chose to retry all reviewers");
                     retry_attempts = 0; // Reset retry counter for fresh attempt
-                    pending_reviewers = failed_names;
+                    pending_reviewers = failed_agent_refs.clone();
                     continue;
                 }
                 AllReviewersFailedDecision::Stop => {
@@ -172,7 +189,7 @@ pub async fn run_reviewing_phase(
 
         match decision {
             ReviewDecision::Retry => {
-                pending_reviewers = failed_names;
+                pending_reviewers = failed_agent_refs;
                 continue;
             }
             ReviewDecision::Continue => {

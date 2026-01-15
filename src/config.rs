@@ -84,9 +84,60 @@ pub struct SingleAgentPhase {
     pub max_turns: Option<u32>,
 }
 
+/// A reference to an agent instance, supporting both simple string references
+/// and extended configurations with custom prompts.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+#[serde(untagged)]
+pub enum AgentRef {
+    /// Simple string reference to a pre-defined agent
+    Simple(String),
+    /// Extended configuration with optional customization
+    Extended(AgentInstance),
+}
+
+/// Extended agent instance configuration
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub struct AgentInstance {
+    /// Name of the base agent (must exist in `agents` section)
+    pub agent: String,
+    /// Optional unique identifier for this instance (for logging/display)
+    /// Defaults to agent name if not specified
+    #[serde(default)]
+    pub id: Option<String>,
+    /// Optional prompt text appended to the system prompt for this instance
+    #[serde(default)]
+    pub prompt: Option<String>,
+}
+
+impl AgentRef {
+    /// Returns the base agent name
+    pub fn agent_name(&self) -> &str {
+        match self {
+            AgentRef::Simple(name) => name,
+            AgentRef::Extended(inst) => &inst.agent,
+        }
+    }
+
+    /// Returns the display ID (instance id or agent name)
+    pub fn display_id(&self) -> &str {
+        match self {
+            AgentRef::Simple(name) => name,
+            AgentRef::Extended(inst) => inst.id.as_deref().unwrap_or(&inst.agent),
+        }
+    }
+
+    /// Returns the optional custom prompt
+    pub fn custom_prompt(&self) -> Option<&str> {
+        match self {
+            AgentRef::Simple(_) => None,
+            AgentRef::Extended(inst) => inst.prompt.as_deref(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct MultiAgentPhase {
-    pub agents: Vec<String>,
+    pub agents: Vec<AgentRef>,
     #[serde(default)]
     pub aggregation: AggregationMode,
     /// If true, reviews without `<plan-feedback>` tags are treated as parse failures.
@@ -140,11 +191,12 @@ impl WorkflowConfig {
             );
         }
 
-        for agent in &self.workflow.reviewing.agents {
-            if !self.agents.contains_key(agent) {
+        for agent_ref in &self.workflow.reviewing.agents {
+            let agent_name = agent_ref.agent_name();
+            if !self.agents.contains_key(agent_name) {
                 anyhow::bail!(
                     "Review agent '{}' not found in agents configuration",
-                    agent
+                    agent_name
                 );
             }
         }
@@ -192,6 +244,10 @@ impl WorkflowConfig {
 }
 
 #[cfg(test)]
+#[path = "config_tests.rs"]
+mod config_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -205,8 +261,8 @@ mod tests {
 
         assert!(config.agents.contains_key(&config.workflow.planning.agent));
         assert!(config.agents.contains_key(&config.workflow.revising.agent));
-        for agent in &config.workflow.reviewing.agents {
-            assert!(config.agents.contains_key(agent));
+        for agent_ref in &config.workflow.reviewing.agents {
+            assert!(config.agents.contains_key(agent_ref.agent_name()));
         }
     }
 
@@ -228,7 +284,10 @@ mod tests {
         // All phases should use claude
         assert_eq!(config.workflow.planning.agent, "claude");
         assert_eq!(config.workflow.revising.agent, "claude");
-        assert_eq!(config.workflow.reviewing.agents, vec!["claude"]);
+        assert_eq!(
+            config.workflow.reviewing.agents,
+            vec![AgentRef::Simple("claude".to_string())]
+        );
 
         // Should validate successfully
         assert!(config.validate().is_ok());
@@ -288,8 +347,16 @@ workflow:
 "#;
         let config: WorkflowConfig = serde_yaml::from_str(yaml).unwrap();
         assert_eq!(config.workflow.reviewing.agents.len(), 2);
-        assert!(config.workflow.reviewing.agents.contains(&"claude".to_string()));
-        assert!(config.workflow.reviewing.agents.contains(&"codex".to_string()));
+        assert!(config
+            .workflow
+            .reviewing
+            .agents
+            .contains(&AgentRef::Simple("claude".to_string())));
+        assert!(config
+            .workflow
+            .reviewing
+            .agents
+            .contains(&AgentRef::Simple("codex".to_string())));
     }
 
     #[test]
