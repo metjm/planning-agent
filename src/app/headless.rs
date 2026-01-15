@@ -1,7 +1,7 @@
 use crate::app::cli::Cli;
 use crate::app::failure::{FailureContext, FailureKind, OnAllReviewersFailed};
 use crate::app::util::truncate_for_summary;
-use crate::app::workflow_common::{plan_file_has_content, pre_create_plan_files};
+use crate::app::workflow_common::{plan_file_has_content, pre_create_plan_files_with_working_dir};
 use crate::config::{AgentRef, WorkflowConfig};
 use crate::phases::{
     self, aggregate_reviews, merge_feedback, run_multi_agent_review_with_context,
@@ -526,8 +526,9 @@ pub async fn run_headless(cli: Cli) -> Result<()> {
     // Canonicalize working_dir for absolute paths in prompts
     let working_dir = std::fs::canonicalize(&working_dir).unwrap_or(working_dir);
 
-    // Pre-create plan folder and files (in ~/.planning-agent/plans/)
-    pre_create_plan_files(&state).context("Failed to pre-create plan files")?;
+    // Pre-create plan folder and files (in ~/.planning-agent/sessions/)
+    pre_create_plan_files_with_working_dir(&state, Some(&working_dir))
+        .context("Failed to pre-create plan files")?;
 
     state.set_updated_at();
     state.save_atomic(&state_path)?;

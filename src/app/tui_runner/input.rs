@@ -1,6 +1,6 @@
 use crate::app::cli::Cli;
 use crate::app::headless::extract_feature_name;
-use crate::app::workflow_common::pre_create_plan_files;
+use crate::app::workflow_common::pre_create_plan_files_with_working_dir;
 use crate::config::WorkflowConfig;
 use crate::planning_paths;
 use crate::state::State;
@@ -529,8 +529,9 @@ async fn handle_naming_tab_input(
 
                     let mut state = State::new(&feature_name, &objective, max_iter)?;
 
-                    // Pre-create plan folder and files (in ~/.planning-agent/plans/)
-                    pre_create_plan_files(&state).context("Failed to pre-create plan files")?;
+                    // Pre-create plan folder and files (in ~/.planning-agent/sessions/)
+                    pre_create_plan_files_with_working_dir(&state, Some(&wd))
+                        .context("Failed to pre-create plan files")?;
 
                     state.set_updated_at();
                     state.save(&state_path)?;

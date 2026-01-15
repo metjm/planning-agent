@@ -162,8 +162,90 @@ pub fn agent_stream_log_path(working_dir: &Path, run_id: &str) -> Result<PathBuf
 }
 
 /// Returns the snapshot file path for a session: `~/.planning-agent/sessions/<session-id>.json`
+///
+/// **DEPRECATED**: Use `session_snapshot_path()` for new code.
+/// This function remains for backward compatibility with existing sessions.
 pub fn snapshot_path(session_id: &str) -> Result<PathBuf> {
     Ok(sessions_dir()?.join(format!("{}.json", session_id)))
+}
+
+// ============================================================================
+// Session-Centric Paths (New Consolidated Structure)
+// ============================================================================
+
+/// Returns the session directory: `~/.planning-agent/sessions/<session-id>/`
+///
+/// Creates the directory if it doesn't exist.
+pub fn session_dir(session_id: &str) -> Result<PathBuf> {
+    let dir = sessions_dir()?.join(session_id);
+    fs::create_dir_all(&dir)
+        .with_context(|| format!("Failed to create session directory: {}", dir.display()))?;
+    Ok(dir)
+}
+
+/// Returns the session state file: `~/.planning-agent/sessions/<session-id>/state.json`
+pub fn session_state_path(session_id: &str) -> Result<PathBuf> {
+    Ok(session_dir(session_id)?.join("state.json"))
+}
+
+/// Returns the session plan file: `~/.planning-agent/sessions/<session-id>/plan.md`
+pub fn session_plan_path(session_id: &str) -> Result<PathBuf> {
+    Ok(session_dir(session_id)?.join("plan.md"))
+}
+
+/// Returns the session feedback file: `~/.planning-agent/sessions/<session-id>/feedback_<round>.md`
+pub fn session_feedback_path(session_id: &str, round: u32) -> Result<PathBuf> {
+    Ok(session_dir(session_id)?.join(format!("feedback_{}.md", round)))
+}
+
+/// Returns the session snapshot file: `~/.planning-agent/sessions/<session-id>/session.json`
+pub fn session_snapshot_path(session_id: &str) -> Result<PathBuf> {
+    Ok(session_dir(session_id)?.join("session.json"))
+}
+
+/// Returns the session logs directory: `~/.planning-agent/sessions/<session-id>/logs/`
+///
+/// Creates the directory if it doesn't exist.
+#[allow(dead_code)]
+pub fn session_logs_dir(session_id: &str) -> Result<PathBuf> {
+    let dir = session_dir(session_id)?.join("logs");
+    fs::create_dir_all(&dir)
+        .with_context(|| format!("Failed to create session logs directory: {}", dir.display()))?;
+    Ok(dir)
+}
+
+/// Returns the session main log file: `~/.planning-agent/sessions/<session-id>/logs/session.log`
+#[allow(dead_code)]
+pub fn session_log_path(session_id: &str) -> Result<PathBuf> {
+    Ok(session_logs_dir(session_id)?.join("session.log"))
+}
+
+/// Returns the session agent stream log: `~/.planning-agent/sessions/<session-id>/logs/agent-stream.log`
+#[allow(dead_code)]
+pub fn session_agent_log_path(session_id: &str) -> Result<PathBuf> {
+    Ok(session_logs_dir(session_id)?.join("agent-stream.log"))
+}
+
+/// Returns the session workflow log: `~/.planning-agent/sessions/<session-id>/logs/workflow.log`
+#[allow(dead_code)]
+pub fn session_workflow_log_path(session_id: &str) -> Result<PathBuf> {
+    Ok(session_logs_dir(session_id)?.join("workflow.log"))
+}
+
+/// Returns the session diagnostics directory: `~/.planning-agent/sessions/<session-id>/diagnostics/`
+///
+/// Creates the directory if it doesn't exist.
+#[allow(dead_code)]
+pub fn session_diagnostics_dir(session_id: &str) -> Result<PathBuf> {
+    let dir = session_dir(session_id)?.join("diagnostics");
+    fs::create_dir_all(&dir)
+        .with_context(|| format!("Failed to create session diagnostics directory: {}", dir.display()))?;
+    Ok(dir)
+}
+
+/// Returns the session info metadata file: `~/.planning-agent/sessions/<session-id>/session_info.json`
+pub fn session_info_path(session_id: &str) -> Result<PathBuf> {
+    Ok(session_dir(session_id)?.join("session_info.json"))
 }
 
 // ============================================================================
@@ -246,49 +328,177 @@ pub struct PlanInfo {
     pub folder_name: String,
 }
 
-/// Lists all plan folders in the plans directory.
+/// Lightweight session info for fast listing without loading full snapshots.
 ///
-/// Returns a vector of PlanInfo, sorted by timestamp descending (most recent first).
-pub fn list_plans() -> Result<Vec<PlanInfo>> {
-    let plans_directory = plans_dir()?;
+/// This struct is stored in `session_info.json` within each session directory
+/// and updated on each state save for efficient session listing.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SessionInfo {
+    /// The workflow session ID
+    pub session_id: String,
+    /// Human-readable feature name
+    pub feature_name: String,
+    /// Brief objective description
+    pub objective: String,
+    /// Working directory where the workflow was started
+    pub working_dir: PathBuf,
+    /// Session creation timestamp (RFC3339)
+    pub created_at: String,
+    /// Last update timestamp (RFC3339)
+    pub updated_at: String,
+    /// Current workflow phase
+    pub phase: String,
+    /// Current iteration number
+    pub iteration: u32,
+}
 
-    let mut plans = Vec::new();
-
-    if !plans_directory.exists() {
-        return Ok(plans);
+impl SessionInfo {
+    /// Creates a new SessionInfo with the current timestamp.
+    pub fn new(
+        session_id: &str,
+        feature_name: &str,
+        objective: &str,
+        working_dir: &Path,
+        phase: &str,
+        iteration: u32,
+    ) -> Self {
+        let now = chrono::Utc::now().to_rfc3339();
+        Self {
+            session_id: session_id.to_string(),
+            feature_name: feature_name.to_string(),
+            objective: objective.to_string(),
+            working_dir: working_dir.to_path_buf(),
+            created_at: now.clone(),
+            updated_at: now,
+            phase: phase.to_string(),
+            iteration,
+        }
     }
 
-    for entry in fs::read_dir(&plans_directory)? {
-        let entry = entry?;
-        let path = entry.path();
+    /// Updates the session info with a new phase and iteration.
+    #[allow(dead_code)]
+    pub fn update(&mut self, phase: &str, iteration: u32) {
+        self.phase = phase.to_string();
+        self.iteration = iteration;
+        self.updated_at = chrono::Utc::now().to_rfc3339();
+    }
 
-        if !path.is_dir() {
-            continue;
+    /// Saves the session info to the session_info.json file.
+    pub fn save(&self, session_id: &str) -> Result<()> {
+        let path = session_info_path(session_id)?;
+        let content = serde_json::to_string_pretty(self)
+            .with_context(|| "Failed to serialize session info")?;
+        fs::write(&path, content)
+            .with_context(|| format!("Failed to write session info: {}", path.display()))?;
+        Ok(())
+    }
+
+    /// Loads session info from the session_info.json file.
+    #[allow(dead_code)]
+    pub fn load(session_id: &str) -> Result<Self> {
+        let path = session_info_path(session_id)?;
+        let content = fs::read_to_string(&path)
+            .with_context(|| format!("Failed to read session info: {}", path.display()))?;
+        serde_json::from_str(&content)
+            .with_context(|| "Failed to parse session info")
+    }
+}
+
+/// Lists all plan folders in the plans directory and session directories.
+///
+/// Returns a vector of PlanInfo, sorted by timestamp descending (most recent first).
+/// Scans both legacy `~/.planning-agent/plans/` and new `~/.planning-agent/sessions/` directories.
+pub fn list_plans() -> Result<Vec<PlanInfo>> {
+    let mut plans = Vec::new();
+
+    // 1. Scan legacy plans directory: ~/.planning-agent/plans/
+    let plans_directory = plans_dir()?;
+    if plans_directory.exists() {
+        for entry in fs::read_dir(&plans_directory)? {
+            let entry = entry?;
+            let path = entry.path();
+
+            if !path.is_dir() {
+                continue;
+            }
+
+            // Check if plan.md exists in this folder
+            let plan_file = path.join("plan.md");
+            if !plan_file.exists() {
+                continue;
+            }
+
+            let folder_name = entry.file_name().to_string_lossy().to_string();
+
+            // Parse folder name format: YYYYMMDD-HHMMSS-shortid_feature-name
+            // Example: 20251230-123632-a3529aa2_plan-verification-phase
+            if let Some((timestamp_part, feature_part)) = folder_name.split_once('_') {
+                // Extract just the timestamp (first 15 chars: YYYYMMDD-HHMMSS)
+                let timestamp = if timestamp_part.len() >= 15 {
+                    timestamp_part[..15].to_string()
+                } else {
+                    timestamp_part.to_string()
+                };
+
+                plans.push(PlanInfo {
+                    path,
+                    feature_name: feature_part.to_string(),
+                    timestamp,
+                    folder_name,
+                });
+            }
         }
+    }
 
-        // Check if plan.md exists in this folder
-        let plan_file = path.join("plan.md");
-        if !plan_file.exists() {
-            continue;
-        }
+    // 2. Scan new session directories: ~/.planning-agent/sessions/<session-id>/plan.md
+    let sessions_directory = sessions_dir()?;
+    if sessions_directory.exists() {
+        for entry in fs::read_dir(&sessions_directory)? {
+            let entry = entry?;
+            let path = entry.path();
 
-        let folder_name = entry.file_name().to_string_lossy().to_string();
+            if !path.is_dir() {
+                continue;
+            }
 
-        // Parse folder name format: YYYYMMDD-HHMMSS-shortid_feature-name
-        // Example: 20251230-123632-a3529aa2_plan-verification-phase
-        if let Some((timestamp_part, feature_part)) = folder_name.split_once('_') {
-            // Extract just the timestamp (first 15 chars: YYYYMMDD-HHMMSS)
-            let timestamp = if timestamp_part.len() >= 15 {
-                timestamp_part[..15].to_string()
+            // Check if plan.md exists in this session folder
+            let plan_file = path.join("plan.md");
+            if !plan_file.exists() {
+                continue;
+            }
+
+            let session_id = entry.file_name().to_string_lossy().to_string();
+
+            // Skip if this doesn't look like a UUID-based session ID
+            if session_id.ends_with(".json") {
+                continue; // Skip legacy snapshot files
+            }
+
+            // Try to read session_info.json for metadata
+            let info_path = path.join("session_info.json");
+            let (feature_name, timestamp) = if info_path.exists() {
+                if let Ok(content) = fs::read_to_string(&info_path) {
+                    if let Ok(info) = serde_json::from_str::<SessionInfo>(&content) {
+                        // Convert RFC3339 timestamp to YYYYMMDD-HHMMSS format
+                        let ts = convert_rfc3339_to_timestamp(&info.created_at)
+                            .unwrap_or_else(|| info.created_at.clone());
+                        (info.feature_name, ts)
+                    } else {
+                        (session_id.clone(), String::new())
+                    }
+                } else {
+                    (session_id.clone(), String::new())
+                }
             } else {
-                timestamp_part.to_string()
+                // Fallback: use session_id as feature name
+                (session_id.clone(), String::new())
             };
 
             plans.push(PlanInfo {
                 path,
-                feature_name: feature_part.to_string(),
+                feature_name,
                 timestamp,
-                folder_name,
+                folder_name: session_id,
             });
         }
     }
@@ -297,6 +507,13 @@ pub fn list_plans() -> Result<Vec<PlanInfo>> {
     plans.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
 
     Ok(plans)
+}
+
+/// Converts an RFC3339 timestamp to YYYYMMDD-HHMMSS format.
+fn convert_rfc3339_to_timestamp(rfc3339: &str) -> Option<String> {
+    chrono::DateTime::parse_from_rfc3339(rfc3339)
+        .ok()
+        .map(|dt| dt.format("%Y%m%d-%H%M%S").to_string())
 }
 
 /// Finds a plan folder by partial match on feature name or folder name.
@@ -448,5 +665,199 @@ mod tests {
         assert!(result.is_ok());
         let path = result.unwrap();
         assert!(path.ends_with("update-installed"));
+    }
+
+    // ============================================================================
+    // Session-Centric Path Tests
+    // ============================================================================
+
+    #[test]
+    fn test_session_dir() {
+        if env::var("HOME").is_err() {
+            return;
+        }
+
+        let session_id = format!("test-session-{}", uuid::Uuid::new_v4());
+        let result = session_dir(&session_id);
+        assert!(result.is_ok());
+        let path = result.unwrap();
+        assert!(path.ends_with(&session_id));
+        assert!(path.to_string_lossy().contains("sessions"));
+        assert!(path.exists()); // Should be created
+    }
+
+    #[test]
+    fn test_session_state_path() {
+        if env::var("HOME").is_err() {
+            return;
+        }
+
+        let session_id = format!("test-session-{}", uuid::Uuid::new_v4());
+        let result = session_state_path(&session_id);
+        assert!(result.is_ok());
+        let path = result.unwrap();
+        assert!(path.ends_with("state.json"));
+        assert!(path.to_string_lossy().contains(&session_id));
+    }
+
+    #[test]
+    fn test_session_plan_path() {
+        if env::var("HOME").is_err() {
+            return;
+        }
+
+        let session_id = format!("test-session-{}", uuid::Uuid::new_v4());
+        let result = session_plan_path(&session_id);
+        assert!(result.is_ok());
+        let path = result.unwrap();
+        assert!(path.ends_with("plan.md"));
+        assert!(path.to_string_lossy().contains(&session_id));
+    }
+
+    #[test]
+    fn test_session_feedback_path() {
+        if env::var("HOME").is_err() {
+            return;
+        }
+
+        let session_id = format!("test-session-{}", uuid::Uuid::new_v4());
+        let result = session_feedback_path(&session_id, 1);
+        assert!(result.is_ok());
+        let path = result.unwrap();
+        assert!(path.ends_with("feedback_1.md"));
+
+        let result2 = session_feedback_path(&session_id, 3);
+        assert!(result2.is_ok());
+        let path2 = result2.unwrap();
+        assert!(path2.ends_with("feedback_3.md"));
+    }
+
+    #[test]
+    fn test_session_snapshot_path() {
+        if env::var("HOME").is_err() {
+            return;
+        }
+
+        let session_id = format!("test-session-{}", uuid::Uuid::new_v4());
+        let result = session_snapshot_path(&session_id);
+        assert!(result.is_ok());
+        let path = result.unwrap();
+        assert!(path.ends_with("session.json"));
+        assert!(path.to_string_lossy().contains(&session_id));
+    }
+
+    #[test]
+    fn test_session_logs_dir() {
+        if env::var("HOME").is_err() {
+            return;
+        }
+
+        let session_id = format!("test-session-{}", uuid::Uuid::new_v4());
+        let result = session_logs_dir(&session_id);
+        assert!(result.is_ok());
+        let path = result.unwrap();
+        assert!(path.ends_with("logs"));
+        assert!(path.to_string_lossy().contains(&session_id));
+        assert!(path.exists()); // Should be created
+    }
+
+    #[test]
+    fn test_session_log_path() {
+        if env::var("HOME").is_err() {
+            return;
+        }
+
+        let session_id = format!("test-session-{}", uuid::Uuid::new_v4());
+        let result = session_log_path(&session_id);
+        assert!(result.is_ok());
+        let path = result.unwrap();
+        assert!(path.ends_with("session.log"));
+    }
+
+    #[test]
+    fn test_session_agent_log_path() {
+        if env::var("HOME").is_err() {
+            return;
+        }
+
+        let session_id = format!("test-session-{}", uuid::Uuid::new_v4());
+        let result = session_agent_log_path(&session_id);
+        assert!(result.is_ok());
+        let path = result.unwrap();
+        assert!(path.ends_with("agent-stream.log"));
+    }
+
+    #[test]
+    fn test_session_diagnostics_dir() {
+        if env::var("HOME").is_err() {
+            return;
+        }
+
+        let session_id = format!("test-session-{}", uuid::Uuid::new_v4());
+        let result = session_diagnostics_dir(&session_id);
+        assert!(result.is_ok());
+        let path = result.unwrap();
+        assert!(path.ends_with("diagnostics"));
+        assert!(path.to_string_lossy().contains(&session_id));
+        assert!(path.exists()); // Should be created
+    }
+
+    #[test]
+    fn test_session_info_path() {
+        if env::var("HOME").is_err() {
+            return;
+        }
+
+        let session_id = format!("test-session-{}", uuid::Uuid::new_v4());
+        let result = session_info_path(&session_id);
+        assert!(result.is_ok());
+        let path = result.unwrap();
+        assert!(path.ends_with("session_info.json"));
+    }
+
+    #[test]
+    fn test_session_info_save_and_load() {
+        if env::var("HOME").is_err() {
+            return;
+        }
+
+        let session_id = format!("test-session-{}", uuid::Uuid::new_v4());
+        let info = SessionInfo::new(
+            &session_id,
+            "test-feature",
+            "Test objective",
+            Path::new("/tmp/test"),
+            "Planning",
+            1,
+        );
+
+        // Save
+        let save_result = info.save(&session_id);
+        assert!(save_result.is_ok());
+
+        // Load
+        let load_result = SessionInfo::load(&session_id);
+        assert!(load_result.is_ok());
+        let loaded = load_result.unwrap();
+
+        assert_eq!(loaded.session_id, session_id);
+        assert_eq!(loaded.feature_name, "test-feature");
+        assert_eq!(loaded.objective, "Test objective");
+        assert_eq!(loaded.phase, "Planning");
+        assert_eq!(loaded.iteration, 1);
+    }
+
+    #[test]
+    fn test_convert_rfc3339_to_timestamp() {
+        let result = convert_rfc3339_to_timestamp("2026-01-15T14:30:00.123Z");
+        assert!(result.is_some());
+        assert_eq!(result.unwrap(), "20260115-143000");
+
+        let result_with_tz = convert_rfc3339_to_timestamp("2026-01-15T14:30:00+00:00");
+        assert!(result_with_tz.is_some());
+        assert_eq!(result_with_tz.unwrap(), "20260115-143000");
+
+        let invalid = convert_rfc3339_to_timestamp("not-a-timestamp");
+        assert!(invalid.is_none());
     }
 }

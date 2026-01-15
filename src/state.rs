@@ -10,6 +10,9 @@ use uuid::Uuid;
 
 /// Generates a unique folder name for a plan using timestamp and UUID.
 /// Format: YYYYMMDD-HHMMSS-xxxxxxxx_<sanitized_name>
+///
+/// **DEPRECATED**: Only used for legacy plan structure.
+/// New sessions use session-centric paths directly.
 fn generate_plan_folder_name(sanitized_name: &str) -> String {
     let timestamp = Utc::now().format("%Y%m%d-%H%M%S");
     let uuid_suffix = &Uuid::new_v4().to_string()[..8];
@@ -19,14 +22,21 @@ fn generate_plan_folder_name(sanitized_name: &str) -> String {
 /// Generates the plan file path inside a plan folder.
 /// Format: ~/.planning-agent/plans/<folder>/plan.md
 ///
+/// **DEPRECATED**: Only used for legacy plan structure.
+/// New sessions use `planning_paths::session_plan_path()`.
+///
 /// # Errors
 /// Returns an error if the home directory cannot be determined.
+#[allow(dead_code)]
 fn generate_plan_path(folder_name: &str) -> Result<PathBuf> {
     Ok(planning_paths::plans_dir()?.join(folder_name).join("plan.md"))
 }
 
 /// Generates a feedback file path inside a plan folder.
 /// Format: ~/.planning-agent/plans/<folder>/feedback_<round>.md
+///
+/// **DEPRECATED**: Only used for legacy plan structure.
+/// New sessions use `planning_paths::session_feedback_path()`.
 ///
 /// # Errors
 /// Returns an error if the home directory cannot be determined.
@@ -38,6 +48,8 @@ fn generate_feedback_path(folder_name: &str, round: u32) -> Result<PathBuf> {
 
 /// Extracts the plan folder name from a plan file path.
 /// Works with both new format (in ~/.planning-agent/plans/) and legacy format (docs/plans/).
+///
+/// **DEPRECATED**: Only used for legacy plan structure.
 fn extract_plan_folder(plan_file: &Path) -> Option<String> {
     // New format: ~/.planning-agent/plans/<folder>/plan.md
     // The folder is the parent of the plan file
@@ -54,6 +66,8 @@ fn extract_plan_folder(plan_file: &Path) -> Option<String> {
 }
 
 /// Extracts the sanitized feature name from a plan folder or legacy filename.
+///
+/// **DEPRECATED**: Only used for legacy plan structure.
 fn extract_sanitized_name(plan_file: &Path) -> Option<String> {
     // Try new format first: folder name like "YYYYMMDD-HHMMSS-xxxxxxxx_feature-name"
     if let Some(folder_name) = extract_plan_folder(plan_file) {
@@ -75,6 +89,20 @@ fn extract_sanitized_name(plan_file: &Path) -> Option<String> {
 
     // Plain legacy format
     Some(filename.to_string())
+}
+
+/// Checks if a plan file path uses the session-centric structure.
+/// Session-centric paths contain a UUID session_id in the parent directory.
+fn is_session_centric_path(plan_file: &Path) -> bool {
+    if let Some(parent) = plan_file.parent() {
+        if let Some(folder_name) = parent.file_name() {
+            let folder_str = folder_name.to_string_lossy();
+            // UUID format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx (36 chars with hyphens)
+            return folder_str.len() == 36
+                && folder_str.chars().filter(|c| *c == '-').count() == 4;
+        }
+    }
+    false
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -224,19 +252,19 @@ pub struct State {
 impl State {
     /// Creates a new State for a workflow.
     ///
+    /// Uses the new session-centric directory structure:
+    /// - Plan file: `~/.planning-agent/sessions/<session-id>/plan.md`
+    /// - Feedback file: `~/.planning-agent/sessions/<session-id>/feedback_<round>.md`
+    ///
     /// # Errors
     /// Returns an error if the home directory cannot be determined for plan storage.
     pub fn new(feature_name: &str, objective: &str, max_iterations: u32) -> Result<Self> {
-        let sanitized_name = feature_name
-            .to_lowercase()
-            .replace(' ', "-")
-            .chars()
-            .filter(|c| c.is_alphanumeric() || *c == '-')
-            .collect::<String>();
+        // Generate session ID first - this is the primary key for the session
+        let workflow_session_id = Uuid::new_v4().to_string();
 
-        let folder_name = generate_plan_folder_name(&sanitized_name);
-        let plan_file = generate_plan_path(&folder_name)?;
-        let feedback_file = generate_feedback_path(&folder_name, 1)?;
+        // Use session-centric paths
+        let plan_file = planning_paths::session_plan_path(&workflow_session_id)?;
+        let feedback_file = planning_paths::session_feedback_path(&workflow_session_id, 1)?;
 
         Ok(Self {
             phase: Phase::Planning,
@@ -248,7 +276,7 @@ impl State {
             feedback_file,
             last_feedback_status: None,
             approval_overridden: false,
-            workflow_session_id: Uuid::new_v4().to_string(),
+            workflow_session_id,
             agent_sessions: HashMap::new(),
             invocations: Vec::new(),
             updated_at: Utc::now().to_rfc3339(),
@@ -260,7 +288,15 @@ impl State {
     /// Updates the feedback filename for a new iteration/round.
     /// This should be called before each review phase to generate a new feedback filename.
     pub fn update_feedback_for_iteration(&mut self, iteration: u32) {
-        // Try to extract the folder name from the plan file path
+        // For session-centric paths, use the session ID directly
+        if is_session_centric_path(&self.plan_file) || !self.workflow_session_id.is_empty() {
+            if let Ok(path) = planning_paths::session_feedback_path(&self.workflow_session_id, iteration) {
+                self.feedback_file = path;
+                return;
+            }
+        }
+
+        // Legacy path handling: try to extract the folder name from the plan file path
         if let Some(folder_name) = extract_plan_folder(&self.plan_file) {
             if let Ok(path) = generate_feedback_path(&folder_name, iteration) {
                 self.feedback_file = path;
@@ -458,21 +494,21 @@ mod tests {
         assert_eq!(state.phase, Phase::Planning);
         assert_eq!(state.iteration, 1);
 
-        // Plan file should be in ~/.planning-agent/plans/<folder>/plan.md
+        // Plan file should be in session directory: ~/.planning-agent/sessions/<session-id>/plan.md
         let plan_file_str = state.plan_file.to_string_lossy();
-        assert!(plan_file_str.contains(".planning-agent/plans/"), "got: {}", plan_file_str);
+        assert!(plan_file_str.contains(".planning-agent/sessions/"), "got: {}", plan_file_str);
         assert!(plan_file_str.ends_with("/plan.md"), "got: {}", plan_file_str);
-        // Verify folder name contains feature name
-        assert!(plan_file_str.contains("_user-auth/"), "got: {}", plan_file_str);
+        // Verify session ID is in the path
+        assert!(plan_file_str.contains(&state.workflow_session_id), "got: {}", plan_file_str);
     }
 
     #[test]
     fn test_new_state_feedback_file_has_round_number() {
         let state = State::new("user-auth", "Implement authentication", 3).unwrap();
 
-        // Feedback file should be in ~/.planning-agent/plans/<folder>/feedback_1.md
+        // Feedback file should be in session directory: ~/.planning-agent/sessions/<session-id>/feedback_1.md
         let feedback_file_str = state.feedback_file.to_string_lossy();
-        assert!(feedback_file_str.contains(".planning-agent/plans/"), "got: {}", feedback_file_str);
+        assert!(feedback_file_str.contains(".planning-agent/sessions/"), "got: {}", feedback_file_str);
         assert!(feedback_file_str.ends_with("/feedback_1.md"), "got: {}", feedback_file_str);
     }
 
@@ -523,14 +559,50 @@ mod tests {
     }
 
     #[test]
+    fn test_is_session_centric_path() {
+        // Session-centric path (UUID in parent)
+        let session_path = PathBuf::from("/home/user/.planning-agent/sessions/550e8400-e29b-41d4-a716-446655440000/plan.md");
+        assert!(is_session_centric_path(&session_path));
+
+        // Legacy plan path (timestamp-uuid_feature format)
+        let legacy_path = PathBuf::from("/home/user/.planning-agent/plans/20250101-120000-abcd1234_my-feature/plan.md");
+        assert!(!is_session_centric_path(&legacy_path));
+
+        // Docs path
+        let docs_path = PathBuf::from("docs/plans/feature.md");
+        assert!(!is_session_centric_path(&docs_path));
+    }
+
+    #[test]
     fn test_update_feedback_for_iteration_with_legacy_plan_file() {
         // Simulate loading a state with legacy plan file format
         let mut state = State::new("test", "test", 3).unwrap();
+        let session_id = state.workflow_session_id.clone();
         // Manually set to legacy format
         state.plan_file = PathBuf::from("docs/plans/existing-feature.md");
         state.feedback_file = PathBuf::from("docs/plans/existing-feature_feedback.md");
 
-        // Update to round 2 - should generate a new folder for feedback
+        // Update to round 2 - should use session-centric path since session_id is set
+        state.update_feedback_for_iteration(2);
+
+        // Feedback file should use session directory since workflow_session_id is present
+        let feedback_str = state.feedback_file.to_string_lossy();
+        assert!(feedback_str.contains(".planning-agent/sessions/"), "got: {}", feedback_str);
+        assert!(feedback_str.ends_with("/feedback_2.md"), "got: {}", feedback_str);
+        assert!(feedback_str.contains(&session_id), "got: {}", feedback_str);
+    }
+
+    #[test]
+    fn test_update_feedback_for_iteration_with_legacy_plan_file_no_session_id() {
+        // Simulate loading a very old state with no session_id
+        let mut state = State::new("test", "test", 3).unwrap();
+        // Clear session ID to simulate legacy state
+        state.workflow_session_id = String::new();
+        // Manually set to legacy format
+        state.plan_file = PathBuf::from("docs/plans/existing-feature.md");
+        state.feedback_file = PathBuf::from("docs/plans/existing-feature_feedback.md");
+
+        // Update to round 2 - should generate a new folder for feedback (legacy path)
         state.update_feedback_for_iteration(2);
 
         // Feedback file should be in a new folder with the proper format

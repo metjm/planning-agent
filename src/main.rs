@@ -11,6 +11,7 @@ mod phases;
 mod planning_paths;
 pub mod prompt_format;
 mod session_daemon;
+mod session_logger;
 mod session_store;
 mod session_tracking;
 mod skills;

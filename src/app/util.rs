@@ -1,5 +1,6 @@
 use crate::phases;
 use crate::planning_paths;
+use crate::session_logger::{LogCategory, SessionLogger};
 use crate::state::State;
 use crate::tui::TabManager;
 use std::collections::HashMap;
@@ -15,6 +16,17 @@ pub fn get_run_id() -> String {
         .clone()
 }
 
+/// Logs a workflow message using the session logger if available.
+///
+/// This is the preferred logging method for new code.
+#[allow(dead_code)]
+pub fn log_workflow_with_session(logger: &SessionLogger, message: &str) {
+    logger.log(LogCategory::Workflow, message);
+}
+
+/// Logs a workflow message using legacy file-based logging.
+///
+/// **DEPRECATED**: Use `log_workflow_with_session()` for new code.
 pub fn log_workflow(working_dir: &Path, message: &str) {
     let run_id = get_run_id();
     // Use home-based log path

@@ -12,7 +12,7 @@ use crate::app::cli::Cli;
 use crate::app::headless::extract_feature_name;
 use crate::app::util::{build_resume_command, debug_log, format_window_title};
 use crate::app::workflow::run_workflow_with_config;
-use crate::app::workflow_common::pre_create_plan_files;
+use crate::app::workflow_common::pre_create_plan_files_with_working_dir;
 use crate::cli_usage;
 use crate::config::WorkflowConfig;
 use crate::planning_paths;
@@ -389,8 +389,9 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                 State::new(&feature_name, &init_objective, init_max_iterations)?
             };
 
-            // Pre-create plan folder and files (in ~/.planning-agent/plans/)
-            pre_create_plan_files(&state).context("Failed to pre-create plan files")?;
+            // Pre-create plan folder and files (in ~/.planning-agent/sessions/)
+            pre_create_plan_files_with_working_dir(&state, Some(&init_working_dir))
+                .context("Failed to pre-create plan files")?;
 
             state.set_updated_at();
             state.save(&state_path)?;

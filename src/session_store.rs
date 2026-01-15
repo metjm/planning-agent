@@ -181,12 +181,23 @@ fn get_sessions_dir() -> Result<PathBuf> {
     planning_paths::sessions_dir()
 }
 
-/// Returns the snapshot file path for a given session ID (home-based).
+/// Returns the snapshot file path for a given session ID.
+///
+/// Uses the new session-centric path: `~/.planning-agent/sessions/<session-id>/session.json`
 fn get_snapshot_path(session_id: &str) -> Result<PathBuf> {
+    planning_paths::session_snapshot_path(session_id)
+}
+
+/// Returns the legacy snapshot file path: `~/.planning-agent/sessions/<session-id>.json`
+fn get_legacy_snapshot_path(session_id: &str) -> Result<PathBuf> {
     planning_paths::snapshot_path(session_id)
 }
 
 /// Saves a session snapshot atomically to home storage (`~/.planning-agent/sessions/`).
+///
+/// Uses the new session-centric path: `~/.planning-agent/sessions/<session-id>/session.json`
+///
+/// Also creates/updates `session_info.json` for fast session listing.
 ///
 /// The `working_dir` parameter is no longer used for storage location but is kept
 /// for API compatibility.
@@ -206,38 +217,71 @@ pub fn save_snapshot(working_dir: &Path, snapshot: &SessionSnapshot) -> Result<P
     fs::rename(&temp_path, &snapshot_path)
         .with_context(|| format!("Failed to rename temp file to: {}", snapshot_path.display()))?;
 
+    // Also update session_info.json for fast listing
+    let _ = update_session_info(snapshot);
+
     Ok(snapshot_path)
 }
 
+/// Updates the session_info.json file for fast session listing.
+fn update_session_info(snapshot: &SessionSnapshot) -> Result<()> {
+    let info = planning_paths::SessionInfo {
+        session_id: snapshot.workflow_session_id.clone(),
+        feature_name: snapshot.workflow_state.feature_name.clone(),
+        objective: snapshot.workflow_state.objective.clone(),
+        working_dir: snapshot.working_dir.clone(),
+        created_at: snapshot.saved_at.clone(), // Use saved_at as approximation
+        updated_at: snapshot.saved_at.clone(),
+        phase: format!("{:?}", snapshot.workflow_state.phase),
+        iteration: snapshot.workflow_state.iteration,
+    };
+    info.save(&snapshot.workflow_session_id)
+}
+
 /// Loads a session snapshot by session ID from `~/.planning-agent/sessions/`.
+///
+/// Checks both new session-centric path and legacy path:
+/// 1. New: `~/.planning-agent/sessions/<session-id>/session.json`
+/// 2. Legacy: `~/.planning-agent/sessions/<session-id>.json`
 ///
 /// If no snapshot file exists, attempts fallback recovery from the daemon registry
 /// and state file. This enables crash recovery when periodic auto-save didn't
 /// complete before the crash.
 #[allow(unused_variables)]
 pub fn load_snapshot(working_dir: &Path, session_id: &str) -> Result<SessionSnapshot> {
-    let snapshot_path = get_snapshot_path(session_id)?;
-
-    if !snapshot_path.exists() {
-        // Try fallback recovery from state file + daemon registry
-        match recover_from_state_file(session_id) {
-            Ok(snapshot) => {
-                // Save recovered snapshot for future use
-                if let Err(e) = save_snapshot(working_dir, &snapshot) {
-                    eprintln!("[recovery] Warning: Failed to save recovered snapshot: {}", e);
-                }
-                return Ok(snapshot);
-            }
-            Err(e) => {
-                anyhow::bail!(
-                    "Session snapshot not found: {}. Recovery also failed: {}. Use --list-sessions to see available sessions.",
-                    session_id, e
-                );
-            }
-        }
+    // 1. Try new session-centric path first
+    let new_path = get_snapshot_path(session_id)?;
+    if new_path.exists() {
+        return load_snapshot_from_path(&new_path);
     }
 
-    let content = fs::read_to_string(&snapshot_path)
+    // 2. Try legacy path
+    let legacy_path = get_legacy_snapshot_path(session_id)?;
+    if legacy_path.exists() {
+        return load_snapshot_from_path(&legacy_path);
+    }
+
+    // 3. Try fallback recovery from state file + daemon registry
+    match recover_from_state_file(session_id) {
+        Ok(snapshot) => {
+            // Save recovered snapshot for future use (in new format)
+            if let Err(e) = save_snapshot(working_dir, &snapshot) {
+                eprintln!("[recovery] Warning: Failed to save recovered snapshot: {}", e);
+            }
+            Ok(snapshot)
+        }
+        Err(e) => {
+            anyhow::bail!(
+                "Session snapshot not found: {}. Recovery also failed: {}. Use --list-sessions to see available sessions.",
+                session_id, e
+            );
+        }
+    }
+}
+
+/// Loads a snapshot from a specific path.
+fn load_snapshot_from_path(snapshot_path: &Path) -> Result<SessionSnapshot> {
+    let content = fs::read_to_string(snapshot_path)
         .with_context(|| format!("Failed to read snapshot file: {}", snapshot_path.display()))?;
 
     let snapshot: SessionSnapshot = serde_json::from_str(&content)
@@ -256,6 +300,10 @@ pub fn load_snapshot(working_dir: &Path, session_id: &str) -> Result<SessionSnap
 }
 
 /// Lists all available session snapshots from `~/.planning-agent/sessions/`.
+///
+/// Scans both new session-centric structure and legacy structure:
+/// 1. New: `~/.planning-agent/sessions/<session-id>/session.json`
+/// 2. Legacy: `~/.planning-agent/sessions/<session-id>.json`
 #[allow(unused_variables)]
 pub fn list_snapshots(working_dir: &Path) -> Result<Vec<SessionSnapshotInfo>> {
     let sessions_dir = get_sessions_dir()?;
@@ -265,6 +313,7 @@ pub fn list_snapshots(working_dir: &Path) -> Result<Vec<SessionSnapshotInfo>> {
     }
 
     let mut snapshots = Vec::new();
+    let mut seen_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     for entry in fs::read_dir(&sessions_dir)
         .with_context(|| format!("Failed to read sessions directory: {}", sessions_dir.display()))?
@@ -272,10 +321,27 @@ pub fn list_snapshots(working_dir: &Path) -> Result<Vec<SessionSnapshotInfo>> {
         let entry = entry?;
         let path = entry.path();
 
-        if path.extension().is_some_and(|ext| ext == "json") {
+        if path.is_dir() {
+            // New session-centric structure: directory with session.json inside
+            let session_json_path = path.join("session.json");
+            if session_json_path.exists() {
+                if let Ok(content) = fs::read_to_string(&session_json_path) {
+                    if let Ok(snapshot) = serde_json::from_str::<SessionSnapshot>(&content) {
+                        if !seen_ids.contains(&snapshot.workflow_session_id) {
+                            seen_ids.insert(snapshot.workflow_session_id.clone());
+                            snapshots.push(snapshot.info());
+                        }
+                    }
+                }
+            }
+        } else if path.extension().is_some_and(|ext| ext == "json") {
+            // Legacy structure: <session-id>.json file
             if let Ok(content) = fs::read_to_string(&path) {
                 if let Ok(snapshot) = serde_json::from_str::<SessionSnapshot>(&content) {
-                    snapshots.push(snapshot.info());
+                    if !seen_ids.contains(&snapshot.workflow_session_id) {
+                        seen_ids.insert(snapshot.workflow_session_id.clone());
+                        snapshots.push(snapshot.info());
+                    }
                 }
             }
         }
@@ -288,19 +354,33 @@ pub fn list_snapshots(working_dir: &Path) -> Result<Vec<SessionSnapshotInfo>> {
 }
 
 /// Deletes a session snapshot from `~/.planning-agent/sessions/`.
+///
+/// Handles both new and legacy paths. For new session directories,
+/// only the session.json file is deleted, not the entire directory
+/// (which may contain other files like logs and state).
 #[allow(unused_variables)]
 pub fn delete_snapshot(working_dir: &Path, session_id: &str) -> Result<()> {
-    let snapshot_path = get_snapshot_path(session_id)?;
+    // Try new path first
+    let new_path = get_snapshot_path(session_id)?;
+    if new_path.exists() {
+        fs::remove_file(&new_path)
+            .with_context(|| format!("Failed to delete snapshot: {}", new_path.display()))?;
+    }
 
-    if snapshot_path.exists() {
-        fs::remove_file(&snapshot_path)
-            .with_context(|| format!("Failed to delete snapshot: {}", snapshot_path.display()))?;
+    // Also try legacy path
+    let legacy_path = get_legacy_snapshot_path(session_id)?;
+    if legacy_path.exists() {
+        fs::remove_file(&legacy_path)
+            .with_context(|| format!("Failed to delete snapshot: {}", legacy_path.display()))?;
     }
 
     Ok(())
 }
 
 /// Cleans up session snapshots older than the specified number of days.
+///
+/// For new session directories, the entire session directory is deleted.
+/// For legacy snapshot files, only the .json file is deleted.
 pub fn cleanup_old_snapshots(working_dir: &Path, older_than_days: u32) -> Result<Vec<String>> {
     let snapshots = list_snapshots(working_dir)?;
     let cutoff = chrono::Utc::now() - chrono::Duration::days(older_than_days as i64);
@@ -310,8 +390,27 @@ pub fn cleanup_old_snapshots(working_dir: &Path, older_than_days: u32) -> Result
 
     for snapshot in snapshots {
         if snapshot.saved_at < cutoff_str {
-            delete_snapshot(working_dir, &snapshot.workflow_session_id)?;
-            deleted.push(snapshot.workflow_session_id);
+            let session_id = &snapshot.workflow_session_id;
+
+            // Check if this is a new-style session directory
+            if let Ok(session_dir) = planning_paths::session_dir(session_id) {
+                if session_dir.exists() && session_dir.is_dir() {
+                    // Check if session.json exists inside (confirms new structure)
+                    if session_dir.join("session.json").exists() {
+                        // Delete the entire session directory
+                        if let Err(e) = fs::remove_dir_all(&session_dir) {
+                            eprintln!("[cleanup] Failed to delete session directory {}: {}", session_dir.display(), e);
+                        } else {
+                            deleted.push(session_id.clone());
+                            continue;
+                        }
+                    }
+                }
+            }
+
+            // Fall back to deleting just the snapshot file (legacy)
+            delete_snapshot(working_dir, session_id)?;
+            deleted.push(session_id.clone());
         }
     }
 
@@ -341,8 +440,40 @@ pub fn check_conflict(snapshot: &SessionSnapshot, current_state: &State) -> Opti
 ///
 /// This is a fallback mechanism for crash recovery when the periodic auto-save
 /// didn't save a snapshot before the crash.
+///
+/// Recovery order:
+/// 1. Try new session-centric state path: `~/.planning-agent/sessions/<session-id>/state.json`
+/// 2. Fall back to daemon registry to find legacy state path
 pub fn recover_from_state_file(session_id: &str) -> Result<SessionSnapshot> {
-    // 1. Look up the session in daemon registry to find state_path
+    // 1. Try new session-centric state path first
+    if let Ok(session_state_path) = planning_paths::session_state_path(session_id) {
+        if session_state_path.exists() {
+            let state = State::load(&session_state_path)
+                .with_context(|| format!(
+                    "Failed to load state file at {}. The file may be corrupted.",
+                    session_state_path.display()
+                ))?;
+
+            let ui_state = SessionUiState::minimal_from_state(&state);
+
+            // Get working_dir from state's plan_file parent or use current dir
+            let working_dir = state.plan_file.parent()
+                .map(|p| p.to_path_buf())
+                .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+
+            return Ok(SessionSnapshot::new_with_timestamp(
+                working_dir,
+                session_id.to_string(),
+                session_state_path,
+                state,
+                ui_state,
+                0,
+                chrono::Utc::now().to_rfc3339(),
+            ));
+        }
+    }
+
+    // 2. Fall back to daemon registry for legacy state paths
     let registry_path = planning_paths::sessiond_registry_path()?;
     if !registry_path.exists() {
         anyhow::bail!("No daemon registry found for recovery");
@@ -360,7 +491,7 @@ pub fn recover_from_state_file(session_id: &str) -> Result<SessionSnapshot> {
         .find(|r| r.workflow_session_id == session_id)
         .ok_or_else(|| anyhow::anyhow!("Session {} not found in daemon registry", session_id))?;
 
-    // 2. Check if state file exists (may have been deleted)
+    // 3. Check if state file exists (may have been deleted)
     if !record.state_path.exists() {
         anyhow::bail!(
             "State file not found at {}. The session data may have been deleted.",
@@ -368,7 +499,7 @@ pub fn recover_from_state_file(session_id: &str) -> Result<SessionSnapshot> {
         );
     }
 
-    // 3. Load state from state_path
+    // 4. Load state from state_path
     let state = State::load(&record.state_path)
         .with_context(|| format!(
             "Failed to load state file at {}. The file may be corrupted.",
@@ -659,5 +790,79 @@ mod tests {
         // No conflict detection for legacy state files
         let conflict = check_conflict(&snapshot, &state);
         assert!(conflict.is_none());
+    }
+
+    #[test]
+    fn test_session_centric_snapshot_path() {
+        // Test that get_snapshot_path returns session-centric path
+        if std::env::var("HOME").is_err() {
+            return;
+        }
+
+        let session_id = format!("test-session-{}", uuid::Uuid::new_v4());
+        let path = get_snapshot_path(&session_id).unwrap();
+
+        // Should be ~/.planning-agent/sessions/<session-id>/session.json
+        assert!(path.to_string_lossy().contains(".planning-agent/sessions/"));
+        assert!(path.to_string_lossy().contains(&session_id));
+        assert!(path.to_string_lossy().ends_with("/session.json"));
+    }
+
+    #[test]
+    fn test_legacy_snapshot_path() {
+        // Test that get_legacy_snapshot_path returns legacy path
+        if std::env::var("HOME").is_err() {
+            return;
+        }
+
+        let session_id = format!("test-session-{}", uuid::Uuid::new_v4());
+        let path = get_legacy_snapshot_path(&session_id).unwrap();
+
+        // Should be ~/.planning-agent/sessions/<session-id>.json
+        assert!(path.to_string_lossy().contains(".planning-agent/sessions/"));
+        assert!(path.to_string_lossy().ends_with(".json"));
+        assert!(!path.to_string_lossy().contains("/session.json"));
+    }
+
+    #[test]
+    fn test_save_and_load_session_centric_snapshot() {
+        if std::env::var("HOME").is_err() {
+            return;
+        }
+
+        let state = create_test_state();
+        let ui_state = create_test_ui_state();
+        let session_id = format!("test-session-{}", uuid::Uuid::new_v4());
+        let saved_at = chrono::Utc::now().to_rfc3339();
+
+        let snapshot = SessionSnapshot::new_with_timestamp(
+            PathBuf::from("/tmp/test"),
+            session_id.clone(),
+            PathBuf::from("/tmp/test/.planning-agent/test-feature.json"),
+            state,
+            ui_state,
+            0,
+            saved_at,
+        );
+
+        // Save
+        let save_result = save_snapshot(Path::new("/tmp"), &snapshot);
+        assert!(save_result.is_ok());
+        let saved_path = save_result.unwrap();
+
+        // Verify session-centric path
+        assert!(saved_path.to_string_lossy().contains(&session_id));
+        assert!(saved_path.to_string_lossy().ends_with("/session.json"));
+
+        // Load
+        let load_result = load_snapshot(Path::new("/tmp"), &session_id);
+        assert!(load_result.is_ok());
+        let loaded = load_result.unwrap();
+
+        assert_eq!(loaded.workflow_session_id, session_id);
+        assert_eq!(loaded.workflow_state.feature_name, "test-feature");
+
+        // Cleanup
+        let _ = delete_snapshot(Path::new("/tmp"), &session_id);
     }
 }
