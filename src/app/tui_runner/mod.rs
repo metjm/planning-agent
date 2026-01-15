@@ -119,6 +119,19 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
     debug_log(start, "event handler created");
     let output_tx = event_handler.sender();
 
+    // Set up signal handlers for graceful shutdown
+    #[cfg(unix)]
+    let mut sigterm = tokio::signal::unix::signal(
+        tokio::signal::unix::SignalKind::terminate()
+    ).expect("Failed to create SIGTERM handler");
+
+    #[cfg(unix)]
+    let mut sigint = tokio::signal::unix::signal(
+        tokio::signal::unix::SignalKind::interrupt()
+    ).expect("Failed to create SIGINT handler");
+
+    debug_log(start, "signal handlers created");
+
     {
         let usage_tx = event_handler.sender();
         tokio::spawn(async move {
@@ -211,6 +224,34 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
             }
         });
         debug_log(start, "daemon subscription task spawned");
+    }
+
+    // Create cancellation token for periodic snapshot task
+    let (snapshot_cancel_tx, mut snapshot_cancel_rx) = tokio::sync::oneshot::channel::<()>();
+
+    // Spawn periodic snapshot save task for crash recovery
+    {
+        let snapshot_tx = event_handler.sender();
+        tokio::spawn(async move {
+            // Initial delay to avoid saving immediately on start
+            tokio::time::sleep(Duration::from_secs(30)).await;
+            let mut interval = tokio::time::interval(Duration::from_secs(30));
+            loop {
+                tokio::select! {
+                    _ = interval.tick() => {
+                        if snapshot_tx.send(Event::SnapshotRequest).is_err() {
+                            // Channel closed, exit the task
+                            break;
+                        }
+                    }
+                    _ = &mut snapshot_cancel_rx => {
+                        // Cancellation requested, exit cleanly
+                        break;
+                    }
+                }
+            }
+        });
+        debug_log(start, "periodic snapshot task spawned");
     }
 
     let working_dir = cli
@@ -405,6 +446,42 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
             }
         }
 
+        // Check for signals before processing further
+        #[cfg(unix)]
+        {
+            use std::task::Poll;
+            use std::pin::Pin;
+
+            // Non-blocking signal check using poll_fn
+            let signal_received = std::future::poll_fn(|cx| {
+                if Pin::new(&mut sigterm).poll_recv(cx).is_ready() {
+                    return Poll::Ready(true);
+                }
+                if Pin::new(&mut sigint).poll_recv(cx).is_ready() {
+                    return Poll::Ready(true);
+                }
+                Poll::Ready(false)
+            }).await;
+
+            if signal_received {
+                // Signal received - save snapshots and initiate quit
+                debug_log(start, "Signal received, saving snapshots");
+                for session in tab_manager.sessions_mut() {
+                    if session.workflow_handle.is_some() {
+                        if let Some(ref state) = session.workflow_state {
+                            let _ = snapshot_helper::create_and_save_snapshot(session, state, &working_dir);
+                        }
+                    }
+                }
+                if matches!(quit_state, QuitState::Running) {
+                    quit_state = QuitState::Quitting {
+                        requested_at: Instant::now(),
+                        stop_sent: false,
+                    };
+                }
+            }
+        }
+
         let new_title = format_window_title(&tab_manager);
         if new_title != last_title {
             title_manager.set_title(&new_title);
@@ -448,6 +525,19 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
             } => {
                 // Send stop commands to all sessions with active workflows (first time only)
                 if !*stop_sent {
+                    // FIRST: Save snapshots for all active sessions BEFORE sending stop
+                    // This ensures we capture state before workflow shutdown begins
+                    for session in tab_manager.sessions_mut() {
+                        if session.workflow_handle.is_some() {
+                            if let Some(ref state) = session.workflow_state {
+                                if let Err(e) = snapshot_helper::create_and_save_snapshot(session, state, &working_dir) {
+                                    debug_log(start, &format!("Failed to save snapshot on quit: {}", e));
+                                }
+                            }
+                        }
+                    }
+
+                    // THEN send stop commands
                     for session in tab_manager.sessions_mut() {
                         if session.workflow_handle.is_some() {
                             if let Some(ref tx) = session.workflow_control_tx {
@@ -481,6 +571,9 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
             }
         }
     }
+
+    // Cancel the periodic snapshot task
+    let _ = snapshot_cancel_tx.send(());
 
     // Cleanup: Abort any still-active workflow handles to prevent zombie processes
     // This is especially important when we exit due to timeout with active workflows

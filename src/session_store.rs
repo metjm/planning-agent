@@ -210,15 +210,31 @@ pub fn save_snapshot(working_dir: &Path, snapshot: &SessionSnapshot) -> Result<P
 }
 
 /// Loads a session snapshot by session ID from `~/.planning-agent/sessions/`.
+///
+/// If no snapshot file exists, attempts fallback recovery from the daemon registry
+/// and state file. This enables crash recovery when periodic auto-save didn't
+/// complete before the crash.
 #[allow(unused_variables)]
 pub fn load_snapshot(working_dir: &Path, session_id: &str) -> Result<SessionSnapshot> {
     let snapshot_path = get_snapshot_path(session_id)?;
 
     if !snapshot_path.exists() {
-        anyhow::bail!(
-            "Session snapshot not found: {}. Use --list-sessions to see available sessions.",
-            session_id
-        );
+        // Try fallback recovery from state file + daemon registry
+        match recover_from_state_file(session_id) {
+            Ok(snapshot) => {
+                // Save recovered snapshot for future use
+                if let Err(e) = save_snapshot(working_dir, &snapshot) {
+                    eprintln!("[recovery] Warning: Failed to save recovered snapshot: {}", e);
+                }
+                return Ok(snapshot);
+            }
+            Err(e) => {
+                anyhow::bail!(
+                    "Session snapshot not found: {}. Recovery also failed: {}. Use --list-sessions to see available sessions.",
+                    session_id, e
+                );
+            }
+        }
     }
 
     let content = fs::read_to_string(&snapshot_path)
@@ -317,6 +333,130 @@ pub fn check_conflict(snapshot: &SessionSnapshot, current_state: &State) -> Opti
         Some(current_state.updated_at.clone())
     } else {
         None
+    }
+}
+
+/// Attempts to recover a session from state file when no snapshot exists.
+/// Returns a minimal snapshot with just workflow state (no UI state).
+///
+/// This is a fallback mechanism for crash recovery when the periodic auto-save
+/// didn't save a snapshot before the crash.
+pub fn recover_from_state_file(session_id: &str) -> Result<SessionSnapshot> {
+    // 1. Look up the session in daemon registry to find state_path
+    let registry_path = planning_paths::sessiond_registry_path()?;
+    if !registry_path.exists() {
+        anyhow::bail!("No daemon registry found for recovery");
+    }
+
+    let content = fs::read_to_string(&registry_path)
+        .context("Failed to read daemon registry")?;
+
+    // NOTE: Registry format is Vec<SessionRecord> (JSON array), verified in server.rs
+    let records: Vec<crate::session_daemon::protocol::SessionRecord> =
+        serde_json::from_str(&content)
+            .context("Failed to parse daemon registry")?;
+
+    let record = records.iter()
+        .find(|r| r.workflow_session_id == session_id)
+        .ok_or_else(|| anyhow::anyhow!("Session {} not found in daemon registry", session_id))?;
+
+    // 2. Check if state file exists (may have been deleted)
+    if !record.state_path.exists() {
+        anyhow::bail!(
+            "State file not found at {}. The session data may have been deleted.",
+            record.state_path.display()
+        );
+    }
+
+    // 3. Load state from state_path
+    let state = State::load(&record.state_path)
+        .with_context(|| format!(
+            "Failed to load state file at {}. The file may be corrupted.",
+            record.state_path.display()
+        ))?;
+
+    // 4. Create minimal UI state with defaults
+    let ui_state = SessionUiState::minimal_from_state(&state);
+
+    // 5. Build snapshot
+    Ok(SessionSnapshot::new_with_timestamp(
+        record.working_dir.clone(),
+        session_id.to_string(),
+        record.state_path.clone(),
+        state,
+        ui_state,
+        0,
+        chrono::Utc::now().to_rfc3339(),
+    ))
+}
+
+impl SessionUiState {
+    /// Create minimal UI state from workflow state (for recovery from crashes).
+    /// All UI state is reset to defaults since we don't have the original.
+    pub fn minimal_from_state(state: &State) -> Self {
+        use crate::state::Phase;
+        Self {
+            id: 0,
+            name: state.feature_name.clone(),
+            status: match state.phase {
+                Phase::Planning => SessionStatus::Planning,
+                Phase::Reviewing => SessionStatus::AwaitingApproval,
+                Phase::Revising => SessionStatus::Planning,
+                Phase::Complete => SessionStatus::Complete,
+            },
+            output_lines: vec![
+                "[recovery] Session recovered from state file".to_string(),
+                format!("[recovery] Phase: {:?}, Iteration: {}", state.phase, state.iteration),
+                "[recovery] UI state reset to defaults. Workflow state preserved.".to_string(),
+            ],
+            scroll_position: 0,
+            output_follow_mode: true,
+            streaming_lines: Vec::new(),
+            streaming_scroll_position: 0,
+            streaming_follow_mode: true,
+            focused_panel: FocusedPanel::Output,
+            total_cost: 0.0,
+            bytes_received: 0,
+            total_input_tokens: 0,
+            total_output_tokens: 0,
+            total_cache_creation_tokens: 0,
+            total_cache_read_tokens: 0,
+            tool_call_count: 0,
+            bytes_per_second: 0.0,
+            turn_count: 0,
+            model_name: None,
+            last_stop_reason: None,
+            tool_error_count: 0,
+            total_tool_duration_ms: 0,
+            completed_tool_count: 0,
+            approval_mode: ApprovalMode::None,
+            approval_context: ApprovalContext::PlanApproval,
+            plan_summary: String::new(),
+            plan_summary_scroll: 0,
+            user_feedback: String::new(),
+            cursor_position: 0,
+            feedback_scroll: 0,
+            feedback_target: FeedbackTarget::ApprovalDecline,
+            input_mode: InputMode::Normal,
+            tab_input: String::new(),
+            tab_input_cursor: 0,
+            tab_input_scroll: 0,
+            last_key_was_backslash: false,
+            tab_input_pastes: Vec::new(),
+            feedback_pastes: Vec::new(),
+            error_state: None,
+            error_scroll: 0,
+            run_tabs: Vec::new(),
+            active_run_tab: 0,
+            chat_follow_mode: true,
+            todos: HashMap::new(),
+            todo_scroll_position: 0,
+            account_usage: AccountUsage::default(),
+            spinner_frame: 0,
+            current_run_id: 0,
+            plan_modal_open: false,
+            plan_modal_scroll: 0,
+        }
     }
 }
 
