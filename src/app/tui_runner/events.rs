@@ -98,6 +98,11 @@ pub async fn process_event(
         Event::PhaseStarted(phase) => {
             if let Some(session) = tab_manager.session_by_id_mut(first_session_id) {
                 session.start_phase(phase);
+
+                // Save snapshot on phase transition (natural checkpoint for recovery)
+                if let Some(ref state) = session.workflow_state {
+                    let _ = create_and_save_snapshot(session, state, working_dir);
+                }
             }
         }
         Event::TurnCompleted => {
@@ -149,6 +154,16 @@ pub async fn process_event(
             if let Some(session) = tab_manager.session_by_id_mut(session_id) {
                 session.add_output(format!("[implementation] Error: {}", error));
                 session.stop_implementation_terminal();
+            }
+        }
+        Event::SnapshotRequest => {
+            // Save snapshot for all active sessions (periodic auto-save)
+            for session in tab_manager.sessions_mut() {
+                if session.workflow_handle.is_some() {
+                    if let Some(ref state) = session.workflow_state {
+                        let _ = create_and_save_snapshot(session, state, working_dir);
+                    }
+                }
             }
         }
         _ => {
@@ -333,6 +348,11 @@ async fn handle_session_event(
         Event::SessionPhaseStarted { session_id, phase } => {
             if let Some(session) = tab_manager.session_by_id_mut(session_id) {
                 session.start_phase(phase);
+
+                // Save snapshot on phase transition (natural checkpoint for recovery)
+                if let Some(ref state) = session.workflow_state {
+                    let _ = create_and_save_snapshot(session, state, working_dir);
+                }
             }
         }
         Event::SessionTurnCompleted { session_id } => {

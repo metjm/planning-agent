@@ -195,6 +195,10 @@ pub enum Event {
 
     /// Daemon subscription reconnected
     DaemonReconnected,
+
+    /// Request to save snapshots for all active sessions.
+    /// Used by periodic auto-save and signal handlers.
+    SnapshotRequest,
 }
 
 #[derive(Debug, Clone)]
