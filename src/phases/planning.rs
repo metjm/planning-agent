@@ -79,7 +79,7 @@ pub async fn run_planning_phase_with_context(
 
 fn build_planning_prompt(state: &State, working_dir: &Path) -> String {
     // state.plan_file is now an absolute path (in ~/.planning-agent/plans/)
-    PromptBuilder::new()
+    let mut builder = PromptBuilder::new()
         .phase("planning")
         .instructions(r#"Create a detailed implementation plan for the given objective.
 
@@ -95,8 +95,21 @@ Requirements:
         .input("objective", &state.objective)
         .input("plan-output-path", &state.plan_file.display().to_string())
         .constraint("Use absolute paths for all file references in your plan")
-        .tools("Use the Read, Glob, and Grep tools to explore the codebase as needed.")
-        .build()
+        .tools("Use the Read, Glob, and Grep tools to explore the codebase as needed.");
+
+    // Add worktree context if applicable
+    if let Some(ref wt_state) = state.worktree_info {
+        builder = builder
+            .input("worktree-path", &wt_state.worktree_path.display().to_string())
+            .input("worktree-branch", &wt_state.branch_name)
+            .input("original-dir", &wt_state.original_dir.display().to_string());
+        if let Some(ref source) = wt_state.source_branch {
+            builder = builder.input("source-branch", source);
+        }
+        builder = builder.constraint("All file operations should be performed in the worktree directory, not the original directory.");
+    }
+
+    builder.build()
 }
 
 #[cfg(test)]
@@ -123,6 +136,7 @@ mod tests {
             updated_at: String::new(),
             last_failure: None,
             failure_history: Vec::new(),
+            worktree_info: None,
         }
     }
 

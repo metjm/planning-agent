@@ -76,4 +76,16 @@ pub struct Cli {
     /// Disable session tracking (useful for debugging)
     #[arg(long)]
     pub no_daemon: bool,
+
+    /// Disable automatic git worktree creation
+    #[arg(long)]
+    pub no_worktree: bool,
+
+    /// Custom directory for git worktree (for CI/CD scenarios)
+    #[arg(long)]
+    pub worktree_dir: Option<PathBuf>,
+
+    /// Custom branch name for git worktree (default: planning-agent/<feature>-<session-short>)
+    #[arg(long)]
+    pub worktree_branch: Option<String>,
 }

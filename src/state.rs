@@ -247,6 +247,23 @@ pub struct State {
     /// Limited to MAX_FAILURE_HISTORY entries to prevent unbounded growth.
     #[serde(default)]
     pub failure_history: Vec<FailureContext>,
+
+    /// Git worktree information if session is using a worktree
+    #[serde(default)]
+    pub worktree_info: Option<WorktreeState>,
+}
+
+/// Persisted worktree state for session resume.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorktreeState {
+    /// Path to the worktree directory
+    pub worktree_path: PathBuf,
+    /// Branch name in the worktree
+    pub branch_name: String,
+    /// Original branch to merge into
+    pub source_branch: Option<String>,
+    /// Original working directory (repo root)
+    pub original_dir: PathBuf,
 }
 
 impl State {
@@ -282,6 +299,7 @@ impl State {
             updated_at: Utc::now().to_rfc3339(),
             last_failure: None,
             failure_history: Vec::new(),
+            worktree_info: None,
         })
     }
 
