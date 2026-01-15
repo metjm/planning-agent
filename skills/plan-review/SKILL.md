@@ -42,6 +42,53 @@ For EVERY library, function, or API mentioned in the plan:
 
 **Never trust the plan's claims about libraries - always verify independently.**
 
+## Code Quality Verification (CRITICAL)
+
+When reviewing any plan, strictly verify these non-negotiable requirements:
+
+### Test Quality Check
+
+**REJECT any plan that proposes mocking.** Acceptable tests must:
+
+- Use real databases, not mocked database clients
+- Use real HTTP calls, not mocked responses
+- Use real file systems, not in-memory fakes
+- Use real message queues, not fake consumers
+
+Look for red flags:
+- Any mention of "mock", "stub", "fake", "double", "spy"
+- References to mocking libraries (mockito, mockall, unittest.mock, jest.mock, etc.)
+- "In-memory" implementations of external services
+- Test-only interfaces or abstractions
+
+### Type Safety Check
+
+**REJECT plans that use weak typing.** Verify the plan:
+
+- Creates dedicated types for domain concepts (not String/int for everything)
+- Uses enums for finite value sets
+- Structures data with proper types, not HashMap<String, Value>
+- Makes invalid states unrepresentable
+
+### Clean Code Check
+
+**REJECT plans that leave cruft.** Verify:
+
+- No "backwards compatibility" shims or re-exports
+- All callers are updated when interfaces change
+- No dead code is left "just in case"
+- No TODO/FIXME comments (issues must be fixed or tracked elsewhere)
+
+### Linter Rule Check
+
+**REJECT plans that miss linter rule opportunities.** When a plan fixes an issue:
+
+- Could this issue have been caught by a linter rule?
+- Does the plan propose enabling the appropriate rule?
+- Is the rule configuration specific enough to catch the issue class?
+
+If a bug or code issue could have been prevented by static analysis and the plan doesn't propose a linter rule, send it back for revision.
+
 ## Review Process
 
 ### Phase 1: Initial Read-Through
@@ -110,10 +157,18 @@ When the plan says "mirror the approach from X" or "follow the pattern at Y":
 
 #### Testing Strategy Review
 
-- Are test cases comprehensive?
-- Do they cover edge cases and error conditions?
-- Are the testing approaches realistic?
-- Are integration tests properly scoped?
+- **CRITICAL: Are all tests real integration tests?** (REJECT if any mocking is proposed)
+- Do tests use actual databases, APIs, and infrastructure?
+- Is test infrastructure clearly specified (containers, services, etc.)?
+- Are setup and teardown steps concrete and repeatable?
+- Do tests verify against real behavior, not mocked responses?
+- Are edge cases tested with real data, not synthetic mocks?
+
+**Red flags that require rejection:**
+- "We'll mock the database for faster tests"
+- "Use a fake HTTP client"
+- "Create test doubles for external services"
+- Any reference to mocking libraries
 
 #### Risk Assessment Review
 
@@ -268,6 +323,32 @@ Generate feedback in this structure:
 | [Risk 1] | [High/Medium/Low] | [Explanation] |
 | [Risk 2] | [High/Medium/Low] | [Explanation] |
 
+### Code Quality Principles
+
+**Status:** [COMPLIANT / VIOLATIONS FOUND]
+
+**Type Safety Review:**
+| Proposed Type | Assessment | Issue |
+|---------------|------------|-------|
+| String for user_id | WEAK | Should be UserId newtype |
+| HashMap<String, Value> | WEAK | Should be a proper struct |
+
+**Test Quality Review:**
+| Proposed Test | Assessment | Issue |
+|---------------|------------|-------|
+| Mock database client | REJECTED | Must use real database |
+| Real HTTP calls | APPROVED | Uses actual API |
+
+**Clean Code Review:**
+- Backwards compatibility concerns: [NONE / VIOLATIONS]
+- Dead code: [NONE / VIOLATIONS]
+- Proper refactoring: [YES / SHORTCUTS TAKEN]
+
+**Linter Rule Review:**
+| Issue Addressed | Linter Rule Needed? | Proposed Rule | Assessment |
+|-----------------|---------------------|---------------|------------|
+| [Issue from plan] | YES/NO | [Rule name or N/A] | ADEQUATE / MISSING |
+
 ---
 
 ## Critical Issues
@@ -354,6 +435,10 @@ If the plan will accomplish its goal and the approach is sound, **approve it** a
 
 Use this **only** when:
 
+- **The plan proposes any form of mocking** - tests must be real
+- **The plan uses weak typing** - String/map where domain types are needed
+- **The plan leaves backwards-compatibility code** - all callers must be updated
+- **The plan misses linter rules** - issues preventable by static analysis need rules proposed
 - The plan fundamentally won't work (e.g., relies on APIs that don't exist, logic errors)
 - There's a clearly superior alternative that would significantly improve the outcome
 - Critical steps are missing that would cause implementation to fail
