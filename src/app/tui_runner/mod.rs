@@ -528,6 +528,12 @@ fn load_workflow_config(
     working_dir: &Path,
     start: std::time::Instant,
 ) -> WorkflowConfig {
+    // --claude flag takes priority over any config file
+    if cli.claude {
+        debug_log(start, "Using Claude-only workflow config (--claude)");
+        return WorkflowConfig::claude_only_config();
+    }
+
     if let Some(config_path) = &cli.config {
         let full_path = if config_path.is_absolute() {
             config_path.clone()
@@ -557,15 +563,9 @@ fn load_workflow_config(
                     debug_log(start, "Falling back to built-in multi-agent workflow config");
                 }
             }
-        } else if cli.claude {
-            debug_log(start, "Using Claude-only workflow config");
         } else {
             debug_log(start, "Using built-in multi-agent workflow config");
         }
     }
-    if cli.claude {
-        WorkflowConfig::claude_only_config()
-    } else {
-        WorkflowConfig::default_config()
-    }
+    WorkflowConfig::default_config()
 }
