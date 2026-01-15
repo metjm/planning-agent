@@ -15,6 +15,15 @@ use tokio::sync::{mpsc, Mutex};
 /// Heartbeat interval in seconds.
 const HEARTBEAT_INTERVAL_SECS: u64 = 5;
 
+/// Number of consecutive heartbeat failures before attempting reconnection.
+const RECONNECT_THRESHOLD: u32 = 2;
+
+/// Maximum backoff interval for reconnection attempts (seconds).
+const MAX_BACKOFF_SECS: u64 = 60;
+
+/// How often to log repeated errors (seconds).
+const ERROR_LOG_INTERVAL_SECS: u64 = 60;
+
 /// Information about an active session.
 struct SessionInfo {
     pub record: SessionRecord,
@@ -63,16 +72,99 @@ impl SessionTracker {
                 tokio::time::Duration::from_secs(HEARTBEAT_INTERVAL_SECS)
             );
 
+            // State for tracking failures and reconnection
+            let mut consecutive_failures: u32 = 0;
+            let mut last_error_log = std::time::Instant::now()
+                .checked_sub(std::time::Duration::from_secs(ERROR_LOG_INTERVAL_SECS))
+                .unwrap_or_else(std::time::Instant::now);
+            let mut backoff_secs = HEARTBEAT_INTERVAL_SECS;
+            let mut in_reconnect_mode = false;
+
             loop {
                 tokio::select! {
                     _ = interval.tick() => {
                         let sessions = heartbeat_sessions.lock().await;
-                        let client = heartbeat_client.lock().await;
 
-                        for session_id in sessions.keys() {
-                            if let Err(e) = client.heartbeat(session_id).await {
-                                // Log but don't fail - connection issues are handled by reconnect
-                                eprintln!("[session-tracker] Heartbeat failed for {}: {}", session_id, e);
+                        // Skip heartbeat if no active sessions
+                        if sessions.is_empty() {
+                            consecutive_failures = 0;
+                            continue;
+                        }
+
+                        // Try heartbeat for each session
+                        let mut any_failed = false;
+                        let mut last_error: Option<String> = None;
+
+                        {
+                            let client = heartbeat_client.lock().await;
+                            for session_id in sessions.keys() {
+                                if let Err(e) = client.heartbeat(session_id).await {
+                                    any_failed = true;
+                                    last_error = Some(e.to_string());
+                                }
+                            }
+                        }
+
+                        if any_failed {
+                            consecutive_failures += 1;
+
+                            // Log on first failure or periodically (not every 5 seconds)
+                            let now = std::time::Instant::now();
+                            let should_log = consecutive_failures == 1
+                                || now.duration_since(last_error_log).as_secs() >= ERROR_LOG_INTERVAL_SECS;
+
+                            if should_log {
+                                if let Some(err) = &last_error {
+                                    eprintln!(
+                                        "[session-tracker] Heartbeat failed (attempt {}): {}",
+                                        consecutive_failures, err
+                                    );
+                                }
+                                last_error_log = now;
+                            }
+
+                            // Attempt reconnection after threshold failures
+                            if consecutive_failures >= RECONNECT_THRESHOLD {
+                                if !in_reconnect_mode {
+                                    eprintln!("[session-tracker] Connection lost, attempting to reconnect...");
+                                    in_reconnect_mode = true;
+                                }
+
+                                // Try to reconnect (will spawn daemon if needed)
+                                let mut client = heartbeat_client.lock().await;
+                                match client.reconnect().await {
+                                    Ok(()) => {
+                                        eprintln!("[session-tracker] Reconnected successfully");
+                                        consecutive_failures = 0;
+                                        backoff_secs = HEARTBEAT_INTERVAL_SECS;
+                                        in_reconnect_mode = false;
+
+                                        // Re-register sessions after reconnect
+                                        for info in sessions.values() {
+                                            let _ = client.register(info.record.clone()).await;
+                                        }
+                                    }
+                                    Err(_) => {
+                                        // Increase backoff interval (exponential backoff)
+                                        backoff_secs = (backoff_secs * 2).min(MAX_BACKOFF_SECS);
+                                        interval = tokio::time::interval(
+                                            tokio::time::Duration::from_secs(backoff_secs)
+                                        );
+                                    }
+                                }
+                            }
+                        } else {
+                            // Success - reset failure state
+                            if consecutive_failures > 0 || in_reconnect_mode {
+                                if in_reconnect_mode {
+                                    eprintln!("[session-tracker] Connection restored");
+                                }
+                                consecutive_failures = 0;
+                                backoff_secs = HEARTBEAT_INTERVAL_SECS;
+                                in_reconnect_mode = false;
+                                interval = tokio::time::interval(
+                                    tokio::time::Duration::from_secs(HEARTBEAT_INTERVAL_SECS)
+                                );
                             }
                         }
                     }
