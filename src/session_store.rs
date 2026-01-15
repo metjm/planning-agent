@@ -381,6 +381,7 @@ pub fn delete_snapshot(working_dir: &Path, session_id: &str) -> Result<()> {
 ///
 /// For new session directories, the entire session directory is deleted.
 /// For legacy snapshot files, only the .json file is deleted.
+/// If the session has a git worktree, it is properly removed first.
 pub fn cleanup_old_snapshots(working_dir: &Path, older_than_days: u32) -> Result<Vec<String>> {
     let snapshots = list_snapshots(working_dir)?;
     let cutoff = chrono::Utc::now() - chrono::Duration::days(older_than_days as i64);
@@ -391,6 +392,23 @@ pub fn cleanup_old_snapshots(working_dir: &Path, older_than_days: u32) -> Result
     for snapshot in snapshots {
         if snapshot.saved_at < cutoff_str {
             let session_id = &snapshot.workflow_session_id;
+
+            // Load the full snapshot to get worktree info
+            if let Ok(full_snapshot) = load_snapshot(working_dir, session_id) {
+                // Clean up git worktree if present
+                if let Some(ref wt_state) = full_snapshot.workflow_state.worktree_info {
+                    if wt_state.worktree_path.exists() {
+                        if let Err(e) = crate::git_worktree::remove_worktree(
+                            &wt_state.original_dir,
+                            &wt_state.worktree_path,
+                            Some(&wt_state.branch_name),
+                        ) {
+                            eprintln!("[cleanup] Warning: Failed to remove worktree: {}", e);
+                            // Continue anyway - we'll still try to delete the directory
+                        }
+                    }
+                }
+            }
 
             // Check if this is a new-style session directory
             if let Ok(session_dir) = planning_paths::session_dir(session_id) {

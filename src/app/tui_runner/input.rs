@@ -508,6 +508,11 @@ async fn handle_naming_tab_input(
                 let wd = working_dir.to_path_buf();
                 let max_iter = cli.max_iterations;
 
+                // Capture worktree-related CLI flags
+                let no_worktree_flag = cli.no_worktree;
+                let custom_worktree_dir = cli.worktree_dir.clone();
+                let custom_worktree_branch = cli.worktree_branch.clone();
+
                 let new_init_handle = tokio::spawn(async move {
                     let _ = tx.send(Event::SessionOutput {
                         session_id,
@@ -529,8 +534,87 @@ async fn handle_naming_tab_input(
 
                     let mut state = State::new(&feature_name, &objective, max_iter)?;
 
+                    // Set up git worktree if not disabled
+                    let effective_working_dir = if no_worktree_flag {
+                        let _ = tx.send(Event::SessionOutput {
+                            session_id,
+                            line: "[planning] Worktree disabled via --no-worktree".to_string(),
+                        });
+                        wd.clone()
+                    } else {
+                        // Get session directory for worktree
+                        let session_dir = match crate::planning_paths::session_dir(&state.workflow_session_id) {
+                            Ok(dir) => dir,
+                            Err(e) => {
+                                let _ = tx.send(Event::SessionOutput {
+                                    session_id,
+                                    line: format!("[planning] Warning: Could not get session directory: {}", e),
+                                });
+                                return Ok::<_, anyhow::Error>((state, state_path, feature_name, wd.clone()));
+                            }
+                        };
+
+                        let worktree_base = custom_worktree_dir
+                            .as_ref()
+                            .map(|d| d.to_path_buf())
+                            .unwrap_or(session_dir);
+
+                        match crate::git_worktree::create_session_worktree(
+                            &wd,
+                            &state.workflow_session_id,
+                            &feature_name,
+                            &worktree_base,
+                            custom_worktree_branch.as_deref(),
+                        ) {
+                            crate::git_worktree::WorktreeSetupResult::Created(info) => {
+                                let _ = tx.send(Event::SessionOutput {
+                                    session_id,
+                                    line: format!("[planning] Created git worktree at: {}", info.worktree_path.display()),
+                                });
+                                let _ = tx.send(Event::SessionOutput {
+                                    session_id,
+                                    line: format!("[planning] Working on branch: {}", info.branch_name),
+                                });
+                                if let Some(ref source) = info.source_branch {
+                                    let _ = tx.send(Event::SessionOutput {
+                                        session_id,
+                                        line: format!("[planning] Will merge into: {}", source),
+                                    });
+                                }
+                                if info.has_submodules {
+                                    let _ = tx.send(Event::SessionOutput {
+                                        session_id,
+                                        line: "[planning] Warning: Repository has submodules".to_string(),
+                                    });
+                                }
+                                let wt_state = crate::state::WorktreeState {
+                                    worktree_path: info.worktree_path.clone(),
+                                    branch_name: info.branch_name,
+                                    source_branch: info.source_branch,
+                                    original_dir: info.original_dir,
+                                };
+                                state.worktree_info = Some(wt_state);
+                                info.worktree_path
+                            }
+                            crate::git_worktree::WorktreeSetupResult::NotAGitRepo => {
+                                let _ = tx.send(Event::SessionOutput {
+                                    session_id,
+                                    line: "[planning] Not a git repository, using original directory".to_string(),
+                                });
+                                wd.clone()
+                            }
+                            crate::git_worktree::WorktreeSetupResult::Failed(err) => {
+                                let _ = tx.send(Event::SessionOutput {
+                                    session_id,
+                                    line: format!("[planning] Warning: Git worktree setup failed: {}", err),
+                                });
+                                wd.clone()
+                            }
+                        }
+                    };
+
                     // Pre-create plan folder and files (in ~/.planning-agent/sessions/)
-                    pre_create_plan_files_with_working_dir(&state, Some(&wd))
+                    pre_create_plan_files_with_working_dir(&state, Some(&effective_working_dir))
                         .context("Failed to pre-create plan files")?;
 
                     state.set_updated_at();
@@ -541,7 +625,7 @@ async fn handle_naming_tab_input(
                         state: state.clone(),
                     });
 
-                    Ok::<_, anyhow::Error>((state, state_path, feature_name))
+                    Ok::<_, anyhow::Error>((state, state_path, feature_name, effective_working_dir))
                 });
 
                 *init_handle = Some((session_id, new_init_handle));

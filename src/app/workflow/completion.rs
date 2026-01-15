@@ -2,6 +2,7 @@
 
 use super::WorkflowResult;
 use crate::app::util::{build_approval_summary, log_workflow};
+use crate::git_worktree;
 use crate::state::State;
 use crate::tui::{SessionEventSender, UserApprovalResponse, WorkflowCommand};
 use anyhow::Result;
@@ -18,6 +19,21 @@ pub async fn handle_completion(
     log_workflow(working_dir, ">>> Plan complete - requesting user approval");
 
     sender.send_output("".to_string());
+
+    // Output merge instructions if using a worktree
+    if let Some(ref wt_state) = state.worktree_info {
+        let info = git_worktree::WorktreeInfo {
+            worktree_path: wt_state.worktree_path.clone(),
+            branch_name: wt_state.branch_name.clone(),
+            source_branch: wt_state.source_branch.clone(),
+            original_dir: wt_state.original_dir.clone(),
+            has_submodules: false, // Don't re-check at completion
+        };
+        let instructions = git_worktree::generate_merge_instructions(&info);
+        for line in instructions.lines() {
+            sender.send_output(line.to_string());
+        }
+    }
 
     // state.plan_file is now an absolute path (in ~/.planning-agent/plans/)
     let plan_path = state.plan_file.clone();

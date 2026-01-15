@@ -6,6 +6,7 @@ mod codex_usage;
 mod config;
 mod diagnostics;
 mod gemini_usage;
+mod git_worktree;
 mod mcp;
 mod phases;
 mod planning_paths;

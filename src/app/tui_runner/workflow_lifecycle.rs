@@ -74,14 +74,14 @@ pub fn start_resumed_workflow(
 /// completes. It sets up the workflow channels and spawns the workflow task.
 pub async fn handle_init_completion(
     session_id: usize,
-    handle: tokio::task::JoinHandle<anyhow::Result<(State, PathBuf, String)>>,
+    handle: tokio::task::JoinHandle<anyhow::Result<(State, PathBuf, String, PathBuf)>>,
     tab_manager: &mut TabManager,
-    working_dir: &Path,
+    _working_dir: &Path, // No longer used directly - effective_working_dir comes from init task
     workflow_config: &WorkflowConfig,
     output_tx: &mpsc::UnboundedSender<crate::tui::Event>,
 ) {
     match handle.await {
-        Ok(Ok((state, state_path, feature_name))) => {
+        Ok(Ok((state, state_path, feature_name, effective_working_dir))) => {
             if let Some(session) = tab_manager.session_by_id_mut(session_id) {
                 session.name = feature_name;
                 session.workflow_state = Some(state.clone());
@@ -113,7 +113,7 @@ pub async fn handle_init_completion(
 
                 let cfg = workflow_config.clone();
                 let workflow_handle = tokio::spawn({
-                    let working_dir = working_dir.to_path_buf();
+                    let working_dir = effective_working_dir; // Use worktree path if created
                     let tx = output_tx.clone();
                     let sid = session_id;
                     async move {

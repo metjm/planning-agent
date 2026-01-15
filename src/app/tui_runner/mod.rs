@@ -34,7 +34,7 @@ pub use workflow_lifecycle::{check_workflow_completions, handle_init_completion}
 
 pub type InitHandle = Option<(
     usize,
-    tokio::task::JoinHandle<Result<(State, PathBuf, String)>>,
+    tokio::task::JoinHandle<Result<(State, PathBuf, String, PathBuf)>>,
 )>;
 
 /// State machine for handling graceful quit with active workflows.
@@ -382,6 +382,11 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
         let init_continue = cli.continue_workflow;
         let init_max_iterations = cli.max_iterations;
 
+        // Capture worktree-related CLI flags before tokio::spawn
+        let no_worktree_flag = cli.no_worktree;
+        let custom_worktree_dir = cli.worktree_dir.clone();
+        let custom_worktree_branch = cli.worktree_branch.clone();
+
         let handle = tokio::spawn(async move {
             let _ = init_tx.send(Event::Output("[planning] Initializing...".to_string()));
 
@@ -411,8 +416,135 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                 State::new(&feature_name, &init_objective, init_max_iterations)?
             };
 
-            // Pre-create plan folder and files (in ~/.planning-agent/sessions/)
-            pre_create_plan_files_with_working_dir(&state, Some(&init_working_dir))
+            // Set up git worktree if in a git repository (and not disabled)
+            // Check if state already has worktree_info (--continue case)
+            let effective_working_dir = if let Some(ref existing_wt) = state.worktree_info {
+                // Worktree already exists from previous session (--continue case)
+                // Note: Even if --no-worktree is passed, we respect the existing worktree
+                // because changes already exist there. --no-worktree only affects NEW sessions.
+                if no_worktree_flag {
+                    let _ = init_tx.send(Event::Output(
+                        "[planning] Note: Using existing worktree (--no-worktree only affects new sessions)".to_string()
+                    ));
+                }
+                // Validate it still exists and is a valid git worktree
+                if crate::git_worktree::is_valid_worktree(&existing_wt.worktree_path) {
+                    let _ = init_tx.send(Event::Output(format!(
+                        "[planning] Reusing existing worktree: {}",
+                        existing_wt.worktree_path.display()
+                    )));
+                    let _ = init_tx.send(Event::Output(format!(
+                        "[planning] Branch: {}",
+                        existing_wt.branch_name
+                    )));
+                    existing_wt.worktree_path.clone()
+                } else {
+                    // Worktree is gone or invalid - clear it and fall back
+                    let _ = init_tx.send(Event::Output(
+                        "[planning] Warning: Previous worktree no longer valid".to_string()
+                    ));
+                    let _ = init_tx.send(Event::Output(format!(
+                        "[planning] Falling back to: {}",
+                        existing_wt.original_dir.display()
+                    )));
+                    let original = existing_wt.original_dir.clone();
+                    state.worktree_info = None;
+                    original
+                }
+            } else if no_worktree_flag {
+                let _ = init_tx.send(Event::Output(
+                    "[planning] Worktree disabled via --no-worktree".to_string()
+                ));
+                init_working_dir.clone()
+            } else {
+                // No existing worktree, create a new one
+                // Get session directory for worktree (graceful fallback if it fails)
+                let session_dir = match crate::planning_paths::session_dir(&state.workflow_session_id) {
+                    Ok(dir) => dir,
+                    Err(e) => {
+                        let _ = init_tx.send(Event::Output(format!(
+                            "[planning] Warning: Could not get session directory: {}",
+                            e
+                        )));
+                        let _ = init_tx.send(Event::Output(
+                            "[planning] Continuing with original directory".to_string()
+                        ));
+                        return Ok::<_, anyhow::Error>((state, state_path, feature_name, init_working_dir.clone()));
+                    }
+                };
+
+                // Use custom worktree dir if provided, otherwise use session_dir
+                let worktree_base = custom_worktree_dir
+                    .as_ref()
+                    .map(|d| d.to_path_buf())
+                    .unwrap_or(session_dir);
+
+                match crate::git_worktree::create_session_worktree(
+                    &init_working_dir,
+                    &state.workflow_session_id,
+                    &feature_name,
+                    &worktree_base,
+                    custom_worktree_branch.as_deref(),
+                ) {
+                    crate::git_worktree::WorktreeSetupResult::Created(info) => {
+                        let _ = init_tx.send(Event::Output(format!(
+                            "[planning] Created git worktree at: {}",
+                            info.worktree_path.display()
+                        )));
+                        let _ = init_tx.send(Event::Output(format!(
+                            "[planning] Working on branch: {}",
+                            info.branch_name
+                        )));
+                        if let Some(ref source) = info.source_branch {
+                            let _ = init_tx.send(Event::Output(format!(
+                                "[planning] Will merge into: {}",
+                                source
+                            )));
+                        }
+
+                        // Warn about submodules if present
+                        if info.has_submodules {
+                            let _ = init_tx.send(Event::Output(
+                                "[planning] Warning: Repository has submodules".to_string()
+                            ));
+                            let _ = init_tx.send(Event::Output(
+                                "[planning] Submodules may not be initialized in the worktree.".to_string()
+                            ));
+                            let _ = init_tx.send(Event::Output(
+                                "[planning] Run 'git submodule update --init' in the worktree if needed.".to_string()
+                            ));
+                        }
+
+                        let wt_state = crate::state::WorktreeState {
+                            worktree_path: info.worktree_path.clone(),
+                            branch_name: info.branch_name,
+                            source_branch: info.source_branch,
+                            original_dir: info.original_dir,
+                        };
+                        state.worktree_info = Some(wt_state);
+                        info.worktree_path
+                    }
+                    crate::git_worktree::WorktreeSetupResult::NotAGitRepo => {
+                        let _ = init_tx.send(Event::Output(
+                            "[planning] Not a git repository, using original directory".to_string()
+                        ));
+                        init_working_dir.clone()
+                    }
+                    crate::git_worktree::WorktreeSetupResult::Failed(err) => {
+                        let _ = init_tx.send(Event::Output(format!(
+                            "[planning] Warning: Git worktree setup failed: {}",
+                            err
+                        )));
+                        let _ = init_tx.send(Event::Output(
+                            "[planning] Continuing with original directory".to_string()
+                        ));
+                        init_working_dir.clone()
+                    }
+                }
+            };
+
+            // Pre-create plan folder and files using effective_working_dir
+            pre_create_plan_files_with_working_dir(&state, Some(&effective_working_dir))
                 .context("Failed to pre-create plan files")?;
 
             state.set_updated_at();
@@ -420,7 +552,8 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
 
             let _ = init_tx.send(Event::StateUpdate(state.clone()));
 
-            Ok::<_, anyhow::Error>((state, state_path, feature_name))
+            // Return effective_working_dir along with state, state_path, feature_name
+            Ok::<_, anyhow::Error>((state, state_path, feature_name, effective_working_dir))
         });
         debug_log(start, "init task spawned");
 

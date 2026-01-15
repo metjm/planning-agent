@@ -449,6 +449,21 @@ pub async fn run_headless_with_config(
         sender.send_output("Max iterations reached. Manual review recommended.".to_string());
     }
 
+    // Output merge instructions if using a worktree
+    if let Some(ref wt_state) = state.worktree_info {
+        let info = crate::git_worktree::WorktreeInfo {
+            worktree_path: wt_state.worktree_path.clone(),
+            branch_name: wt_state.branch_name.clone(),
+            source_branch: wt_state.source_branch.clone(),
+            original_dir: wt_state.original_dir.clone(),
+            has_submodules: false,
+        };
+        let instructions = crate::git_worktree::generate_merge_instructions(&info);
+        for line in instructions.lines() {
+            sender.send_output(line.to_string());
+        }
+    }
+
     Ok(())
 }
 
@@ -526,8 +541,83 @@ pub async fn run_headless(cli: Cli) -> Result<()> {
     // Canonicalize working_dir for absolute paths in prompts
     let working_dir = std::fs::canonicalize(&working_dir).unwrap_or(working_dir);
 
+    // Set up git worktree if in a git repository (and not disabled)
+    let effective_working_dir = if let Some(ref existing_wt) = state.worktree_info {
+        // Worktree already exists from previous session (--continue case)
+        if cli.no_worktree {
+            eprintln!("[planning] Note: Using existing worktree (--no-worktree only affects new sessions)");
+        }
+        // Validate it still exists and is a valid git worktree
+        if crate::git_worktree::is_valid_worktree(&existing_wt.worktree_path) {
+            eprintln!("[planning] Reusing existing worktree: {}", existing_wt.worktree_path.display());
+            eprintln!("[planning] Branch: {}", existing_wt.branch_name);
+            existing_wt.worktree_path.clone()
+        } else {
+            eprintln!("[planning] Warning: Previous worktree no longer valid, falling back to original dir");
+            let original = existing_wt.original_dir.clone();
+            state.worktree_info = None;
+            original
+        }
+    } else if cli.no_worktree {
+        eprintln!("[planning] Worktree disabled via --no-worktree");
+        working_dir.clone()
+    } else {
+        // No existing worktree, try to create one
+        let session_dir = match crate::planning_paths::session_dir(&state.workflow_session_id) {
+            Ok(dir) => dir,
+            Err(e) => {
+                eprintln!("[planning] Warning: Could not get session directory: {}", e);
+                eprintln!("[planning] Continuing with original directory");
+                working_dir.clone()
+            }
+        };
+
+        // Use custom worktree dir if provided, otherwise use session_dir
+        let worktree_base = cli.worktree_dir
+            .as_ref()
+            .cloned()
+            .unwrap_or(session_dir);
+
+        match crate::git_worktree::create_session_worktree(
+            &working_dir,
+            &state.workflow_session_id,
+            &feature_name,
+            &worktree_base,
+            cli.worktree_branch.as_deref(),
+        ) {
+            crate::git_worktree::WorktreeSetupResult::Created(info) => {
+                eprintln!("[planning] Created git worktree at: {}", info.worktree_path.display());
+                eprintln!("[planning] Working on branch: {}", info.branch_name);
+                if let Some(ref source) = info.source_branch {
+                    eprintln!("[planning] Will merge into: {}", source);
+                }
+                if info.has_submodules {
+                    eprintln!("[planning] Warning: Repository has submodules");
+                    eprintln!("[planning] Run 'git submodule update --init' in the worktree if needed.");
+                }
+                let wt_state = crate::state::WorktreeState {
+                    worktree_path: info.worktree_path.clone(),
+                    branch_name: info.branch_name,
+                    source_branch: info.source_branch,
+                    original_dir: info.original_dir,
+                };
+                state.worktree_info = Some(wt_state);
+                info.worktree_path
+            }
+            crate::git_worktree::WorktreeSetupResult::NotAGitRepo => {
+                eprintln!("[planning] Not a git repository, using original directory");
+                working_dir.clone()
+            }
+            crate::git_worktree::WorktreeSetupResult::Failed(err) => {
+                eprintln!("[planning] Warning: Git worktree setup failed: {}", err);
+                eprintln!("[planning] Continuing with original directory");
+                working_dir.clone()
+            }
+        }
+    };
+
     // Pre-create plan folder and files (in ~/.planning-agent/sessions/)
-    pre_create_plan_files_with_working_dir(&state, Some(&working_dir))
+    pre_create_plan_files_with_working_dir(&state, Some(&effective_working_dir))
         .context("Failed to pre-create plan files")?;
 
     state.set_updated_at();
@@ -587,7 +677,7 @@ pub async fn run_headless(cli: Cli) -> Result<()> {
 
     run_headless_with_config(
         state,
-        working_dir,
+        effective_working_dir,
         state_path,
         workflow_config,
         output_tx.clone(),
