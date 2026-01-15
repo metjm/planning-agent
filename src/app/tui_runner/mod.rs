@@ -17,17 +17,14 @@ use crate::cli_usage;
 use crate::config::WorkflowConfig;
 use crate::planning_paths;
 use crate::state::State;
-use crate::tui::{
-    Event, EventHandler, InputMode, SessionStatus, TabManager, TerminalTitleManager,
-    WorkflowCommand,
-};
+use crate::tui::{Event, EventHandler, InputMode, SessionStatus, TabManager, TerminalTitleManager};
 use crate::update;
 use anyhow::{Context, Result};
 use crossterm::event::{
     KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
 };
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 pub use events::process_event;
 pub use workflow_lifecycle::{check_workflow_completions, handle_init_completion};
@@ -37,17 +34,6 @@ pub type InitHandle = Option<(
     tokio::task::JoinHandle<Result<(State, PathBuf, String, PathBuf)>>,
 )>;
 
-/// State machine for handling graceful quit with active workflows.
-#[derive(Clone)]
-enum QuitState {
-    /// Normal operation, not quitting.
-    Running,
-    /// Quit requested, waiting for workflows to stop.
-    Quitting {
-        requested_at: Instant,
-        stop_sent: bool,
-    },
-}
 
 /// Information about a session that was successfully stopped and can be resumed.
 #[derive(Clone)]
@@ -585,13 +571,12 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
 
         init_handle = Some((first_session_id, handle));
     }
-    let mut quit_state = QuitState::Running;
     let mut resumable_sessions: Vec<ResumableSession> = Vec::new();
+    let mut quit_requested = false;
 
     debug_log(start, "entering main loop");
 
     const MAX_EVENTS_PER_FRAME: usize = 50;
-    const QUIT_TIMEOUT: Duration = Duration::from_secs(5);
 
     loop {
         terminal.draw(|frame| crate::tui::ui::draw(frame, &tab_manager))?;
@@ -607,7 +592,7 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
         }
 
         for event in events_to_process {
-            let quit_requested = process_event(
+            if process_event(
                 event,
                 &mut tab_manager,
                 &mut terminal,
@@ -618,23 +603,18 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                 &mut init_handle,
                 first_session_id,
             )
-            .await?;
-
-            if quit_requested && matches!(quit_state, QuitState::Running) {
-                quit_state = QuitState::Quitting {
-                    requested_at: Instant::now(),
-                    stop_sent: false,
-                };
+            .await?
+            {
+                quit_requested = true;
             }
         }
 
-        // Check for signals before processing further
+        // Check for signals
         #[cfg(unix)]
         {
             use std::task::Poll;
             use std::pin::Pin;
 
-            // Non-blocking signal check using poll_fn
             let signal_received = std::future::poll_fn(|cx| {
                 if Pin::new(&mut sigterm).poll_recv(cx).is_ready() {
                     return Poll::Ready(true);
@@ -646,22 +626,29 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
             }).await;
 
             if signal_received {
-                // Signal received - save snapshots and initiate quit
-                debug_log(start, "Signal received, saving snapshots");
-                for session in tab_manager.sessions_mut() {
-                    if session.workflow_handle.is_some() {
-                        if let Some(ref state) = session.workflow_state {
-                            let _ = snapshot_helper::create_and_save_snapshot(session, state, &working_dir);
-                        }
+                debug_log(start, "Signal received");
+                quit_requested = true;
+            }
+        }
+
+        // Handle quit: save state and exit immediately
+        if quit_requested {
+            debug_log(start, "Quit requested, saving snapshots");
+            for session in tab_manager.sessions_mut() {
+                if let Some(ref state) = session.workflow_state {
+                    if let Err(e) = snapshot_helper::create_and_save_snapshot(session, state, &working_dir) {
+                        debug_log(start, &format!("Failed to save snapshot: {}", e));
+                    } else {
+                        // Track as resumable
+                        resumable_sessions.push(ResumableSession {
+                            feature_name: state.feature_name.clone(),
+                            session_id: state.workflow_session_id.clone(),
+                            working_dir: working_dir.clone(),
+                        });
                     }
                 }
-                if matches!(quit_state, QuitState::Running) {
-                    quit_state = QuitState::Quitting {
-                        requested_at: Instant::now(),
-                        stop_sent: false,
-                    };
-                }
             }
+            break;
         }
 
         let new_title = format_window_title(&tab_manager);
@@ -695,92 +682,16 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
         )
         .await;
         resumable_sessions.extend(completed);
-
-        // Handle quit state machine
-        match &mut quit_state {
-            QuitState::Running => {
-                // Normal operation, continue the loop
-            }
-            QuitState::Quitting {
-                requested_at,
-                stop_sent,
-            } => {
-                // Send stop commands to all sessions with active workflows (first time only)
-                if !*stop_sent {
-                    // FIRST: Save snapshots for all active sessions BEFORE sending stop
-                    // This ensures we capture state before workflow shutdown begins
-                    for session in tab_manager.sessions_mut() {
-                        if session.workflow_handle.is_some() {
-                            if let Some(ref state) = session.workflow_state {
-                                if let Err(e) = snapshot_helper::create_and_save_snapshot(session, state, &working_dir) {
-                                    debug_log(start, &format!("Failed to save snapshot on quit: {}", e));
-                                }
-                            }
-                        }
-                    }
-
-                    // THEN send stop commands
-                    for session in tab_manager.sessions_mut() {
-                        if session.workflow_handle.is_some() {
-                            if let Some(ref tx) = session.workflow_control_tx {
-                                let _ = tx.try_send(WorkflowCommand::Stop);
-                            }
-                            // Also drop the approval channel to unblock any waiting recv()
-                            // This is a belt-and-suspenders approach - the workflow should
-                            // handle Stop via control_rx, but dropping approval_tx ensures
-                            // the channel closes even if there's some edge case
-                            session.approval_tx = None;
-                        }
-                    }
-                    *stop_sent = true;
-                }
-
-                // Check if all workflows have completed
-                let any_active = tab_manager
-                    .sessions
-                    .iter()
-                    .any(|s| s.workflow_handle.is_some());
-
-                // Check for timeout
-                let timed_out = requested_at.elapsed() > QUIT_TIMEOUT;
-
-                if !any_active || timed_out {
-                    if timed_out && any_active {
-                        debug_log(start, "quit timeout reached with active workflows");
-                    }
-                    break;
-                }
-            }
-        }
     }
 
     // Cancel the periodic snapshot task
     let _ = snapshot_cancel_tx.send(());
 
-    // Cleanup: Abort any still-active workflow handles to prevent zombie processes
-    // This is especially important when we exit due to timeout with active workflows
-    let mut abort_handles = Vec::new();
+    // Abort any active workflow handles (no need to wait - state is already saved)
     for session in tab_manager.sessions_mut() {
         if let Some(handle) = session.workflow_handle.take() {
             handle.abort();
-            abort_handles.push(handle);
         }
-    }
-
-    // Wait briefly for aborted tasks to finish cleanup (with timeout)
-    if !abort_handles.is_empty() {
-        debug_log(start, &format!("Waiting for {} workflow(s) to abort", abort_handles.len()));
-        let cleanup_timeout = tokio::time::timeout(
-            Duration::from_millis(500),
-            async {
-                for handle in abort_handles {
-                    // Ignore the result - we just want the task to stop
-                    let _ = handle.await;
-                }
-            }
-        );
-        let _ = cleanup_timeout.await;
-        debug_log(start, "Workflow cleanup complete");
     }
 
     title_manager.restore_title();
