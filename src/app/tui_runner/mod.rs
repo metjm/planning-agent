@@ -189,6 +189,28 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
         debug_log(start, "file index task spawned");
     }
 
+    // Spawn daemon in background before starting subscription task
+    // This ensures daemon is available when subscription tries to connect
+    // Uses spawn_blocking since SessionDaemonClient::new() is sync and may take up to 2s
+    {
+        let daemon_spawn_tx = event_handler.sender();
+        tokio::spawn(async move {
+            // Run blocking daemon spawn in dedicated thread
+            let connected = tokio::task::spawn_blocking(|| {
+                let client = crate::session_daemon::client::SessionDaemonClient::new(false);
+                client.is_connected()
+            })
+            .await
+            .unwrap_or(false);
+
+            // Send initial status if daemon was already running
+            if connected {
+                let _ = daemon_spawn_tx.send(Event::DaemonReconnected);
+            }
+        });
+        debug_log(start, "daemon spawn task started");
+    }
+
     // Spawn daemon subscription task for push notifications
     {
         let daemon_tx = event_handler.sender();
