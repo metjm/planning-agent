@@ -26,12 +26,26 @@ use app::{cli::Cli, headless::run_headless, tui_runner::run_tui, verify::run_hea
 use clap::Parser;
 use std::path::{Path, PathBuf};
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
     if let Err(e) = skills::install_skills_if_needed() {
         eprintln!("[planning-agent] Warning: Failed to install skills: {}", e);
     }
 
+    // Build runtime with fast shutdown - don't wait for blocking tasks
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("Failed to create tokio runtime");
+
+    let result = runtime.block_on(async_main());
+
+    // Shutdown with 100ms timeout - don't wait for slow blocking tasks
+    runtime.shutdown_timeout(std::time::Duration::from_millis(100));
+
+    result
+}
+
+async fn async_main() -> Result<()> {
     let start = std::time::Instant::now();
 
     {
@@ -91,11 +105,13 @@ async fn main() -> Result<()> {
     }
 
     // Resume session or normal workflow
-    if cli.headless {
+    let result = if cli.headless {
         run_headless(cli).await
     } else {
         run_tui(cli, start).await
-    }
+    };
+    app::util::debug_log(start, "main function returning");
+    result
 }
 
 /// Resolves a plan specification (path, name pattern, or "latest") to a full path.
