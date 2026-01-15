@@ -93,14 +93,12 @@ impl SessionTracker {
 
                         // Try heartbeat for each session
                         let mut any_failed = false;
-                        let mut last_error: Option<String> = None;
 
                         {
                             let client = heartbeat_client.lock().await;
                             for session_id in sessions.keys() {
-                                if let Err(e) = client.heartbeat(session_id).await {
+                                if client.heartbeat(session_id).await.is_err() {
                                     any_failed = true;
-                                    last_error = Some(e.to_string());
                                 }
                             }
                         }
@@ -108,25 +106,17 @@ impl SessionTracker {
                         if any_failed {
                             consecutive_failures += 1;
 
-                            // Log on first failure or periodically (not every 5 seconds)
+                            // Track last error time for backoff (no console logging - uses UI)
                             let now = std::time::Instant::now();
-                            let should_log = consecutive_failures == 1
+                            let should_update_log_time = consecutive_failures == 1
                                 || now.duration_since(last_error_log).as_secs() >= ERROR_LOG_INTERVAL_SECS;
-
-                            if should_log {
-                                if let Some(err) = &last_error {
-                                    eprintln!(
-                                        "[session-tracker] Heartbeat failed (attempt {}): {}",
-                                        consecutive_failures, err
-                                    );
-                                }
+                            if should_update_log_time {
                                 last_error_log = now;
                             }
 
                             // Attempt reconnection after threshold failures
                             if consecutive_failures >= RECONNECT_THRESHOLD {
                                 if !in_reconnect_mode {
-                                    eprintln!("[session-tracker] Connection lost, attempting to reconnect...");
                                     in_reconnect_mode = true;
                                 }
 
@@ -134,7 +124,6 @@ impl SessionTracker {
                                 let mut client = heartbeat_client.lock().await;
                                 match client.reconnect().await {
                                     Ok(()) => {
-                                        eprintln!("[session-tracker] Reconnected successfully");
                                         consecutive_failures = 0;
                                         backoff_secs = HEARTBEAT_INTERVAL_SECS;
                                         in_reconnect_mode = false;
@@ -156,9 +145,6 @@ impl SessionTracker {
                         } else {
                             // Success - reset failure state
                             if consecutive_failures > 0 || in_reconnect_mode {
-                                if in_reconnect_mode {
-                                    eprintln!("[session-tracker] Connection restored");
-                                }
                                 consecutive_failures = 0;
                                 backoff_secs = HEARTBEAT_INTERVAL_SECS;
                                 in_reconnect_mode = false;
