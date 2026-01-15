@@ -33,11 +33,30 @@ workflow:
     max_turns: 200
 
   # All three agents review in parallel
+  # Supports both simple format (agent name string) and extended format (object with custom prompt)
   reviewing:
     agents:
       - claude
       - codex
       #- gemini
+
+      # Extended format example: Run multiple Claude instances with different focuses
+      # Uncomment below to add specialized review passes:
+      #- agent: claude
+      #  id: claude-security    # Display name for logs/UI (defaults to agent name)
+      #  prompt: |              # Appended to system prompt for this instance
+      #    Focus your review on security concerns:
+      #    - Authentication and authorization
+      #    - Input validation and sanitization
+      #    - Secrets and credential handling
+      #
+      #- agent: claude
+      #  id: claude-architecture
+      #  prompt: |
+      #    Focus your review on architectural concerns:
+      #    - Code organization and modularity
+      #    - Design patterns and best practices
+      #    - Performance implications
     # Use majority voting - 2 of 3 must reject to trigger revision
     aggregation: any_rejects
 

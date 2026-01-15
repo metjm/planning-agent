@@ -170,6 +170,11 @@ fn handle_tick_event(tab_manager: &mut TabManager, output_tx: &mpsc::UnboundedSe
         tab_manager.update_spinner_frame = tab_manager.update_spinner_frame.wrapping_add(1);
     }
 
+    // Advance spinner frame when session browser is open (for running session animations)
+    if tab_manager.session_browser.open {
+        tab_manager.update_spinner_frame = tab_manager.update_spinner_frame.wrapping_add(1);
+    }
+
     // Auto-refresh session browser if open and due for refresh
     if tab_manager.session_browser.open && tab_manager.session_browser.should_auto_refresh() {
         tab_manager.session_browser.loading = true;
