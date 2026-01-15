@@ -57,7 +57,7 @@ When referencing existing code as a pattern to copy or mirror:
 
 ### Phase 3: Documentation
 
-Create a detailed plan file in `docs/plans/` (e.g., `docs/plans/feature-name.md`) with:
+Write the plan to the `plan-output-path` provided in the inputs. The plan should include:
 - Clear objective and scope
 - Current state analysis with specific file references
 - Proposed solution with architectural decisions
@@ -82,7 +82,7 @@ Create a detailed plan file in `docs/plans/` (e.g., `docs/plans/feature-name.md`
 
 ## Output Format
 
-Generate a super information-dense plan in `docs/plans/<feature-name>.md` with this structure:
+Write the plan to the `plan-output-path` provided in the inputs. Use this structure:
 
 ```markdown
 # Implementation Plan: [Feature/Task Name]
