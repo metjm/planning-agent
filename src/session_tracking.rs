@@ -363,17 +363,61 @@ mod tests {
 }
 
 /// Integration tests for SessionTracker with real daemon communication.
+///
+/// Each test uses unique session IDs (UUIDs) to avoid conflicts with:
+/// - Other tests running in parallel
+/// - Other planning-agent instances on the same system
+/// - Leftover sessions from previous test runs
 #[cfg(test)]
 #[cfg(unix)]
 mod integration_tests {
     use super::*;
     use crate::session_daemon::LivenessState;
     use std::time::Duration;
+    use uuid::Uuid;
+
+    /// Generate a unique session ID for this test run.
+    fn unique_session_id(prefix: &str) -> String {
+        format!("{}-{}", prefix, Uuid::new_v4())
+    }
 
     /// Helper to clean up a specific session (marks it as stopped).
     /// Does NOT shut down the daemon - other tests may be using it.
     async fn cleanup_session(tracker: &SessionTracker, session_id: &str) {
         let _ = tracker.force_stop(session_id).await;
+    }
+
+    /// Wait for a session to reach the expected liveness state.
+    /// This handles race conditions where state updates take time to propagate.
+    async fn wait_for_liveness(
+        tracker: &SessionTracker,
+        session_id: &str,
+        expected: LivenessState,
+        timeout: Duration,
+    ) -> Result<(), String> {
+        let deadline = tokio::time::Instant::now() + timeout;
+
+        while tokio::time::Instant::now() < deadline {
+            if let Ok(sessions) = tracker.list().await {
+                if let Some(session) = sessions.iter().find(|s| s.workflow_session_id == session_id) {
+                    if session.liveness == expected {
+                        return Ok(());
+                    }
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+
+        // Get final state for error message
+        if let Ok(sessions) = tracker.list().await {
+            if let Some(session) = sessions.iter().find(|s| s.workflow_session_id == session_id) {
+                return Err(format!(
+                    "Session {} liveness is {:?}, expected {:?}",
+                    session_id, session.liveness, expected
+                ));
+            }
+        }
+        Err(format!("Session {} not found", session_id))
     }
 
     #[tokio::test]
@@ -386,12 +430,12 @@ mod integration_tests {
             return;
         }
 
-        let session_id = "tracker-test-session-1";
+        let session_id = unique_session_id("tracker-register");
 
         // Register
         let result = tracker
             .register(
-                session_id.to_string(),
+                session_id.clone(),
                 "test-feature".to_string(),
                 PathBuf::from("/tmp/test"),
                 PathBuf::from("/tmp/test/state.json"),
@@ -410,7 +454,7 @@ mod integration_tests {
         let found = sessions.iter().any(|s| s.workflow_session_id == session_id);
         assert!(found, "Session not found in list");
 
-        cleanup_session(&tracker, session_id).await;
+        cleanup_session(&tracker, &session_id).await;
     }
 
     #[tokio::test]
@@ -423,12 +467,12 @@ mod integration_tests {
             return;
         }
 
-        let session_id = "tracker-test-session-2";
+        let session_id = unique_session_id("tracker-update");
 
         // Register
         tracker
             .register(
-                session_id.to_string(),
+                session_id.clone(),
                 "test-feature".to_string(),
                 PathBuf::from("/tmp/test"),
                 PathBuf::from("/tmp/test/state.json"),
@@ -441,7 +485,7 @@ mod integration_tests {
 
         // Update phase
         let result = tracker
-            .update(session_id, "Reviewing".to_string(), 2, "Reviewing".to_string())
+            .update(&session_id, "Reviewing".to_string(), 2, "Reviewing".to_string())
             .await;
         assert!(result.is_ok(), "Update failed: {:?}", result.err());
 
@@ -454,7 +498,7 @@ mod integration_tests {
         assert_eq!(session.phase, "Reviewing");
         assert_eq!(session.iteration, 2);
 
-        cleanup_session(&tracker, session_id).await;
+        cleanup_session(&tracker, &session_id).await;
     }
 
     #[tokio::test]
@@ -467,12 +511,12 @@ mod integration_tests {
             return;
         }
 
-        let session_id = "tracker-test-session-3";
+        let session_id = unique_session_id("tracker-mark-stopped");
 
         // Register
         tracker
             .register(
-                session_id.to_string(),
+                session_id.clone(),
                 "test-feature".to_string(),
                 PathBuf::from("/tmp/test"),
                 PathBuf::from("/tmp/test/state.json"),
@@ -484,16 +528,13 @@ mod integration_tests {
             .expect("Register failed");
 
         // Mark stopped
-        let result = tracker.mark_stopped(session_id).await;
+        let result = tracker.mark_stopped(&session_id).await;
         assert!(result.is_ok(), "Mark stopped failed: {:?}", result.err());
 
-        // Session should be marked as Stopped in daemon
-        let sessions = tracker.list().await.expect("List failed");
-        let session = sessions.iter()
-            .find(|s| s.workflow_session_id == session_id)
-            .expect("Session not found");
-
-        assert_eq!(session.liveness, LivenessState::Stopped);
+        // Wait for session to be marked as Stopped (handles race conditions)
+        wait_for_liveness(&tracker, &session_id, LivenessState::Stopped, Duration::from_secs(2))
+            .await
+            .expect("Session should be marked as Stopped");
         // Already stopped, no additional cleanup needed
     }
 
@@ -507,12 +548,12 @@ mod integration_tests {
             return;
         }
 
-        let session_id = "tracker-test-session-4";
+        let session_id = unique_session_id("tracker-force-stop");
 
         // Register
         tracker
             .register(
-                session_id.to_string(),
+                session_id.clone(),
                 "test-feature".to_string(),
                 PathBuf::from("/tmp/test"),
                 PathBuf::from("/tmp/test/state.json"),
@@ -524,16 +565,13 @@ mod integration_tests {
             .expect("Register failed");
 
         // Force stop
-        let result = tracker.force_stop(session_id).await;
+        let result = tracker.force_stop(&session_id).await;
         assert!(result.is_ok(), "Force stop failed: {:?}", result.err());
 
-        // Session should be Stopped
-        let sessions = tracker.list().await.expect("List failed");
-        let session = sessions.iter()
-            .find(|s| s.workflow_session_id == session_id)
-            .expect("Session not found");
-
-        assert_eq!(session.liveness, LivenessState::Stopped);
+        // Wait for session to be Stopped (handles race conditions)
+        wait_for_liveness(&tracker, &session_id, LivenessState::Stopped, Duration::from_secs(2))
+            .await
+            .expect("Session should be Stopped");
         // Already stopped, no additional cleanup needed
     }
 
@@ -548,12 +586,12 @@ mod integration_tests {
             return;
         }
 
-        let session_id = "tracker-workflow-lifecycle-test";
+        let session_id = unique_session_id("tracker-lifecycle");
 
         // 1. Register at workflow start
         tracker
             .register(
-                session_id.to_string(),
+                session_id.clone(),
                 "lifecycle-feature".to_string(),
                 PathBuf::from("/tmp/lifecycle-test"),
                 PathBuf::from("/tmp/lifecycle-test/state.json"),
@@ -574,7 +612,7 @@ mod integration_tests {
 
         // 2. Update: Planning -> Reviewing
         tracker
-            .update(session_id, "Reviewing".to_string(), 1, "Reviewing".to_string())
+            .update(&session_id, "Reviewing".to_string(), 1, "Reviewing".to_string())
             .await
             .expect("Update to Reviewing failed");
 
@@ -586,7 +624,7 @@ mod integration_tests {
 
         // 3. Update: Reviewing -> Revising
         tracker
-            .update(session_id, "Revising".to_string(), 2, "Revising".to_string())
+            .update(&session_id, "Revising".to_string(), 2, "Revising".to_string())
             .await
             .expect("Update to Revising failed");
 
@@ -599,23 +637,27 @@ mod integration_tests {
 
         // 4. Update: Revising -> Complete
         tracker
-            .update(session_id, "Complete".to_string(), 2, "Complete".to_string())
+            .update(&session_id, "Complete".to_string(), 2, "Complete".to_string())
             .await
             .expect("Update to Complete failed");
 
         // 5. Mark stopped at workflow end - this also serves as cleanup
         tracker
-            .mark_stopped(session_id)
+            .mark_stopped(&session_id)
             .await
             .expect("Mark stopped failed");
 
-        // Verify final state
+        // Wait for final state (handles race conditions)
+        wait_for_liveness(&tracker, &session_id, LivenessState::Stopped, Duration::from_secs(2))
+            .await
+            .expect("Session should be Stopped");
+
+        // Verify final phase
         let sessions = tracker.list().await.expect("List failed");
         let session = sessions.iter()
             .find(|s| s.workflow_session_id == session_id)
             .expect("Session not found");
         assert_eq!(session.phase, "Complete");
-        assert_eq!(session.liveness, LivenessState::Stopped);
         // Already stopped, no additional cleanup needed
     }
 
@@ -629,12 +671,12 @@ mod integration_tests {
             return;
         }
 
-        let session_id = "tracker-reconnect-test";
+        let session_id = unique_session_id("tracker-reconnect");
 
         // Register
         tracker
             .register(
-                session_id.to_string(),
+                session_id.clone(),
                 "test-feature".to_string(),
                 PathBuf::from("/tmp/test"),
                 PathBuf::from("/tmp/test/state.json"),
@@ -654,6 +696,6 @@ mod integration_tests {
         let found = sessions.iter().any(|s| s.workflow_session_id == session_id);
         assert!(found, "Session not found after reconnect");
 
-        cleanup_session(&tracker, session_id).await;
+        cleanup_session(&tracker, &session_id).await;
     }
 }
