@@ -17,7 +17,10 @@ use crate::cli_usage;
 use crate::config::WorkflowConfig;
 use crate::planning_paths;
 use crate::state::State;
-use crate::tui::{Event, EventHandler, InputMode, SessionStatus, TabManager, TerminalTitleManager};
+use crate::tui::{
+    Event, EventHandler, InputMode, SessionStatus, TabManager, TerminalTitleManager,
+    WorkflowCommand,
+};
 use crate::update;
 use anyhow::{Context, Result};
 use crossterm::event::{
@@ -635,11 +638,13 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
         if quit_requested {
             debug_log(start, "Quit requested, saving snapshots");
             for session in tab_manager.sessions_mut() {
+                // Save snapshot if we have state
                 if let Some(ref state) = session.workflow_state {
+                    debug_log(start, &format!("Saving snapshot for session {}", state.workflow_session_id));
                     if let Err(e) = snapshot_helper::create_and_save_snapshot(session, state, &working_dir) {
                         debug_log(start, &format!("Failed to save snapshot: {}", e));
                     } else {
-                        // Track as resumable
+                        debug_log(start, "Snapshot saved successfully");
                         resumable_sessions.push(ResumableSession {
                             feature_name: state.feature_name.clone(),
                             session_id: state.workflow_session_id.clone(),
@@ -647,7 +652,15 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                         });
                     }
                 }
+                // Send stop command and drop channels to unblock workflows
+                if session.workflow_handle.is_some() {
+                    if let Some(ref tx) = session.workflow_control_tx {
+                        let _ = tx.try_send(WorkflowCommand::Stop);
+                    }
+                    session.approval_tx = None;
+                }
             }
+            debug_log(start, "Breaking out of main loop");
             break;
         }
 
@@ -684,18 +697,27 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
         resumable_sessions.extend(completed);
     }
 
+    debug_log(start, "Loop exited, starting cleanup");
+
     // Cancel the periodic snapshot task
     let _ = snapshot_cancel_tx.send(());
+    debug_log(start, "Snapshot task cancelled");
 
     // Abort any active workflow handles (no need to wait - state is already saved)
+    let mut abort_count = 0;
     for session in tab_manager.sessions_mut() {
         if let Some(handle) = session.workflow_handle.take() {
             handle.abort();
+            abort_count += 1;
         }
     }
+    debug_log(start, &format!("Aborted {} workflow handles", abort_count));
 
+    debug_log(start, "Restoring title");
     title_manager.restore_title();
+    debug_log(start, "Restoring terminal");
     restore_terminal(&mut terminal)?;
+    debug_log(start, "Terminal restored");
 
     // Print resume commands for sessions that were successfully stopped
     if !resumable_sessions.is_empty() {
@@ -706,6 +728,7 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
         }
     }
 
+    debug_log(start, "run_tui complete");
     Ok(())
 }
 
