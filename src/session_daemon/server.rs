@@ -12,6 +12,22 @@ use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::{broadcast, Mutex};
 
+/// Log a daemon server event to ~/.planning-agent/daemon-debug.log
+fn daemon_log(msg: &str) {
+    use std::io::Write;
+    if let Ok(home) = planning_paths::planning_agent_home_dir() {
+        let log_path = home.join("daemon-debug.log");
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_path)
+        {
+            let now = chrono::Local::now().format("%H:%M:%S%.3f");
+            let _ = writeln!(f, "[{}] [server] {}", now, msg);
+        }
+    }
+}
+
 /// Default timeout for marking sessions as unresponsive (seconds).
 const UNRESPONSIVE_TIMEOUT_SECS: u64 = 25;
 
@@ -247,6 +263,7 @@ async fn run_unix_server(
         let mut shutdown_rx = shutdown_tx.subscribe();
 
         tokio::spawn(async move {
+            daemon_log("connection handler started");
             let (reader, writer) = stream.into_split();
             let mut reader = BufReader::new(reader);
             let mut writer = writer;
@@ -258,12 +275,18 @@ async fn run_unix_server(
 
                 // Build the select based on subscription state
                 if subscribed {
+                    daemon_log("in subscriber loop, waiting for data or events");
                     let events_receiver = events_rx.as_mut().unwrap();
                     tokio::select! {
                         result = reader.read_line(&mut line) => {
+                            daemon_log(&format!("subscriber: read_line result: {:?}", result.as_ref().map(|n| *n)));
                             match result {
-                                Ok(0) => break, // EOF
+                                Ok(0) => {
+                                    daemon_log("subscriber: got EOF, breaking");
+                                    break;
+                                }
                                 Ok(_) => {
+                                    daemon_log(&format!("subscriber: received: {}", line.trim()));
                                     let (response, should_subscribe) = handle_message_with_broadcast(&line, &conn_state, &conn_events_tx).await;
                                     if should_subscribe && !subscribed {
                                         subscribed = true;
@@ -307,17 +330,26 @@ async fn run_unix_server(
                         }
                     }
                 } else {
+                    daemon_log("in non-subscriber loop, waiting for data");
                     tokio::select! {
                         result = reader.read_line(&mut line) => {
+                            daemon_log(&format!("non-sub: read_line result: {:?}", result.as_ref().map(|n| *n)));
                             match result {
-                                Ok(0) => break, // EOF
+                                Ok(0) => {
+                                    daemon_log("non-sub: got EOF, breaking");
+                                    break;
+                                }
                                 Ok(_) => {
+                                    daemon_log(&format!("non-sub: received: {}", line.trim()));
                                     let (response, should_subscribe) = handle_message_with_broadcast(&line, &conn_state, &conn_events_tx).await;
+                                    daemon_log(&format!("non-sub: should_subscribe={}", should_subscribe));
                                     if should_subscribe {
+                                        daemon_log("non-sub: setting subscribed=true, creating events_rx");
                                         subscribed = true;
                                         events_rx = Some(conn_events_tx.subscribe());
                                     }
-                                    if let Some(response) = response {
+                                    if let Some(ref response) = response {
+                                        daemon_log(&format!("non-sub: sending response: {:?}", response));
                                         let response_json = match serde_json::to_string(&response) {
                                             Ok(json) => json,
                                             Err(e) => {
@@ -326,22 +358,30 @@ async fn run_unix_server(
                                             }
                                         };
                                         if writer.write_all(format!("{}\n", response_json).as_bytes()).await.is_err() {
+                                            daemon_log("non-sub: write failed, breaking");
                                             break;
                                         }
+                                        daemon_log("non-sub: response sent successfully");
 
                                         // Check if we should shut down
                                         if matches!(response, DaemonMessage::Ack { .. }) {
                                             let state_guard = conn_state.lock().await;
                                             if state_guard.shutting_down {
+                                                daemon_log("non-sub: shutting_down flag set, breaking");
                                                 break;
                                             }
                                         }
                                     }
+                                    daemon_log("non-sub: continuing loop");
                                 }
-                                Err(_) => break,
+                                Err(e) => {
+                                    daemon_log(&format!("non-sub: read error: {}, breaking", e));
+                                    break;
+                                }
                             }
                         }
                         _ = shutdown_rx.recv() => {
+                            daemon_log("non-sub: shutdown signal received, sending Restarting");
                             let msg = DaemonMessage::Restarting {
                                 new_sha: BUILD_SHA.to_string(),
                             };
@@ -353,6 +393,7 @@ async fn run_unix_server(
                     }
                 }
             }
+            daemon_log("connection handler ended");
         });
     }
 

@@ -215,34 +215,60 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
     {
         let daemon_tx = event_handler.sender();
         tokio::spawn(async move {
+            // Helper to log daemon events
+            fn daemon_log(msg: &str) {
+                use std::io::Write;
+                if let Ok(home) = crate::planning_paths::planning_agent_home_dir() {
+                    let log_path = home.join("daemon-debug.log");
+                    if let Ok(mut f) = std::fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(&log_path)
+                    {
+                        let now = chrono::Local::now().format("%H:%M:%S%.3f");
+                        let _ = writeln!(f, "[{}] [tui_runner] {}", now, msg);
+                    }
+                }
+            }
+
+            daemon_log("subscription task started");
             loop {
+                daemon_log("attempting to connect...");
                 // Try to connect and subscribe
                 if let Some(mut subscription) =
                     crate::session_daemon::DaemonSubscription::connect().await
                 {
+                    daemon_log("connected! sending DaemonReconnected event");
                     let _ = daemon_tx.send(Event::DaemonReconnected);
 
                     // Forward all push notifications to event system
+                    daemon_log("entering recv loop");
                     while let Some(msg) = subscription.recv().await {
+                        daemon_log(&format!("received message: {:?}", msg));
                         match msg {
                             crate::session_daemon::protocol::DaemonMessage::SessionChanged(
                                 record,
                             ) => {
+                                daemon_log("forwarding SessionChanged event");
                                 let _ = daemon_tx.send(Event::DaemonSessionChanged(record));
                             }
                             crate::session_daemon::protocol::DaemonMessage::Restarting { .. } => {
-                                // Daemon is restarting, will reconnect
+                                daemon_log("daemon is restarting, breaking recv loop");
                                 break;
                             }
-                            _ => {}
+                            _ => {
+                                daemon_log("ignoring other message type");
+                            }
                         }
                     }
-
+                    daemon_log("recv loop ended, sending DaemonDisconnected event");
                     let _ = daemon_tx.send(Event::DaemonDisconnected);
+                } else {
+                    daemon_log("connect() returned None");
                 }
 
-                // Wait before retry
-                tokio::time::sleep(Duration::from_secs(2)).await;
+                daemon_log("waiting 500ms before retry...");
+                tokio::time::sleep(Duration::from_millis(500)).await;
             }
         });
         debug_log(start, "daemon subscription task spawned");
