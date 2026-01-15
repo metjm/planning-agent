@@ -452,7 +452,7 @@ pub async fn handle_max_iterations_input(
     session: &mut Session,
 ) -> Result<bool> {
     match key.code {
-        KeyCode::Char('p') | KeyCode::Char('P') => {
+        KeyCode::Char('y') | KeyCode::Char('Y') => {
             if let Some(tx) = session.approval_tx.clone() {
                 let _ = tx.send(UserApprovalResponse::ProceedWithoutApproval).await;
             }

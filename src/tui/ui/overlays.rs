@@ -309,7 +309,7 @@ fn draw_choice_popup(frame: &mut Frame, session: &Session, area: Rect) {
             Span::raw("Scroll"),
         ])]),
         ApprovalContext::MaxIterationsReached => Paragraph::new(vec![Line::from(vec![
-            Span::styled("  [p] ", Style::default().fg(Color::Green).bold()),
+            Span::styled("  [y] ", Style::default().fg(Color::Green).bold()),
             Span::raw("Proceed  "),
             Span::styled("  [c] ", Style::default().fg(Color::Yellow).bold()),
             Span::raw("Continue Review  "),
