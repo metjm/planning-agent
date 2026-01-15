@@ -2,7 +2,7 @@ use crate::app::cli::Cli;
 use crate::app::failure::{FailureContext, FailureKind, OnAllReviewersFailed};
 use crate::app::util::truncate_for_summary;
 use crate::app::workflow_common::{plan_file_has_content, pre_create_plan_files};
-use crate::config::WorkflowConfig;
+use crate::config::{AgentRef, WorkflowConfig};
 use crate::phases::{
     self, aggregate_reviews, merge_feedback, run_multi_agent_review_with_context,
     run_planning_phase_with_context, run_revision_phase_with_context, write_feedback_files,
@@ -166,7 +166,8 @@ pub async fn run_headless_with_config(
                 ));
 
                 let mut reviews_by_agent: HashMap<String, phases::ReviewResult> = HashMap::new();
-                let mut pending_reviewers = config.workflow.reviewing.agents.clone();
+                let mut pending_reviewers: Vec<AgentRef> =
+                    config.workflow.reviewing.agents.clone();
                 let mut retry_attempts = 0usize;
 
                 loop {
@@ -190,11 +191,22 @@ pub async fn run_headless_with_config(
                         break;
                     }
 
-                    let failed_names = batch
+                    // Collect failed display_ids
+                    let failed_display_ids: Vec<String> = batch
                         .failures
                         .iter()
                         .map(|f| f.agent_name.clone())
-                        .collect::<Vec<_>>();
+                        .collect();
+
+                    // Find the AgentRef objects that match failed display_ids
+                    let failed_agent_refs: Vec<AgentRef> = config
+                        .workflow
+                        .reviewing
+                        .agents
+                        .iter()
+                        .filter(|r| failed_display_ids.contains(&r.display_id().to_string()))
+                        .cloned()
+                        .collect();
 
                     let mut has_bundles = false;
                     for failure in &batch.failures {
@@ -224,7 +236,7 @@ pub async fn run_headless_with_config(
                                 "[review] All reviewers failed; retrying ({}/{})...",
                                 retry_attempts, max_retries
                             ));
-                            pending_reviewers = failed_names;
+                            pending_reviewers = failed_agent_refs.clone();
                             continue;
                         }
                         // Output bundle paths before applying policy
@@ -294,7 +306,7 @@ pub async fn run_headless_with_config(
 
                     sender.send_output(format!(
                         "[review] Some reviewers failed: {}. Continuing with {} successful review(s).",
-                        failed_names.join(", "),
+                        failed_display_ids.join(", "),
                         reviews_by_agent.len()
                     ));
                     break;
@@ -445,7 +457,11 @@ pub async fn run_headless(cli: Cli) -> Result<()> {
         .working_dir
         .unwrap_or_else(|| std::env::current_dir().expect("Failed to get current directory"));
 
-    let workflow_config = if let Some(config_path) = &cli.config {
+    // --claude flag takes priority over any config file
+    let workflow_config = if cli.claude {
+        eprintln!("[planning-agent] Using Claude-only workflow config (--claude)");
+        WorkflowConfig::claude_only_config()
+    } else if let Some(config_path) = &cli.config {
         let full_path = if config_path.is_absolute() {
             config_path.clone()
         } else {
@@ -454,11 +470,12 @@ pub async fn run_headless(cli: Cli) -> Result<()> {
         match WorkflowConfig::load(&full_path) {
             Ok(cfg) => {
                 eprintln!("[planning-agent] Loaded config from {:?}", full_path);
-                Some(cfg)
+                cfg
             }
             Err(e) => {
                 eprintln!("[planning-agent] Warning: Failed to load config: {}", e);
-                None
+                eprintln!("[planning-agent] Using built-in multi-agent workflow config");
+                WorkflowConfig::default_config()
             }
         }
     } else {
@@ -467,29 +484,22 @@ pub async fn run_headless(cli: Cli) -> Result<()> {
             match WorkflowConfig::load(&default_config_path) {
                 Ok(cfg) => {
                     eprintln!("[planning-agent] Loaded default workflow.yaml");
-                    Some(cfg)
+                    cfg
                 }
                 Err(e) => {
                     eprintln!(
                         "[planning-agent] Warning: Failed to load workflow.yaml: {}",
                         e
                     );
-                    None
+                    eprintln!("[planning-agent] Using built-in multi-agent workflow config");
+                    WorkflowConfig::default_config()
                 }
             }
-        } else {
-            None
-        }
-    };
-    let workflow_config = workflow_config.unwrap_or_else(|| {
-        if cli.claude {
-            eprintln!("[planning-agent] Using Claude-only workflow config");
-            WorkflowConfig::claude_only_config()
         } else {
             eprintln!("[planning-agent] Using built-in multi-agent workflow config");
             WorkflowConfig::default_config()
         }
-    });
+    };
 
     let objective = cli.objective.join(" ");
 
