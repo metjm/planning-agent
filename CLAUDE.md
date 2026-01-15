@@ -74,13 +74,37 @@ Max iterations (default 3) prevents infinite revision loops.
 - `Phase` enum: Planning, Reviewing, Revising, Complete
 - Persisted to `~/.planning-agent/state/<wd-hash>/<feature>.json`
 
+**Session Logging** (`src/session_logger.rs`):
+- `SessionLogger` - Unified logging for session-scoped events
+- `LogCategory` enum: Workflow, Agent, State, Ui, System
+- All timestamps in UTC ISO 8601 format for consistency
+
 ### Data Storage
 
 All data stored under `~/.planning-agent/`:
-- `plans/` - Plan markdown files with feedback
-- `sessions/` - Session snapshots for resume
+
+**Session-Centric Structure** (new sessions):
+```
+~/.planning-agent/sessions/<session-id>/
+├── plan.md              # Implementation plan
+├── feedback_1.md        # Review feedback (round 1)
+├── feedback_2.md        # Review feedback (round 2)
+├── state.json           # Workflow state
+├── session.json         # Session snapshot (for resume)
+├── session_info.json    # Lightweight metadata for listing
+├── logs/
+│   ├── session.log      # Main session log
+│   └── agent-stream.log # Raw agent output
+└── diagnostics/         # Failure bundles
+```
+
+**Legacy Structure** (backward compatibility):
+- `plans/` - Legacy plan folders with timestamp-uuid prefix
+- `sessions/*.json` - Legacy snapshot files
 - `state/<wd-hash>/` - Per-project workflow state
 - `logs/<wd-hash>/` - Workflow and agent stream logs
+
+The system reads from both structures for backward compatibility with existing sessions.
 
 ### Agent Protocol
 

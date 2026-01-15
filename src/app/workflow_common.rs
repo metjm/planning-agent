@@ -1,5 +1,6 @@
 use crate::app::failure::{FailureKind, NETWORK_ERROR_PATTERN};
 use crate::phases::{ReviewFailure, ReviewResult};
+use crate::planning_paths::SessionInfo;
 use crate::state::State;
 use regex::Regex;
 use std::fs::{self, OpenOptions};
@@ -13,9 +14,22 @@ use std::time::Duration;
 pub const DEFAULT_REVIEW_FAILURE_RETRY_LIMIT: usize = 2;
 
 /// Pre-creates the plan folder and empty plan/feedback files before agent execution.
-/// Plan files are stored in ~/.planning-agent/plans/<folder>/ so paths are absolute.
+/// Plan files are stored in ~/.planning-agent/sessions/<session-id>/ so paths are absolute.
 /// Handles `AlreadyExists` as success for resumed workflows.
+///
+/// Also creates session_info.json for fast session listing.
+#[allow(dead_code)]
 pub fn pre_create_plan_files(state: &State) -> anyhow::Result<()> {
+    pre_create_plan_files_with_working_dir(state, None)
+}
+
+/// Pre-creates the plan folder and empty plan/feedback files, optionally with a working directory.
+///
+/// The working directory is stored in session_info.json for session listing.
+pub fn pre_create_plan_files_with_working_dir(
+    state: &State,
+    working_dir: Option<&Path>,
+) -> anyhow::Result<()> {
     let plan_path = &state.plan_file;
     let feedback_path = &state.feedback_file;
 
@@ -62,6 +76,22 @@ pub fn pre_create_plan_files(state: &State) -> anyhow::Result<()> {
                 e
             ))
         }
+    }
+
+    // Create session_info.json for fast listing
+    let default_wd = std::env::current_dir().unwrap_or_default();
+    let wd = working_dir.unwrap_or(&default_wd);
+    let session_info = SessionInfo::new(
+        &state.workflow_session_id,
+        &state.feature_name,
+        &state.objective,
+        wd,
+        &format!("{:?}", state.phase),
+        state.iteration,
+    );
+    if let Err(e) = session_info.save(&state.workflow_session_id) {
+        // Log warning but don't fail - session_info is optional metadata
+        eprintln!("[planning] Warning: Failed to save session_info.json: {}", e);
     }
 
     Ok(())
@@ -165,6 +195,7 @@ pub fn calculate_backoff(retry_count: u32, base_secs: u32) -> Duration {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::planning_paths;
     use std::fs;
     use tempfile::tempdir;
 
@@ -263,7 +294,7 @@ mod tests {
 
     #[test]
     fn test_pre_create_plan_files_creates_folder_and_files() {
-        // State::new creates paths in ~/.planning-agent/plans/ which are absolute
+        // State::new creates paths in ~/.planning-agent/sessions/ which are absolute
         let state = State::new("test-feature", "Test objective", 3).unwrap();
 
         // The paths should be absolute (starting with home dir)
@@ -277,6 +308,11 @@ mod tests {
         assert!(state.feedback_file.exists(), "Feedback file should exist at {}", state.feedback_file.display());
         assert_eq!(fs::read_to_string(&state.plan_file).unwrap(), "");
         assert_eq!(fs::read_to_string(&state.feedback_file).unwrap(), "");
+
+        // Verify session_info.json was created
+        let session_info_path = planning_paths::session_info_path(&state.workflow_session_id);
+        assert!(session_info_path.is_ok());
+        assert!(session_info_path.unwrap().exists(), "session_info.json should exist");
 
         // Cleanup
         if let Some(parent) = state.plan_file.parent() {
@@ -302,6 +338,28 @@ mod tests {
         // Original content should be preserved (not overwritten)
         assert_eq!(fs::read_to_string(&state.plan_file).unwrap(), "existing plan content");
         assert_eq!(fs::read_to_string(&state.feedback_file).unwrap(), "existing feedback content");
+
+        // Cleanup
+        if let Some(parent) = state.plan_file.parent() {
+            let _ = fs::remove_dir_all(parent);
+        }
+    }
+
+    #[test]
+    fn test_pre_create_plan_files_with_working_dir() {
+        let state = State::new("test-feature-wd", "Test with working dir", 3).unwrap();
+        let temp_dir = tempdir().unwrap();
+        let working_dir = temp_dir.path();
+
+        let result = pre_create_plan_files_with_working_dir(&state, Some(working_dir));
+        assert!(result.is_ok(), "pre_create_plan_files_with_working_dir should succeed: {:?}", result);
+
+        // Verify session_info.json was created with correct working_dir
+        let info = SessionInfo::load(&state.workflow_session_id);
+        assert!(info.is_ok());
+        let info = info.unwrap();
+        assert_eq!(info.working_dir, working_dir);
+        assert_eq!(info.feature_name, "test-feature-wd");
 
         // Cleanup
         if let Some(parent) = state.plan_file.parent() {
