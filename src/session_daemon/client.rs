@@ -306,8 +306,12 @@ impl SessionDaemonClient {
                     // verify the socket exists to avoid waiting for a defunct daemon
                     if unsafe { nix::libc::kill(pid, 0) } == 0 && socket_path.exists() {
                         // Process is alive and socket exists, wait for it to be ready
-                        Self::wait_for_socket(socket_path, DAEMON_INIT_TIMEOUT_MS)?;
-                        return Ok(());
+                        // If wait_for_socket succeeds, daemon is running - return success
+                        // If it times out, daemon is a zombie with stale socket - fall through to cleanup
+                        if Self::wait_for_socket(socket_path, DAEMON_INIT_TIMEOUT_MS).is_ok() {
+                            return Ok(());
+                        }
+                        // Zombie with stale socket detected - fall through to cleanup and spawn
                     }
                 }
             }
@@ -319,6 +323,9 @@ impl SessionDaemonClient {
         if socket_path.exists() {
             let _ = std::fs::remove_file(socket_path);
         }
+
+        // Reap any zombie children from previous daemon spawns before spawning new one
+        Self::reap_zombie_children();
 
         // Spawn daemon
         let exe = std::env::current_exe()
@@ -333,10 +340,32 @@ impl SessionDaemonClient {
             .spawn()
             .context("Failed to spawn daemon")?;
 
+        // Reap again after spawn in case child exited quickly
+        Self::reap_zombie_children();
+
         // Wait for socket to appear
         Self::wait_for_socket(socket_path, DAEMON_INIT_TIMEOUT_MS)?;
 
         Ok(())
+    }
+
+    /// Reap any zombie children from this process.
+    ///
+    /// This prevents zombie accumulation by periodically cleaning up
+    /// terminated child processes that haven't been waited on.
+    #[cfg(unix)]
+    fn reap_zombie_children() {
+        use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
+        use nix::unistd::Pid;
+
+        // Reap all zombie children (non-blocking)
+        loop {
+            match waitpid(Pid::from_raw(-1), Some(WaitPidFlag::WNOHANG)) {
+                Ok(WaitStatus::StillAlive) => break, // No more zombies
+                Ok(_) => continue,                   // Reaped one, check for more
+                Err(_) => break,                     // No children or error
+            }
+        }
     }
 
     #[cfg(unix)]
