@@ -301,15 +301,17 @@ impl SessionDaemonClient {
         if pid_path.exists() {
             if let Ok(pid_str) = std::fs::read_to_string(&pid_path) {
                 if let Ok(pid) = pid_str.trim().parse::<i32>() {
-                    // Check if process is alive
-                    if unsafe { nix::libc::kill(pid, 0) } == 0 {
-                        // Process is alive, wait for socket
+                    // Check if process is alive AND socket exists
+                    // Note: kill(pid, 0) returns success for zombie processes, so we also
+                    // verify the socket exists to avoid waiting for a defunct daemon
+                    if unsafe { nix::libc::kill(pid, 0) } == 0 && socket_path.exists() {
+                        // Process is alive and socket exists, wait for it to be ready
                         Self::wait_for_socket(socket_path, DAEMON_INIT_TIMEOUT_MS)?;
                         return Ok(());
                     }
                 }
             }
-            // Stale PID file, remove it
+            // Stale PID file (zombie or no socket), remove it
             let _ = std::fs::remove_file(&pid_path);
         }
 
