@@ -162,15 +162,22 @@ impl SessionDaemonClient {
     }
 
     /// Attempts to reconnect to the daemon.
+    ///
+    /// This will try to connect to an existing daemon or spawn a new one.
+    /// If successful, clears the degraded state.
     pub async fn reconnect(&mut self) -> Result<()> {
-        if self.degraded {
-            return Ok(());
+        match Self::connect_or_spawn() {
+            Ok(connection) => {
+                let mut conn_guard = self.connection.lock().await;
+                *conn_guard = Some(connection);
+                self.degraded = false;
+                Ok(())
+            }
+            Err(e) => {
+                self.degraded = true;
+                Err(e)
+            }
         }
-
-        let connection = Self::connect_or_spawn()?;
-        let mut conn_guard = self.connection.lock().await;
-        *conn_guard = Some(connection);
-        Ok(())
     }
 
     /// Sends a message and returns the build SHA from the Ack response.
