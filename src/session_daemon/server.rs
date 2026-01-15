@@ -675,6 +675,10 @@ pub(crate) async fn handle_message_with_broadcast(
                 // Only update if PID matches (or this is a force update)
                 if existing.pid == record.pid {
                     existing.update_state(record.phase, record.iteration, record.workflow_status);
+                    // Honor liveness=Stopped from client (for mark_stopped)
+                    if record.liveness == LivenessState::Stopped {
+                        existing.liveness = LivenessState::Stopped;
+                    }
                 }
                 existing.clone()
             } else {
