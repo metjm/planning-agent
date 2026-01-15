@@ -64,13 +64,10 @@ impl SessionDaemonClient {
             };
         }
 
-        // Try to connect
+        // Try to connect (errors are silent - daemon status shown in footer)
         let (connection, degraded) = match Self::connect_or_spawn() {
             Ok(conn) => (Some(conn), false),
-            Err(e) => {
-                eprintln!("[sessiond-client] Failed to connect: {}", e);
-                (None, true)
-            }
+            Err(_) => (None, true),
         };
 
         Self {
@@ -251,13 +248,7 @@ impl SessionDaemonClient {
             if let Some(daemon_sha) = Self::get_daemon_build_sha_unix(&mut conn) {
                 let our_sha = crate::update::BUILD_SHA;
                 if daemon_sha != our_sha && our_sha != "unknown" && daemon_sha != "unknown" {
-                    // Version mismatch - shutdown old daemon and spawn new one
-                    eprintln!(
-                        "[sessiond-client] Version mismatch: daemon={}, client={}. Restarting daemon...",
-                        &daemon_sha[..8.min(daemon_sha.len())],
-                        &our_sha[..8.min(our_sha.len())]
-                    );
-                    // Send shutdown (best effort)
+                    // Version mismatch - shutdown old daemon and spawn new one (silent)
                     let _ = Self::send_shutdown_unix(&mut conn);
                     // Wait for daemon to exit
                     std::thread::sleep(Duration::from_millis(200));
@@ -460,13 +451,7 @@ impl SessionDaemonClient {
                         if let Some(daemon_sha) = Self::get_daemon_build_sha_windows(&mut conn) {
                             let our_sha = crate::update::BUILD_SHA;
                             if daemon_sha != our_sha && our_sha != "unknown" && daemon_sha != "unknown" {
-                                // Version mismatch - shutdown old daemon and spawn new one
-                                eprintln!(
-                                    "[sessiond-client] Version mismatch: daemon={}, client={}. Restarting daemon...",
-                                    &daemon_sha[..8.min(daemon_sha.len())],
-                                    &our_sha[..8.min(our_sha.len())]
-                                );
-                                // Send shutdown (best effort)
+                                // Version mismatch - shutdown old daemon and spawn new one (silent)
                                 let _ = Self::send_shutdown_windows(&mut conn);
                                 // Wait for daemon to exit
                                 std::thread::sleep(Duration::from_millis(200));

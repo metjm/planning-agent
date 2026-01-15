@@ -35,6 +35,9 @@ pub struct TabManager {
 
     /// Session browser overlay state
     pub session_browser: SessionBrowserState,
+
+    /// Whether the session daemon is connected (for footer status indicator)
+    pub daemon_connected: bool,
 }
 
 /// TabManager provides the full API surface for multi-tab management.
@@ -57,6 +60,7 @@ impl TabManager {
             command_in_progress: false,
             version_info: None,
             session_browser: SessionBrowserState::new(),
+            daemon_connected: false,
         };
 
         manager.add_session();
