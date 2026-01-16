@@ -130,7 +130,7 @@ pub fn draw_stats(frame: &mut Frame, session: &Session, area: Rect, show_live_to
 }
 
 fn build_account_usage(session: &Session) -> Vec<Line<'static>> {
-    use crate::usage_reset::format_countdown;
+    use crate::usage_reset::{format_countdown, UsageTimeStatus};
 
     let mut lines = Vec::new();
     let has_any_usage = !session.account_usage.providers.is_empty();
@@ -207,11 +207,13 @@ fn build_account_usage(session: &Session) -> Vec<Line<'static>> {
                     } else {
                         Color::Green
                     };
-                    let label = if provider.provider == "codex" {
-                        "  5h: "
-                    } else {
-                        "  Session: "
-                    };
+                    // Use span label if known, otherwise fall back to "Session"
+                    let label = provider
+                        .session
+                        .window_span
+                        .label()
+                        .map(|l| format!("  {}: ", l))
+                        .unwrap_or_else(|| "  Session: ".to_string());
 
                     // Build usage line with optional countdown
                     let mut spans = vec![
@@ -220,9 +222,16 @@ fn build_account_usage(session: &Session) -> Vec<Line<'static>> {
                     ];
 
                     if let Some(remaining) = provider.session.time_until_reset() {
+                        // Color countdown based on usage pace
+                        let countdown_color = match provider.session.time_status() {
+                            UsageTimeStatus::Ahead => Color::LightRed,
+                            UsageTimeStatus::Behind => Color::LightGreen,
+                            UsageTimeStatus::OnTrack => Color::Yellow,
+                            UsageTimeStatus::Unknown => Color::DarkGray,
+                        };
                         spans.push(Span::styled(
                             format!(" ({})", format_countdown(Some(remaining))),
-                            Style::default().fg(Color::DarkGray),
+                            Style::default().fg(countdown_color),
                         ));
                     }
 
@@ -237,11 +246,18 @@ fn build_account_usage(session: &Session) -> Vec<Line<'static>> {
                     } else {
                         Color::Green
                     };
-                    let label = if provider.provider == "gemini" {
+                    // Use span label if known, otherwise fall back to "Weekly" or "Daily" based on provider
+                    let fallback_label = if provider.provider == "gemini" {
                         "  Daily: "
                     } else {
                         "  Weekly: "
                     };
+                    let label = provider
+                        .weekly
+                        .window_span
+                        .label()
+                        .map(|l| format!("  {}: ", l))
+                        .unwrap_or_else(|| fallback_label.to_string());
 
                     // Build usage line with optional countdown
                     let mut spans = vec![
@@ -250,9 +266,16 @@ fn build_account_usage(session: &Session) -> Vec<Line<'static>> {
                     ];
 
                     if let Some(remaining) = provider.weekly.time_until_reset() {
+                        // Color countdown based on usage pace
+                        let countdown_color = match provider.weekly.time_status() {
+                            UsageTimeStatus::Ahead => Color::LightRed,
+                            UsageTimeStatus::Behind => Color::LightGreen,
+                            UsageTimeStatus::OnTrack => Color::Yellow,
+                            UsageTimeStatus::Unknown => Color::DarkGray,
+                        };
                         spans.push(Span::styled(
                             format!(" ({})", format_countdown(Some(remaining))),
-                            Style::default().fg(Color::DarkGray),
+                            Style::default().fg(countdown_color),
                         ));
                     }
 

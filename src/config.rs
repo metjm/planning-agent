@@ -51,12 +51,29 @@ fn default_max_verification_iterations() -> u32 {
     3
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct SessionPersistenceConfig {
-    #[serde(default)]
+    #[serde(default = "default_session_persistence_enabled")]
     pub enabled: bool,
-    #[serde(default)]
+    #[serde(default = "default_session_persistence_strategy")]
     pub strategy: ResumeStrategy,
+}
+
+fn default_session_persistence_enabled() -> bool {
+    true
+}
+
+fn default_session_persistence_strategy() -> ResumeStrategy {
+    ResumeStrategy::ConversationResume
+}
+
+impl Default for SessionPersistenceConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_session_persistence_enabled(),
+            strategy: default_session_persistence_strategy(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -454,11 +471,12 @@ workflow:
         let config: WorkflowConfig = serde_yaml::from_str(yaml).unwrap();
         let claude_config = config.get_agent("claude").unwrap();
 
-        // session_persistence should default to disabled with Stateless strategy
-        assert!(!claude_config.session_persistence.enabled);
+        // session_persistence should default to enabled with ConversationResume strategy
+        // This enables session continuity for planning/revision phases by default
+        assert!(claude_config.session_persistence.enabled);
         assert_eq!(
             claude_config.session_persistence.strategy,
-            crate::state::ResumeStrategy::Stateless
+            crate::state::ResumeStrategy::ConversationResume
         );
     }
 
