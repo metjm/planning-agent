@@ -52,7 +52,8 @@ pub async fn run_revising_phase(
         "=== REVISION PHASE (Iteration {}) ===",
         state.iteration
     ));
-    sender.send_output(format!("Agent: {}", config.workflow.revising.agent));
+    // Revision uses the planning agent for session continuity
+    sender.send_output(format!("Agent: {} (planning agent)", config.workflow.planning.agent));
 
     let max_retries = config.failure_policy.max_retries as usize;
     let mut retry_attempts = 0usize;
@@ -97,10 +98,11 @@ pub async fn run_revising_phase(
 
                 // Max retries reached - prompt user for decision
                 sender.send_output("[revision] Failed after retries; awaiting your decision...".to_string());
+                // Revision uses planning agent
                 let summary = build_workflow_failure_summary(
                     "Revising",
                     &error_msg,
-                    Some(&config.workflow.revising.agent),
+                    Some(&config.workflow.planning.agent),
                     retry_attempts,
                     max_retries,
                     None, // No bundle path for revision failures currently
@@ -118,10 +120,11 @@ pub async fn run_revising_phase(
                     WorkflowFailureDecision::Stop => {
                         session_logger.log(LogLevel::Info, LogCategory::Workflow, "User chose to stop and save state after revision failure");
                         // Save failure context for later recovery
+                        // Uses planning agent for session continuity
                         state.set_failure(FailureContext {
                             kind: FailureKind::Unknown(error_msg),
                             phase: state.phase.clone(),
-                            agent_name: Some(config.workflow.revising.agent.clone()),
+                            agent_name: Some(config.workflow.planning.agent.clone()),
                             retry_count: retry_attempts as u32,
                             max_retries: max_retries as u32,
                             failed_at: chrono::Utc::now().to_rfc3339(),

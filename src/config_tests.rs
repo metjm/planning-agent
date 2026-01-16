@@ -16,8 +16,6 @@ workflow:
     agent: claude
   reviewing:
     agents: [claude, codex]
-  revising:
-    agent: claude
 "#;
     let config: WorkflowConfig = serde_yaml::from_str(yaml).unwrap();
     assert_eq!(config.workflow.reviewing.agents.len(), 2);
@@ -48,8 +46,6 @@ workflow:
       - agent: claude
         id: claude-security
         prompt: "Focus on security"
-  revising:
-    agent: claude
 "#;
     let config: WorkflowConfig = serde_yaml::from_str(yaml).unwrap();
     assert_eq!(config.workflow.reviewing.agents.len(), 1);
@@ -82,8 +78,6 @@ workflow:
       - agent: claude
         id: claude-arch
         prompt: "Focus on architecture"
-  revising:
-    agent: claude
 "#;
     let config: WorkflowConfig = serde_yaml::from_str(yaml).unwrap();
     assert_eq!(config.workflow.reviewing.agents.len(), 2);
@@ -119,8 +113,6 @@ workflow:
   reviewing:
     agents:
       - agent: claude
-  revising:
-    agent: claude
 "#;
     let config: WorkflowConfig = serde_yaml::from_str(yaml).unwrap();
     assert_eq!(config.workflow.reviewing.agents.len(), 1);
@@ -178,8 +170,6 @@ workflow:
     agents:
       - agent: nonexistent
         id: test-instance
-  revising:
-    agent: claude
 "#;
     let config: WorkflowConfig = serde_yaml::from_str(yaml).unwrap();
 
@@ -219,8 +209,6 @@ workflow:
           Focus on architecture:
           - Code organization
           - Design patterns
-  revising:
-    agent: claude
 "#;
     let config: WorkflowConfig = serde_yaml::from_str(yaml).unwrap();
 
@@ -276,8 +264,6 @@ workflow:
       - agent: claude
         id: claude-perf
       - agent: claude
-  revising:
-    agent: claude
 "#;
     let config: WorkflowConfig = serde_yaml::from_str(yaml).unwrap();
 
@@ -330,9 +316,6 @@ workflow:
         prompt: "Review for logical correctness"
     aggregation: any_rejects
     require_plan_feedback_tags: true
-
-  revising:
-    agent: claude
 
 failure_policy:
   max_retries: 3
@@ -427,9 +410,6 @@ workflow:
         prompt: "Review for logical correctness and edge cases"
     aggregation: majority
     require_plan_feedback_tags: true
-
-  revising:
-    agent: claude
 
 failure_policy:
   max_retries: 2

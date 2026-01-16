@@ -22,6 +22,11 @@ agents:
       - "WebFetch"
       - "Skill"
       - "Task"
+    # Optional: Enable session persistence for planning->revision session continuity.
+    # This is a Claude-only feature. When enabled, revision resumes the planning session.
+    # session_persistence:
+    #   enabled: true
+    #   strategy: session_id
 
   codex:
     command: "codex"
@@ -41,9 +46,11 @@ agents:
 # Workflow phase configuration
 workflow:
   # Planning phase - which agent creates the initial plan
+  # IMPORTANT: planning.max_turns applies to BOTH planning AND revision phases.
+  # Set high enough for complex plans that may require multiple revision cycles.
   planning:
     agent: claude
-    max_turns: 50
+    max_turns: 200
 
   # Reviewing phase - can use multiple agents for parallel review
   reviewing:
@@ -56,9 +63,9 @@ workflow:
     # - majority: If majority rejects
     aggregation: any_rejects
 
-  # Revising phase - which agent revises the plan based on feedback
-  revising:
-    agent: claude
+  # Note: Revision phase uses the planning agent automatically.
+  # When the planning agent has session_persistence enabled (Claude only),
+  # revision resumes the planning session, providing context continuity.
 
 # Failure handling policy (optional - defaults shown)
 # Controls how transient failures and recovery are handled

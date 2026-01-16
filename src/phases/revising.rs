@@ -1,5 +1,6 @@
 use crate::agents::{AgentContext, AgentType};
 use crate::config::WorkflowConfig;
+use crate::phases::planning_session_key;
 use crate::phases::ReviewResult;
 use crate::prompt_format::PromptBuilder;
 use crate::session_logger::SessionLogger;
@@ -25,23 +26,34 @@ pub async fn run_revision_phase_with_context(
     state_path: &Path,
     session_logger: Arc<SessionLogger>,
 ) -> Result<()> {
-    let revising_config = &config.workflow.revising;
-    let agent_name = &revising_config.agent;
-    let max_turns = revising_config.max_turns;
+    // Revision uses the planning agent - this enables session continuity
+    let planning_config = &config.workflow.planning;
+    let agent_name = &planning_config.agent;
+    let max_turns = planning_config.max_turns;
 
     let agent_config = config
         .get_agent(agent_name)
-        .ok_or_else(|| anyhow::anyhow!("Revising agent '{}' not found in config", agent_name))?;
+        .ok_or_else(|| anyhow::anyhow!("Planning agent '{}' not found in config", agent_name))?;
 
-    session_sender.send_output(format!(
-        "[revision] Using agent: {} with {} review(s)",
-        agent_name,
-        reviews.len()
-    ));
+    // Note: When session_persistence is not enabled, revision uses a fresh session
+    // instead of resuming the planning session. This is expected behavior for non-Claude
+    // agents (Codex, Gemini) which don't support session resume.
 
     let agent = AgentType::from_config(agent_name, agent_config, working_dir.to_path_buf())?;
 
-    let prompt = build_revision_prompt_with_reviews(state, reviews, working_dir);
+    // Determine if session resume is active for prompt simplification
+    let session_resume_active = agent.supports_session_resume()
+        && agent_config.session_persistence.enabled
+        && agent_config.session_persistence.strategy == ResumeStrategy::SessionId;
+
+    session_sender.send_output(format!(
+        "[revision] Using planning agent: {} with {} review(s){}",
+        agent_name,
+        reviews.len(),
+        if session_resume_active { " (session resume)" } else { "" }
+    ));
+
+    let prompt = build_revision_prompt_with_reviews(state, reviews, working_dir, session_resume_active);
 
     let phase_name = format!("Revising #{}", iteration);
     // Use resume strategy from config if session persistence is enabled, otherwise Stateless
@@ -50,11 +62,13 @@ pub async fn run_revision_phase_with_context(
     } else {
         ResumeStrategy::Stateless
     };
-    let agent_session = state.get_or_create_agent_session(agent_name, configured_strategy);
+    // Use the SAME session key as planning phase for session continuity
+    let session_key_name = planning_session_key(agent_name);
+    let agent_session = state.get_or_create_agent_session(&session_key_name, configured_strategy);
     let session_key = agent_session.session_key.clone();
     let resume_strategy = agent_session.resume_strategy.clone();
 
-    state.record_invocation(agent_name, &phase_name);
+    state.record_invocation(&session_key_name, &phase_name);
     state.set_updated_at();
     state.save_atomic(state_path)?;
 
@@ -88,23 +102,41 @@ pub async fn run_revision_phase_with_context(
     Ok(())
 }
 
-fn build_revision_prompt_with_reviews(state: &State, reviews: &[ReviewResult], working_dir: &Path) -> String {
+fn build_revision_prompt_with_reviews(
+    state: &State,
+    reviews: &[ReviewResult],
+    working_dir: &Path,
+    session_resume_active: bool,
+) -> String {
     let merged_feedback = reviews
         .iter()
         .map(|r| format!("## {} Review\n\n{}", r.agent_name.to_uppercase(), r.feedback))
         .collect::<Vec<_>>()
         .join("\n\n---\n\n");
 
-    PromptBuilder::new()
-        .phase("revising")
-        .instructions(r#"Revise the plan to address all issues raised by the reviewers.
+    if session_resume_active {
+        // Continuation prompt - leverages existing session context
+        // The agent already knows the workspace, plan file, and original context
+        format!(
+            "The reviewers have provided feedback on your plan. \
+             Please revise the plan at {} to address all issues raised.\n\n\
+             # Reviewer Feedback\n\n{}",
+            state.plan_file.display(),
+            merged_feedback
+        )
+    } else {
+        // Full context prompt - for fresh sessions (Codex, Gemini, or session persistence disabled)
+        PromptBuilder::new()
+            .phase("revising")
+            .instructions(r#"Revise the plan to address all issues raised by the reviewers.
 Preserve the good parts of the existing plan - only modify what needs to change.
 Update the plan file with your revisions."#)
-        .input("workspace-root", &working_dir.display().to_string())
-        .input("plan-path", &state.plan_file.display().to_string())
-        .context(&format!("# Consolidated Reviewer Feedback\n\n{}", merged_feedback))
-        .constraint("Use absolute paths for all file references in the revised plan")
-        .build()
+            .input("workspace-root", &working_dir.display().to_string())
+            .input("plan-path", &state.plan_file.display().to_string())
+            .context(&format!("# Consolidated Reviewer Feedback\n\n{}", merged_feedback))
+            .constraint("Use absolute paths for all file references in the revised plan")
+            .build()
+    }
 }
 
 #[cfg(test)]
@@ -112,12 +144,8 @@ mod tests {
     use super::*;
     use crate::state::Phase;
 
-    #[test]
-    fn test_build_revision_prompt_with_reviews() {
-        let mut state = State::new("test", "test objective", 3).unwrap();
-        state.phase = Phase::Revising;
-
-        let reviews = vec![
+    fn test_reviews() -> Vec<ReviewResult> {
+        vec![
             ReviewResult {
                 agent_name: "claude".to_string(),
                 needs_revision: true,
@@ -130,10 +158,19 @@ mod tests {
                 feedback: "Issue 2: Unclear architecture".to_string(),
                 summary: "Architecture needs clarification".to_string(),
             },
-        ];
+        ]
+    }
 
+    #[test]
+    fn test_build_revision_prompt_full_context() {
+        let mut state = State::new("test", "test objective", 3).unwrap();
+        state.phase = Phase::Revising;
+
+        let reviews = test_reviews();
         let working_dir = Path::new("/workspaces/myproject");
-        let prompt = build_revision_prompt_with_reviews(&state, &reviews, working_dir);
+
+        // Test with session_resume_active = false (full context prompt)
+        let prompt = build_revision_prompt_with_reviews(&state, &reviews, working_dir, false);
 
         // Check XML structure
         assert!(prompt.starts_with("<user-prompt>"));
@@ -148,5 +185,34 @@ mod tests {
         assert!(prompt.contains("<workspace-root>/workspaces/myproject</workspace-root>"));
         // Check constraints
         assert!(prompt.contains("Use absolute paths"));
+    }
+
+    #[test]
+    fn test_build_revision_prompt_session_resume() {
+        let mut state = State::new("test", "test objective", 3).unwrap();
+        state.phase = Phase::Revising;
+
+        let reviews = test_reviews();
+        let working_dir = Path::new("/workspaces/myproject");
+
+        // Test with session_resume_active = true (simplified continuation prompt)
+        let prompt = build_revision_prompt_with_reviews(&state, &reviews, working_dir, true);
+
+        // Should NOT be XML structured
+        assert!(!prompt.starts_with("<user-prompt>"));
+        assert!(!prompt.contains("<phase>revising</phase>"));
+
+        // Should be a simpler continuation prompt
+        assert!(prompt.contains("The reviewers have provided feedback"));
+        assert!(prompt.contains("Please revise the plan"));
+
+        // Should still contain the feedback
+        assert!(prompt.contains("CLAUDE Review"));
+        assert!(prompt.contains("CODEX Review"));
+        assert!(prompt.contains("Issue 1: Missing tests"));
+        assert!(prompt.contains("Issue 2: Unclear architecture"));
+
+        // Should reference the plan file
+        assert!(prompt.contains("plan.md"));
     }
 }

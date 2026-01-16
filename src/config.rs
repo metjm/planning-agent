@@ -71,10 +71,11 @@ pub struct AgentConfig {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct PhaseConfigs {
     pub planning: SingleAgentPhase,
     pub reviewing: MultiAgentPhase,
-    pub revising: SingleAgentPhase,
+    // Note: `revising` field was removed - revision now uses the planning agent
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -201,13 +202,6 @@ impl WorkflowConfig {
             }
         }
 
-        if !self.agents.contains_key(&self.workflow.revising.agent) {
-            anyhow::bail!(
-                "Revising agent '{}' not found in agents configuration",
-                self.workflow.revising.agent
-            );
-        }
-
         if self.workflow.reviewing.agents.is_empty() {
             anyhow::bail!("At least one review agent must be configured");
         }
@@ -260,7 +254,6 @@ mod tests {
         assert!(config.agents.contains_key("gemini"));
 
         assert!(config.agents.contains_key(&config.workflow.planning.agent));
-        assert!(config.agents.contains_key(&config.workflow.revising.agent));
         for agent_ref in &config.workflow.reviewing.agents {
             assert!(config.agents.contains_key(agent_ref.agent_name()));
         }
@@ -281,9 +274,9 @@ mod tests {
         assert!(!config.agents.contains_key("codex"));
         assert!(!config.agents.contains_key("gemini"));
 
-        // All phases should use claude
+        // Planning and reviewing phases should use claude
+        // Note: revision now uses the planning agent automatically
         assert_eq!(config.workflow.planning.agent, "claude");
-        assert_eq!(config.workflow.revising.agent, "claude");
         assert_eq!(
             config.workflow.reviewing.agents,
             vec![AgentRef::Simple("claude".to_string())]
@@ -310,9 +303,6 @@ workflow:
   reviewing:
     agents: [claude]
     aggregation: any_rejects
-
-  revising:
-    agent: claude
 "#;
         let config: WorkflowConfig = serde_yaml::from_str(yaml).unwrap();
         assert_eq!(config.workflow.planning.agent, "claude");
@@ -341,9 +331,6 @@ workflow:
   reviewing:
     agents: [claude, codex]
     aggregation: any_rejects
-
-  revising:
-    agent: claude
 "#;
         let config: WorkflowConfig = serde_yaml::from_str(yaml).unwrap();
         assert_eq!(config.workflow.reviewing.agents.len(), 2);
@@ -372,9 +359,6 @@ workflow:
 
   reviewing:
     agents: [claude]
-
-  revising:
-    agent: claude
 "#;
         let config: WorkflowConfig = serde_yaml::from_str(yaml).unwrap();
         assert!(config.validate().is_err());
@@ -393,9 +377,6 @@ workflow:
 
   reviewing:
     agents: [claude, nonexistent]
-
-  revising:
-    agent: claude
 "#;
         let config: WorkflowConfig = serde_yaml::from_str(yaml).unwrap();
         assert!(config.validate().is_err());
@@ -413,8 +394,6 @@ workflow:
   reviewing:
     agents: [claude]
     aggregation: any_rejects
-  revising:
-    agent: claude
 "#;
         let config: WorkflowConfig = serde_yaml::from_str(yaml_any).unwrap();
         assert_eq!(
@@ -432,8 +411,6 @@ workflow:
   reviewing:
     agents: [claude]
     aggregation: all_reject
-  revising:
-    agent: claude
 "#;
         let config: WorkflowConfig = serde_yaml::from_str(yaml_all).unwrap();
         assert_eq!(
@@ -451,8 +428,6 @@ workflow:
   reviewing:
     agents: [claude]
     aggregation: majority
-  revising:
-    agent: claude
 "#;
         let config: WorkflowConfig = serde_yaml::from_str(yaml_majority).unwrap();
         assert_eq!(
@@ -475,8 +450,6 @@ workflow:
     agent: claude
   reviewing:
     agents: [claude]
-  revising:
-    agent: claude
 "#;
         let config: WorkflowConfig = serde_yaml::from_str(yaml).unwrap();
         let claude_config = config.get_agent("claude").unwrap();
@@ -503,8 +476,6 @@ workflow:
     agent: claude
   reviewing:
     agents: [claude]
-  revising:
-    agent: claude
 "#;
         let config: WorkflowConfig = serde_yaml::from_str(yaml).unwrap();
 
@@ -531,8 +502,6 @@ workflow:
     agent: claude
   reviewing:
     agents: [claude]
-  revising:
-    agent: claude
 
 verification:
   enabled: true
@@ -573,8 +542,6 @@ workflow:
     agent: claude
   reviewing:
     agents: [claude]
-  revising:
-    agent: claude
 
 verification:
   enabled: true
@@ -602,8 +569,6 @@ workflow:
     agent: claude
   reviewing:
     agents: [claude]
-  revising:
-    agent: claude
 
 verification:
   enabled: false
@@ -614,5 +579,29 @@ verification:
 
         // Validation should pass because verification is disabled
         assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_config_with_revising_field_fails_to_parse() {
+        // Configs that include the old `revising` field should fail to parse
+        // This is a clean break - no backward compatibility for this removed field
+        let yaml = r#"
+agents:
+  claude:
+    command: "claude"
+
+workflow:
+  planning:
+    agent: claude
+  reviewing:
+    agents: [claude]
+  revising:
+    agent: claude
+"#;
+        let result: Result<WorkflowConfig, _> = serde_yaml::from_str(yaml);
+        assert!(result.is_err(), "Config with revising field should fail to parse");
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("revising") || err.contains("unknown field"),
+            "Error should mention 'revising' or 'unknown field': {}", err);
     }
 }

@@ -68,6 +68,12 @@ impl AgentType {
         }
     }
 
+    /// Returns true if this agent type supports session resume via --session-id.
+    /// Currently only Claude supports this feature.
+    pub fn supports_session_resume(&self) -> bool {
+        matches!(self, AgentType::Claude(_))
+    }
+
     #[cfg(test)]
     pub fn name(&self) -> &str {
         match self {
