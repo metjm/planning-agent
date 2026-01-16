@@ -17,6 +17,7 @@ agents:
       - "exec"
       - "--json"
       - "--dangerously-bypass-approvals-and-sandbox"
+      - "--skip-git-repo-check"
     allowed_tools: []
 
   gemini:
