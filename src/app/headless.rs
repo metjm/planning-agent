@@ -383,12 +383,13 @@ pub async fn run_headless_with_config(
                             revising_attempts += 1;
                             if revising_attempts > max_retries {
                                 // Apply failure policy for revising failures
+                                // Uses planning agent for session continuity
                                 match config.failure_policy.on_all_reviewers_failed {
                                     OnAllReviewersFailed::SaveState => {
                                         state.set_failure(FailureContext {
                                             kind: FailureKind::Unknown(error_msg),
                                             phase: state.phase.clone(),
-                                            agent_name: Some(config.workflow.revising.agent.clone()),
+                                            agent_name: Some(config.workflow.planning.agent.clone()),
                                             retry_count: revising_attempts as u32,
                                             max_retries: max_retries as u32,
                                             failed_at: chrono::Utc::now().to_rfc3339(),

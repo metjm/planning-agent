@@ -11,6 +11,7 @@ use crate::phases::review_parser::parse_mcp_review;
 use crate::phases::review_prompts::{
     build_mcp_agent_prompt, build_mcp_recovery_prompt, build_mcp_review_prompt, REVIEW_SYSTEM_PROMPT,
 };
+use crate::phases::reviewing_session_key;
 use crate::session_logger::SessionLogger;
 use crate::state::{FeedbackStatus, ResumeStrategy, State};
 use crate::tui::SessionEventSender;
@@ -126,15 +127,16 @@ pub async fn run_multi_agent_review_with_context(
                 }
             })
             .unwrap_or(ResumeStrategy::Stateless);
-        // Use display_id for session tracking to ensure unique sessions per instance
-        let agent_session = state.get_or_create_agent_session(&display_id, configured_strategy);
+        // Use namespaced session key to avoid collisions with planning sessions
+        let session_key_name = reviewing_session_key(&display_id);
+        let agent_session = state.get_or_create_agent_session(&session_key_name, configured_strategy);
         agent_contexts.push((
             display_id.clone(),
             agent_session.session_key.clone(),
             agent_session.resume_strategy.clone(),
             custom_prompt,
         ));
-        state.record_invocation(&display_id, &phase_name);
+        state.record_invocation(&session_key_name, &phase_name);
     }
     state.set_updated_at();
     state.save_atomic(state_path)?;

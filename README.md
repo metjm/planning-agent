@@ -97,14 +97,17 @@ agents:
 workflow:
   planning:
     agent: codex
+    max_turns: 200  # Applies to both planning AND revision phases
   reviewing:
     agents: [claude, codex]
     aggregation: any_rejects
-  revising:
-    agent: claude
+  # Note: revision automatically uses the planning agent
 ```
 
-Default: codex plans, claude+codex review (any rejection triggers revision), claude revises.
+Default: codex plans and revises, claude+codex review (any rejection triggers revision).
+
+**Session Continuity**: When the planning agent has session_persistence enabled
+(Claude only), revision resumes the planning session, providing full context continuity.
 
 ## Installation
 

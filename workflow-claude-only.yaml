@@ -1,5 +1,5 @@
 # Single-agent Claude-only workflow configuration
-# This is equivalent to the default behavior
+# This configuration enables session persistence for planning->revision continuity.
 
 agents:
   claude:
@@ -20,19 +20,25 @@ agents:
       - "WebFetch"
       - "Skill"
       - "Task"
+    # Enable session persistence for planning->revision session continuity (Claude-only feature)
+    session_persistence:
+      enabled: true
+      strategy: session_id
 
 workflow:
   planning:
     agent: claude
-    max_turns: 50
+    # Note: max_turns applies to BOTH planning AND revision phases.
+    # Set high enough for complex plans that may require multiple revision cycles.
+    max_turns: 200
 
   reviewing:
     agents:
       - claude
     aggregation: any_rejects
 
-  revising:
-    agent: claude
+  # Note: Revision phase uses the planning agent automatically.
+  # With session_persistence enabled, revision resumes the planning session context.
 
 # Failure handling policy (uses defaults)
 # failure_policy:

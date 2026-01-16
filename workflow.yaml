@@ -60,8 +60,8 @@ workflow:
     # Use majority voting - 2 of 3 must reject to trigger revision
     aggregation: any_rejects
 
-  revising:
-    agent: claude
+  # Note: Revision phase uses the planning agent automatically.
+  # This enables session continuity when using Claude with session_persistence enabled.
 
 # Failure handling policy
 # Controls how transient failures and recovery are handled

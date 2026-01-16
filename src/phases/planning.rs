@@ -1,5 +1,6 @@
 use crate::agents::{AgentContext, AgentType};
 use crate::config::WorkflowConfig;
+use crate::phases::planning_session_key;
 use crate::prompt_format::PromptBuilder;
 use crate::session_logger::SessionLogger;
 use crate::state::{ResumeStrategy, State};
@@ -46,11 +47,13 @@ pub async fn run_planning_phase_with_context(
     } else {
         ResumeStrategy::Stateless
     };
-    let agent_session = state.get_or_create_agent_session(agent_name, configured_strategy);
+    // Use namespaced session key to avoid collisions with reviewer sessions
+    let session_key_name = planning_session_key(agent_name);
+    let agent_session = state.get_or_create_agent_session(&session_key_name, configured_strategy);
     let session_key = agent_session.session_key.clone();
     let resume_strategy = agent_session.resume_strategy.clone();
 
-    state.record_invocation(agent_name, "Planning");
+    state.record_invocation(&session_key_name, "Planning");
     state.set_updated_at();
     state.save_atomic(state_path)?;
 
