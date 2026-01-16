@@ -715,10 +715,10 @@ impl Session {
     }
 
     /// Accept the currently selected mention in the tab input field.
-    /// Replaces the @query with the selected file path.
+    /// Replaces the @query with the selected file path (absolute path when available).
     pub fn accept_tab_mention(&mut self) {
         if let Some(selected) = self.tab_mention_state.selected_match() {
-            let path = selected.path.clone();
+            let path = selected.insert_text();
             let start = self.tab_mention_state.start_byte;
             let end = self.tab_input_cursor;
 
@@ -736,10 +736,10 @@ impl Session {
     }
 
     /// Accept the currently selected mention in the feedback input field.
-    /// Replaces the @query with the selected file path.
+    /// Replaces the @query with the selected file path (absolute path when available).
     pub fn accept_feedback_mention(&mut self) {
         if let Some(selected) = self.feedback_mention_state.selected_match() {
-            let path = selected.path.clone();
+            let path = selected.insert_text();
             let start = self.feedback_mention_state.start_byte;
             let end = self.cursor_position;
 

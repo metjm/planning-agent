@@ -34,7 +34,7 @@ pub fn draw_mention_dropdown(
     let dropdown_height = (matches.len() as u16).min(10) + 2; // +2 for borders
     let max_path_width = matches
         .iter()
-        .map(|m| m.path.width())
+        .map(|m| m.display_path.width())
         .max()
         .unwrap_or(20) as u16;
     let dropdown_width = (max_path_width + 4).min(max_width).max(30); // +4 for padding and selection indicator
@@ -94,7 +94,7 @@ pub fn draw_mention_dropdown(
             } else {
                 Style::default().fg(Color::White)
             };
-            Line::from(Span::styled(format!("{}{}", prefix, m.path), style))
+            Line::from(Span::styled(format!("{}{}", prefix, m.display_path), style))
         })
         .collect();
 
