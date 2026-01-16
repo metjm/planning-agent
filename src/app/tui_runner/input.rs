@@ -509,7 +509,7 @@ async fn handle_naming_tab_input(
                 let max_iter = cli.max_iterations;
 
                 // Capture worktree-related CLI flags
-                let no_worktree_flag = cli.no_worktree;
+                let worktree_flag = cli.worktree;
                 let custom_worktree_dir = cli.worktree_dir.clone();
                 let custom_worktree_branch = cli.worktree_branch.clone();
 
@@ -534,12 +534,9 @@ async fn handle_naming_tab_input(
 
                     let mut state = State::new(&feature_name, &objective, max_iter)?;
 
-                    // Set up git worktree if not disabled
-                    let effective_working_dir = if no_worktree_flag {
-                        let _ = tx.send(Event::SessionOutput {
-                            session_id,
-                            line: "[planning] Worktree disabled via --no-worktree".to_string(),
-                        });
+                    // Set up git worktree if enabled via --worktree
+                    let effective_working_dir = if !worktree_flag {
+                        // Worktree is disabled by default
                         wd.clone()
                     } else {
                         // Get session directory for worktree

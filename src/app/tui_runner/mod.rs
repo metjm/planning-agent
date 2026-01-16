@@ -398,7 +398,7 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
         let init_max_iterations = cli.max_iterations;
 
         // Capture worktree-related CLI flags before tokio::spawn
-        let no_worktree_flag = cli.no_worktree;
+        let worktree_flag = cli.worktree;
         let custom_worktree_dir = cli.worktree_dir.clone();
         let custom_worktree_branch = cli.worktree_branch.clone();
 
@@ -435,13 +435,8 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
             // Check if state already has worktree_info (--continue case)
             let effective_working_dir = if let Some(ref existing_wt) = state.worktree_info {
                 // Worktree already exists from previous session (--continue case)
-                // Note: Even if --no-worktree is passed, we respect the existing worktree
-                // because changes already exist there. --no-worktree only affects NEW sessions.
-                if no_worktree_flag {
-                    let _ = init_tx.send(Event::Output(
-                        "[planning] Note: Using existing worktree (--no-worktree only affects new sessions)".to_string()
-                    ));
-                }
+                // Note: Even if --worktree is not passed, we respect the existing worktree
+                // because changes already exist there. --worktree only affects NEW sessions.
                 // Validate it still exists and is a valid git worktree
                 if crate::git_worktree::is_valid_worktree(&existing_wt.worktree_path) {
                     let _ = init_tx.send(Event::Output(format!(
@@ -466,10 +461,8 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                     state.worktree_info = None;
                     original
                 }
-            } else if no_worktree_flag {
-                let _ = init_tx.send(Event::Output(
-                    "[planning] Worktree disabled via --no-worktree".to_string()
-                ));
+            } else if !worktree_flag {
+                // Worktree is disabled by default
                 init_working_dir.clone()
             } else {
                 // No existing worktree, create a new one
