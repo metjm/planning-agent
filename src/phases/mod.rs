@@ -19,14 +19,14 @@ pub use verification::{
     parse_verification_verdict, run_verification_phase, VerificationVerdictResult,
 };
 
-/// Constructs the session key for planning and revision phases.
-/// Both phases MUST use this function to ensure session continuity.
-pub fn planning_session_key(agent_name: &str) -> String {
+/// Constructs the conversation key for planning and revision phases.
+/// Both phases MUST use this function to ensure conversation continuity.
+pub fn planning_conversation_key(agent_name: &str) -> String {
     format!("planning/{}", agent_name)
 }
 
-/// Constructs the session key for reviewing phases.
-/// Uses a separate namespace to prevent collision with planning sessions.
-pub fn reviewing_session_key(display_id: &str) -> String {
+/// Constructs the conversation key for reviewing phases.
+/// Uses a separate namespace to prevent collision with planning conversations.
+pub fn reviewing_conversation_key(display_id: &str) -> String {
     format!("reviewing/{}", display_id)
 }

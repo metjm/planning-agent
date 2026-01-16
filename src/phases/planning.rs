@@ -1,6 +1,6 @@
 use crate::agents::{AgentContext, AgentType};
 use crate::config::WorkflowConfig;
-use crate::phases::planning_session_key;
+use crate::phases::planning_conversation_key;
 use crate::prompt_format::PromptBuilder;
 use crate::session_logger::SessionLogger;
 use crate::state::{ResumeStrategy, State};
@@ -48,19 +48,19 @@ pub async fn run_planning_phase_with_context(
         ResumeStrategy::Stateless
     };
     // Use namespaced session key to avoid collisions with reviewer sessions
-    let session_key_name = planning_session_key(agent_name);
-    let agent_session = state.get_or_create_agent_session(&session_key_name, configured_strategy);
-    let session_key = agent_session.session_key.clone();
+    let conversation_id_name = planning_conversation_key(agent_name);
+    let agent_session = state.get_or_create_agent_session(&conversation_id_name, configured_strategy);
+    let conversation_id = agent_session.conversation_id.clone();
     let resume_strategy = agent_session.resume_strategy.clone();
 
-    state.record_invocation(&session_key_name, "Planning");
+    state.record_invocation(&conversation_id_name, "Planning");
     state.set_updated_at();
     state.save_atomic(state_path)?;
 
     let context = AgentContext {
         session_sender: session_sender.clone(),
         phase: "Planning".to_string(),
-        session_key,
+        conversation_id,
         resume_strategy,
         session_logger,
     };
@@ -74,6 +74,18 @@ pub async fn run_planning_phase_with_context(
         )
         .await?;
 
+    // Store captured conversation ID for future resume (e.g., in revising phase)
+    if let Some(ref captured_id) = result.conversation_id {
+        state.update_agent_conversation_id(&conversation_id_name, captured_id.clone());
+        state.set_updated_at();
+        state.save_atomic(state_path)?;
+        session_sender.send_output(format!(
+            "[planning:{}] Captured conversation ID for resume: {}",
+            agent_name,
+            &captured_id[..8.min(captured_id.len())]
+        ));
+    }
+
     session_sender.send_output(format!("[planning:{}] Planning phase complete", agent_name));
     session_sender.send_output(format!(
         "[planning:{}] Result preview: {}...",
@@ -86,9 +98,9 @@ pub async fn run_planning_phase_with_context(
 
 fn build_planning_prompt(state: &State, working_dir: &Path) -> String {
     // state.plan_file is now an absolute path (in ~/.planning-agent/plans/)
-    let mut builder = PromptBuilder::new()
-        .phase("planning")
-        .instructions(r#"Create a detailed implementation plan for the given objective.
+    let plan_path = state.plan_file.display().to_string();
+    let instructions = format!(
+        r#"Create a detailed implementation plan for the given objective.
 
 Requirements:
 1. Analyze the existing codebase to understand the current architecture
@@ -96,11 +108,19 @@ Requirements:
 3. Break down the implementation into clear, actionable steps
 4. Consider edge cases and potential issues
 5. Include a testing strategy
-6. When replacing functionality, remove old code entirely—update all callers and do not add backward-compatibility shims or re-exports"#)
+6. When replacing functionality, remove old code entirely—update all callers and do not add backward-compatibility shims or re-exports
+
+IMPORTANT: Write the final plan to this file: {}"#,
+        plan_path
+    );
+
+    let mut builder = PromptBuilder::new()
+        .phase("planning")
+        .instructions(&instructions)
         .input("workspace-root", &working_dir.display().to_string())
         .input("feature-name", &state.feature_name)
         .input("objective", &state.objective)
-        .input("plan-output-path", &state.plan_file.display().to_string())
+        .input("plan-output-path", &plan_path)
         .constraint("Use absolute paths for all file references in your plan")
         .tools("Use the Read, Glob, and Grep tools to explore the codebase as needed.");
 
@@ -138,7 +158,7 @@ mod tests {
             last_feedback_status: None,
             approval_overridden: false,
             workflow_session_id: "test-session".to_string(),
-            agent_sessions: HashMap::new(),
+            agent_conversations: HashMap::new(),
             invocations: Vec::new(),
             updated_at: String::new(),
             last_failure: None,
@@ -168,6 +188,25 @@ mod tests {
         assert!(
             prompt.contains("backward-compatibility shims"),
             "Planning prompt should contain 'backward-compatibility shims'"
+        );
+    }
+
+    #[test]
+    fn build_planning_prompt_includes_plan_output_path() {
+        let state = minimal_state();
+        let working_dir = PathBuf::from("/tmp/workspace");
+        let prompt = build_planning_prompt(&state, &working_dir);
+
+        // Print for debugging
+        eprintln!("Generated prompt:\n{}", prompt);
+
+        assert!(
+            prompt.contains("<plan-output-path>"),
+            "Planning prompt should contain <plan-output-path> tag"
+        );
+        assert!(
+            prompt.contains("/tmp/test-plan.md"),
+            "Planning prompt should contain the plan file path"
         );
     }
 }

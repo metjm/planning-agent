@@ -61,7 +61,7 @@ pub async fn run_fixing_phase(
     let context = AgentContext {
         session_sender: session_sender.clone(),
         phase: phase_name,
-        session_key: None, // Fixing is stateless per round
+        conversation_id: None, // Fixing is stateless per round
         resume_strategy: ResumeStrategy::Stateless,
         session_logger,
     };

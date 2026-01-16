@@ -29,6 +29,11 @@ impl GeminiParser {
     fn parse_json(&mut self, json: &Value) -> Vec<AgentEvent> {
         let mut events = Vec::new();
 
+        // Capture session_id for conversation resume
+        if let Some(session_id) = json.get("session_id").and_then(|v| v.as_str()) {
+            events.push(AgentEvent::ConversationIdCaptured(session_id.to_string()));
+        }
+
         // First check for direct text content
         if let Some(response) = json
             .get("response")
@@ -316,5 +321,26 @@ mod tests {
         let _ = parser.parse_line_multi(r#"{"response": "test"}"#);
         parser.reset();
         assert_eq!(parser._event_count, 0);
+    }
+
+    #[test]
+    fn test_parse_session_id_captures_conversation_id() {
+        let mut parser = GeminiParser::new();
+        let line = r#"{"session_id": "4e2f5f4f-c181-417a-855f-291bf3e9e515", "response": "Hello"}"#;
+        let events = parser.parse_line_multi(line).unwrap();
+        // Should have both ConversationIdCaptured and TextContent
+        assert_eq!(events.len(), 2);
+        match &events[0] {
+            AgentEvent::ConversationIdCaptured(id) => {
+                assert_eq!(id, "4e2f5f4f-c181-417a-855f-291bf3e9e515");
+            }
+            _ => panic!("Expected ConversationIdCaptured event first"),
+        }
+        match &events[1] {
+            AgentEvent::TextContent(content) => {
+                assert_eq!(content, "Hello");
+            }
+            _ => panic!("Expected TextContent event second"),
+        }
     }
 }

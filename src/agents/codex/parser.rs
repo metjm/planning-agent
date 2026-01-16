@@ -33,6 +33,12 @@ impl CodexParser {
         // Try to get event type
         if let Some(event_type) = json.get("type").and_then(|v| v.as_str()) {
             match event_type {
+                "thread.started" => {
+                    // Capture thread_id for conversation resume
+                    if let Some(thread_id) = json.get("thread_id").and_then(|v| v.as_str()) {
+                        events.push(AgentEvent::ConversationIdCaptured(thread_id.to_string()));
+                    }
+                }
                 "message" | "content" | "text" => {
                     if let Some(content) = self.extract_text_content(json) {
                         events.push(AgentEvent::TextContent(content));
@@ -489,5 +495,19 @@ mod tests {
 
         // Test no truncation needed
         assert_eq!(CodexParser::truncate_command("ls -la", 50), "ls -la");
+    }
+
+    #[test]
+    fn test_parse_thread_started_captures_conversation_id() {
+        let mut parser = CodexParser::new();
+        let line = r#"{"type":"thread.started","thread_id":"019bc838-8e90-7052-b458-3615bee3647a"}"#;
+        let events = parser.parse_line_multi(line).unwrap();
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            AgentEvent::ConversationIdCaptured(id) => {
+                assert_eq!(id, "019bc838-8e90-7052-b458-3615bee3647a");
+            }
+            _ => panic!("Expected ConversationIdCaptured event"),
+        }
     }
 }

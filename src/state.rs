@@ -190,14 +190,14 @@ pub enum FeedbackStatus {
 pub enum ResumeStrategy {
     #[default]
     Stateless,
-    SessionId,
+    ConversationResume,
     ResumeLatest,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AgentSessionState {
+pub struct AgentConversationState {
     pub resume_strategy: ResumeStrategy,
-    pub session_key: Option<String>,
+    pub conversation_id: Option<String>,
     pub last_used_at: String,
 }
 
@@ -206,7 +206,7 @@ pub struct InvocationRecord {
     pub agent: String,
     pub phase: String,
     pub timestamp: String,
-    pub session_key: Option<String>,
+    pub conversation_id: Option<String>,
     pub resume_strategy: ResumeStrategy,
 }
 
@@ -228,7 +228,7 @@ pub struct State {
     pub workflow_session_id: String,
 
     #[serde(default)]
-    pub agent_sessions: HashMap<String, AgentSessionState>,
+    pub agent_conversations: HashMap<String, AgentConversationState>,
 
     #[serde(default)]
     pub invocations: Vec<InvocationRecord>,
@@ -294,7 +294,7 @@ impl State {
             last_feedback_status: None,
             approval_overridden: false,
             workflow_session_id,
-            agent_sessions: HashMap::new(),
+            agent_conversations: HashMap::new(),
             invocations: Vec::new(),
             updated_at: Utc::now().to_rfc3339(),
             last_failure: None,
@@ -345,41 +345,47 @@ impl State {
         &mut self,
         agent: &str,
         strategy: ResumeStrategy,
-    ) -> &AgentSessionState {
+    ) -> &AgentConversationState {
         let now = chrono::Utc::now().to_rfc3339();
 
-        if !self.agent_sessions.contains_key(agent) {
-            let session_key = match strategy {
-                ResumeStrategy::SessionId => Some(Uuid::new_v4().to_string()),
-                _ => None,
-            };
-
-            self.agent_sessions.insert(
+        if !self.agent_conversations.contains_key(agent) {
+            // Don't pre-generate a conversation ID - it will be captured from the agent's output
+            // after the first successful execution
+            self.agent_conversations.insert(
                 agent.to_string(),
-                AgentSessionState {
+                AgentConversationState {
                     resume_strategy: strategy,
-                    session_key,
+                    conversation_id: None,
                     last_used_at: now.clone(),
                 },
             );
         }
 
-        let session = self.agent_sessions.get_mut(agent).unwrap();
+        let session = self.agent_conversations.get_mut(agent).unwrap();
         session.last_used_at = now;
         session
     }
 
+    /// Update the conversation ID for an agent after capturing it from agent output.
+    /// This is called after the agent runs and we capture the conversation ID from its init message.
+    pub fn update_agent_conversation_id(&mut self, agent: &str, conversation_id: String) {
+        if let Some(session) = self.agent_conversations.get_mut(agent) {
+            session.conversation_id = Some(conversation_id);
+            session.last_used_at = chrono::Utc::now().to_rfc3339();
+        }
+    }
+
     pub fn record_invocation(&mut self, agent: &str, phase: &str) {
-        let session = self.agent_sessions.get(agent);
-        let (session_key, resume_strategy) = session
-            .map(|s| (s.session_key.clone(), s.resume_strategy.clone()))
+        let session = self.agent_conversations.get(agent);
+        let (conversation_id, resume_strategy) = session
+            .map(|s| (s.conversation_id.clone(), s.resume_strategy.clone()))
             .unwrap_or((None, ResumeStrategy::Stateless));
 
         self.invocations.push(InvocationRecord {
             agent: agent.to_string(),
             phase: phase.to_string(),
             timestamp: chrono::Utc::now().to_rfc3339(),
-            session_key,
+            conversation_id,
             resume_strategy,
         });
     }
@@ -667,7 +673,7 @@ mod tests {
     fn test_new_state_has_workflow_session_id() {
         let state = State::new("test", "test objective", 3).unwrap();
         assert!(!state.workflow_session_id.is_empty());
-        assert!(state.agent_sessions.is_empty());
+        assert!(state.agent_conversations.is_empty());
         assert!(state.invocations.is_empty());
     }
 
@@ -684,38 +690,58 @@ mod tests {
         let session = state.get_or_create_agent_session("claude", ResumeStrategy::Stateless);
 
         assert_eq!(session.resume_strategy, ResumeStrategy::Stateless);
-        assert!(session.session_key.is_none());
+        assert!(session.conversation_id.is_none());
         assert!(!session.last_used_at.is_empty());
     }
 
     #[test]
-    fn test_get_or_create_agent_session_with_session_id() {
+    fn test_get_or_create_agent_session_with_conversation_resume() {
         let mut state = State::new("test", "test objective", 3).unwrap();
-        let session = state.get_or_create_agent_session("claude", ResumeStrategy::SessionId);
+        let session = state.get_or_create_agent_session("claude", ResumeStrategy::ConversationResume);
 
-        assert_eq!(session.resume_strategy, ResumeStrategy::SessionId);
-        assert!(session.session_key.is_some());
-        let session_key = session.session_key.clone().unwrap();
-        assert!(!session_key.is_empty());
+        assert_eq!(session.resume_strategy, ResumeStrategy::ConversationResume);
+        // Initially None - will be captured from agent output after first run
+        assert!(session.conversation_id.is_none());
+    }
+
+    #[test]
+    fn test_update_agent_conversation_id() {
+        let mut state = State::new("test", "test objective", 3).unwrap();
+        state.get_or_create_agent_session("claude", ResumeStrategy::ConversationResume);
+
+        // Initially None
+        assert!(state.agent_conversations.get("claude").unwrap().conversation_id.is_none());
+
+        // Update with captured ID
+        state.update_agent_conversation_id("claude", "captured-uuid-123".to_string());
+
+        // Now it should be set
+        let session = state.agent_conversations.get("claude").unwrap();
+        assert_eq!(session.conversation_id, Some("captured-uuid-123".to_string()));
     }
 
     #[test]
     fn test_agent_session_is_reused() {
         let mut state = State::new("test", "test objective", 3).unwrap();
 
-        let session1 = state.get_or_create_agent_session("claude", ResumeStrategy::SessionId);
-        let key1 = session1.session_key.clone();
+        state.get_or_create_agent_session("claude", ResumeStrategy::ConversationResume);
+        state.update_agent_conversation_id("claude", "test-uuid".to_string());
 
-        let session2 = state.get_or_create_agent_session("claude", ResumeStrategy::SessionId);
-        let key2 = session2.session_key.clone();
+        let session1 = state.get_or_create_agent_session("claude", ResumeStrategy::ConversationResume);
+        let key1 = session1.conversation_id.clone();
+
+        let session2 = state.get_or_create_agent_session("claude", ResumeStrategy::ConversationResume);
+        let key2 = session2.conversation_id.clone();
 
         assert_eq!(key1, key2);
+        assert_eq!(key1, Some("test-uuid".to_string()));
     }
 
     #[test]
     fn test_record_invocation() {
         let mut state = State::new("test", "test objective", 3).unwrap();
-        state.get_or_create_agent_session("claude", ResumeStrategy::SessionId);
+        state.get_or_create_agent_session("claude", ResumeStrategy::ConversationResume);
+        state.update_agent_conversation_id("claude", "test-conv-id".to_string());
         state.record_invocation("claude", "Planning");
 
         assert_eq!(state.invocations.len(), 1);
@@ -723,8 +749,19 @@ mod tests {
         assert_eq!(inv.agent, "claude");
         assert_eq!(inv.phase, "Planning");
         assert!(!inv.timestamp.is_empty());
-        assert!(inv.session_key.is_some());
-        assert_eq!(inv.resume_strategy, ResumeStrategy::SessionId);
+        assert_eq!(inv.conversation_id, Some("test-conv-id".to_string()));
+        assert_eq!(inv.resume_strategy, ResumeStrategy::ConversationResume);
+    }
+
+    #[test]
+    fn test_record_invocation_without_conversation_id() {
+        let mut state = State::new("test", "test objective", 3).unwrap();
+        state.get_or_create_agent_session("claude", ResumeStrategy::ConversationResume);
+        // Don't update conversation_id - simulating first run before capture
+        state.record_invocation("claude", "Planning");
+
+        let inv = &state.invocations[0];
+        assert!(inv.conversation_id.is_none());
     }
 
     #[test]
@@ -754,22 +791,22 @@ mod tests {
         let state: State = serde_json::from_str(old_state_json).unwrap();
         assert_eq!(state.feature_name, "existing-feature");
         assert!(state.workflow_session_id.is_empty());
-        assert!(state.agent_sessions.is_empty());
+        assert!(state.agent_conversations.is_empty());
         assert!(state.invocations.is_empty());
     }
 
     #[test]
     fn test_state_serialization_with_session_data() {
         let mut state = State::new("test", "test objective", 3).unwrap();
-        state.get_or_create_agent_session("claude", ResumeStrategy::SessionId);
+        state.get_or_create_agent_session("claude", ResumeStrategy::ConversationResume);
         state.record_invocation("claude", "Planning");
 
         let json = serde_json::to_string(&state).unwrap();
         let loaded: State = serde_json::from_str(&json).unwrap();
 
         assert_eq!(loaded.workflow_session_id, state.workflow_session_id);
-        assert_eq!(loaded.agent_sessions.len(), 1);
-        assert!(loaded.agent_sessions.contains_key("claude"));
+        assert_eq!(loaded.agent_conversations.len(), 1);
+        assert!(loaded.agent_conversations.contains_key("claude"));
         assert_eq!(loaded.invocations.len(), 1);
     }
 

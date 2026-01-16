@@ -95,6 +95,13 @@ pub enum AgentEvent {
     /// Provides explicit error event handling for cases like JSON parse failures,
     /// process crashes, and timeout errors that don't fit the existing `Result` structure.
     Error(String),
+
+    /// Agent's conversation/session ID captured from output.
+    /// Used for conversation resume on subsequent invocations.
+    /// - Claude: from `{"type":"system","subtype":"init","session_id":"..."}`
+    /// - Codex: from thread_id in output
+    /// - Gemini: from session UUID in output
+    ConversationIdCaptured(String),
 }
 
 /// Token usage information from agent execution.
@@ -137,6 +144,8 @@ pub struct AgentOutput {
     pub is_error: bool,
     /// Cost in USD if available
     pub cost_usd: Option<f64>,
+    /// Captured conversation ID for resume (from agent's init/start message)
+    pub conversation_id: Option<String>,
 }
 
 /// Trait for parsing agent-specific output formats into unified AgentEvent types.
@@ -218,9 +227,21 @@ mod tests {
             output: "test".to_string(),
             is_error: false,
             cost_usd: Some(0.01),
+            conversation_id: None,
         };
         assert_eq!(output.output, "test");
         assert!(!output.is_error);
         assert_eq!(output.cost_usd, Some(0.01));
+    }
+
+    #[test]
+    fn test_agent_output_with_conversation_id() {
+        let output = AgentOutput {
+            output: "test".to_string(),
+            is_error: false,
+            cost_usd: None,
+            conversation_id: Some("abc-123".to_string()),
+        };
+        assert_eq!(output.conversation_id, Some("abc-123".to_string()));
     }
 }
