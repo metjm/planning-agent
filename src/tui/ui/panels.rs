@@ -57,8 +57,10 @@ pub fn draw_main(frame: &mut Frame, session: &Session, area: Rect) {
     let instance_count = session.cli_instances.len();
     // Each instance takes 1 line, plus 2 for borders/title
     let desired_cli_height = (instance_count as u16).saturating_add(2).max(CLI_INSTANCES_MIN_HEIGHT);
-    // Cap at reasonable max to leave room for stats
-    let cli_instances_height = desired_cli_height.min(8);
+    // Allow CLI panel to expand within available right-column space after Objective
+    // Stats will take the remaining space (Constraint::Min(0))
+    let available_for_cli = right_area.height.saturating_sub(objective_height);
+    let cli_instances_height = desired_cli_height.min(available_for_cli);
 
     let right_chunks = Layout::default()
         .direction(Direction::Vertical)

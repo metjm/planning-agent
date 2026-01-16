@@ -41,15 +41,15 @@ pub fn draw_cli_instances(frame: &mut Frame, session: &Session, area: Rect) {
         ))]
     } else {
         let mut result: Vec<Line> = Vec::new();
-        let mut lines_remaining = visible_height.saturating_sub(1); // Reserve 1 for "+N more"
-        let mut remaining_count = 0;
+        // Only reserve a line for "+N more" if truncation is actually needed
+        let needs_truncation = instances.len() > visible_height;
+        let display_capacity = if needs_truncation {
+            visible_height.saturating_sub(1)
+        } else {
+            visible_height
+        };
 
-        for instance in &instances {
-            if lines_remaining == 0 {
-                remaining_count += 1;
-                continue;
-            }
-
+        for instance in instances.iter().take(display_capacity) {
             let elapsed = format_duration(instance.elapsed());
             let idle = format_duration(instance.idle());
 
@@ -63,11 +63,11 @@ pub fn draw_cli_instances(frame: &mut Frame, session: &Session, area: Rect) {
                 Span::styled(idle, Style::default().fg(Color::Yellow)),
             ]);
             result.push(line);
-            lines_remaining = lines_remaining.saturating_sub(1);
         }
 
-        // Add "+N more" indicator if truncated
-        if remaining_count > 0 {
+        // Add "+N more" indicator only if truncated
+        if needs_truncation {
+            let remaining_count = instances.len().saturating_sub(display_capacity);
             result.push(Line::from(Span::styled(
                 format!("+{} more", remaining_count),
                 Style::default().fg(Color::DarkGray),
