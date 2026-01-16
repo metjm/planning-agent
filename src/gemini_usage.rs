@@ -36,7 +36,22 @@ impl GeminiUsage {
 }
 
 pub fn is_gemini_available() -> bool {
-    which::which("gemini").is_ok()
+    // First check if binary exists
+    if which::which("gemini").is_err() {
+        return false;
+    }
+
+    // Then verify it actually works by running --help
+    // This catches broken installations (missing npm packages, etc.)
+    match std::process::Command::new("gemini")
+        .arg("--help")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+    {
+        Ok(status) => status.success(),
+        Err(_) => false,
+    }
 }
 
 /// Returns true if debug logging is enabled via GEMINI_USAGE_DEBUG=1
@@ -548,6 +563,56 @@ mod tests {
         assert_eq!(usage, Some(26)); // Lowest is 25.5% -> rounds to 26%
         // The duration should be from the 25.5% line (6h)
         assert_eq!(duration, Some(Duration::from_secs(6 * 3600)));
+    }
+
+    /// Test that fetch returns quickly when CLI is unavailable or broken.
+    /// This is a real test - it actually checks the system's Gemini CLI.
+    #[test]
+    fn test_fetch_returns_quickly_when_unavailable() {
+        let start = std::time::Instant::now();
+        let usage = fetch_gemini_usage_sync();
+        let elapsed = start.elapsed();
+
+        // If CLI is not available, should return immediately (< 1 second)
+        // If CLI is available, the fetch might take longer, but that's ok
+        if !is_gemini_available() {
+            assert!(
+                elapsed.as_secs() < 2,
+                "Should return quickly when CLI unavailable, took {:?}",
+                elapsed
+            );
+            assert!(
+                usage.error_message.is_some(),
+                "Should have error message when CLI unavailable"
+            );
+            eprintln!(
+                "CLI unavailable, returned in {:?} with: {:?}",
+                elapsed,
+                usage.error_message.as_ref().unwrap()
+            );
+        } else {
+            eprintln!("CLI is available, fetch took {:?}", elapsed);
+        }
+    }
+
+    /// Test that is_gemini_available properly validates CLI functionality.
+    /// A broken CLI (binary exists but crashes) should return false.
+    #[test]
+    fn test_is_gemini_available_validates_functionality() {
+        let available = is_gemini_available();
+        eprintln!("is_gemini_available() = {}", available);
+
+        // If available, verify gemini --help actually works
+        if available {
+            let output = std::process::Command::new("gemini")
+                .arg("--help")
+                .output()
+                .expect("should be able to run gemini --help");
+            assert!(
+                output.status.success(),
+                "gemini --help should succeed when is_gemini_available returns true"
+            );
+        }
     }
 
     #[test]
