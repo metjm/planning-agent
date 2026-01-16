@@ -113,23 +113,14 @@ pub async fn run_multi_agent_review_with_context(
         Vec::new();
     for agent_ref in agent_refs {
         let display_id = agent_ref.display_id().to_string();
-        let agent_name = agent_ref.agent_name();
         let custom_prompt = agent_ref.custom_prompt().map(|s| s.to_string());
 
-        // Get the configured resume strategy for this agent
-        let configured_strategy = config
-            .get_agent(agent_name)
-            .map(|cfg| {
-                if cfg.session_persistence.enabled {
-                    cfg.session_persistence.strategy.clone()
-                } else {
-                    ResumeStrategy::Stateless
-                }
-            })
-            .unwrap_or(ResumeStrategy::Stateless);
+        // Reviewing always uses Stateless - each review should be independent
+        // with a fresh perspective on the plan, not influenced by prior sessions.
+        let resume_strategy = ResumeStrategy::Stateless;
         // Use namespaced session key to avoid collisions with planning sessions
         let conversation_id_name = reviewing_conversation_key(&display_id);
-        let agent_session = state.get_or_create_agent_session(&conversation_id_name, configured_strategy);
+        let agent_session = state.get_or_create_agent_session(&conversation_id_name, resume_strategy.clone());
         agent_contexts.push((
             display_id.clone(),
             agent_session.conversation_id.clone(),

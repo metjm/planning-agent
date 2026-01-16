@@ -41,12 +41,9 @@ pub async fn run_planning_phase_with_context(
 
     let prompt = build_planning_prompt(state, working_dir);
 
-    // Use resume strategy from config if session persistence is enabled, otherwise Stateless
-    let configured_strategy = if agent_config.session_persistence.enabled {
-        agent_config.session_persistence.strategy.clone()
-    } else {
-        ResumeStrategy::Stateless
-    };
+    // Planning always uses ConversationResume to enable revision continuity.
+    // The agent will capture its conversation ID on first run, then resume on revision.
+    let configured_strategy = ResumeStrategy::ConversationResume;
     // Use namespaced session key to avoid collisions with reviewer sessions
     let conversation_id_name = planning_conversation_key(agent_name);
     let agent_session = state.get_or_create_agent_session(&conversation_id_name, configured_strategy);

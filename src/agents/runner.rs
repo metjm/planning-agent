@@ -7,7 +7,7 @@ use crate::agents::log::AgentLogger;
 use crate::agents::protocol::{AgentEvent, AgentOutput, AgentStreamParser};
 use crate::agents::{AgentContext, AgentResult};
 use crate::session_logger::SessionLogger;
-use crate::tui::TokenUsage;
+use crate::tui::{CliInstanceId, TokenUsage};
 use anyhow::{Context, Result};
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -25,6 +25,11 @@ pub const DEFAULT_OVERALL_TIMEOUT: Duration = Duration::from_secs(21600); // 6 h
 
 /// Timeout for waiting for the process to exit after streams close.
 pub const PROCESS_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Minimum interval between activity event emissions per CLI instance.
+/// This prevents flooding the event loop with activity updates while
+/// still maintaining accurate idle time tracking in the UI.
+pub const ACTIVITY_EMIT_MIN_INTERVAL: Duration = Duration::from_secs(1);
 
 /// Configuration for the agent runner.
 #[derive(Clone)]
@@ -96,6 +101,16 @@ pub trait EventEmitter: Send + Sync {
     fn send_tool_result_received(&self, tool_id: Option<String>, is_error: bool);
     fn send_agent_message(&self, msg: String);
     fn send_todos_update(&self, items: Vec<crate::tui::TodoItem>);
+
+    // CLI instance lifecycle methods
+    /// Allocate a new unique CLI instance ID.
+    fn next_cli_instance_id(&self) -> CliInstanceId;
+    /// Send a CLI instance started event.
+    fn send_cli_instance_started(&self, id: CliInstanceId, pid: Option<u32>, started_at: std::time::Instant);
+    /// Send a CLI instance activity event.
+    fn send_cli_instance_activity(&self, id: CliInstanceId, activity_at: std::time::Instant);
+    /// Send a CLI instance finished event.
+    fn send_cli_instance_finished(&self, id: CliInstanceId);
 }
 
 /// Event emitter for context mode (session-aware).
@@ -164,6 +179,50 @@ impl EventEmitter for ContextEmitter {
         self.context
             .session_sender
             .send_todos_update(self.agent_name.clone(), items);
+    }
+    fn next_cli_instance_id(&self) -> CliInstanceId {
+        self.context.session_sender.next_cli_instance_id()
+    }
+    fn send_cli_instance_started(&self, id: CliInstanceId, pid: Option<u32>, started_at: std::time::Instant) {
+        self.context.session_sender.send_cli_instance_started(
+            id,
+            self.agent_name.clone(),
+            pid,
+            started_at,
+        );
+    }
+    fn send_cli_instance_activity(&self, id: CliInstanceId, activity_at: std::time::Instant) {
+        self.context.session_sender.send_cli_instance_activity(id, activity_at);
+    }
+    fn send_cli_instance_finished(&self, id: CliInstanceId) {
+        self.context.session_sender.send_cli_instance_finished(id);
+    }
+}
+
+/// RAII guard that ensures CLI instance finished event is sent on drop.
+struct CliInstanceGuard<'a> {
+    id: CliInstanceId,
+    emitter: &'a dyn EventEmitter,
+    finished: bool,
+}
+
+impl<'a> CliInstanceGuard<'a> {
+    fn new(id: CliInstanceId, emitter: &'a dyn EventEmitter) -> Self {
+        Self { id, emitter, finished: false }
+    }
+
+    /// Mark as finished (prevents double-emit on drop).
+    fn finish(&mut self) {
+        if !self.finished {
+            self.emitter.send_cli_instance_finished(self.id);
+            self.finished = true;
+        }
+    }
+}
+
+impl<'a> Drop for CliInstanceGuard<'a> {
+    fn drop(&mut self) {
+        self.finish();
     }
 }
 
@@ -255,6 +314,15 @@ pub async fn run_agent_process<P: AgentStreamParser>(
         .spawn()
         .with_context(|| format!("Failed to spawn {} process", config.agent_name))?;
 
+    // Allocate CLI instance ID and emit started event
+    let cli_instance_id = emitter.next_cli_instance_id();
+    let pid = child.id();
+    let std_started_at = std::time::Instant::now();
+    emitter.send_cli_instance_started(cli_instance_id, pid, std_started_at);
+
+    // Create RAII guard to ensure finished event is always emitted
+    let mut _cli_guard = CliInstanceGuard::new(cli_instance_id, emitter);
+
     let stdout = child
         .stdout
         .take()
@@ -274,6 +342,8 @@ pub async fn run_agent_process<P: AgentStreamParser>(
 
     let start_time = Instant::now();
     let mut last_activity = Instant::now();
+    // Track last activity emit time for throttling
+    let mut last_activity_emit = Instant::now();
 
     loop {
         // Check overall timeout
@@ -286,6 +356,11 @@ pub async fn run_agent_process<P: AgentStreamParser>(
         tokio::select! {
             line = stdout_reader.next_line() => {
                 last_activity = Instant::now();
+                // Emit throttled activity event for CLI instance tracking
+                if last_activity.duration_since(last_activity_emit) >= ACTIVITY_EMIT_MIN_INTERVAL {
+                    last_activity_emit = last_activity;
+                    emitter.send_cli_instance_activity(cli_instance_id, std::time::Instant::now());
+                }
                 match line {
                     Ok(Some(line)) => {
                         if let Some(ref logger) = logger {
@@ -342,6 +417,11 @@ pub async fn run_agent_process<P: AgentStreamParser>(
             }
             line = stderr_reader.next_line() => {
                 last_activity = Instant::now();
+                // Emit throttled activity event for CLI instance tracking
+                if last_activity.duration_since(last_activity_emit) >= ACTIVITY_EMIT_MIN_INTERVAL {
+                    last_activity_emit = last_activity;
+                    emitter.send_cli_instance_activity(cli_instance_id, std::time::Instant::now());
+                }
                 if let Ok(Some(line)) = line {
                     if let Some(ref logger) = logger {
                         logger.log_line("stderr", &line);
