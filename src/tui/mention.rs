@@ -217,14 +217,15 @@ mod tests {
 
     #[test]
     fn test_mention_state_select_prev() {
+        use std::path::PathBuf;
         let mut state = MentionState {
             active: true,
             query: "test".to_string(),
             start_byte: 0,
             matches: vec![
-                MentionMatch { path: "a".to_string(), score: 10 },
-                MentionMatch { path: "b".to_string(), score: 9 },
-                MentionMatch { path: "c".to_string(), score: 8 },
+                MentionMatch { display_path: "a".to_string(), absolute_path: PathBuf::from("a"), score: 10 },
+                MentionMatch { display_path: "b".to_string(), absolute_path: PathBuf::from("b"), score: 9 },
+                MentionMatch { display_path: "c".to_string(), absolute_path: PathBuf::from("c"), score: 8 },
             ],
             selected_idx: 0,
         };
@@ -238,13 +239,14 @@ mod tests {
 
     #[test]
     fn test_mention_state_select_next() {
+        use std::path::PathBuf;
         let mut state = MentionState {
             active: true,
             query: "test".to_string(),
             start_byte: 0,
             matches: vec![
-                MentionMatch { path: "a".to_string(), score: 10 },
-                MentionMatch { path: "b".to_string(), score: 9 },
+                MentionMatch { display_path: "a".to_string(), absolute_path: PathBuf::from("a"), score: 10 },
+                MentionMatch { display_path: "b".to_string(), absolute_path: PathBuf::from("b"), score: 9 },
             ],
             selected_idx: 0,
         };
@@ -258,11 +260,12 @@ mod tests {
 
     #[test]
     fn test_mention_state_clear() {
+        use std::path::PathBuf;
         let mut state = MentionState {
             active: true,
             query: "test".to_string(),
             start_byte: 5,
-            matches: vec![MentionMatch { path: "a".to_string(), score: 10 }],
+            matches: vec![MentionMatch { display_path: "a".to_string(), absolute_path: PathBuf::from("a"), score: 10 }],
             selected_idx: 0,
         };
 
@@ -276,20 +279,53 @@ mod tests {
 
     #[test]
     fn test_selected_match() {
+        use std::path::PathBuf;
         let mut state = MentionState {
             active: true,
             query: "test".to_string(),
             start_byte: 0,
             matches: vec![
-                MentionMatch { path: "a".to_string(), score: 10 },
-                MentionMatch { path: "b".to_string(), score: 9 },
+                MentionMatch { display_path: "a".to_string(), absolute_path: PathBuf::from("a"), score: 10 },
+                MentionMatch { display_path: "b".to_string(), absolute_path: PathBuf::from("b"), score: 9 },
             ],
             selected_idx: 1,
         };
 
-        assert_eq!(state.selected_match().unwrap().path, "b");
+        assert_eq!(state.selected_match().unwrap().display_path, "b");
 
         state.active = false;
         assert!(state.selected_match().is_none());
+    }
+
+    #[test]
+    fn test_insert_text_with_absolute_path() {
+        use std::path::PathBuf;
+        // File with absolute path
+        let file_match = MentionMatch {
+            display_path: "src/main.rs".to_string(),
+            absolute_path: PathBuf::from("/repo/src/main.rs"),
+            score: 10,
+        };
+        assert_eq!(file_match.insert_text(), "/repo/src/main.rs");
+
+        // Folder with absolute path (should preserve trailing slash)
+        let folder_match = MentionMatch {
+            display_path: "src/".to_string(),
+            absolute_path: PathBuf::from("/repo/src"),
+            score: 10,
+        };
+        assert_eq!(folder_match.insert_text(), "/repo/src/");
+    }
+
+    #[test]
+    fn test_insert_text_fallback_to_display_path() {
+        use std::path::PathBuf;
+        // When absolute_path is relative (fallback for tests without repo_root)
+        let file_match = MentionMatch {
+            display_path: "src/main.rs".to_string(),
+            absolute_path: PathBuf::from("src/main.rs"),
+            score: 10,
+        };
+        assert_eq!(file_match.insert_text(), "src/main.rs");
     }
 }

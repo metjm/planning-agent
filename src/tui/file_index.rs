@@ -2,6 +2,7 @@
 //! Built once at TUI startup from `git ls-files` output.
 //! Includes both files and folders from the working directory.
 use std::collections::HashSet;
+use std::path::PathBuf;
 
 #[derive(Debug, Clone)]
 pub struct FileEntry {
@@ -60,12 +61,38 @@ pub enum FileIndexStatus {
 pub struct FileIndex {
     pub status: FileIndexStatus,
     pub entries: Vec<FileEntry>,
+    /// Repository root path for computing absolute paths.
+    /// When `Some`, `find_matches` will produce absolute paths for insertion.
+    /// When `None` (for tests or loading state), insertion falls back to relative display paths.
+    pub repo_root: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone)]
 pub struct MentionMatch {
-    pub path: String,
+    /// Relative path for display in the dropdown (original git ls-files path)
+    pub display_path: String,
+    /// Absolute path for insertion (repo_root joined with relative path)
+    pub absolute_path: PathBuf,
     pub score: i32,
+}
+
+impl MentionMatch {
+    /// Returns the text to insert when this match is selected.
+    /// Uses absolute path if available, otherwise falls back to display_path.
+    /// Preserves trailing slash for folders.
+    pub fn insert_text(&self) -> String {
+        if self.absolute_path.is_absolute() {
+            let mut path_str = self.absolute_path.to_string_lossy().to_string();
+            // Preserve trailing slash for folders (display_path has trailing / for folders)
+            if self.display_path.ends_with('/') && !path_str.ends_with('/') {
+                path_str.push('/');
+            }
+            path_str
+        } else {
+            // Fallback for tests without repo_root
+            self.display_path.clone()
+        }
+    }
 }
 
 impl FileIndex {
@@ -73,13 +100,27 @@ impl FileIndex {
         Self {
             status: FileIndexStatus::Loading,
             entries: Vec::new(),
+            repo_root: None,
         }
     }
 
+    /// Create a file index with entries but no repo root (for tests).
+    /// When repo_root is None, insert_text() returns display_path (relative path).
+    #[allow(dead_code)]
     pub fn with_entries(entries: Vec<FileEntry>) -> Self {
         Self {
             status: FileIndexStatus::Ready,
             entries,
+            repo_root: None,
+        }
+    }
+
+    /// Create a file index with entries and a repo root (for tests that need absolute paths).
+    pub fn with_entries_and_root(entries: Vec<FileEntry>, repo_root: PathBuf) -> Self {
+        Self {
+            status: FileIndexStatus::Ready,
+            entries,
+            repo_root: Some(repo_root),
         }
     }
 
@@ -87,6 +128,7 @@ impl FileIndex {
         Self {
             status: FileIndexStatus::Error,
             entries: Vec::new(),
+            repo_root: None,
         }
     }
 
@@ -106,8 +148,14 @@ impl FileIndex {
 
         for entry in &self.entries {
             if let Some(score) = self.compute_score(entry, &query_lower) {
+                // Compute absolute path if repo_root is available
+                let absolute_path = match &self.repo_root {
+                    Some(root) => root.join(&entry.path),
+                    None => PathBuf::from(&entry.path), // Fallback: relative path as PathBuf
+                };
                 matches.push(MentionMatch {
-                    path: entry.path.clone(),
+                    display_path: entry.path.clone(),
+                    absolute_path,
                     score,
                 });
             }
@@ -118,8 +166,8 @@ impl FileIndex {
         matches.sort_by(|a, b| {
             b.score
                 .cmp(&a.score)
-                .then_with(|| a.path.len().cmp(&b.path.len()))
-                .then_with(|| a.path.cmp(&b.path))
+                .then_with(|| a.display_path.len().cmp(&b.display_path.len()))
+                .then_with(|| a.display_path.cmp(&b.display_path))
         });
 
         matches.truncate(limit);
@@ -173,8 +221,33 @@ impl FileIndex {
 /// Build a file index by running `git ls-files` in the given directory.
 /// Includes both files and folders (extracted from file paths).
 /// This function is meant to be called via `tokio::task::spawn_blocking`.
+///
+/// Note: `git ls-files` outputs paths relative to the **repository root**, not the working_dir.
+/// We use `git rev-parse --show-toplevel` to get the repo root for computing correct absolute paths.
 pub fn build_file_index(working_dir: &std::path::Path) -> FileIndex {
     use std::process::Command;
+
+    // First, get the repository root using `git rev-parse --show-toplevel`.
+    // This is necessary because `git ls-files` outputs repo-root-relative paths,
+    // not working_dir-relative paths. Using working_dir as base would produce
+    // incorrect paths when working_dir is a subdirectory.
+    let repo_root_output = Command::new("git")
+        .args(["rev-parse", "--show-toplevel"])
+        .current_dir(working_dir)
+        .output();
+
+    let repo_root = match repo_root_output {
+        Ok(output) if output.status.success() => {
+            let raw_root = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            let root_path = PathBuf::from(&raw_root);
+            // Canonicalize to resolve symlinks; fall back to raw path if canonicalization fails
+            std::fs::canonicalize(&root_path).unwrap_or(root_path)
+        }
+        _ => {
+            // Not a git repo or git not available
+            return FileIndex::with_error();
+        }
+    };
 
     // Try to run git ls-files
     let output = Command::new("git")
@@ -230,7 +303,7 @@ pub fn build_file_index(working_dir: &std::path::Path) -> FileIndex {
                     entries.push(FileEntry::new(path.to_string()));
                 }
 
-                FileIndex::with_entries(entries)
+                FileIndex::with_entries_and_root(entries, repo_root)
             } else {
                 FileIndex::with_error()
             }
@@ -287,7 +360,7 @@ mod tests {
         let matches = index.find_matches("src", 10);
         assert_eq!(matches.len(), 3);
         // "src/" should match with high score
-        assert!(matches.iter().any(|m| m.path == "src/"));
+        assert!(matches.iter().any(|m| m.display_path == "src/"));
     }
 
     #[test]
@@ -300,7 +373,7 @@ mod tests {
         let matches = index.find_matches("components", 10);
         assert_eq!(matches.len(), 3);
         // All should match
-        assert!(matches.iter().any(|m| m.path.ends_with("components/")));
+        assert!(matches.iter().any(|m| m.display_path.ends_with("components/")));
     }
 
     #[test]
@@ -322,8 +395,8 @@ mod tests {
         let matches = index.find_matches("main.rs", 10);
         assert!(!matches.is_empty());
         // Both exact matches should be first
-        assert!(matches[0].path.ends_with("main.rs"));
-        assert!(!matches[0].path.contains("test"));
+        assert!(matches[0].display_path.ends_with("main.rs"));
+        assert!(!matches[0].display_path.contains("test"));
     }
 
     #[test]
@@ -346,7 +419,7 @@ mod tests {
         ]);
         let matches = index.find_matches("mainfile", 10);
         assert_eq!(matches.len(), 1);
-        assert_eq!(matches[0].path, "src/MainFile.rs");
+        assert_eq!(matches[0].display_path, "src/MainFile.rs");
     }
 
     #[test]
@@ -371,7 +444,7 @@ mod tests {
         let matches = index.find_matches("file.rs", 10);
         assert_eq!(matches.len(), 2);
         // Shorter path should come first (same base score, but shorter path bonus)
-        assert_eq!(matches[0].path, "short/file.rs");
+        assert_eq!(matches[0].display_path, "short/file.rs");
     }
 
     #[test]
