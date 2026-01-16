@@ -1,5 +1,8 @@
+use crate::planning_paths;
 use crate::usage_reset::{ResetTimestamp, UsageWindow, UsageWindowSpan};
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
+use std::env;
+use std::fs::OpenOptions;
 use std::io::{Read, Write};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -36,20 +39,118 @@ pub fn is_gemini_available() -> bool {
     which::which("gemini").is_ok()
 }
 
+/// Returns true if debug logging is enabled via GEMINI_USAGE_DEBUG=1
+fn is_debug_enabled() -> bool {
+    env::var("GEMINI_USAGE_DEBUG")
+        .map(|v| v == "1" || v.to_lowercase() == "true")
+        .unwrap_or(false)
+}
+
+/// Get prompt timeout from env or use default (15 seconds)
+fn get_prompt_timeout() -> Duration {
+    env::var("GEMINI_USAGE_PROMPT_TIMEOUT")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .map(Duration::from_secs)
+        .unwrap_or(Duration::from_secs(15))
+}
+
+/// Get stats output timeout from env or use default (10 seconds)
+fn get_stats_timeout() -> Duration {
+    env::var("GEMINI_USAGE_STATS_TIMEOUT")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .map(Duration::from_secs)
+        .unwrap_or(Duration::from_secs(10))
+}
+
+/// Get overall timeout from env or use default (30 seconds)
+fn get_overall_timeout() -> Duration {
+    env::var("GEMINI_USAGE_OVERALL_TIMEOUT")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .map(Duration::from_secs)
+        .unwrap_or(Duration::from_secs(30))
+}
+
+/// Debug logger that writes to ~/.planning-agent/logs/gemini-usage.log when GEMINI_USAGE_DEBUG=1
+struct DebugLogger {
+    enabled: bool,
+    start: Instant,
+    entries: Vec<String>,
+}
+
+impl DebugLogger {
+    fn new() -> Self {
+        Self {
+            enabled: is_debug_enabled(),
+            start: Instant::now(),
+            entries: Vec::new(),
+        }
+    }
+
+    fn log(&mut self, message: &str) {
+        if self.enabled {
+            let elapsed_ms = self.start.elapsed().as_millis();
+            self.entries.push(format!("[+{:06}ms] {}", elapsed_ms, message));
+        }
+    }
+
+    fn flush_to_file(&self) {
+        if !self.enabled || self.entries.is_empty() {
+            return;
+        }
+        if let Ok(log_path) = planning_paths::gemini_usage_log_path() {
+            if let Ok(mut file) = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&log_path)
+            {
+                let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+                let _ = writeln!(file, "\n=== Gemini Usage Fetch {} ===", timestamp);
+                for entry in &self.entries {
+                    let _ = writeln!(file, "{}", entry);
+                }
+            }
+        }
+    }
+}
+
+impl Drop for DebugLogger {
+    fn drop(&mut self) {
+        self.flush_to_file();
+    }
+}
+
 pub fn fetch_gemini_usage_sync() -> GeminiUsage {
+    let mut logger = DebugLogger::new();
+    logger.log("Starting Gemini usage fetch");
+
     if !is_gemini_available() {
+        logger.log("Gemini CLI not available");
         return GeminiUsage::not_available();
     }
 
-    let timeout = Duration::from_secs(20);
+    let timeout = get_overall_timeout();
+    logger.log(&format!(
+        "Timeouts: prompt={}s, stats={}s, overall={}s",
+        get_prompt_timeout().as_secs(),
+        get_stats_timeout().as_secs(),
+        timeout.as_secs()
+    ));
 
-    match run_gemini_stats_via_pty("gemini", timeout) {
+    match run_gemini_stats_via_pty("gemini", timeout, &mut logger) {
         Ok(raw_output) => {
             let output = strip_ansi_codes(&raw_output);
+            logger.log(&format!("Got output ({} bytes)", output.len()));
 
             // Parse returns (remaining %, reset_duration) from the lowest usage line
             let (usage_remaining, reset_duration) = parse_gemini_usage_with_reset(&output);
             let daily_used = usage_remaining.map(|r| 100u8.saturating_sub(r));
+            logger.log(&format!(
+                "Parsed: remaining={:?}%, used={:?}%",
+                usage_remaining, daily_used
+            ));
 
             // Build usage window with reset timestamp and span
             // Gemini has daily usage windows (24h)
@@ -62,17 +163,26 @@ pub fn fetch_gemini_usage_sync() -> GeminiUsage {
                 _ => UsageWindow::default(),
             };
 
+            logger.log("Fetch completed successfully");
             GeminiUsage {
                 daily,
                 fetched_at: Some(Instant::now()),
                 error_message: None,
             }
         }
-        Err(e) => GeminiUsage::with_error(e),
+        Err(e) => {
+            logger.log(&format!("Fetch failed: {}", e));
+            GeminiUsage::with_error(e)
+        }
     }
 }
 
-fn run_gemini_stats_via_pty(command: &str, timeout: Duration) -> Result<String, String> {
+fn run_gemini_stats_via_pty(
+    command: &str,
+    timeout: Duration,
+    logger: &mut DebugLogger,
+) -> Result<String, String> {
+    logger.log("Allocating PTY");
     let pty_system = native_pty_system();
 
     let pair = pty_system
@@ -84,6 +194,7 @@ fn run_gemini_stats_via_pty(command: &str, timeout: Duration) -> Result<String, 
         })
         .map_err(|e| format!("Failed to allocate PTY: {}", e))?;
 
+    logger.log("Spawning Gemini CLI");
     let cmd = CommandBuilder::new(command);
     let mut child = pair
         .slave
@@ -119,10 +230,18 @@ fn run_gemini_stats_via_pty(command: &str, timeout: Duration) -> Result<String, 
     });
 
     let start = Instant::now();
-    let prompt_timeout = Duration::from_secs(15);
+    let prompt_timeout = get_prompt_timeout();
+    logger.log(&format!(
+        "Waiting for CLI prompt (timeout: {}s)",
+        prompt_timeout.as_secs()
+    ));
 
     loop {
         if start.elapsed() > prompt_timeout {
+            logger.log(&format!(
+                "Prompt timeout after {:.1}s",
+                start.elapsed().as_secs_f64()
+            ));
             let _ = child.kill();
             drop(writer);
             drop(pair.master);
@@ -139,6 +258,11 @@ fn run_gemini_stats_via_pty(command: &str, timeout: Duration) -> Result<String, 
         let has_prompt = stripped.contains("Type your message") || stripped.contains(">>>");
 
         if has_prompt && len > 500 {
+            logger.log(&format!(
+                "Found prompt after {:.1}s ({} bytes)",
+                start.elapsed().as_secs_f64(),
+                len
+            ));
             break;
         }
 
@@ -146,6 +270,7 @@ fn run_gemini_stats_via_pty(command: &str, timeout: Duration) -> Result<String, 
     }
 
     if start.elapsed() > timeout {
+        logger.log("Overall timeout exceeded after finding prompt");
         let _ = child.kill();
         drop(writer);
         drop(pair.master);
@@ -153,18 +278,32 @@ fn run_gemini_stats_via_pty(command: &str, timeout: Duration) -> Result<String, 
         return Err("Timeout".to_string());
     }
 
+    logger.log("Sending /stats command");
     for c in "/stats".chars() {
-        writer.write_all(&[c as u8]).map_err(|e| format!("Failed to send: {}", e))?;
+        writer
+            .write_all(&[c as u8])
+            .map_err(|e| format!("Failed to send: {}", e))?;
         std::thread::sleep(Duration::from_millis(30));
     }
     std::thread::sleep(Duration::from_millis(200));
-    writer.write_all(b"\r").map_err(|e| format!("Failed to send Enter: {}", e))?;
+    writer
+        .write_all(b"\r")
+        .map_err(|e| format!("Failed to send Enter: {}", e))?;
 
     let stats_start = Instant::now();
-    let stats_timeout = Duration::from_secs(5);
+    let stats_timeout = get_stats_timeout();
+    logger.log(&format!(
+        "Waiting for stats output (timeout: {}s)",
+        stats_timeout.as_secs()
+    ));
 
+    let mut stats_found = false;
     loop {
         if stats_start.elapsed() > stats_timeout {
+            logger.log(&format!(
+                "Stats timeout after {:.1}s (no usage data found)",
+                stats_start.elapsed().as_secs_f64()
+            ));
             break;
         }
 
@@ -174,13 +313,23 @@ fn run_gemini_stats_via_pty(command: &str, timeout: Duration) -> Result<String, 
         drop(data);
 
         if stripped.contains("Usage left") || stripped.contains("Model Usage") {
-            std::thread::sleep(Duration::from_millis(500)); 
+            logger.log(&format!(
+                "Found stats output after {:.1}s",
+                stats_start.elapsed().as_secs_f64()
+            ));
+            stats_found = true;
+            std::thread::sleep(Duration::from_millis(500));
             break;
         }
 
         std::thread::sleep(Duration::from_millis(100));
     }
 
+    if !stats_found {
+        logger.log("Warning: Stats not found within timeout, proceeding with available output");
+    }
+
+    logger.log("Sending /quit command");
     for c in "/quit".chars() {
         let _ = writer.write_all(&[c as u8]);
         std::thread::sleep(Duration::from_millis(30));
@@ -190,15 +339,20 @@ fn run_gemini_stats_via_pty(command: &str, timeout: Duration) -> Result<String, 
     let exit_deadline = Instant::now() + Duration::from_secs(3);
     loop {
         match child.try_wait() {
-            Ok(Some(_)) => break,
+            Ok(Some(_)) => {
+                logger.log("Process exited cleanly");
+                break;
+            }
             Ok(None) => {
                 if Instant::now() > exit_deadline {
+                    logger.log("Exit timeout, killing process");
                     let _ = child.kill();
                     break;
                 }
                 std::thread::sleep(Duration::from_millis(100));
             }
             Err(_) => {
+                logger.log("Error checking process status, killing");
                 let _ = child.kill();
                 break;
             }
@@ -210,6 +364,7 @@ fn run_gemini_stats_via_pty(command: &str, timeout: Duration) -> Result<String, 
     let _ = reader_handle.join();
 
     let output = output_buffer.lock().unwrap().clone();
+    logger.log(&format!("Total output: {} bytes", output.len()));
     Ok(String::from_utf8_lossy(&output).into_owned())
 }
 
