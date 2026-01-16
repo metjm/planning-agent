@@ -77,9 +77,9 @@ pub struct Cli {
     #[arg(long)]
     pub no_daemon: bool,
 
-    /// Disable automatic git worktree creation
+    /// Enable git worktree creation (creates isolated branch for planning)
     #[arg(long)]
-    pub no_worktree: bool,
+    pub worktree: bool,
 
     /// Custom directory for git worktree (for CI/CD scenarios)
     #[arg(long)]

@@ -541,12 +541,10 @@ pub async fn run_headless(cli: Cli) -> Result<()> {
     // Canonicalize working_dir for absolute paths in prompts
     let working_dir = std::fs::canonicalize(&working_dir).unwrap_or(working_dir);
 
-    // Set up git worktree if in a git repository (and not disabled)
+    // Set up git worktree if in a git repository (and enabled via --worktree)
     let effective_working_dir = if let Some(ref existing_wt) = state.worktree_info {
         // Worktree already exists from previous session (--continue case)
-        if cli.no_worktree {
-            eprintln!("[planning] Note: Using existing worktree (--no-worktree only affects new sessions)");
-        }
+        // Note: Even if --worktree is not passed, we respect the existing worktree
         // Validate it still exists and is a valid git worktree
         if crate::git_worktree::is_valid_worktree(&existing_wt.worktree_path) {
             eprintln!("[planning] Reusing existing worktree: {}", existing_wt.worktree_path.display());
@@ -558,8 +556,8 @@ pub async fn run_headless(cli: Cli) -> Result<()> {
             state.worktree_info = None;
             original
         }
-    } else if cli.no_worktree {
-        eprintln!("[planning] Worktree disabled via --no-worktree");
+    } else if !cli.worktree {
+        // Worktree is disabled by default
         working_dir.clone()
     } else {
         // No existing worktree, try to create one
