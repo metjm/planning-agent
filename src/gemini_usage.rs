@@ -1,4 +1,4 @@
-
+use crate::usage_reset::{ResetTimestamp, UsageWindow};
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use std::io::{Read, Write};
 use std::sync::{Arc, Mutex};
@@ -6,8 +6,8 @@ use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, Default)]
 pub struct GeminiUsage {
-
-    pub usage_remaining: Option<u8>,
+    /// Daily usage window with reset timestamp
+    pub daily: UsageWindow,
 
     pub fetched_at: Option<Instant>,
 
@@ -47,10 +47,22 @@ pub fn fetch_gemini_usage_sync() -> GeminiUsage {
         Ok(raw_output) => {
             let output = strip_ansi_codes(&raw_output);
 
-            let usage_remaining = parse_gemini_usage(&output);
+            // Parse returns (remaining %, reset_duration) from the lowest usage line
+            let (usage_remaining, reset_duration) = parse_gemini_usage_with_reset(&output);
+            let daily_used = usage_remaining.map(|r| 100u8.saturating_sub(r));
+
+            // Build usage window with reset timestamp
+            let daily = match (daily_used, reset_duration) {
+                (Some(pct), Some(dur)) => {
+                    let reset_ts = ResetTimestamp::from_duration_from_now(dur);
+                    UsageWindow::with_percent_and_reset(pct, reset_ts)
+                }
+                (Some(pct), None) => UsageWindow::with_percent(pct),
+                _ => UsageWindow::default(),
+            };
 
             GeminiUsage {
-                usage_remaining,
+                daily,
                 fetched_at: Some(Instant::now()),
                 error_message: None,
             }
@@ -221,31 +233,96 @@ fn strip_ansi_codes(text: &str) -> String {
     result
 }
 
+/// Parse Gemini usage remaining percentage (for backwards compatibility in tests)
+#[cfg(test)]
 fn parse_gemini_usage(text: &str) -> Option<u8> {
+    let (usage, _) = parse_gemini_usage_with_reset(text);
+    usage
+}
+
+/// Parse Gemini usage and reset duration from the line with lowest usage.
+///
+/// Returns (usage_remaining_percent, reset_duration) where:
+/// - usage_remaining_percent is the lowest percentage found
+/// - reset_duration is the duration parsed from that same line
+fn parse_gemini_usage_with_reset(text: &str) -> (Option<u8>, Option<Duration>) {
     let mut lowest_usage: Option<f32> = None;
+    let mut lowest_reset_duration: Option<Duration> = None;
 
     for line in text.lines() {
-
         if line.contains('%') && line.contains("Resets") {
-
             let parts: Vec<&str> = line.split_whitespace().collect();
 
+            // Find percentage
+            let mut line_pct: Option<f32> = None;
             for part in parts.iter() {
                 if part.ends_with('%') {
                     let pct_str = part.trim_end_matches('%');
                     if let Ok(pct) = pct_str.parse::<f32>() {
-
-                        if lowest_usage.is_none() || pct < lowest_usage.unwrap() {
-                            lowest_usage = Some(pct);
-                        }
+                        line_pct = Some(pct);
                     }
-                    break; 
+                    break;
+                }
+            }
+
+            // If this line has the lowest usage, capture its reset duration
+            if let Some(pct) = line_pct {
+                if lowest_usage.is_none() || pct < lowest_usage.unwrap() {
+                    lowest_usage = Some(pct);
+                    lowest_reset_duration = parse_reset_duration(line);
                 }
             }
         }
     }
 
-    lowest_usage.map(|p| p.round() as u8)
+    (lowest_usage.map(|p| p.round() as u8), lowest_reset_duration)
+}
+
+/// Parse reset duration from a line like "... (Resets in 23h 18m)" or "... (Resets in 24h)"
+fn parse_reset_duration(line: &str) -> Option<Duration> {
+    // Find "Resets in" pattern
+    let lower = line.to_lowercase();
+    let resets_pos = lower.find("resets in ")?;
+    let after_resets = &line[resets_pos + 10..];
+
+    // Extract duration text (until ')' or end of line)
+    let duration_text = if let Some(paren_pos) = after_resets.find(')') {
+        after_resets[..paren_pos].trim()
+    } else {
+        after_resets.trim()
+    };
+
+    // Parse duration components (e.g., "23h 18m", "24h", "18m")
+    let mut total_secs: u64 = 0;
+    let lower_duration = duration_text.to_lowercase();
+
+    // Parse hours
+    if let Some(h_pos) = lower_duration.find('h') {
+        let h_str = lower_duration[..h_pos].split_whitespace().last()?;
+        if let Ok(hours) = h_str.parse::<u64>() {
+            total_secs += hours * 3600;
+        }
+    }
+
+    // Parse minutes
+    if let Some(m_pos) = lower_duration.find('m') {
+        // Find the number before 'm'
+        let before_m = &lower_duration[..m_pos];
+        let m_str = before_m.split_whitespace().last()?;
+        // Strip 'h' suffix if present (e.g., "23h" from "23h 18m")
+        let m_str = m_str.trim_end_matches('h');
+        if !m_str.is_empty() {
+            if let Ok(minutes) = m_str.parse::<u64>() {
+                total_secs += minutes * 60;
+            }
+        }
+    }
+
+    if total_secs > 0 {
+        Some(Duration::from_secs(total_secs))
+    } else {
+        None
+    }
 }
 
 #[cfg(test)]
@@ -264,7 +341,7 @@ mod tests {
   gemini-3-pro-preview           -      100.0% (Resets in 24h)
 "#;
         let usage = parse_gemini_usage(output);
-        assert_eq!(usage, Some(99)); 
+        assert_eq!(usage, Some(99));
     }
 
     #[test]
@@ -274,7 +351,47 @@ mod tests {
   gemini-2.5-pro                 -   25.5% (Resets in 6h)
 "#;
         let usage = parse_gemini_usage(output);
-        assert_eq!(usage, Some(26)); 
+        assert_eq!(usage, Some(26));
+    }
+
+    #[test]
+    fn test_parse_reset_duration_hours_and_minutes() {
+        let line = "gemini-2.5-flash - 99.3% (Resets in 23h 18m)";
+        let duration = parse_reset_duration(line);
+        assert_eq!(duration, Some(Duration::from_secs(23 * 3600 + 18 * 60)));
+    }
+
+    #[test]
+    fn test_parse_reset_duration_hours_only() {
+        let line = "gemini-2.5-pro - 100.0% (Resets in 24h)";
+        let duration = parse_reset_duration(line);
+        assert_eq!(duration, Some(Duration::from_secs(24 * 3600)));
+    }
+
+    #[test]
+    fn test_parse_reset_duration_minutes_only() {
+        let line = "gemini-2.5-flash - 99.0% (Resets in 45m)";
+        let duration = parse_reset_duration(line);
+        assert_eq!(duration, Some(Duration::from_secs(45 * 60)));
+    }
+
+    #[test]
+    fn test_parse_reset_duration_no_match() {
+        let line = "gemini-2.5-flash - 99.0%";
+        let duration = parse_reset_duration(line);
+        assert_eq!(duration, None);
+    }
+
+    #[test]
+    fn test_parse_gemini_usage_with_reset_captures_duration() {
+        let output = r#"
+  gemini-2.5-flash               -   50.0% (Resets in 12h)
+  gemini-2.5-pro                 -   25.5% (Resets in 6h)
+"#;
+        let (usage, duration) = parse_gemini_usage_with_reset(output);
+        assert_eq!(usage, Some(26)); // Lowest is 25.5% -> rounds to 26%
+        // The duration should be from the 25.5% line (6h)
+        assert_eq!(duration, Some(Duration::from_secs(6 * 3600)));
     }
 
     #[test]
@@ -291,8 +408,18 @@ mod tests {
 
         assert!(usage.fetched_at.is_some());
         if usage.error_message.is_none() {
-            assert!(usage.usage_remaining.is_some(), "Should have usage data");
-            eprintln!("Usage remaining: {}%", usage.usage_remaining.unwrap());
+            assert!(
+                usage.daily.used_percent.is_some(),
+                "Should have daily usage data"
+            );
+            eprintln!("Daily used: {}%", usage.daily.used_percent.unwrap());
+            if let Some(remaining) = usage.daily.time_until_reset() {
+                eprintln!(
+                    "Resets in: {}h {}m",
+                    remaining.as_secs() / 3600,
+                    (remaining.as_secs() % 3600) / 60
+                );
+            }
         }
     }
 }

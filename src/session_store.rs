@@ -25,7 +25,11 @@ use std::path::{Path, PathBuf};
 
 /// Current snapshot format version.
 /// Increment this when making breaking changes to the snapshot format.
-pub const SNAPSHOT_VERSION: u32 = 1;
+///
+/// Version history:
+/// - v1: Initial version with session_used/weekly_used in ProviderUsage
+/// - v2: UsageWindow with reset timestamps (session/weekly fields)
+pub const SNAPSHOT_VERSION: u32 = 2;
 
 /// A persistable snapshot of a workflow session.
 ///
@@ -281,20 +285,40 @@ pub fn load_snapshot(working_dir: &Path, session_id: &str) -> Result<SessionSnap
 
 /// Loads a snapshot from a specific path.
 fn load_snapshot_from_path(snapshot_path: &Path) -> Result<SessionSnapshot> {
+    use crate::session_store_migration::{migrate_v1_to_v2, LegacySessionSnapshotV1};
+
     let content = fs::read_to_string(snapshot_path)
         .with_context(|| format!("Failed to read snapshot file: {}", snapshot_path.display()))?;
 
-    let snapshot: SessionSnapshot = serde_json::from_str(&content)
+    // First, try to parse just the version to determine format
+    let version_check: serde_json::Value = serde_json::from_str(&content)
         .with_context(|| "Failed to parse snapshot file as JSON")?;
 
+    let version = version_check
+        .get("version")
+        .and_then(|v| v.as_u64())
+        .map(|v| v as u32)
+        .unwrap_or(1);
+
     // Version check
-    if snapshot.version > SNAPSHOT_VERSION {
+    if version > SNAPSHOT_VERSION {
         anyhow::bail!(
             "Snapshot version {} is newer than supported version {}. Please upgrade planning-agent.",
-            snapshot.version,
+            version,
             SNAPSHOT_VERSION
         );
     }
+
+    // Handle migration from v1
+    if version == 1 {
+        let legacy: LegacySessionSnapshotV1 = serde_json::from_str(&content)
+            .with_context(|| "Failed to parse v1 snapshot for migration")?;
+        return Ok(migrate_v1_to_v2(legacy));
+    }
+
+    // Parse as current version
+    let snapshot: SessionSnapshot = serde_json::from_str(&content)
+        .with_context(|| "Failed to parse snapshot file as JSON")?;
 
     Ok(snapshot)
 }

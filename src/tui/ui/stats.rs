@@ -130,6 +130,8 @@ pub fn draw_stats(frame: &mut Frame, session: &Session, area: Rect, show_live_to
 }
 
 fn build_account_usage(session: &Session) -> Vec<Line<'static>> {
+    use crate::usage_reset::format_countdown;
+
     let mut lines = Vec::new();
     let has_any_usage = !session.account_usage.providers.is_empty();
 
@@ -142,9 +144,13 @@ fn build_account_usage(session: &Session) -> Vec<Line<'static>> {
 
         let mut providers: Vec<_> = session.account_usage.providers.values().collect();
         providers.sort_by(|a, b| {
-            if a.provider == "claude" { std::cmp::Ordering::Less }
-            else if b.provider == "claude" { std::cmp::Ordering::Greater }
-            else { a.provider.cmp(&b.provider) }
+            if a.provider == "claude" {
+                std::cmp::Ordering::Less
+            } else if b.provider == "claude" {
+                std::cmp::Ordering::Greater
+            } else {
+                a.provider.cmp(&b.provider)
+            }
         });
 
         for provider in providers {
@@ -159,44 +165,98 @@ fn build_account_usage(session: &Session) -> Vec<Line<'static>> {
             };
 
             if provider.has_error() || !provider.supports_usage {
-                let reason = provider.status_message.as_deref().unwrap_or("N/A").to_string();
+                let reason = provider
+                    .status_message
+                    .as_deref()
+                    .unwrap_or("N/A")
+                    .to_string();
                 lines.push(Line::from(vec![
-                    Span::styled(format!(" {}: ", provider.display_name), Style::default().fg(Color::White)),
+                    Span::styled(
+                        format!(" {}: ", provider.display_name),
+                        Style::default().fg(Color::White),
+                    ),
                     Span::styled("N/A", Style::default().fg(Color::DarkGray)),
-                    Span::styled(format!(" ({})", reason), Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC)),
+                    Span::styled(
+                        format!(" ({})", reason),
+                        Style::default()
+                            .fg(Color::DarkGray)
+                            .add_modifier(Modifier::ITALIC),
+                    ),
                 ]));
             } else {
-                lines.push(Line::from(vec![
-                    Span::styled(format!(" {}", provider.display_name), header_style),
-                ]));
+                lines.push(Line::from(vec![Span::styled(
+                    format!(" {}", provider.display_name),
+                    header_style,
+                )]));
 
                 if let Some(ref plan) = provider.plan_type {
                     lines.push(Line::from(vec![
                         Span::styled("  Plan: ", Style::default().fg(Color::White)),
-                        Span::styled(plan.clone(), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+                        Span::styled(
+                            plan.clone(),
+                            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                        ),
                     ]));
                 }
 
-                if let Some(session_pct) = provider.session_used {
-                    let color = if session_pct >= 90 { Color::Red }
-                               else if session_pct >= 70 { Color::Yellow }
-                               else { Color::Green };
-                    let label = if provider.provider == "codex" { "  5h: " } else { "  Session: " };
-                    lines.push(Line::from(vec![
+                if let Some(session_pct) = provider.session.used_percent {
+                    let color = if session_pct >= 90 {
+                        Color::Red
+                    } else if session_pct >= 70 {
+                        Color::Yellow
+                    } else {
+                        Color::Green
+                    };
+                    let label = if provider.provider == "codex" {
+                        "  5h: "
+                    } else {
+                        "  Session: "
+                    };
+
+                    // Build usage line with optional countdown
+                    let mut spans = vec![
                         Span::styled(label, Style::default().fg(Color::White)),
-                        Span::styled(format!("{}% used", session_pct), Style::default().fg(color)),
-                    ]));
+                        Span::styled(format!("{}%", session_pct), Style::default().fg(color)),
+                    ];
+
+                    if let Some(remaining) = provider.session.time_until_reset() {
+                        spans.push(Span::styled(
+                            format!(" ({})", format_countdown(Some(remaining))),
+                            Style::default().fg(Color::DarkGray),
+                        ));
+                    }
+
+                    lines.push(Line::from(spans));
                 }
 
-                if let Some(weekly_pct) = provider.weekly_used {
-                    let color = if weekly_pct >= 90 { Color::Red }
-                               else if weekly_pct >= 70 { Color::Yellow }
-                               else { Color::Green };
-                    let label = if provider.provider == "gemini" { "  Daily: " } else { "  Weekly: " };
-                    lines.push(Line::from(vec![
+                if let Some(weekly_pct) = provider.weekly.used_percent {
+                    let color = if weekly_pct >= 90 {
+                        Color::Red
+                    } else if weekly_pct >= 70 {
+                        Color::Yellow
+                    } else {
+                        Color::Green
+                    };
+                    let label = if provider.provider == "gemini" {
+                        "  Daily: "
+                    } else {
+                        "  Weekly: "
+                    };
+
+                    // Build usage line with optional countdown
+                    let mut spans = vec![
                         Span::styled(label, Style::default().fg(Color::White)),
-                        Span::styled(format!("{}% used", weekly_pct), Style::default().fg(color)),
-                    ]));
+                        Span::styled(format!("{}%", weekly_pct), Style::default().fg(color)),
+                    ];
+
+                    if let Some(remaining) = provider.weekly.time_until_reset() {
+                        spans.push(Span::styled(
+                            format!(" ({})", format_countdown(Some(remaining))),
+                            Style::default().fg(Color::DarkGray),
+                        ));
+                    }
+
+                    lines.push(Line::from(spans));
                 }
             }
         }
