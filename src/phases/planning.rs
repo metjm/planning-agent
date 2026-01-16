@@ -1,10 +1,12 @@
 use crate::agents::{AgentContext, AgentType};
 use crate::config::WorkflowConfig;
 use crate::prompt_format::PromptBuilder;
+use crate::session_logger::SessionLogger;
 use crate::state::{ResumeStrategy, State};
 use crate::tui::SessionEventSender;
 use anyhow::Result;
 use std::path::Path;
+use std::sync::Arc;
 
 const PLANNING_SYSTEM_PROMPT: &str = r#"You are a technical planning agent.
 Create a detailed implementation plan for the given objective.
@@ -22,6 +24,7 @@ pub async fn run_planning_phase_with_context(
     config: &WorkflowConfig,
     session_sender: SessionEventSender,
     state_path: &Path,
+    session_logger: Arc<SessionLogger>,
 ) -> Result<()> {
     let planning_config = &config.workflow.planning;
     let agent_name = &planning_config.agent;
@@ -56,6 +59,7 @@ pub async fn run_planning_phase_with_context(
         phase: "Planning".to_string(),
         session_key,
         resume_strategy,
+        session_logger,
     };
 
     let result = agent

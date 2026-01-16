@@ -5,10 +5,12 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 
 use crate::cli_usage::AccountUsage;
+use crate::session_logger::{LogCategory, LogLevel, SessionLogger};
 use crate::state::State;
 use crate::tui::file_index::FileIndex;
 use crate::tui::session::TodoItem;
 use crate::update::{UpdateResult, UpdateStatus, VersionInfo};
+use std::sync::Arc;
 
 /// Command sent from UI to workflow to control execution.
 #[derive(Debug, Clone)]
@@ -292,6 +294,8 @@ pub struct SessionEventSender {
     session_id: usize,
     run_id: u64,
     inner: mpsc::UnboundedSender<Event>,
+    /// Optional session logger for workflow events.
+    session_logger: Option<Arc<SessionLogger>>,
 }
 
 /// Some methods may not be used in all code paths but are part of the
@@ -303,11 +307,54 @@ impl SessionEventSender {
             session_id,
             run_id,
             inner: sender,
+            session_logger: None,
         }
+    }
+
+    /// Creates a new SessionEventSender with a session logger attached.
+    pub fn with_logger(
+        session_id: usize,
+        run_id: u64,
+        sender: mpsc::UnboundedSender<Event>,
+        logger: Arc<SessionLogger>,
+    ) -> Self {
+        Self {
+            session_id,
+            run_id,
+            inner: sender,
+            session_logger: Some(logger),
+        }
+    }
+
+    /// Attaches a session logger to this sender.
+    pub fn set_logger(&mut self, logger: Arc<SessionLogger>) {
+        self.session_logger = Some(logger);
+    }
+
+    /// Returns the session logger if one is attached.
+    pub fn logger(&self) -> Option<&Arc<SessionLogger>> {
+        self.session_logger.as_ref()
     }
 
     pub fn session_id(&self) -> usize {
         self.session_id
+    }
+
+    /// Logs a message to the session logger if available.
+    pub fn log(&self, level: LogLevel, category: LogCategory, message: &str) {
+        if let Some(ref logger) = self.session_logger {
+            logger.log(level, category, message);
+        }
+    }
+
+    /// Logs an info-level workflow message.
+    pub fn log_workflow(&self, message: &str) {
+        self.log(LogLevel::Info, LogCategory::Workflow, message);
+    }
+
+    /// Logs a debug-level workflow message.
+    pub fn log_workflow_debug(&self, message: &str) {
+        self.log(LogLevel::Debug, LogCategory::Workflow, message);
     }
 
     pub fn send_output(&self, line: String) {

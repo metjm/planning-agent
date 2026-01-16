@@ -2,10 +2,12 @@ use crate::agents::{AgentContext, AgentType};
 use crate::config::WorkflowConfig;
 use crate::phases::ReviewResult;
 use crate::prompt_format::PromptBuilder;
+use crate::session_logger::SessionLogger;
 use crate::state::{ResumeStrategy, State};
 use crate::tui::SessionEventSender;
 use anyhow::Result;
 use std::path::Path;
+use std::sync::Arc;
 
 const SUMMARY_SYSTEM_PROMPT: &str = r#"You are a concise technical summarizer.
 Your task is to provide a brief, focused summary of the content provided.
@@ -20,22 +22,20 @@ pub fn spawn_summary_generation(
     config: &WorkflowConfig,
     sender: SessionEventSender,
     reviews: Option<&[ReviewResult]>,
+    session_logger: Arc<SessionLogger>,
 ) {
-
     let plan_path = working_dir.join(&state.plan_file);
     let working_dir = working_dir.to_path_buf();
     let config = config.clone();
     let phase_clone = phase.clone();
 
     let summary_input = if phase.starts_with("Reviewing") {
-
         if let Some(reviews) = reviews {
             build_review_summary_input(reviews)
         } else {
             "No review data available.".to_string()
         }
     } else {
-
         match std::fs::read_to_string(&plan_path) {
             Ok(content) => build_plan_summary_input(&content, &phase),
             Err(e) => format!("Failed to read plan file: {}", e),
@@ -45,7 +45,7 @@ pub fn spawn_summary_generation(
     sender.send_run_tab_summary_generating(phase.clone());
 
     tokio::spawn(async move {
-        match run_summary_generation(&phase_clone, &summary_input, &working_dir, &config, sender.clone()).await {
+        match run_summary_generation(&phase_clone, &summary_input, &working_dir, &config, sender.clone(), session_logger).await {
             Ok(summary) => {
                 sender.send_run_tab_summary_ready(phase_clone, summary);
             }
@@ -100,8 +100,8 @@ async fn run_summary_generation(
     working_dir: &Path,
     config: &WorkflowConfig,
     sender: SessionEventSender,
+    session_logger: Arc<SessionLogger>,
 ) -> Result<String> {
-
     let agent_name = &config.workflow.planning.agent;
 
     let agent_config = config
@@ -117,6 +117,7 @@ async fn run_summary_generation(
         phase: phase.to_string(),
         session_key: None,
         resume_strategy: ResumeStrategy::Stateless,
+        session_logger,
     };
 
     let result = agent

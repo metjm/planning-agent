@@ -2,14 +2,16 @@
 
 use super::WorkflowResult;
 use crate::app::failure::{FailureContext, FailureKind};
-use crate::app::util::{build_workflow_failure_summary, log_workflow};
+use crate::app::util::build_workflow_failure_summary;
 use crate::app::workflow_decisions::{wait_for_workflow_failure_decision, WorkflowFailureDecision};
 use crate::config::WorkflowConfig;
 use crate::phases::{self, run_revision_phase_with_context};
+use crate::session_logger::{LogCategory, LogLevel, SessionLogger};
 use crate::state::{Phase, State};
 use crate::tui::{CancellationError, SessionEventSender, UserApprovalResponse, WorkflowCommand};
 use anyhow::Result;
 use std::path::Path;
+use std::sync::Arc;
 use tokio::sync::mpsc;
 
 #[allow(clippy::too_many_arguments)]
@@ -22,30 +24,28 @@ pub async fn run_revising_phase(
     approval_rx: &mut mpsc::Receiver<UserApprovalResponse>,
     control_rx: &mut mpsc::Receiver<WorkflowCommand>,
     last_reviews: &mut Vec<phases::ReviewResult>,
+    session_logger: Arc<SessionLogger>,
 ) -> Result<Option<WorkflowResult>> {
     // Check for commands before starting revision
     if let Ok(cmd) = control_rx.try_recv() {
         match cmd {
             WorkflowCommand::Interrupt { feedback } => {
-                log_workflow(working_dir, &format!("Received interrupt during revising: {}", feedback));
+                session_logger.log(LogLevel::Info, LogCategory::Workflow, &format!("Received interrupt during revising: {}", feedback));
                 sender.send_output("[revision] Interrupted by user".to_string());
                 return Err(CancellationError { feedback }.into());
             }
             WorkflowCommand::Stop => {
-                log_workflow(working_dir, "Received stop during revising");
+                session_logger.log(LogLevel::Info, LogCategory::Workflow, "Received stop during revising");
                 sender.send_output("[revision] Stopping...".to_string());
                 return Ok(Some(WorkflowResult::Stopped));
             }
         }
     }
 
-    log_workflow(
-        working_dir,
-        &format!(
-            ">>> ENTERING Revising phase (iteration {})",
-            state.iteration
-        ),
-    );
+    session_logger.log(LogLevel::Info, LogCategory::Workflow, &format!(
+        ">>> ENTERING Revising phase (iteration {})",
+        state.iteration
+    ));
     sender.send_phase_started("Revising".to_string());
     sender.send_output("".to_string());
     sender.send_output(format!(
@@ -58,7 +58,7 @@ pub async fn run_revising_phase(
     let mut retry_attempts = 0usize;
 
     loop {
-        log_workflow(working_dir, "Calling run_revision_phase_with_context...");
+        session_logger.log(LogLevel::Info, LogCategory::Workflow, "Calling run_revision_phase_with_context...");
         let revision_result = run_revision_phase_with_context(
             state,
             working_dir,
@@ -67,6 +67,7 @@ pub async fn run_revising_phase(
             sender.clone(),
             state.iteration,
             state_path,
+            session_logger.clone(),
         )
         .await;
 
@@ -76,12 +77,12 @@ pub async fn run_revising_phase(
                 break;
             }
             Err(e) if e.downcast_ref::<CancellationError>().is_some() => {
-                log_workflow(working_dir, "Revising phase was cancelled");
+                session_logger.log(LogLevel::Info, LogCategory::Workflow, "Revising phase was cancelled");
                 return Err(e);
             }
             Err(e) => {
                 let error_msg = format!("{}", e);
-                log_workflow(working_dir, &format!("Revising phase failed: {}", error_msg));
+                session_logger.log(LogLevel::Info, LogCategory::Workflow, &format!("Revising phase failed: {}", error_msg));
                 sender.send_output(format!("[revision] Failed: {}", error_msg));
 
                 // Check if we can auto-retry
@@ -110,12 +111,12 @@ pub async fn run_revising_phase(
 
                 match decision {
                     WorkflowFailureDecision::Retry => {
-                        log_workflow(working_dir, "User chose to retry revision");
+                        session_logger.log(LogLevel::Info, LogCategory::Workflow, "User chose to retry revision");
                         retry_attempts = 0; // Reset retry counter for fresh attempt
                         continue;
                     }
                     WorkflowFailureDecision::Stop => {
-                        log_workflow(working_dir, "User chose to stop and save state after revision failure");
+                        session_logger.log(LogLevel::Info, LogCategory::Workflow, "User chose to stop and save state after revision failure");
                         // Save failure context for later recovery
                         state.set_failure(FailureContext {
                             kind: FailureKind::Unknown(error_msg),
@@ -131,13 +132,13 @@ pub async fn run_revising_phase(
                         return Ok(Some(WorkflowResult::Stopped));
                     }
                     WorkflowFailureDecision::Abort => {
-                        log_workflow(working_dir, "User chose to abort after revision failure");
+                        session_logger.log(LogLevel::Info, LogCategory::Workflow, "User chose to abort after revision failure");
                         return Ok(Some(WorkflowResult::Aborted {
                             reason: format!("Revision failed: {}", error_msg),
                         }));
                     }
                     WorkflowFailureDecision::Stopped => {
-                        log_workflow(working_dir, "Workflow stopped during revision failure decision");
+                        session_logger.log(LogLevel::Info, LogCategory::Workflow, "Workflow stopped during revision failure decision");
                         return Ok(Some(WorkflowResult::Stopped));
                     }
                 }
@@ -146,7 +147,7 @@ pub async fn run_revising_phase(
     }
 
     last_reviews.clear();
-    log_workflow(working_dir, "run_revision_phase_with_context completed");
+    session_logger.log(LogLevel::Info, LogCategory::Workflow, "run_revision_phase_with_context completed");
 
     // Keep old feedback files - don't cleanup
     // let feedback_path = working_dir.join(&state.feedback_file);
@@ -160,18 +161,16 @@ pub async fn run_revising_phase(
         config,
         sender.clone(),
         None,
+        session_logger.clone(),
     );
 
     state.iteration += 1;
     // Update feedback filename for the new iteration before transitioning to review
     state.update_feedback_for_iteration(state.iteration);
-    log_workflow(
-        working_dir,
-        &format!(
-            "Transitioning: Revising -> Reviewing (iteration now {})",
-            state.iteration
-        ),
-    );
+    session_logger.log(LogLevel::Info, LogCategory::Workflow, &format!(
+        "Transitioning: Revising -> Reviewing (iteration now {})",
+        state.iteration
+    ));
     state.transition(Phase::Reviewing)?;
     state.set_updated_at();
     state.save_atomic(state_path)?;

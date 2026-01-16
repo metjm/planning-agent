@@ -1,7 +1,7 @@
 //! Reviewing phase execution.
 
 use super::WorkflowResult;
-use crate::app::util::{build_all_reviewers_failed_summary, build_review_failure_summary, log_workflow};
+use crate::app::util::{build_all_reviewers_failed_summary, build_review_failure_summary};
 use crate::app::workflow_decisions::{
     handle_max_iterations, wait_for_all_reviewers_failed_decision, wait_for_review_decision,
     AllReviewersFailedDecision, ReviewDecision,
@@ -11,11 +11,13 @@ use crate::phases::{
     self, aggregate_reviews, merge_feedback, run_multi_agent_review_with_context,
     write_feedback_files,
 };
+use crate::session_logger::{LogCategory, LogLevel, SessionLogger};
 use crate::state::{FeedbackStatus, Phase, State};
 use crate::tui::{CancellationError, SessionEventSender, UserApprovalResponse, WorkflowCommand};
 use anyhow::Result;
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::Arc;
 use tokio::sync::mpsc;
 
 pub struct WorkflowPhaseContext<'a> {
@@ -23,6 +25,21 @@ pub struct WorkflowPhaseContext<'a> {
     pub state_path: &'a Path,
     pub config: &'a WorkflowConfig,
     pub sender: &'a SessionEventSender,
+    /// Session logger for workflow events.
+    pub session_logger: Arc<SessionLogger>,
+}
+
+impl<'a> WorkflowPhaseContext<'a> {
+    /// Logs a workflow message to the session logger.
+    pub fn log_workflow(&self, message: &str) {
+        self.session_logger.log(LogLevel::Info, LogCategory::Workflow, message);
+    }
+
+    /// Logs a workflow message at a specific level.
+    #[allow(dead_code)]
+    pub fn log_workflow_level(&self, level: LogLevel, message: &str) {
+        self.session_logger.log(level, LogCategory::Workflow, message);
+    }
 }
 
 pub async fn run_reviewing_phase(
@@ -36,13 +53,10 @@ pub async fn run_reviewing_phase(
     let state_path = context.state_path;
     let config = context.config;
     let sender = context.sender;
-    log_workflow(
-        working_dir,
-        &format!(
-            ">>> ENTERING Reviewing phase (iteration {})",
-            state.iteration
-        ),
-    );
+    context.log_workflow(&format!(
+        ">>> ENTERING Reviewing phase (iteration {})",
+        state.iteration
+    ));
     sender.send_phase_started("Reviewing".to_string());
     sender.send_output("".to_string());
     sender.send_output(format!(
@@ -67,12 +81,12 @@ pub async fn run_reviewing_phase(
         if let Ok(cmd) = control_rx.try_recv() {
             match cmd {
                 WorkflowCommand::Interrupt { feedback } => {
-                    log_workflow(working_dir, &format!("Received interrupt during reviewing: {}", feedback));
+                    context.log_workflow( &format!("Received interrupt during reviewing: {}", feedback));
                     sender.send_output("[review] Interrupted by user".to_string());
                     return Ok(Some(WorkflowResult::NeedsRestart { user_feedback: feedback }));
                 }
                 WorkflowCommand::Stop => {
-                    log_workflow(working_dir, "Received stop during reviewing");
+                    context.log_workflow( "Received stop during reviewing");
                     sender.send_output("[review] Stopping...".to_string());
                     return Ok(Some(WorkflowResult::Stopped));
                 }
@@ -81,10 +95,7 @@ pub async fn run_reviewing_phase(
 
         let pending_display_ids: Vec<&str> =
             pending_reviewers.iter().map(|r| r.display_id()).collect();
-        log_workflow(
-            working_dir,
-            &format!("Running reviewers: {:?}", pending_display_ids),
-        );
+        context.log_workflow(&format!("Running reviewers: {:?}", pending_display_ids));
         let batch = run_multi_agent_review_with_context(
             state,
             working_dir,
@@ -93,6 +104,7 @@ pub async fn run_reviewing_phase(
             sender.clone(),
             state.iteration,
             state_path,
+            context.session_logger.clone(),
         )
         .await;
 
@@ -100,7 +112,7 @@ pub async fn run_reviewing_phase(
         let batch = match batch {
             Ok(b) => b,
             Err(e) if e.downcast_ref::<CancellationError>().is_some() => {
-                log_workflow(working_dir, "Review phase was cancelled");
+                context.log_workflow( "Review phase was cancelled");
                 return Err(e);
             }
             Err(e) => return Err(e),
@@ -159,23 +171,23 @@ pub async fn run_reviewing_phase(
 
             match decision {
                 AllReviewersFailedDecision::Retry => {
-                    log_workflow(working_dir, "User chose to retry all reviewers");
+                    context.log_workflow( "User chose to retry all reviewers");
                     retry_attempts = 0; // Reset retry counter for fresh attempt
                     pending_reviewers = failed_agent_refs.clone();
                     continue;
                 }
                 AllReviewersFailedDecision::Stop => {
-                    log_workflow(working_dir, "User chose to stop and save state");
+                    context.log_workflow( "User chose to stop and save state");
                     return Ok(Some(WorkflowResult::Stopped));
                 }
                 AllReviewersFailedDecision::Abort => {
-                    log_workflow(working_dir, "User chose to abort after all reviewers failed");
+                    context.log_workflow( "User chose to abort after all reviewers failed");
                     return Ok(Some(WorkflowResult::Aborted {
                         reason: "All reviewers failed - user chose to abort".to_string(),
                     }));
                 }
                 AllReviewersFailedDecision::Stopped => {
-                    log_workflow(working_dir, "Workflow stopped during all reviewers failed decision");
+                    context.log_workflow( "Workflow stopped during all reviewers failed decision");
                     return Ok(Some(WorkflowResult::Stopped));
                 }
             }
@@ -196,7 +208,7 @@ pub async fn run_reviewing_phase(
                 break;
             }
             ReviewDecision::Stopped => {
-                log_workflow(working_dir, "Workflow stopped during review decision");
+                context.log_workflow( "Workflow stopped during review decision");
                 return Ok(Some(WorkflowResult::Stopped));
             }
         }
@@ -211,7 +223,7 @@ pub async fn run_reviewing_phase(
     let _ = merge_feedback(&reviews, &feedback_path);
 
     let status = aggregate_reviews(&reviews, &config.workflow.reviewing.aggregation);
-    log_workflow(working_dir, &format!("Aggregated status: {:?}", status));
+    context.log_workflow( &format!("Aggregated status: {:?}", status));
 
     *last_reviews = reviews;
     state.last_feedback_status = Some(status.clone());
@@ -224,11 +236,12 @@ pub async fn run_reviewing_phase(
         config,
         sender.clone(),
         Some(last_reviews),
+        context.session_logger.clone(),
     );
 
     match status {
         FeedbackStatus::Approved => {
-            log_workflow(working_dir, "Plan APPROVED! Transitioning to Complete");
+            context.log_workflow( "Plan APPROVED! Transitioning to Complete");
             sender.send_output("[planning] Plan APPROVED!".to_string());
             state.transition(Phase::Complete)?;
         }
@@ -249,7 +262,7 @@ pub async fn run_reviewing_phase(
                     return Ok(Some(workflow_result));
                 }
             } else {
-                log_workflow(working_dir, "Transitioning: Reviewing -> Revising");
+                context.log_workflow( "Transitioning: Reviewing -> Revising");
                 state.transition(Phase::Revising)?;
             }
         }

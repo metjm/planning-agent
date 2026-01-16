@@ -74,14 +74,17 @@ impl ClaudeAgent {
         context: Option<&AgentContext>,
         mcp_config: Option<&str>,
     ) -> Result<AgentResult> {
-        let logger = AgentLogger::new(&self.name, &self.working_dir);
+        let logger = context.map(|ctx| AgentLogger::new(&self.name, ctx.session_logger.clone()));
         self.log_start(&logger, &prompt, &system_prompt, context.is_some());
         self.log_timeout(&logger);
 
         let cmd = self.build_command(&prompt, &system_prompt, max_turns, context, mcp_config);
-        let config = RunnerConfig::new(self.name.clone(), self.working_dir.clone())
+        let mut config = RunnerConfig::new(self.name.clone(), self.working_dir.clone())
             .with_activity_timeout(self.activity_timeout)
             .with_overall_timeout(self.overall_timeout);
+        if let Some(ctx) = context {
+            config = config.with_session_logger(ctx.session_logger.clone());
+        }
         let mut parser = ClaudeParser::new();
 
         let output = run_agent_process(cmd, &config, &mut parser, emitter).await?;

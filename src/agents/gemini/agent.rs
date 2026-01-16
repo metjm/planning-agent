@@ -81,7 +81,7 @@ impl GeminiAgent {
         context: AgentContext,
     ) -> Result<AgentResult> {
         let emitter = ContextEmitter::new(context.clone(), self.name.clone());
-        self.execute_streaming_internal(prompt, &emitter, true, None).await
+        self.execute_streaming_internal(prompt, &emitter, Some(&context), None).await
     }
 
     /// Execute with MCP config for review feedback collection
@@ -94,18 +94,18 @@ impl GeminiAgent {
         mcp_config: &McpServerConfig,
     ) -> Result<AgentResult> {
         let emitter = ContextEmitter::new(context.clone(), self.name.clone());
-        self.execute_streaming_internal(prompt, &emitter, true, Some(mcp_config)).await
+        self.execute_streaming_internal(prompt, &emitter, Some(&context), Some(mcp_config)).await
     }
 
     async fn execute_streaming_internal(
         &self,
         prompt: String,
         emitter: &dyn EventEmitter,
-        has_context: bool,
+        context: Option<&AgentContext>,
         mcp_config: Option<&McpServerConfig>,
     ) -> Result<AgentResult> {
-        let logger = AgentLogger::new(&self.name, &self.working_dir);
-        self.log_start(&logger, &prompt, has_context, mcp_config.is_some());
+        let logger = context.map(|ctx| AgentLogger::new(&self.name, ctx.session_logger.clone()));
+        self.log_start(&logger, &prompt, context.is_some(), mcp_config.is_some());
 
         // Create temp config dir if using MCP (will be cleaned up when dropped)
         let _temp_config = match mcp_config {
@@ -114,9 +114,12 @@ impl GeminiAgent {
         };
 
         let cmd = self.build_command(&prompt, mcp_config, _temp_config.as_ref());
-        let config = RunnerConfig::new(self.name.clone(), self.working_dir.clone())
+        let mut config = RunnerConfig::new(self.name.clone(), self.working_dir.clone())
             .with_activity_timeout(self.activity_timeout)
             .with_overall_timeout(self.overall_timeout);
+        if let Some(ctx) = context {
+            config = config.with_session_logger(ctx.session_logger.clone());
+        }
         let mut parser = GeminiParser::new();
 
         let output = run_agent_process(cmd, &config, &mut parser, emitter).await?;

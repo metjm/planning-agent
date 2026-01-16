@@ -171,6 +171,7 @@ pub fn generate_mcp_config(plan_content: &str, review_prompt: &str) -> Result<St
 }
 
 /// Generate MCP config with the server config struct for more control
+#[allow(dead_code)]
 pub fn generate_mcp_server_config(plan_content: &str, review_prompt: &str) -> Result<McpServerConfig> {
     McpServerConfig::new(plan_content, review_prompt)
 }

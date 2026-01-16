@@ -7,10 +7,12 @@ pub mod runner;
 
 use crate::config::AgentConfig;
 use crate::mcp::McpServerConfig;
+use crate::session_logger::SessionLogger;
 use crate::state::ResumeStrategy;
 use crate::tui::SessionEventSender;
 use anyhow::Result;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct AgentContext {
@@ -18,6 +20,9 @@ pub struct AgentContext {
     pub phase: String,
     pub session_key: Option<String>,
     pub resume_strategy: ResumeStrategy,
+    /// Session logger for agent events.
+    #[allow(dead_code)]
+    pub session_logger: Arc<SessionLogger>,
 }
 
 #[derive(Debug, Clone)]

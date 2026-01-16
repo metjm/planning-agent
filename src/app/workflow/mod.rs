@@ -40,8 +40,8 @@ mod planning;
 mod reviewing;
 mod revising;
 
-use crate::app::util::log_workflow;
 use crate::config::WorkflowConfig;
+use crate::session_logger::{create_session_logger, LogCategory, LogLevel};
 use crate::session_tracking::SessionTracker;
 use crate::state::{Phase, State};
 use crate::tui::{CancellationError, Event, SessionEventSender, UserApprovalResponse, WorkflowCommand};
@@ -54,6 +54,7 @@ use completion::handle_completion;
 use planning::run_planning_phase;
 use reviewing::{run_reviewing_phase, WorkflowPhaseContext};
 use revising::run_revising_phase;
+
 
 pub enum WorkflowResult {
     Accepted,
@@ -95,6 +96,10 @@ pub async fn run_workflow_with_config(
 
     let sender = SessionEventSender::new(session_id, run_id, output_tx);
 
+    // Create session logger for workflow events
+    let session_logger = create_session_logger(&state.workflow_session_id)?;
+    session_logger.log(LogLevel::Info, LogCategory::Workflow, "Session logger initialized");
+
     // Create session tracker for daemon integration
     let tracker = Arc::new(SessionTracker::new(no_daemon));
 
@@ -111,22 +116,20 @@ pub async fn run_workflow_with_config(
         )
         .await
     {
-        log_workflow(&working_dir, &format!("Session registration failed (non-fatal): {}", e));
+        session_logger.log(LogLevel::Warn, LogCategory::Workflow, &format!("Session registration failed (non-fatal): {}", e));
     }
 
-    log_workflow(
-        &working_dir,
-        &format!(
-            "=== WORKFLOW START: phase={:?}, iteration={} ===",
-            state.phase, state.iteration
-        ),
-    );
+    session_logger.log(LogLevel::Info, LogCategory::Workflow, &format!(
+        "=== WORKFLOW START: phase={:?}, iteration={} ===",
+        state.phase, state.iteration
+    ));
 
     let phase_context = WorkflowPhaseContext {
         working_dir: &working_dir,
         state_path: &state_path,
         config: &config,
         sender: &sender,
+        session_logger: session_logger.clone(),
     };
 
     let mut last_reviews: Vec<crate::phases::ReviewResult> = Vec::new();
@@ -146,6 +149,7 @@ pub async fn run_workflow_with_config(
                     &sender,
                     &mut approval_rx,
                     &mut control_rx,
+                    session_logger.clone(),
                 )
                 .await;
 
@@ -170,11 +174,11 @@ pub async fn run_workflow_with_config(
                         if let Ok(cmd) = control_rx.try_recv() {
                             match cmd {
                                 WorkflowCommand::Interrupt { feedback } => {
-                                    log_workflow(&working_dir, "Planning phase cancelled, restarting with feedback");
+                                    session_logger.log(LogLevel::Info, LogCategory::Workflow, "Planning phase cancelled, restarting with feedback");
                                     return Ok(WorkflowResult::NeedsRestart { user_feedback: feedback });
                                 }
                                 WorkflowCommand::Stop => {
-                                    log_workflow(&working_dir, "Planning phase cancelled for stop");
+                                    session_logger.log(LogLevel::Info, LogCategory::Workflow, "Planning phase cancelled for stop");
                                     let _ = tracker.mark_stopped(&state.workflow_session_id).await;
                                     return Ok(WorkflowResult::Stopped);
                                 }
@@ -223,11 +227,11 @@ pub async fn run_workflow_with_config(
                         if let Ok(cmd) = control_rx.try_recv() {
                             match cmd {
                                 WorkflowCommand::Interrupt { feedback } => {
-                                    log_workflow(&working_dir, "Reviewing phase cancelled, restarting with feedback");
+                                    session_logger.log(LogLevel::Info, LogCategory::Workflow, "Reviewing phase cancelled, restarting with feedback");
                                     return Ok(WorkflowResult::NeedsRestart { user_feedback: feedback });
                                 }
                                 WorkflowCommand::Stop => {
-                                    log_workflow(&working_dir, "Reviewing phase cancelled for stop");
+                                    session_logger.log(LogLevel::Info, LogCategory::Workflow, "Reviewing phase cancelled for stop");
                                     let _ = tracker.mark_stopped(&state.workflow_session_id).await;
                                     return Ok(WorkflowResult::Stopped);
                                 }
@@ -252,6 +256,7 @@ pub async fn run_workflow_with_config(
                     &mut approval_rx,
                     &mut control_rx,
                     &mut last_reviews,
+                    session_logger.clone(),
                 )
                 .await;
 
@@ -275,11 +280,11 @@ pub async fn run_workflow_with_config(
                         if let Ok(cmd) = control_rx.try_recv() {
                             match cmd {
                                 WorkflowCommand::Interrupt { feedback } => {
-                                    log_workflow(&working_dir, "Revising phase cancelled, restarting with feedback");
+                                    session_logger.log(LogLevel::Info, LogCategory::Workflow, "Revising phase cancelled, restarting with feedback");
                                     return Ok(WorkflowResult::NeedsRestart { user_feedback: feedback });
                                 }
                                 WorkflowCommand::Stop => {
-                                    log_workflow(&working_dir, "Revising phase cancelled for stop");
+                                    session_logger.log(LogLevel::Info, LogCategory::Workflow, "Revising phase cancelled for stop");
                                     let _ = tracker.mark_stopped(&state.workflow_session_id).await;
                                     return Ok(WorkflowResult::Stopped);
                                 }
@@ -300,13 +305,10 @@ pub async fn run_workflow_with_config(
         }
     }
 
-    log_workflow(
-        &working_dir,
-        &format!(
-            "=== WORKFLOW END: phase={:?}, iteration={} ===",
-            state.phase, state.iteration
-        ),
-    );
+    session_logger.log(LogLevel::Info, LogCategory::Workflow, &format!(
+        "=== WORKFLOW END: phase={:?}, iteration={} ===",
+        state.phase, state.iteration
+    ));
 
     if state.phase == Phase::Complete {
         let result = handle_completion(

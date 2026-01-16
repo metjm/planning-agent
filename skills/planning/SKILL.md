@@ -57,6 +57,97 @@ Use the type system to prevent errors at compile time, not runtime.
 - **DO NOT**: Use HashMap<String, Value> when a struct is more appropriate
 - **DO NOT**: Use Option/Result to paper over design issues
 
+### Clean Cuts - No Backwards Compatibility (CRITICAL)
+
+**When implementing new features or refactoring, make a clean cut. Never maintain backwards compatibility.**
+
+This is one of the most important principles. Backwards compatibility code creates:
+- Technical debt that accumulates forever
+- Confusion about which code path is "correct"
+- Maintenance burden for deprecated patterns
+- Bugs from edge cases in compatibility layers
+
+**What "clean cut" means:**
+- **DO**: Delete old code entirely when replacing it
+- **DO**: Update ALL callers to use the new approach
+- **DO**: Remove old function signatures, not just deprecate them
+- **DO**: Change data structures completely if the new design requires it
+- **DO**: Migrate all existing data/state to the new format
+
+**What to NEVER do:**
+- **NEVER**: Keep old functions "just in case" something still calls them
+- **NEVER**: Add `_deprecated`, `_old`, `_legacy` suffixed functions
+- **NEVER**: Create adapters/shims to make old code work with new code
+- **NEVER**: Re-export removed items from their old locations
+- **NEVER**: Add conversion methods between old and new formats
+- **NEVER**: Keep old fields in structs "for compatibility"
+- **NEVER**: Support both old and new config formats simultaneously
+- **NEVER**: Add feature flags to toggle between old/new behavior
+
+**Example of what NOT to do:**
+```rust
+// BAD - Don't do this!
+pub fn old_function() { new_function() } // Shim
+pub use new_module::Thing as OldThing; // Re-export
+struct Config {
+    old_field: Option<String>, // "for compatibility"
+    new_field: String,
+}
+```
+
+**Example of what TO do:**
+```rust
+// GOOD - Clean cut
+// 1. Delete old_function entirely
+// 2. Update all 47 callers to use new_function
+// 3. Delete the old module
+// 4. Migrate existing configs to new format
+```
+
+If updating all callers seems like too much work, that's exactly when you MUST do it. The "too much work" feeling is a sign of accumulated debt that must be paid now.
+
+### No Option Wrappers for "Transitions"
+
+A common anti-pattern is wrapping new required fields in `Option<T>` "during transition" or "for backwards compatibility". This is forbidden.
+
+**What to NEVER do:**
+```rust
+// BAD - Don't wrap new fields in Option "for now"
+struct Context {
+    session_logger: Option<Arc<SessionLogger>>,  // "Optional during transition"
+}
+
+// BAD - Don't add fallback logic for missing required fields
+fn log(&self, msg: &str) {
+    if let Some(logger) = &self.session_logger {
+        logger.log(msg);
+    } else {
+        legacy_log(msg);  // Fallback to old system
+    }
+}
+```
+
+**What TO do:**
+```rust
+// GOOD - Make it required from the start
+struct Context {
+    session_logger: Arc<SessionLogger>,  // Required, no Option
+}
+
+// GOOD - Update ALL callers to provide the required field
+fn log(&self, msg: &str) {
+    self.session_logger.log(msg);  // No fallback needed
+}
+```
+
+**Why this matters:**
+- `Option` wrappers for "transitions" never get removed
+- Fallback code paths rarely get tested
+- You end up maintaining two systems indefinitely
+- The "transition" becomes permanent technical debt
+
+**The rule:** If something should be required in the final design, make it required from the first commit. Update all callers immediately, even if there are many.
+
 ### Clean Code - No Exceptions
 
 The lazy path is never acceptable.
@@ -134,7 +225,9 @@ Write the plan to the `plan-output-path` provided in the inputs. The plan should
 - **Simple tasks can be implemented in a single step**
 - **NEVER propose tests that use mocks** - all tests must use real infrastructure
 - **ALWAYS use strong types** - plans must specify concrete types, not generic strings/maps
-- **NEVER leave backwards-compatibility code** - plans must update all callers
+- **NEVER leave backwards-compatibility code** - plans MUST delete old code and update ALL callers
+- **NEVER add shims, adapters, re-exports, or compatibility layers** - make clean cuts
+- **NEVER keep old fields/functions "for compatibility"** - remove them entirely
 - **ALWAYS propose linter rules** when the issue being addressed is preventable by static analysis
 
 ## Output Format

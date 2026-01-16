@@ -6,10 +6,12 @@
 use crate::agents::log::AgentLogger;
 use crate::agents::protocol::{AgentEvent, AgentOutput, AgentStreamParser};
 use crate::agents::{AgentContext, AgentResult};
+use crate::session_logger::SessionLogger;
 use crate::tui::TokenUsage;
 use anyhow::{Context, Result};
 use std::path::PathBuf;
 use std::process::Stdio;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
@@ -25,7 +27,7 @@ pub const DEFAULT_OVERALL_TIMEOUT: Duration = Duration::from_secs(21600); // 6 h
 pub const PROCESS_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Configuration for the agent runner.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct RunnerConfig {
     /// Agent name for logging
     pub agent_name: String,
@@ -35,6 +37,20 @@ pub struct RunnerConfig {
     pub activity_timeout: Duration,
     /// Overall execution timeout
     pub overall_timeout: Duration,
+    /// Session logger for agent output
+    pub session_logger: Option<Arc<SessionLogger>>,
+}
+
+impl std::fmt::Debug for RunnerConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RunnerConfig")
+            .field("agent_name", &self.agent_name)
+            .field("working_dir", &self.working_dir)
+            .field("activity_timeout", &self.activity_timeout)
+            .field("overall_timeout", &self.overall_timeout)
+            .field("session_logger", &self.session_logger.is_some())
+            .finish()
+    }
 }
 
 impl RunnerConfig {
@@ -44,6 +60,7 @@ impl RunnerConfig {
             working_dir,
             activity_timeout: DEFAULT_ACTIVITY_TIMEOUT,
             overall_timeout: DEFAULT_OVERALL_TIMEOUT,
+            session_logger: None,
         }
     }
 
@@ -54,6 +71,11 @@ impl RunnerConfig {
 
     pub fn with_overall_timeout(mut self, timeout: Duration) -> Self {
         self.overall_timeout = timeout;
+        self
+    }
+
+    pub fn with_session_logger(mut self, logger: Arc<SessionLogger>) -> Self {
+        self.session_logger = Some(logger);
         self
     }
 }
@@ -219,7 +241,7 @@ pub async fn run_agent_process<P: AgentStreamParser>(
     parser: &mut P,
     emitter: &dyn EventEmitter,
 ) -> Result<AgentOutput> {
-    let logger = AgentLogger::new(&config.agent_name, &config.working_dir);
+    let logger = config.session_logger.as_ref().map(|sl| AgentLogger::new(&config.agent_name, sl.clone()));
 
     command.current_dir(&config.working_dir);
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
