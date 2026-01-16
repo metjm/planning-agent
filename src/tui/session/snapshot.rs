@@ -94,6 +94,7 @@ impl Session {
             running: false, // Will be set when workflow resumes
             active_tools_by_agent: HashMap::new(), // Reset
             completed_tools_by_agent: HashMap::new(), // Reset
+            cli_instances: Vec::new(), // Runtime-only, reset on resume
             approval_mode: ui_state.approval_mode,
             approval_context: ui_state.approval_context,
             plan_summary: ui_state.plan_summary,

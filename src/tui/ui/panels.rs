@@ -1,4 +1,5 @@
 
+use super::cli_instances::{draw_cli_instances, CLI_INSTANCES_MIN_HEIGHT};
 use super::objective::{compute_objective_height, draw_objective, OBJECTIVE_MAX_FRACTION, OBJECTIVE_MIN_HEIGHT};
 use super::stats::draw_stats;
 use super::util::{compute_wrapped_line_count, parse_markdown_line};
@@ -39,7 +40,7 @@ pub fn draw_main(frame: &mut Frame, session: &Session, area: Rect) {
         draw_chat(frame, session, left_chunks[1], show_tool_panel);
     }
 
-    // Split right column into Objective (top) and Stats (bottom)
+    // Split right column into Objective (top), CLI Instances (middle), and Stats (bottom)
     let right_area = chunks[1];
     let objective_text = session
         .workflow_state
@@ -52,17 +53,26 @@ pub fn draw_main(frame: &mut Frame, session: &Session, area: Rect) {
     let objective_height = compute_objective_height(objective_text, right_area.width, max_objective_height)
         .max(OBJECTIVE_MIN_HEIGHT);
 
+    // Compute CLI instances panel height: minimum height always, grows with instance count
+    let instance_count = session.cli_instances.len();
+    // Each instance takes 1 line, plus 2 for borders/title
+    let desired_cli_height = (instance_count as u16).saturating_add(2).max(CLI_INSTANCES_MIN_HEIGHT);
+    // Cap at reasonable max to leave room for stats
+    let cli_instances_height = desired_cli_height.min(8);
+
     let right_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(objective_height),
+            Constraint::Length(cli_instances_height),
             Constraint::Min(0),
         ])
         .split(right_area);
 
     draw_objective(frame, session, right_chunks[0]);
+    draw_cli_instances(frame, session, right_chunks[1]);
     // Show live tools in Stats only when tool panel is NOT visible (narrow terminals)
-    draw_stats(frame, session, right_chunks[1], !in_implementation_mode);
+    draw_stats(frame, session, right_chunks[2], !in_implementation_mode);
 }
 
 fn draw_output(frame: &mut Frame, session: &Session, area: Rect) {

@@ -1,11 +1,14 @@
 
 mod chat;
+mod cli_instances;
 pub mod context;
 mod input;
 pub mod model;
 mod paste;
 mod snapshot;
 mod tools;
+
+pub use cli_instances::{CliInstance, CliInstanceId};
 
 pub use context::SessionContext;
 use crate::app::WorkflowResult;
@@ -81,6 +84,8 @@ pub struct Session {
     pub active_tools_by_agent: HashMap<String, Vec<ActiveTool>>,
     /// Completed tools grouped by agent name (newest first)
     pub completed_tools_by_agent: HashMap<String, Vec<CompletedTool>>,
+    /// Active CLI agent instances (runtime-only, not serialized)
+    pub cli_instances: Vec<CliInstance>,
 
     pub approval_mode: ApprovalMode,
     pub approval_context: ApprovalContext,
@@ -187,6 +192,7 @@ impl Session {
             running: true,
             active_tools_by_agent: HashMap::new(),
             completed_tools_by_agent: HashMap::new(),
+            cli_instances: Vec::new(),
 
             approval_mode: ApprovalMode::None,
             approval_context: ApprovalContext::PlanApproval,

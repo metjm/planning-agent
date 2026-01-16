@@ -1,4 +1,5 @@
 
+mod cli_instances;
 mod dropdowns;
 mod error_overlay;
 mod objective;

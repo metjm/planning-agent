@@ -35,16 +35,11 @@ pub async fn run_revision_phase_with_context(
         .get_agent(agent_name)
         .ok_or_else(|| anyhow::anyhow!("Planning agent '{}' not found in config", agent_name))?;
 
-    // Note: When session_persistence is not enabled, revision uses a fresh session
-    // instead of resuming the planning session. This is expected behavior for non-Claude
-    // agents (Codex, Gemini) which don't support session resume.
-
     let agent = AgentType::from_config(agent_name, agent_config, working_dir.to_path_buf())?;
 
-    // Determine if session resume is active for prompt simplification
-    let session_resume_active = agent.supports_session_resume()
-        && agent_config.session_persistence.enabled
-        && agent_config.session_persistence.strategy == ResumeStrategy::ConversationResume;
+    // Revision always uses ConversationResume to continue the planning session.
+    // All agents (Claude, Codex, Gemini) support session resume.
+    let session_resume_active = agent.supports_session_resume();
 
     session_sender.send_output(format!(
         "[revision] Using planning agent: {} with {} review(s){}",
@@ -56,17 +51,13 @@ pub async fn run_revision_phase_with_context(
     let prompt = build_revision_prompt_with_reviews(state, reviews, working_dir, session_resume_active);
 
     let phase_name = format!("Revising #{}", iteration);
-    // Use resume strategy from config if session persistence is enabled, otherwise Stateless
-    let configured_strategy = if agent_config.session_persistence.enabled {
-        agent_config.session_persistence.strategy.clone()
-    } else {
-        ResumeStrategy::Stateless
-    };
+    // Revision always uses ConversationResume to continue the planning conversation.
+    // This ensures the agent has full context from the original planning phase.
+    let resume_strategy = ResumeStrategy::ConversationResume;
     // Use the SAME session key as planning phase for session continuity
     let conversation_id_name = planning_conversation_key(agent_name);
-    let agent_session = state.get_or_create_agent_session(&conversation_id_name, configured_strategy);
+    let agent_session = state.get_or_create_agent_session(&conversation_id_name, resume_strategy.clone());
     let conversation_id = agent_session.conversation_id.clone();
-    let resume_strategy = agent_session.resume_strategy.clone();
 
     state.record_invocation(&conversation_id_name, &phase_name);
     state.set_updated_at();

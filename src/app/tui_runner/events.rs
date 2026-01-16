@@ -655,6 +655,32 @@ async fn handle_session_event(
                 }
             }
         }
+        // CLI instance lifecycle events
+        Event::SessionCliInstanceStarted {
+            session_id,
+            id,
+            agent_name,
+            pid,
+            started_at,
+        } => {
+            if let Some(session) = tab_manager.session_by_id_mut(session_id) {
+                session.cli_instance_started(id, agent_name, pid, started_at);
+            }
+        }
+        Event::SessionCliInstanceActivity {
+            session_id,
+            id,
+            activity_at,
+        } => {
+            if let Some(session) = tab_manager.session_by_id_mut(session_id) {
+                session.cli_instance_activity(id, activity_at);
+            }
+        }
+        Event::SessionCliInstanceFinished { session_id, id } => {
+            if let Some(session) = tab_manager.session_by_id_mut(session_id) {
+                session.cli_instance_finished(id);
+            }
+        }
         _ => {}
     }
     Ok(())

@@ -1,6 +1,7 @@
 use anyhow::Result;
 use crossterm::event::{Event as CrosstermEvent, KeyEvent, KeyEventKind};
 use futures::StreamExt;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use tokio::sync::mpsc;
 
@@ -8,9 +9,10 @@ use crate::cli_usage::AccountUsage;
 use crate::session_logger::{LogCategory, LogLevel, SessionLogger};
 use crate::state::State;
 use crate::tui::file_index::FileIndex;
-use crate::tui::session::TodoItem;
+use crate::tui::session::{CliInstanceId, TodoItem};
 use crate::update::{UpdateResult, UpdateStatus, VersionInfo};
 use std::sync::Arc;
+use std::time::Instant;
 
 /// Command sent from UI to workflow to control execution.
 #[derive(Debug, Clone)]
@@ -171,6 +173,24 @@ pub enum Event {
     /// Verification workflow result
     SessionVerificationResult { session_id: usize, approved: bool, iterations_used: u32 },
 
+    /// CLI instance lifecycle events
+    SessionCliInstanceStarted {
+        session_id: usize,
+        id: CliInstanceId,
+        agent_name: String,
+        pid: Option<u32>,
+        started_at: Instant,
+    },
+    SessionCliInstanceActivity {
+        session_id: usize,
+        id: CliInstanceId,
+        activity_at: Instant,
+    },
+    SessionCliInstanceFinished {
+        session_id: usize,
+        id: CliInstanceId,
+    },
+
     /// File index ready for @-mention auto-complete
     FileIndexReady(FileIndex),
 
@@ -296,6 +316,8 @@ pub struct SessionEventSender {
     inner: mpsc::UnboundedSender<Event>,
     /// Optional session logger for workflow events.
     session_logger: Option<Arc<SessionLogger>>,
+    /// Monotonic counter for generating unique CLI instance IDs per session.
+    cli_instance_counter: Arc<AtomicU64>,
 }
 
 /// Some methods may not be used in all code paths but are part of the
@@ -308,6 +330,7 @@ impl SessionEventSender {
             run_id,
             inner: sender,
             session_logger: None,
+            cli_instance_counter: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -323,6 +346,7 @@ impl SessionEventSender {
             run_id,
             inner: sender,
             session_logger: Some(logger),
+            cli_instance_counter: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -608,6 +632,47 @@ impl SessionEventSender {
             session_id: self.session_id,
             approved,
             iterations_used,
+        });
+    }
+
+    // CLI instance lifecycle event helpers
+
+    /// Allocates a new unique CLI instance ID for this session.
+    pub fn next_cli_instance_id(&self) -> CliInstanceId {
+        CliInstanceId(self.cli_instance_counter.fetch_add(1, Ordering::Relaxed))
+    }
+
+    /// Sends a CLI instance started event.
+    pub fn send_cli_instance_started(
+        &self,
+        id: CliInstanceId,
+        agent_name: String,
+        pid: Option<u32>,
+        started_at: Instant,
+    ) {
+        let _ = self.inner.send(Event::SessionCliInstanceStarted {
+            session_id: self.session_id,
+            id,
+            agent_name,
+            pid,
+            started_at,
+        });
+    }
+
+    /// Sends a CLI instance activity event.
+    pub fn send_cli_instance_activity(&self, id: CliInstanceId, activity_at: Instant) {
+        let _ = self.inner.send(Event::SessionCliInstanceActivity {
+            session_id: self.session_id,
+            id,
+            activity_at,
+        });
+    }
+
+    /// Sends a CLI instance finished event.
+    pub fn send_cli_instance_finished(&self, id: CliInstanceId) {
+        let _ = self.inner.send(Event::SessionCliInstanceFinished {
+            session_id: self.session_id,
+            id,
         });
     }
 }
