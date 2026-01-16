@@ -1,5 +1,5 @@
 use crate::planning_paths;
-use crate::usage_reset::{ResetTimestamp, UsageWindow};
+use crate::usage_reset::{ResetTimestamp, UsageWindow, UsageWindowSpan};
 use serde::Deserialize;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader};
@@ -115,8 +115,10 @@ fn collect_jsonl_files(dir: &Path, files: &mut Vec<PathBuf>) {
 struct ParsedRateLimits {
     session_used: f64,
     session_resets_at: Option<i64>,
+    session_window_minutes: Option<u64>,
     weekly_used: f64,
     weekly_resets_at: Option<i64>,
+    weekly_window_minutes: Option<u64>,
 }
 
 fn read_rate_limits_from_session(path: &Path) -> Option<ParsedRateLimits> {
@@ -124,8 +126,10 @@ fn read_rate_limits_from_session(path: &Path) -> Option<ParsedRateLimits> {
     let reader = BufReader::new(file);
     let mut primary_used: Option<f64> = None;
     let mut primary_resets_at: Option<i64> = None;
+    let mut primary_window_minutes: Option<u64> = None;
     let mut secondary_used: Option<f64> = None;
     let mut secondary_resets_at: Option<i64> = None;
+    let mut secondary_window_minutes: Option<u64> = None;
 
     for line in reader.lines().map_while(Result::ok) {
         if let Ok(entry) = serde_json::from_str::<SessionEntry>(&line) {
@@ -135,6 +139,7 @@ fn read_rate_limits_from_session(path: &Path) -> Option<ParsedRateLimits> {
                         if let Some(rate_limits) = payload.rate_limits {
                             if let Some(primary) = rate_limits.primary {
                                 primary_used = Some(primary.used_percent);
+                                primary_window_minutes = primary.window_minutes;
                                 // Only capture resets_at if window is 5h (300 minutes)
                                 if primary.window_minutes == Some(300) {
                                     primary_resets_at = primary.resets_at;
@@ -142,6 +147,7 @@ fn read_rate_limits_from_session(path: &Path) -> Option<ParsedRateLimits> {
                             }
                             if let Some(secondary) = rate_limits.secondary {
                                 secondary_used = Some(secondary.used_percent);
+                                secondary_window_minutes = secondary.window_minutes;
                                 // Only capture resets_at if window is weekly (10080 minutes)
                                 if secondary.window_minutes == Some(10080) {
                                     secondary_resets_at = secondary.resets_at;
@@ -158,8 +164,10 @@ fn read_rate_limits_from_session(path: &Path) -> Option<ParsedRateLimits> {
         (Some(p), Some(s)) => Some(ParsedRateLimits {
             session_used: p,
             session_resets_at: primary_resets_at,
+            session_window_minutes: primary_window_minutes,
             weekly_used: s,
             weekly_resets_at: secondary_resets_at,
+            weekly_window_minutes: secondary_window_minutes,
         }),
         _ => None,
     }
@@ -201,20 +209,34 @@ pub fn fetch_codex_usage_sync() -> CodexUsage {
                 }
             }
 
-            // Build usage windows with reset timestamps
+            // Convert window_minutes to UsageWindowSpan
+            let session_span = match limits.session_window_minutes {
+                Some(300) => UsageWindowSpan::Minutes(300), // 5h
+                Some(mins) => UsageWindowSpan::Minutes(mins as u16),
+                None => UsageWindowSpan::Unknown,
+            };
+            let weekly_span = match limits.weekly_window_minutes {
+                Some(10080) => UsageWindowSpan::Days(7), // 7d
+                Some(mins) => UsageWindowSpan::Minutes(mins as u16),
+                None => UsageWindowSpan::Unknown,
+            };
+
+            // Build usage windows with reset timestamps and spans
             let session = match limits.session_resets_at {
-                Some(ts) => UsageWindow::with_percent_and_reset(
+                Some(ts) => UsageWindow::with_percent_reset_and_span(
                     session_used_pct,
                     ResetTimestamp::from_epoch_seconds(ts),
+                    session_span,
                 ),
-                None => UsageWindow::with_percent(session_used_pct),
+                None => UsageWindow::with_percent_and_span(session_used_pct, session_span),
             };
             let weekly = match limits.weekly_resets_at {
-                Some(ts) => UsageWindow::with_percent_and_reset(
+                Some(ts) => UsageWindow::with_percent_reset_and_span(
                     weekly_used_pct,
                     ResetTimestamp::from_epoch_seconds(ts),
+                    weekly_span,
                 ),
-                None => UsageWindow::with_percent(weekly_used_pct),
+                None => UsageWindow::with_percent_and_span(weekly_used_pct, weekly_span),
             };
 
             return CodexUsage {

@@ -1,4 +1,4 @@
-use crate::usage_reset::{ResetTimestamp, UsageWindow};
+use crate::usage_reset::{ResetTimestamp, UsageWindow, UsageWindowSpan};
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use std::io::{Read, Write};
 use std::sync::{Arc, Mutex};
@@ -51,13 +51,14 @@ pub fn fetch_gemini_usage_sync() -> GeminiUsage {
             let (usage_remaining, reset_duration) = parse_gemini_usage_with_reset(&output);
             let daily_used = usage_remaining.map(|r| 100u8.saturating_sub(r));
 
-            // Build usage window with reset timestamp
+            // Build usage window with reset timestamp and span
+            // Gemini has daily usage windows (24h)
             let daily = match (daily_used, reset_duration) {
                 (Some(pct), Some(dur)) => {
                     let reset_ts = ResetTimestamp::from_duration_from_now(dur);
-                    UsageWindow::with_percent_and_reset(pct, reset_ts)
+                    UsageWindow::with_percent_reset_and_span(pct, reset_ts, UsageWindowSpan::Days(1))
                 }
-                (Some(pct), None) => UsageWindow::with_percent(pct),
+                (Some(pct), None) => UsageWindow::with_percent_and_span(pct, UsageWindowSpan::Days(1)),
                 _ => UsageWindow::default(),
             };
 

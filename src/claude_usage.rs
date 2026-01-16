@@ -1,5 +1,5 @@
 use crate::planning_paths;
-use crate::usage_reset::{ResetTimestamp, UsageWindow};
+use crate::usage_reset::{ResetTimestamp, UsageWindow, UsageWindowSpan};
 use chrono::{Datelike, Local, NaiveDate, NaiveTime, TimeZone, Utc};
 use chrono_tz::Tz;
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
@@ -544,15 +544,25 @@ pub fn fetch_claude_usage_sync() -> ClaudeUsage {
 
             let plan = parse_plan_type(&output);
 
-            // Build usage windows with reset timestamps
+            // Build usage windows with reset timestamps and spans
+            // Claude session window length is not verifiable from CLI output, so use Unknown
+            // Weekly window is known to be 7 days
             let session = match (session_pct, session_reset) {
-                (Some(pct), Some(ts)) => UsageWindow::with_percent_and_reset(pct, ts),
-                (Some(pct), None) => UsageWindow::with_percent(pct),
+                (Some(pct), Some(ts)) => UsageWindow::with_percent_reset_and_span(
+                    pct,
+                    ts,
+                    UsageWindowSpan::Unknown, // Session duration not verifiable
+                ),
+                (Some(pct), None) => UsageWindow::with_percent_and_span(pct, UsageWindowSpan::Unknown),
                 _ => UsageWindow::default(),
             };
             let weekly = match (weekly_pct, weekly_reset) {
-                (Some(pct), Some(ts)) => UsageWindow::with_percent_and_reset(pct, ts),
-                (Some(pct), None) => UsageWindow::with_percent(pct),
+                (Some(pct), Some(ts)) => UsageWindow::with_percent_reset_and_span(
+                    pct,
+                    ts,
+                    UsageWindowSpan::Days(7), // Weekly window is 7 days
+                ),
+                (Some(pct), None) => UsageWindow::with_percent_and_span(pct, UsageWindowSpan::Days(7)),
                 _ => UsageWindow::default(),
             };
 
