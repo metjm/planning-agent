@@ -9,11 +9,13 @@ use crate::phases::{
 };
 use crate::planning_paths;
 use crate::prompt_format::PromptBuilder;
+use crate::session_logger::SessionLogger;
 use crate::state::{FeedbackStatus, Phase, State};
 use crate::tui::{Event, SessionEventSender};
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 use tokio::sync::mpsc;
 
 pub async fn extract_feature_name(
@@ -74,6 +76,11 @@ pub async fn run_headless_with_config(
     let sender = SessionEventSender::new(0, 0, output_tx.clone());
     let mut last_reviews: Vec<phases::ReviewResult> = Vec::new();
 
+    // Create session logger for headless mode
+    let session_logger = SessionLogger::new(&state.workflow_session_id)
+        .context("Failed to create session logger")?;
+    let session_logger = Arc::new(session_logger);
+
     sender.send_output(format!(
         "[session] Workflow session ID: {}",
         state.workflow_session_id
@@ -95,6 +102,7 @@ pub async fn run_headless_with_config(
                         &config,
                         sender.clone(),
                         &state_path,
+                        session_logger.clone(),
                     )
                     .await;
 
@@ -180,6 +188,7 @@ pub async fn run_headless_with_config(
                         sender.clone(),
                         iteration,
                         &state_path,
+                        session_logger.clone(),
                     )
                     .await?;
 
@@ -361,6 +370,7 @@ pub async fn run_headless_with_config(
                         sender.clone(),
                         iteration,
                         &state_path,
+                        session_logger.clone(),
                     )
                     .await;
 

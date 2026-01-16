@@ -2,11 +2,13 @@ use crate::agents::{AgentContext, AgentType};
 use crate::config::WorkflowConfig;
 use crate::phases::verification::extract_verification_feedback;
 use crate::prompt_format::PromptBuilder;
+use crate::session_logger::SessionLogger;
 use crate::state::ResumeStrategy;
 use crate::tui::SessionEventSender;
 use crate::verification_state::VerificationState;
 use anyhow::Result;
 use std::fs;
+use std::sync::Arc;
 
 const FIXING_SYSTEM_PROMPT: &str = r#"You are a fixing agent that addresses issues found during verification.
 
@@ -26,6 +28,7 @@ pub async fn run_fixing_phase(
     config: &WorkflowConfig,
     verification_report: &str,
     session_sender: SessionEventSender,
+    session_logger: Arc<SessionLogger>,
 ) -> Result<()> {
     let fixing_config = config
         .verification
@@ -60,6 +63,7 @@ pub async fn run_fixing_phase(
         phase: phase_name,
         session_key: None, // Fixing is stateless per round
         resume_strategy: ResumeStrategy::Stateless,
+        session_logger,
     };
 
     let result = agent

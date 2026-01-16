@@ -48,21 +48,15 @@ fn main() -> Result<()> {
 async fn async_main() -> Result<()> {
     let start = std::time::Instant::now();
 
+    // Log startup message to session-scoped startup log (merged into session log later)
     {
-        use std::io::Write;
-        if let Ok(mut f) = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open("/tmp/planning-debug.log")
-        {
-            let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
-            let _ = writeln!(f, "\n=== NEW RUN {} ===", now);
-        }
+        let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+        session_logger::log_startup(&format!("=== NEW RUN {} ===", now));
     }
-    app::util::debug_log(start, "main starting");
+    session_logger::log_startup("main starting");
 
     let cli = Cli::parse();
-    app::util::debug_log(start, "cli parsed");
+    session_logger::log_startup("cli parsed");
 
     // Handle internal MCP server mode
     if cli.internal_mcp_server {
@@ -110,7 +104,7 @@ async fn async_main() -> Result<()> {
     } else {
         run_tui(cli, start).await
     };
-    app::util::debug_log(start, "main function returning");
+    session_logger::log_startup("main function returning");
     result
 }
 

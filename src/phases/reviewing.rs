@@ -11,11 +11,13 @@ use crate::phases::review_parser::parse_mcp_review;
 use crate::phases::review_prompts::{
     build_mcp_agent_prompt, build_mcp_recovery_prompt, build_mcp_review_prompt, REVIEW_SYSTEM_PROMPT,
 };
+use crate::session_logger::SessionLogger;
 use crate::state::{FeedbackStatus, ResumeStrategy, State};
 use crate::tui::SessionEventSender;
 use anyhow::Result;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 // Re-export VerdictParseResult and parse_verdict for external use (used in tests)
 #[allow(unused_imports)]
@@ -90,6 +92,7 @@ pub async fn run_multi_agent_review_with_context(
     session_sender: SessionEventSender,
     iteration: u32,
     state_path: &Path,
+    session_logger: Arc<SessionLogger>,
 ) -> Result<ReviewBatchResult> {
     if agent_refs.is_empty() {
         anyhow::bail!("No reviewers configured");
@@ -180,6 +183,7 @@ pub async fn run_multi_agent_review_with_context(
             let mcp_command = mcp_command.clone();
             let sender = session_sender.clone();
             let phase = format!("Reviewing #{}", iteration);
+            let logger = session_logger.clone();
 
             // Build the system prompt, appending custom prompt if present
             let system_prompt = match &custom_prompt {
@@ -224,6 +228,7 @@ pub async fn run_multi_agent_review_with_context(
                     &phase,
                     &mcp_config,
                     &system_prompt,
+                    logger.clone(),
                 )
                 .await;
 
@@ -278,6 +283,7 @@ pub async fn run_multi_agent_review_with_context(
                             &format!("{} (recovery)", phase),
                             &mcp_config,
                             &system_prompt,
+                            logger.clone(),
                         )
                         .await;
 
@@ -466,6 +472,7 @@ async fn execute_review_attempt(
     phase: &str,
     mcp_config: &McpServerConfig,
     system_prompt: &str,
+    session_logger: Arc<SessionLogger>,
 ) -> Result<ReviewAttemptResult> {
     let started_at = chrono::Utc::now().to_rfc3339();
 
@@ -474,7 +481,7 @@ async fn execute_review_attempt(
         phase: phase.to_string(),
         session_key: session_key.clone(),
         resume_strategy: resume_strategy.clone(),
-        session_logger: None,
+        session_logger,
     };
 
     let result = agent

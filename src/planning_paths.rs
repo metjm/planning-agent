@@ -89,6 +89,17 @@ pub fn debug_log_path() -> Result<PathBuf> {
     Ok(logs.join("debug.log"))
 }
 
+/// Returns the startup log path: `~/.planning-agent/logs/startup.log`
+///
+/// This is used for early logging before a session is created.
+/// Entries are merged into the session log when `SessionLogger::new` is called.
+pub fn startup_log_path() -> Result<PathBuf> {
+    let logs = planning_agent_home_dir()?.join("logs");
+    fs::create_dir_all(&logs)
+        .with_context(|| format!("Failed to create logs directory: {}", logs.display()))?;
+    Ok(logs.join("startup.log"))
+}
+
 /// Returns the update marker path: `~/.planning-agent/update-installed`
 pub fn update_marker_path() -> Result<PathBuf> {
     Ok(planning_agent_home_dir()?.join("update-installed"))
@@ -157,6 +168,9 @@ pub fn workflow_log_path(working_dir: &Path, run_id: &str) -> Result<PathBuf> {
 }
 
 /// Returns the agent stream log path: `~/.planning-agent/logs/<wd-hash>/agent-stream-<run>.log`
+///
+/// **DEPRECATED**: Legacy path, no longer used. Agent logs now go to session directory.
+#[allow(dead_code)]
 pub fn agent_stream_log_path(working_dir: &Path, run_id: &str) -> Result<PathBuf> {
     Ok(logs_dir(working_dir)?.join(format!("agent-stream-{}.log", run_id)))
 }

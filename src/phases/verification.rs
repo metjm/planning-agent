@@ -1,12 +1,14 @@
 use crate::agents::{AgentContext, AgentType};
 use crate::config::WorkflowConfig;
 use crate::prompt_format::PromptBuilder;
+use crate::session_logger::SessionLogger;
 use crate::state::ResumeStrategy;
 use crate::tui::SessionEventSender;
 use crate::verification_state::VerificationState;
 use anyhow::Result;
 use regex::Regex;
 use std::fs;
+use std::sync::Arc;
 
 const VERIFICATION_SYSTEM_PROMPT: &str = r#"You are a verification agent that compares an implementation against its approved plan.
 
@@ -66,6 +68,7 @@ pub async fn run_verification_phase(
     verification_state: &mut VerificationState,
     config: &WorkflowConfig,
     session_sender: SessionEventSender,
+    session_logger: Arc<SessionLogger>,
 ) -> Result<String> {
     let verification_config = config
         .verification
@@ -101,6 +104,7 @@ pub async fn run_verification_phase(
         phase: phase_name,
         session_key: None, // Verification is stateless per round
         resume_strategy: ResumeStrategy::Stateless,
+        session_logger,
     };
 
     let result = agent

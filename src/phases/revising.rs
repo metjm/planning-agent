@@ -2,10 +2,12 @@ use crate::agents::{AgentContext, AgentType};
 use crate::config::WorkflowConfig;
 use crate::phases::ReviewResult;
 use crate::prompt_format::PromptBuilder;
+use crate::session_logger::SessionLogger;
 use crate::state::{ResumeStrategy, State};
 use crate::tui::SessionEventSender;
 use anyhow::Result;
 use std::path::Path;
+use std::sync::Arc;
 
 const REVISION_SYSTEM_PROMPT: &str = r#"You are revising an implementation plan based on reviewer feedback.
 Focus on addressing all blocking issues first, then important improvements.
@@ -21,6 +23,7 @@ pub async fn run_revision_phase_with_context(
     session_sender: SessionEventSender,
     iteration: u32,
     state_path: &Path,
+    session_logger: Arc<SessionLogger>,
 ) -> Result<()> {
     let revising_config = &config.workflow.revising;
     let agent_name = &revising_config.agent;
@@ -60,6 +63,7 @@ pub async fn run_revision_phase_with_context(
         phase: phase_name,
         session_key,
         resume_strategy,
+        session_logger,
     };
 
     let result = agent

@@ -2,10 +2,12 @@ use crate::config::WorkflowConfig;
 use crate::phases::{
     parse_verification_verdict, run_fixing_phase, run_verification_phase, VerificationVerdictResult,
 };
+use crate::session_logger::SessionLogger;
 use crate::tui::SessionEventSender;
 use crate::verification_state::{normalize_plan_path, VerificationPhase, VerificationState};
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use tokio::sync::mpsc;
 
 /// Result of the verification workflow.
@@ -28,6 +30,7 @@ pub async fn run_verification_workflow(
     working_dir: &Path,
     config: &WorkflowConfig,
     session_sender: SessionEventSender,
+    session_logger: Arc<SessionLogger>,
 ) -> Result<VerificationResult> {
     // Normalize plan path (accept both folder and file paths)
     let plan_folder = normalize_plan_path(plan_path);
@@ -91,7 +94,7 @@ pub async fn run_verification_workflow(
                 session_sender.send_verification_started(verification_state.iteration);
 
                 // Run verification phase
-                let report = run_verification_phase(&mut verification_state, config, session_sender.clone())
+                let report = run_verification_phase(&mut verification_state, config, session_sender.clone(), session_logger.clone())
                     .await
                     .context("Verification phase failed")?;
 
@@ -150,7 +153,7 @@ pub async fn run_verification_workflow(
                     .with_context(|| format!("Failed to read verification report: {}", report_path.display()))?;
 
                 // Run fixing phase
-                run_fixing_phase(&mut verification_state, config, &report, session_sender.clone())
+                run_fixing_phase(&mut verification_state, config, &report, session_sender.clone(), session_logger.clone())
                     .await
                     .context("Fixing phase failed")?;
 
@@ -197,6 +200,12 @@ pub async fn run_headless_verification(
     println!("Working Dir: {}", working_dir.display());
     println!("Max Iterations: {}", config.verification.max_iterations);
     println!();
+
+    // Create session logger for headless verification
+    let session_id = format!("verify-{}", uuid::Uuid::new_v4());
+    let session_logger = SessionLogger::new(&session_id)
+        .context("Failed to create session logger for verification")?;
+    let session_logger = Arc::new(session_logger);
 
     // Create a simple event sender that prints to stdout
     let (tx, mut rx) = mpsc::unbounded_channel();
@@ -245,7 +254,7 @@ pub async fn run_headless_verification(
     });
 
     // Run verification
-    let result = run_verification_workflow(&plan_path, &working_dir, &config, session_sender).await;
+    let result = run_verification_workflow(&plan_path, &working_dir, &config, session_sender, session_logger).await;
 
     // Wait for print task to finish
     drop(print_handle);
