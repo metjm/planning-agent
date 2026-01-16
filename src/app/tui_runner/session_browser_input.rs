@@ -4,6 +4,7 @@
 //! including navigation, resume, force-stop, and confirmation dialogs.
 
 use crate::config::WorkflowConfig;
+use crate::tui::session::context::{compute_effective_working_dir, validate_working_dir, SessionContext};
 use crate::tui::{Event, InputMode, TabManager};
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyModifiers};
@@ -89,7 +90,7 @@ async fn handle_confirmation_input(
     key: crossterm::event::KeyEvent,
     tab_manager: &mut TabManager,
     working_dir: &Path,
-    _workflow_config: &WorkflowConfig,
+    workflow_config: &WorkflowConfig,
     output_tx: &mpsc::UnboundedSender<Event>,
 ) -> Result<bool> {
     use crate::tui::session_browser::ConfirmationState;
@@ -108,8 +109,14 @@ async fn handle_confirmation_input(
                     session_id,
                     target_dir,
                 }) => {
-                    // Spawn new terminal for cross-directory resume
-                    execute_cross_directory_resume(tab_manager, &session_id, &target_dir);
+                    // Resume in current process using session context for the target directory
+                    execute_cross_directory_resume_in_process(
+                        tab_manager,
+                        &session_id,
+                        &target_dir,
+                        workflow_config,
+                        output_tx,
+                    );
                 }
                 None => {}
             }
@@ -148,24 +155,63 @@ async fn execute_force_stop(
     }
 }
 
-/// Execute cross-directory resume by spawning a new terminal.
-fn execute_cross_directory_resume(
+/// Execute cross-directory resume in the current process.
+///
+/// This function resumes a session from a different directory using session context
+/// to track the session's working directory, state path, and configuration.
+fn execute_cross_directory_resume_in_process(
     tab_manager: &mut TabManager,
     session_id: &str,
     target_dir: &Path,
+    workflow_config: &WorkflowConfig,
+    output_tx: &mpsc::UnboundedSender<Event>,
 ) {
-    match crate::tui::terminal_spawn::spawn_terminal_for_resume(target_dir, session_id) {
-        Ok(()) => {
-            // Successfully spawned - close the browser
-            tab_manager.session_browser.close();
+    // Find the entry for this session to get full information
+    let entry = tab_manager
+        .session_browser
+        .entries
+        .iter()
+        .find(|e| e.session_id == session_id)
+        .cloned();
+
+    match entry {
+        Some(entry) => {
+            // Use the unified resume function which now handles cross-directory resume
+            resume_session_in_current_process(tab_manager, &entry, workflow_config, output_tx);
         }
-        Err(e) => {
-            tab_manager.session_browser.error = Some(format!("Failed to spawn terminal: {}", e));
+        None => {
+            // Entry not found - try to load directly
+            if let Err(err) = validate_working_dir(target_dir) {
+                tab_manager.session_browser.error = Some(err);
+                return;
+            }
+
+            // Create a minimal entry for resume
+            let entry = crate::tui::session_browser::SessionEntry {
+                session_id: session_id.to_string(),
+                feature_name: "Unknown".to_string(),
+                phase: "Unknown".to_string(),
+                iteration: 0,
+                workflow_status: "Stopped".to_string(),
+                liveness: crate::session_daemon::LivenessState::Stopped,
+                last_seen_at: String::new(),
+                last_seen_relative: String::new(),
+                working_dir: target_dir.to_path_buf(),
+                is_current_dir: false,
+                has_snapshot: true, // Assume snapshot exists since we're trying to resume
+                is_resumable: true,
+                pid: None,
+                is_live: false,
+            };
+            resume_session_in_current_process(tab_manager, &entry, workflow_config, output_tx);
         }
     }
 }
 
-/// Resume a session in the current process (same directory).
+/// Resume a session in the current process.
+///
+/// This function now supports both same-directory and cross-directory resume
+/// by creating a SessionContext with the appropriate working directories.
 fn resume_session_in_current_process(
     tab_manager: &mut TabManager,
     entry: &crate::tui::session_browser::SessionEntry,
@@ -173,6 +219,13 @@ fn resume_session_in_current_process(
     output_tx: &mpsc::UnboundedSender<Event>,
 ) {
     tab_manager.session_browser.resuming = true;
+
+    // Validate that the base working directory exists
+    if let Err(err) = validate_working_dir(&entry.working_dir) {
+        tab_manager.session_browser.error = Some(err);
+        tab_manager.session_browser.resuming = false;
+        return;
+    }
 
     // Load the snapshot
     let load_result = crate::session_store::load_snapshot(&entry.working_dir, &entry.session_id);
@@ -193,6 +246,23 @@ fn resume_session_in_current_process(
                 Some(restored_state.clone()),
             );
             session.id = session_id; // Preserve the new session ID
+
+            // Compute effective_working_dir from worktree_info if present
+            let effective_working_dir = compute_effective_working_dir(
+                &snapshot.working_dir,
+                restored_state.worktree_info.as_ref(),
+            );
+
+            // Create and set session context BEFORE starting the workflow
+            let context = SessionContext::from_snapshot(
+                snapshot.working_dir.clone(),
+                snapshot.state_path.clone(),
+                restored_state.worktree_info.as_ref(),
+                workflow_config.clone(),
+            );
+            session.context = Some(context);
+
+            // Log resume information
             session.add_output(format!(
                 "[planning] Resumed session: {}",
                 entry.session_id
@@ -202,16 +272,30 @@ fn resume_session_in_current_process(
                 restored_state.feature_name, restored_state.phase, restored_state.iteration
             ));
 
+            // Log working directory info if cross-directory or using worktree
+            if !entry.is_current_dir {
+                session.add_output(format!(
+                    "[planning] Base directory: {}",
+                    snapshot.working_dir.display()
+                ));
+            }
+            if effective_working_dir != snapshot.working_dir {
+                session.add_output(format!(
+                    "[planning] Working in worktree: {}",
+                    effective_working_dir.display()
+                ));
+            }
+
             // Set up for workflow continuation
             session.input_mode = InputMode::Normal;
             session.total_cost = snapshot.ui_state.total_cost;
 
-            // Start the actual workflow
+            // Start the actual workflow - context is already set so it will use it
             super::workflow_lifecycle::start_resumed_workflow(
                 session,
                 restored_state,
                 snapshot.state_path,
-                &entry.working_dir,
+                &snapshot.working_dir, // Pass base_working_dir as fallback
                 workflow_config,
                 output_tx,
             );

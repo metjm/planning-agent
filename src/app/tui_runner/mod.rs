@@ -368,6 +368,16 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
 
         let _ = output_tx.send(Event::StateUpdate(state.clone()));
 
+        // Set up session context BEFORE starting the workflow
+        // This enables proper working directory tracking for cross-directory resume
+        let context = crate::tui::SessionContext::from_snapshot(
+            snapshot.working_dir.clone(),
+            state_path.clone(),
+            state.worktree_info.as_ref(),
+            workflow_config.clone(),
+        );
+        first_session.context = Some(context);
+
         // Use the shared resume helper (same as /sessions overlay)
         workflow_lifecycle::start_resumed_workflow(
             first_session,

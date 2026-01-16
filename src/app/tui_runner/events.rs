@@ -100,8 +100,14 @@ pub async fn process_event(
                 session.start_phase(phase);
 
                 // Save snapshot on phase transition (natural checkpoint for recovery)
+                // Use session context's base_working_dir if available, otherwise fall back to global
                 if let Some(ref state) = session.workflow_state {
-                    let _ = create_and_save_snapshot(session, state, working_dir);
+                    let base_working_dir = session
+                        .context
+                        .as_ref()
+                        .map(|ctx| ctx.base_working_dir.as_path())
+                        .unwrap_or(working_dir);
+                    let _ = create_and_save_snapshot(session, state, base_working_dir);
                 }
             }
         }
@@ -158,10 +164,16 @@ pub async fn process_event(
         }
         Event::SnapshotRequest => {
             // Save snapshot for all active sessions (periodic auto-save)
+            // Use each session's context base_working_dir if available
             for session in tab_manager.sessions_mut() {
                 if session.workflow_handle.is_some() {
                     if let Some(ref state) = session.workflow_state {
-                        let _ = create_and_save_snapshot(session, state, working_dir);
+                        let base_working_dir = session
+                            .context
+                            .as_ref()
+                            .map(|ctx| ctx.base_working_dir.as_path())
+                            .unwrap_or(working_dir);
+                        let _ = create_and_save_snapshot(session, state, base_working_dir);
                     }
                 }
             }
@@ -350,8 +362,14 @@ async fn handle_session_event(
                 session.start_phase(phase);
 
                 // Save snapshot on phase transition (natural checkpoint for recovery)
+                // Use session context's base_working_dir if available
                 if let Some(ref state) = session.workflow_state {
-                    let _ = create_and_save_snapshot(session, state, working_dir);
+                    let base_working_dir = session
+                        .context
+                        .as_ref()
+                        .map(|ctx| ctx.base_working_dir.as_path())
+                        .unwrap_or(working_dir);
+                    let _ = create_and_save_snapshot(session, state, base_working_dir);
                 }
             }
         }
@@ -394,8 +412,14 @@ async fn handle_session_event(
                 session.running = false;
 
                 // Save a snapshot for completed sessions so they appear in /sessions history
+                // Use session context's base_working_dir if available
                 if let Some(ref state) = session.workflow_state {
-                    if let Err(e) = create_and_save_snapshot(session, state, working_dir) {
+                    let base_working_dir = session
+                        .context
+                        .as_ref()
+                        .map(|ctx| ctx.base_working_dir.as_path())
+                        .unwrap_or(working_dir);
+                    if let Err(e) = create_and_save_snapshot(session, state, base_working_dir) {
                         session.add_output(format!(
                             "[planning] Warning: Failed to save completion snapshot: {}",
                             e

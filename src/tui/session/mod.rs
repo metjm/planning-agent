@@ -1,11 +1,13 @@
 
 mod chat;
+pub mod context;
 mod input;
 pub mod model;
 mod paste;
 mod snapshot;
 mod tools;
 
+pub use context::SessionContext;
 use crate::app::WorkflowResult;
 use crate::cli_usage::AccountUsage;
 use crate::state::{Phase, State};
@@ -155,6 +157,10 @@ pub struct Session {
     pub plan_modal_scroll: usize,
     /// Cached plan modal content (runtime-only, not serialized)
     pub plan_modal_content: String,
+
+    /// Per-session context tracking working directory, paths, and configuration.
+    /// None for sessions created before this feature or not yet initialized.
+    pub context: Option<SessionContext>,
 }
 
 /// Session provides the full API surface for session management.
@@ -245,6 +251,8 @@ impl Session {
             plan_modal_open: false,
             plan_modal_scroll: 0,
             plan_modal_content: String::new(),
+
+            context: None,
         }
     }
 

@@ -150,6 +150,8 @@ impl Session {
             plan_modal_open: ui_state.plan_modal_open,
             plan_modal_scroll: ui_state.plan_modal_scroll,
             plan_modal_content: String::new(), // Content is re-read from disk when modal opens
+
+            context: None, // Context is set by resume/new-session flows, not serialized
         }
     }
 }

@@ -457,7 +457,7 @@ fn draw_confirmation_dialog(frame: &mut Frame, parent_area: Rect, confirmation: 
                     format!("Session: {}", truncated_id),
                     format!("Directory: {}", truncated_dir),
                     String::new(),
-                    "Open in new terminal window?".to_string(),
+                    "Resume in this window?".to_string(),
                 ],
                 Color::Yellow,
             )
