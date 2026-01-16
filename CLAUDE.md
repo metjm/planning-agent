@@ -74,6 +74,12 @@ Max iterations (default 3) prevents infinite revision loops.
 - `Phase` enum: Planning, Reviewing, Revising, Complete
 - Persisted to `~/.planning-agent/state/<wd-hash>/<feature>.json`
 
+**Prompt Handling** (`src/agents/prompt.rs`):
+- `PreparedPrompt` - Centralized prompt preparation for all agent types
+- `AgentCapabilities` - Defines what each agent CLI supports (system prompts, max turns)
+- For Claude: system prompts passed via `--append-system-prompt`
+- For Codex/Gemini: system prompts merged into user prompt within `<system-context>` tags
+
 **Session Logging** (`src/session_logger.rs`):
 - `SessionLogger` - Unified logging for session-scoped events
 - `LogCategory` enum: Workflow, Agent, State, Ui, System
@@ -109,6 +115,27 @@ The system reads from both structures for backward compatibility with existing s
 ### Agent Protocol
 
 Agents output streaming JSON. Review feedback must use `<plan-feedback verdict="approve|reject">` tags for structured parsing. MCP (Model Context Protocol) servers are injected for review feedback collection.
+
+### Naming Conventions: Sessions vs Conversations
+
+**IMPORTANT**: There are two distinct concepts that must not be confused:
+
+| Term | Meaning | Storage |
+|------|---------|---------|
+| **Workflow Session** | planning-agent's orchestration unit | `~/.planning-agent/sessions/<uuid>/` |
+| **Agent Conversation** | Claude/Codex/Gemini's persistent chat context | Managed by each agent's CLI |
+
+**Variable naming conventions:**
+- `workflow_session_id` - planning-agent's session identifier
+- `conversation_id` - AI agent's conversation/thread ID for resume
+- `agent_conversations` - Map of agent name → conversation state
+- `AgentConversationState` - State for an agent's conversation
+- `ResumeStrategy::ConversationResume` - Resume using captured conversation ID
+
+**Why this matters:**
+- Workflow sessions are what users see in the session browser
+- Agent conversations enable context continuity between planning→revising phases
+- Confusing these leads to bugs like passing workflow IDs to agent resume flags
 
 ### Channel Pattern (Critical)
 

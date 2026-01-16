@@ -1,6 +1,6 @@
 use crate::agents::{AgentContext, AgentType};
 use crate::config::WorkflowConfig;
-use crate::phases::planning_session_key;
+use crate::phases::planning_conversation_key;
 use crate::phases::ReviewResult;
 use crate::prompt_format::PromptBuilder;
 use crate::session_logger::SessionLogger;
@@ -44,7 +44,7 @@ pub async fn run_revision_phase_with_context(
     // Determine if session resume is active for prompt simplification
     let session_resume_active = agent.supports_session_resume()
         && agent_config.session_persistence.enabled
-        && agent_config.session_persistence.strategy == ResumeStrategy::SessionId;
+        && agent_config.session_persistence.strategy == ResumeStrategy::ConversationResume;
 
     session_sender.send_output(format!(
         "[revision] Using planning agent: {} with {} review(s){}",
@@ -63,19 +63,19 @@ pub async fn run_revision_phase_with_context(
         ResumeStrategy::Stateless
     };
     // Use the SAME session key as planning phase for session continuity
-    let session_key_name = planning_session_key(agent_name);
-    let agent_session = state.get_or_create_agent_session(&session_key_name, configured_strategy);
-    let session_key = agent_session.session_key.clone();
+    let conversation_id_name = planning_conversation_key(agent_name);
+    let agent_session = state.get_or_create_agent_session(&conversation_id_name, configured_strategy);
+    let conversation_id = agent_session.conversation_id.clone();
     let resume_strategy = agent_session.resume_strategy.clone();
 
-    state.record_invocation(&session_key_name, &phase_name);
+    state.record_invocation(&conversation_id_name, &phase_name);
     state.set_updated_at();
     state.save_atomic(state_path)?;
 
     let context = AgentContext {
         session_sender: session_sender.clone(),
         phase: phase_name,
-        session_key,
+        conversation_id,
         resume_strategy,
         session_logger,
     };
@@ -114,6 +114,8 @@ fn build_revision_prompt_with_reviews(
         .collect::<Vec<_>>()
         .join("\n\n---\n\n");
 
+    let plan_path = state.plan_file.display().to_string();
+
     if session_resume_active {
         // Continuation prompt - leverages existing session context
         // The agent already knows the workspace, plan file, and original context
@@ -121,18 +123,24 @@ fn build_revision_prompt_with_reviews(
             "The reviewers have provided feedback on your plan. \
              Please revise the plan at {} to address all issues raised.\n\n\
              # Reviewer Feedback\n\n{}",
-            state.plan_file.display(),
+            plan_path,
             merged_feedback
         )
     } else {
         // Full context prompt - for fresh sessions (Codex, Gemini, or session persistence disabled)
+        let instructions = format!(
+            r#"Revise the plan to address all issues raised by the reviewers.
+Preserve the good parts of the existing plan - only modify what needs to change.
+
+IMPORTANT: Update the plan file at: {}"#,
+            plan_path
+        );
+
         PromptBuilder::new()
             .phase("revising")
-            .instructions(r#"Revise the plan to address all issues raised by the reviewers.
-Preserve the good parts of the existing plan - only modify what needs to change.
-Update the plan file with your revisions."#)
+            .instructions(&instructions)
             .input("workspace-root", &working_dir.display().to_string())
-            .input("plan-path", &state.plan_file.display().to_string())
+            .input("plan-output-path", &plan_path)
             .context(&format!("# Consolidated Reviewer Feedback\n\n{}", merged_feedback))
             .constraint("Use absolute paths for all file references in the revised plan")
             .build()
@@ -143,6 +151,7 @@ Update the plan file with your revisions."#)
 mod tests {
     use super::*;
     use crate::state::Phase;
+    use std::path::PathBuf;
 
     fn test_reviews() -> Vec<ReviewResult> {
         vec![
@@ -159,6 +168,31 @@ mod tests {
                 summary: "Architecture needs clarification".to_string(),
             },
         ]
+    }
+
+    #[test]
+    fn test_revision_prompt_includes_plan_path() {
+        let mut state = State::new("test", "test objective", 3).unwrap();
+        state.phase = Phase::Revising;
+        state.plan_file = PathBuf::from("/home/user/.planning-agent/sessions/abc123/plan.md");
+
+        let reviews = test_reviews();
+        let working_dir = std::path::Path::new("/workspaces/myproject");
+
+        // Test with session_resume_active = false (full context prompt)
+        let prompt = build_revision_prompt_with_reviews(&state, &reviews, working_dir, false);
+
+        eprintln!("Generated revision prompt:\n{}", prompt);
+
+        // The full context prompt should include plan-output-path
+        assert!(
+            prompt.contains("<plan-output-path>"),
+            "Revision prompt should contain <plan-output-path> tag"
+        );
+        assert!(
+            prompt.contains("/home/user/.planning-agent/sessions/abc123/plan.md"),
+            "Revision prompt should contain the plan file path"
+        );
     }
 
     #[test]

@@ -119,6 +119,15 @@ impl ClaudeParser {
                     is_error,
                 });
             }
+            "system" => {
+                // Capture conversation ID from init message
+                // Format: {"type":"system","subtype":"init","session_id":"uuid",...}
+                if json.get("subtype").and_then(|s| s.as_str()) == Some("init") {
+                    if let Some(session_id) = json.get("session_id").and_then(|s| s.as_str()) {
+                        events.push(AgentEvent::ConversationIdCaptured(session_id.to_string()));
+                    }
+                }
+            }
             _ => {}
         }
 
@@ -339,5 +348,28 @@ mod tests {
         assert!(!events
             .iter()
             .any(|e| matches!(e, AgentEvent::TurnCompleted)));
+    }
+
+    #[test]
+    fn test_parse_system_init_captures_conversation_id() {
+        let mut parser = ClaudeParser::new();
+        let line = r#"{"type":"system","subtype":"init","session_id":"7c4aefbb-b0a5-45d7-bd7a-8494f1d6d47f","cwd":"/workspace","tools":["Read"]}"#;
+        let events = parser.parse_line_multi(line).unwrap();
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            AgentEvent::ConversationIdCaptured(id) => {
+                assert_eq!(id, "7c4aefbb-b0a5-45d7-bd7a-8494f1d6d47f");
+            }
+            _ => panic!("Expected ConversationIdCaptured event"),
+        }
+    }
+
+    #[test]
+    fn test_parse_system_non_init_ignored() {
+        let mut parser = ClaudeParser::new();
+        // A system message without subtype "init" should not capture anything
+        let line = r#"{"type":"system","subtype":"other","session_id":"abc"}"#;
+        let events = parser.parse_line_multi(line).unwrap();
+        assert!(events.is_empty());
     }
 }

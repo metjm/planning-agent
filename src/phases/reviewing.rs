@@ -11,7 +11,7 @@ use crate::phases::review_parser::parse_mcp_review;
 use crate::phases::review_prompts::{
     build_mcp_agent_prompt, build_mcp_recovery_prompt, build_mcp_review_prompt, REVIEW_SYSTEM_PROMPT,
 };
-use crate::phases::reviewing_session_key;
+use crate::phases::reviewing_conversation_key;
 use crate::session_logger::SessionLogger;
 use crate::state::{FeedbackStatus, ResumeStrategy, State};
 use crate::tui::SessionEventSender;
@@ -108,7 +108,7 @@ pub async fn run_multi_agent_review_with_context(
 
     let phase_name = format!("Reviewing #{}", iteration);
 
-    // Build agent contexts: (display_id, session_key, resume_strategy, custom_prompt)
+    // Build agent contexts: (display_id, conversation_id, resume_strategy, custom_prompt)
     let mut agent_contexts: Vec<(String, Option<String>, ResumeStrategy, Option<String>)> =
         Vec::new();
     for agent_ref in agent_refs {
@@ -128,27 +128,27 @@ pub async fn run_multi_agent_review_with_context(
             })
             .unwrap_or(ResumeStrategy::Stateless);
         // Use namespaced session key to avoid collisions with planning sessions
-        let session_key_name = reviewing_session_key(&display_id);
-        let agent_session = state.get_or_create_agent_session(&session_key_name, configured_strategy);
+        let conversation_id_name = reviewing_conversation_key(&display_id);
+        let agent_session = state.get_or_create_agent_session(&conversation_id_name, configured_strategy);
         agent_contexts.push((
             display_id.clone(),
-            agent_session.session_key.clone(),
+            agent_session.conversation_id.clone(),
             agent_session.resume_strategy.clone(),
             custom_prompt,
         ));
-        state.record_invocation(&session_key_name, &phase_name);
+        state.record_invocation(&conversation_id_name, &phase_name);
     }
     state.set_updated_at();
     state.save_atomic(state_path)?;
 
-    // Build agents: (display_id, AgentType, session_key, resume_strategy, custom_prompt)
+    // Build agents: (display_id, AgentType, conversation_id, resume_strategy, custom_prompt)
     #[allow(clippy::type_complexity)]
     let agents: Vec<(String, AgentType, Option<String>, ResumeStrategy, Option<String>)> =
         agent_refs
             .iter()
             .zip(agent_contexts.into_iter())
             .map(
-                |(agent_ref, (display_id, session_key, resume_strategy, custom_prompt))| {
+                |(agent_ref, (display_id, conversation_id, resume_strategy, custom_prompt))| {
                     let agent_name = agent_ref.agent_name();
                     let agent_config = config.get_agent(agent_name).ok_or_else(|| {
                         anyhow::anyhow!("Review agent '{}' not found in config", agent_name)
@@ -156,7 +156,7 @@ pub async fn run_multi_agent_review_with_context(
                     Ok((
                         display_id,
                         AgentType::from_config(agent_name, agent_config, working_dir.to_path_buf())?,
-                        session_key,
+                        conversation_id,
                         resume_strategy,
                         custom_prompt,
                     ))
@@ -178,7 +178,7 @@ pub async fn run_multi_agent_review_with_context(
 
     let futures: Vec<_> = agents
         .into_iter()
-        .map(|(display_id, agent, session_key, resume_strategy, custom_prompt)| {
+        .map(|(display_id, agent, conversation_id, resume_strategy, custom_prompt)| {
             let plan = plan_content.clone();
             let review_prompt = mcp_review_prompt.clone();
             let mcp_prompt = mcp_agent_prompt.clone();
@@ -224,7 +224,7 @@ pub async fn run_multi_agent_review_with_context(
                 let attempt1_result = execute_review_attempt(
                     &agent,
                     &mcp_prompt,
-                    &session_key,
+                    &conversation_id,
                     &resume_strategy,
                     &sender,
                     &phase,
@@ -279,7 +279,7 @@ pub async fn run_multi_agent_review_with_context(
                         let attempt2_result = execute_review_attempt(
                             &agent,
                             &recovery_prompt,
-                            &session_key,
+                            &conversation_id,
                             &resume_strategy,
                             &sender,
                             &format!("{} (recovery)", phase),
@@ -468,7 +468,7 @@ pub async fn run_multi_agent_review_with_context(
 async fn execute_review_attempt(
     agent: &AgentType,
     prompt: &str,
-    session_key: &Option<String>,
+    conversation_id: &Option<String>,
     resume_strategy: &ResumeStrategy,
     sender: &SessionEventSender,
     phase: &str,
@@ -481,7 +481,7 @@ async fn execute_review_attempt(
     let context = AgentContext {
         session_sender: sender.clone(),
         phase: phase.to_string(),
-        session_key: session_key.clone(),
+        conversation_id: conversation_id.clone(),
         resume_strategy: resume_strategy.clone(),
         session_logger,
     };

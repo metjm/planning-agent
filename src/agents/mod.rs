@@ -2,6 +2,7 @@ pub mod claude;
 pub mod codex;
 pub mod gemini;
 pub(crate) mod log;
+pub mod prompt;
 pub mod protocol;
 pub mod runner;
 
@@ -11,6 +12,7 @@ use crate::session_logger::SessionLogger;
 use crate::state::ResumeStrategy;
 use crate::tui::SessionEventSender;
 use anyhow::Result;
+use prompt::{prepare_prompt, AgentCapabilities, PreparedPrompt, PromptRequest};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -18,7 +20,8 @@ use std::sync::Arc;
 pub struct AgentContext {
     pub session_sender: SessionEventSender,
     pub phase: String,
-    pub session_key: Option<String>,
+    /// The AI agent's conversation ID for session resume (e.g., Claude's session UUID)
+    pub conversation_id: Option<String>,
     pub resume_strategy: ResumeStrategy,
     /// Session logger for agent events.
     #[allow(dead_code)]
@@ -32,6 +35,8 @@ pub struct AgentResult {
     /// Cost in USD (stored for potential display/logging, currently unused)
     #[allow(dead_code)]
     pub cost_usd: Option<f64>,
+    /// Captured conversation ID for future resume (from agent's init message)
+    pub conversation_id: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -42,7 +47,6 @@ pub enum AgentType {
 }
 
 impl AgentType {
-
     pub fn from_config(
         name: &str,
         config: &AgentConfig,
@@ -68,10 +72,22 @@ impl AgentType {
         }
     }
 
-    /// Returns true if this agent type supports session resume via --session-id.
-    /// Currently only Claude supports this feature.
+    /// Returns the capabilities of this agent type.
+    fn capabilities(&self) -> AgentCapabilities {
+        match self {
+            Self::Claude(_) => AgentCapabilities::Claude,
+            Self::Codex(_) => AgentCapabilities::Codex,
+            Self::Gemini(_) => AgentCapabilities::Gemini,
+        }
+    }
+
+    /// Returns true if this agent type supports conversation resume.
+    /// All agents (Claude, Codex, Gemini) support this feature:
+    /// - Claude: uses --resume <conversation_id>
+    /// - Codex: uses exec resume <thread_id> <prompt>
+    /// - Gemini: uses --resume <session_id>
     pub fn supports_session_resume(&self) -> bool {
-        matches!(self, AgentType::Claude(_))
+        true
     }
 
     #[cfg(test)]
@@ -83,6 +99,19 @@ impl AgentType {
         }
     }
 
+    /// Prepare a prompt request for this agent type.
+    /// Handles merging system prompt into user prompt for agents that don't support it.
+    fn prepare_prompt(&self, user_prompt: String, system_prompt: Option<String>, max_turns: Option<u32>) -> PreparedPrompt {
+        let mut request = PromptRequest::new(user_prompt);
+        if let Some(sys) = system_prompt {
+            request = request.with_system_prompt(sys);
+        }
+        if let Some(turns) = max_turns {
+            request = request.with_max_turns(turns);
+        }
+        prepare_prompt(request, self.capabilities())
+    }
+
     pub async fn execute_streaming_with_context(
         &self,
         prompt: String,
@@ -90,20 +119,23 @@ impl AgentType {
         max_turns: Option<u32>,
         context: AgentContext,
     ) -> Result<AgentResult> {
+        // Prepare prompt centrally - handles system prompt merging for non-Claude agents
+        let prepared = self.prepare_prompt(prompt, system_prompt, max_turns);
+
         match self {
             Self::Claude(agent) => {
                 agent
-                    .execute_streaming_with_context(prompt, system_prompt, max_turns, context)
+                    .execute_streaming_with_prepared(prepared, context, None)
                     .await
             }
             Self::Codex(agent) => {
                 agent
-                    .execute_streaming_with_context(prompt, system_prompt, max_turns, context)
+                    .execute_streaming_with_prepared(prepared, context, None)
                     .await
             }
             Self::Gemini(agent) => {
                 agent
-                    .execute_streaming_with_context(prompt, system_prompt, max_turns, context)
+                    .execute_streaming_with_prepared(prepared, context, None)
                     .await
             }
         }
@@ -119,20 +151,23 @@ impl AgentType {
         context: AgentContext,
         mcp_config: &McpServerConfig,
     ) -> Result<AgentResult> {
+        // Prepare prompt centrally - handles system prompt merging for non-Claude agents
+        let prepared = self.prepare_prompt(prompt, system_prompt, max_turns);
+
         match self {
             Self::Claude(agent) => {
                 agent
-                    .execute_streaming_with_mcp(prompt, system_prompt, max_turns, context, mcp_config)
+                    .execute_streaming_with_prepared(prepared, context, Some(mcp_config))
                     .await
             }
             Self::Codex(agent) => {
                 agent
-                    .execute_streaming_with_mcp(prompt, system_prompt, max_turns, context, mcp_config)
+                    .execute_streaming_with_prepared(prepared, context, Some(mcp_config))
                     .await
             }
             Self::Gemini(agent) => {
                 agent
-                    .execute_streaming_with_mcp(prompt, system_prompt, max_turns, context, mcp_config)
+                    .execute_streaming_with_prepared(prepared, context, Some(mcp_config))
                     .await
             }
         }

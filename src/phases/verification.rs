@@ -102,7 +102,7 @@ pub async fn run_verification_phase(
     let context = AgentContext {
         session_sender: session_sender.clone(),
         phase: phase_name,
-        session_key: None, // Verification is stateless per round
+        conversation_id: None, // Verification is stateless per round
         resume_strategy: ResumeStrategy::Stateless,
         session_logger,
     };

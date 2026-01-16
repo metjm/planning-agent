@@ -224,6 +224,9 @@ fn emit_agent_event(event: AgentEvent, emitter: &dyn EventEmitter) {
         AgentEvent::Error(msg) => {
             emitter.send_streaming(format!("[error] {}", msg));
         }
+        AgentEvent::ConversationIdCaptured(_) => {
+            // Handled separately in run_agent_process for state capture
+        }
     }
 }
 
@@ -267,6 +270,7 @@ pub async fn run_agent_process<P: AgentStreamParser>(
     let mut final_output = String::new();
     let mut total_cost: Option<f64> = None;
     let mut is_error = false;
+    let mut captured_conversation_id: Option<String> = None;
 
     let start_time = Instant::now();
     let mut last_activity = Instant::now();
@@ -293,19 +297,28 @@ pub async fn run_agent_process<P: AgentStreamParser>(
                         match parser.parse_line_multi(&line) {
                             Ok(events) => {
                                 for event in events {
-                                    // Handle Result events specially
-                                    if let AgentEvent::Result { output, cost, is_error: err } = &event {
-                                        if let Some(out) = output {
-                                            final_output = out.clone();
+                                    // Handle special events
+                                    match &event {
+                                        AgentEvent::Result { output, cost, is_error: err } => {
+                                            if let Some(out) = output {
+                                                final_output = out.clone();
+                                            }
+                                            total_cost = *cost;
+                                            is_error = *err;
                                         }
-                                        total_cost = *cost;
-                                        is_error = *err;
-                                    } else {
-                                        // Accumulate text content for final output
-                                        if let AgentEvent::TextContent(ref text) = event {
+                                        AgentEvent::ConversationIdCaptured(id) => {
+                                            captured_conversation_id = Some(id.clone());
+                                            if let Some(ref logger) = logger {
+                                                logger.log_line("conversation_id", id);
+                                            }
+                                        }
+                                        AgentEvent::TextContent(text) => {
                                             final_output.push_str(text);
+                                            emit_agent_event(event, emitter);
                                         }
-                                        emit_agent_event(event, emitter);
+                                        _ => {
+                                            emit_agent_event(event, emitter);
+                                        }
                                     }
                                 }
                             }
@@ -363,6 +376,7 @@ pub async fn run_agent_process<P: AgentStreamParser>(
         output: final_output,
         is_error,
         cost_usd: total_cost,
+        conversation_id: captured_conversation_id,
     })
 }
 
@@ -453,6 +467,7 @@ impl From<AgentOutput> for AgentResult {
             output: output.output,
             is_error: output.is_error,
             cost_usd: output.cost_usd,
+            conversation_id: output.conversation_id,
         }
     }
 }
@@ -483,10 +498,24 @@ mod tests {
             output: "test output".to_string(),
             is_error: false,
             cost_usd: Some(0.05),
+            conversation_id: Some("conv-123".to_string()),
         };
         let result: AgentResult = output.into();
         assert_eq!(result.output, "test output");
         assert!(!result.is_error);
         assert_eq!(result.cost_usd, Some(0.05));
+        assert_eq!(result.conversation_id, Some("conv-123".to_string()));
+    }
+
+    #[test]
+    fn test_agent_output_to_result_without_conversation_id() {
+        let output = AgentOutput {
+            output: "test output".to_string(),
+            is_error: false,
+            cost_usd: None,
+            conversation_id: None,
+        };
+        let result: AgentResult = output.into();
+        assert!(result.conversation_id.is_none());
     }
 }

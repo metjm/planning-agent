@@ -20,10 +20,10 @@ agents:
       - "WebFetch"
       - "Skill"
       - "Task"
-    # Enable session persistence for planning->revision session continuity (Claude-only feature)
+    # Enable conversation persistence for planning->revision continuity (Claude-only feature)
     session_persistence:
       enabled: true
-      strategy: session_id
+      strategy: conversation_resume
 
 workflow:
   planning:
