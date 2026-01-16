@@ -3,7 +3,9 @@ use crate::app::failure::FailureKind;
 use crate::app::workflow_common::is_network_error;
 use crate::config::{AgentRef, AggregationMode, WorkflowConfig};
 use crate::diagnostics::{create_mcp_review_bundle, AttemptTimestamp, BundleConfig};
-use crate::mcp::spawner::generate_mcp_server_config;
+use crate::mcp::spawner::{
+    generate_mcp_server_config_with_command, prepare_mcp_server_binary,
+};
 use crate::mcp::{McpServerConfig, SubmittedReview};
 use crate::phases::review_parser::parse_mcp_review;
 use crate::phases::review_prompts::{
@@ -165,12 +167,17 @@ pub async fn run_multi_agent_review_with_context(
     let mcp_review_prompt = build_mcp_review_prompt(state, working_dir);
     let mcp_agent_prompt = build_mcp_agent_prompt(state, working_dir);
 
+    // Keep the per-review MCP binary alive until all reviewers finish.
+    let mcp_binary = prepare_mcp_server_binary()?;
+    let mcp_command = mcp_binary.command_path().to_path_buf();
+
     let futures: Vec<_> = agents
         .into_iter()
         .map(|(display_id, agent, session_key, resume_strategy, custom_prompt)| {
             let plan = plan_content.clone();
             let review_prompt = mcp_review_prompt.clone();
             let mcp_prompt = mcp_agent_prompt.clone();
+            let mcp_command = mcp_command.clone();
             let sender = session_sender.clone();
             let phase = format!("Reviewing #{}", iteration);
 
@@ -184,7 +191,11 @@ pub async fn run_multi_agent_review_with_context(
                 sender.send_output(format!("[review:{}] Starting MCP review...", display_id));
 
                 // Generate MCP config for this agent
-                let mcp_config = match generate_mcp_server_config(&plan, &review_prompt) {
+                let mcp_config = match generate_mcp_server_config_with_command(
+                    &plan,
+                    &review_prompt,
+                    &mcp_command,
+                ) {
                     Ok(cfg) => cfg,
                     Err(e) => {
                         return (
@@ -337,6 +348,8 @@ pub async fn run_multi_agent_review_with_context(
         .collect();
 
     let results = futures::future::join_all(futures).await;
+    // Hold the guard until all review tasks complete.
+    let _ = &mcp_binary;
 
     // Get run_id for bundle creation
     let run_id = crate::app::util::get_run_id();
@@ -461,6 +474,7 @@ async fn execute_review_attempt(
         phase: phase.to_string(),
         session_key: session_key.clone(),
         resume_strategy: resume_strategy.clone(),
+        session_logger: None,
     };
 
     let result = agent

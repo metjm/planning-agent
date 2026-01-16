@@ -1,6 +1,10 @@
 use anyhow::Result;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use serde_json::json;
+use std::fs;
+use std::path::{Path, PathBuf};
+#[cfg(unix)]
+use std::io;
 use uuid::Uuid;
 
 /// Configuration for an MCP server that can be used by any agent
@@ -18,6 +22,15 @@ impl McpServerConfig {
     /// Create a new MCP server config with a unique name
     pub fn new(plan_content: &str, review_prompt: &str) -> Result<Self> {
         let exe = std::env::current_exe()?;
+        Self::new_with_command(plan_content, review_prompt, &exe)
+    }
+
+    /// Create a new MCP server config using an explicit command path
+    pub fn new_with_command(
+        plan_content: &str,
+        review_prompt: &str,
+        command: &Path,
+    ) -> Result<Self> {
         let server_name = generate_unique_server_name();
 
         // Encode plan and prompt as base64 to safely pass via command line
@@ -26,7 +39,7 @@ impl McpServerConfig {
 
         Ok(Self {
             server_name,
-            command: exe.to_string_lossy().to_string(),
+            command: command.to_string_lossy().to_string(),
             args: vec![
                 "--internal-mcp-server".to_string(),
                 "--plan-content-b64".to_string(),
@@ -89,6 +102,60 @@ args = {}
     }
 }
 
+pub struct McpServerBinaryGuard {
+    dir: PathBuf,
+    path: PathBuf,
+}
+
+impl McpServerBinaryGuard {
+    pub fn new() -> Result<Self> {
+        let exe_path = std::env::current_exe()?;
+        let file_name = exe_path
+            .file_name()
+            .unwrap_or_else(|| std::ffi::OsStr::new("planning"));
+        let dir = std::env::temp_dir().join(format!("planning-mcp-{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir)?;
+        let path = dir.join(file_name);
+        copy_current_exe(&exe_path, &path)?;
+        Ok(Self { dir, path })
+    }
+
+    pub fn command_path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for McpServerBinaryGuard {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.dir);
+    }
+}
+
+fn copy_current_exe(source: &Path, dest: &Path) -> Result<()> {
+    match fs::copy(source, dest) {
+        Ok(_) => Ok(()),
+        Err(err) => {
+            #[cfg(unix)]
+            {
+                if err.kind() == io::ErrorKind::NotFound {
+                    return copy_from_proc_self(dest);
+                }
+            }
+            Err(err.into())
+        }
+    }
+}
+
+#[cfg(unix)]
+fn copy_from_proc_self(dest: &Path) -> Result<()> {
+    let mut src = fs::File::open("/proc/self/exe")?;
+    let mut dst = fs::File::create(dest)?;
+    io::copy(&mut src, &mut dst)?;
+    let permissions = fs::metadata("/proc/self/exe")?.permissions();
+    fs::set_permissions(dest, permissions)?;
+    Ok(())
+}
+
 /// Generate a unique MCP server name to prevent collisions
 pub fn generate_unique_server_name() -> String {
     format!("planning-agent-review-{}", Uuid::new_v4())
@@ -106,6 +173,18 @@ pub fn generate_mcp_config(plan_content: &str, review_prompt: &str) -> Result<St
 /// Generate MCP config with the server config struct for more control
 pub fn generate_mcp_server_config(plan_content: &str, review_prompt: &str) -> Result<McpServerConfig> {
     McpServerConfig::new(plan_content, review_prompt)
+}
+
+pub fn generate_mcp_server_config_with_command(
+    plan_content: &str,
+    review_prompt: &str,
+    command: &Path,
+) -> Result<McpServerConfig> {
+    McpServerConfig::new_with_command(plan_content, review_prompt, command)
+}
+
+pub fn prepare_mcp_server_binary() -> Result<McpServerBinaryGuard> {
+    McpServerBinaryGuard::new()
 }
 
 /// Decode base64 plan content
