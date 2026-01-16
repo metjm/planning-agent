@@ -1,18 +1,22 @@
 use crate::planning_paths;
-use chrono::Local;
+use crate::usage_reset::{ResetTimestamp, UsageWindow};
+use chrono::{Datelike, Local, NaiveDate, NaiveTime, TimeZone, Utc};
+use chrono_tz::Tz;
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use std::env;
 use std::fs::OpenOptions;
 use std::io::{Read, Write};
+use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, Default)]
 pub struct ClaudeUsage {
+    /// Session usage with reset timestamp
+    pub session: UsageWindow,
 
-    pub weekly_used: Option<u8>,
-
-    pub session_used: Option<u8>,
+    /// Weekly usage with reset timestamp
+    pub weekly: UsageWindow,
 
     pub plan_type: Option<String>,
 
@@ -530,15 +534,31 @@ pub fn fetch_claude_usage_sync() -> ClaudeUsage {
         Ok(raw_output) => {
             let output = strip_ansi_codes(&raw_output);
 
-            let session = parse_usage_used_percent(&output, "current session");
-            let weekly = parse_usage_used_percent(&output, "current week")
+            let session_pct = parse_usage_used_percent(&output, "current session");
+            let weekly_pct = parse_usage_used_percent(&output, "current week")
                 .or_else(|| parse_usage_used_percent(&output, "week"));
+
+            let session_reset = parse_reset_timestamp(&output, "current session");
+            let weekly_reset = parse_reset_timestamp(&output, "current week")
+                .or_else(|| parse_reset_timestamp(&output, "week"));
 
             let plan = parse_plan_type(&output);
 
+            // Build usage windows with reset timestamps
+            let session = match (session_pct, session_reset) {
+                (Some(pct), Some(ts)) => UsageWindow::with_percent_and_reset(pct, ts),
+                (Some(pct), None) => UsageWindow::with_percent(pct),
+                _ => UsageWindow::default(),
+            };
+            let weekly = match (weekly_pct, weekly_reset) {
+                (Some(pct), Some(ts)) => UsageWindow::with_percent_and_reset(pct, ts),
+                (Some(pct), None) => UsageWindow::with_percent(pct),
+                _ => UsageWindow::default(),
+            };
+
             ClaudeUsage {
-                weekly_used: weekly,
-                session_used: session,
+                session,
+                weekly,
                 plan_type: plan,
                 fetched_at: Some(Instant::now()),
                 error_message: None,
@@ -605,6 +625,177 @@ fn parse_plan_type(text: &str) -> Option<String> {
     }
 
     None
+}
+
+/// Parse reset timestamp from Claude /usage output for a given section.
+///
+/// Looks for patterns like:
+/// - "Resets 9:59am (America/Los_Angeles)" (time-only)
+/// - "Resets Dec 26, 5:59am (America/Los_Angeles)" (date without year)
+fn parse_reset_timestamp(text: &str, section_keyword: &str) -> Option<ResetTimestamp> {
+    let lines: Vec<&str> = text.lines().collect();
+    let section_keyword_lower = section_keyword.to_lowercase();
+
+    for (i, line) in lines.iter().enumerate() {
+        let line_lower = line.to_lowercase();
+
+        if line_lower.contains(&section_keyword_lower) {
+            // Look for "Resets" line in the next few lines
+            for candidate in lines.iter().skip(i).take(5) {
+                if let Some(ts) = parse_reset_line(candidate) {
+                    return Some(ts);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Parse a single "Resets ..." line and extract the timestamp.
+///
+/// Handles two formats:
+/// 1. Time-only: "Resets 9:59am (America/Los_Angeles)"
+/// 2. Date+time: "Resets Dec 26, 5:59am (America/Los_Angeles)"
+fn parse_reset_line(line: &str) -> Option<ResetTimestamp> {
+    // Find "Resets" keyword (case-insensitive)
+    let lower = line.to_lowercase();
+    let resets_pos = lower.find("resets ")?;
+    let after_resets = &line[resets_pos + 7..];
+
+    // Extract timezone from parentheses
+    let tz_start = after_resets.find('(')?;
+    let tz_end = after_resets.find(')')?;
+    if tz_start >= tz_end {
+        return None;
+    }
+
+    let tz_str = after_resets[tz_start + 1..tz_end].trim();
+    let time_part = after_resets[..tz_start].trim();
+
+    // Parse timezone
+    let tz: Tz = Tz::from_str(tz_str).ok()?;
+
+    // Get current time in the target timezone
+    let now_utc = Utc::now();
+    let now_tz = now_utc.with_timezone(&tz);
+
+    // Try to parse time and optional date
+    if let Some(ts) = parse_datetime_with_date(time_part, tz, now_tz) {
+        return Some(ts);
+    }
+
+    if let Some(ts) = parse_time_only(time_part, tz, now_tz) {
+        return Some(ts);
+    }
+
+    None
+}
+
+/// Parse a date+time string like "Dec 26, 5:59am" or "Jan 1, 12:00pm"
+fn parse_datetime_with_date(
+    time_part: &str,
+    tz: Tz,
+    now_tz: chrono::DateTime<Tz>,
+) -> Option<ResetTimestamp> {
+    // Look for month abbreviation at the start
+    let months = [
+        "jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec",
+    ];
+
+    let lower = time_part.to_lowercase();
+    let month_idx = months.iter().position(|m| lower.starts_with(m))?;
+
+    // Extract day number - find digits after month
+    let after_month = &time_part[3..].trim_start();
+
+    // Find the comma that separates day from time
+    let comma_pos = after_month.find(',')?;
+    let day_str = after_month[..comma_pos].trim();
+    let time_str = after_month[comma_pos + 1..].trim();
+
+    let day: u32 = day_str.parse().ok()?;
+
+    // Parse time (e.g., "5:59am", "12:00pm")
+    let naive_time = parse_am_pm_time(time_str)?;
+
+    // Determine year - if month/day already passed, use next year
+    let mut year = now_tz.year();
+    let month = (month_idx + 1) as u32;
+
+    let candidate_date = NaiveDate::from_ymd_opt(year, month, day)?;
+    let candidate_dt = candidate_date.and_time(naive_time);
+
+    // Convert to timezone, handling DST ambiguity with earliest()
+    let local_dt = tz.from_local_datetime(&candidate_dt).earliest()?;
+
+    // If this time is in the past, roll to next year
+    if local_dt < now_tz {
+        year += 1;
+        let next_date = NaiveDate::from_ymd_opt(year, month, day)?;
+        let next_dt = next_date.and_time(naive_time);
+        let next_local = tz.from_local_datetime(&next_dt).earliest()?;
+        return Some(ResetTimestamp::from_epoch_seconds(next_local.timestamp()));
+    }
+
+    Some(ResetTimestamp::from_epoch_seconds(local_dt.timestamp()))
+}
+
+/// Parse a time-only string like "9:59am" or "12:00pm"
+fn parse_time_only(
+    time_part: &str,
+    tz: Tz,
+    now_tz: chrono::DateTime<Tz>,
+) -> Option<ResetTimestamp> {
+    let naive_time = parse_am_pm_time(time_part)?;
+
+    // Combine with today's date in the target timezone
+    let today = now_tz.date_naive();
+    let candidate_dt = today.and_time(naive_time);
+
+    // Convert to timezone, handling DST ambiguity with earliest()
+    let local_dt = tz.from_local_datetime(&candidate_dt).earliest()?;
+
+    // If this time is in the past, roll to tomorrow
+    if local_dt < now_tz {
+        let tomorrow = today.succ_opt()?;
+        let tomorrow_dt = tomorrow.and_time(naive_time);
+        let next_local = tz.from_local_datetime(&tomorrow_dt).earliest()?;
+        return Some(ResetTimestamp::from_epoch_seconds(next_local.timestamp()));
+    }
+
+    Some(ResetTimestamp::from_epoch_seconds(local_dt.timestamp()))
+}
+
+/// Parse time in am/pm format like "9:59am", "12:00pm", "5:30AM"
+fn parse_am_pm_time(time_str: &str) -> Option<NaiveTime> {
+    let lower = time_str.to_lowercase();
+    let is_pm = lower.contains("pm");
+    let is_am = lower.contains("am");
+
+    if !is_pm && !is_am {
+        return None;
+    }
+
+    // Remove am/pm suffix
+    let cleaned = lower.replace("am", "").replace("pm", "").trim().to_string();
+
+    // Parse hour:minute
+    let parts: Vec<&str> = cleaned.split(':').collect();
+    if parts.len() != 2 {
+        return None;
+    }
+
+    let mut hour: u32 = parts[0].trim().parse().ok()?;
+    let minute: u32 = parts[1].trim().parse().ok()?;
+
+    // Convert to 24-hour format
+    if is_pm && hour != 12 {
+        hour += 12;
+    } else if is_am && hour == 12 {
+        hour = 0;
+    }
+
+    NaiveTime::from_hms_opt(hour, minute, 0)
 }
 
 #[cfg(test)]

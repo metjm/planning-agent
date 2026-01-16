@@ -5,13 +5,16 @@ use std::time::Instant;
 use crate::claude_usage::{self, ClaudeUsage};
 use crate::codex_usage::{self, CodexUsage};
 use crate::gemini_usage::{self, GeminiUsage};
+use crate::usage_reset::UsageWindow;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ProviderUsage {
     pub provider: String,
     pub display_name: String,
-    pub session_used: Option<u8>,
-    pub weekly_used: Option<u8>,
+    /// Session/5h usage window with reset timestamp
+    pub session: UsageWindow,
+    /// Weekly/daily usage window with reset timestamp
+    pub weekly: UsageWindow,
     pub plan_type: Option<String>,
     /// Timestamp when usage was fetched - skipped during serialization
     #[serde(skip)]
@@ -21,14 +24,13 @@ pub struct ProviderUsage {
 }
 
 impl ProviderUsage {
-
     #[allow(dead_code)]
     pub fn not_available(provider: &str, display_name: &str) -> Self {
         Self {
             provider: provider.to_string(),
             display_name: display_name.to_string(),
-            session_used: None,
-            weekly_used: None,
+            session: UsageWindow::default(),
+            weekly: UsageWindow::default(),
             plan_type: None,
             fetched_at: Some(Instant::now()),
             status_message: Some("No usage command".to_string()),
@@ -40,8 +42,8 @@ impl ProviderUsage {
         Self {
             provider: "claude".to_string(),
             display_name: "Claude".to_string(),
-            session_used: usage.session_used,
-            weekly_used: usage.weekly_used,
+            session: usage.session,
+            weekly: usage.weekly,
             plan_type: usage.plan_type,
             fetched_at: usage.fetched_at,
             status_message: usage.error_message,
@@ -50,14 +52,11 @@ impl ProviderUsage {
     }
 
     pub fn from_gemini_usage(usage: GeminiUsage) -> Self {
-
-        let daily_used = usage.usage_remaining.map(|r| 100u8.saturating_sub(r));
-
         Self {
             provider: "gemini".to_string(),
             display_name: "Gemini".to_string(),
-            session_used: None, 
-            weekly_used: daily_used, 
+            session: UsageWindow::default(),
+            weekly: usage.daily, // Gemini daily maps to weekly slot
             plan_type: None, // Gemini /stats doesn't provide plan info
             fetched_at: usage.fetched_at,
             status_message: usage.error_message,
@@ -66,15 +65,11 @@ impl ProviderUsage {
     }
 
     pub fn from_codex_usage(usage: CodexUsage) -> Self {
-
-        let session_used = usage.hourly_remaining.map(|r| 100u8.saturating_sub(r));
-        let weekly_used = usage.weekly_remaining.map(|r| 100u8.saturating_sub(r));
-
         Self {
             provider: "codex".to_string(),
             display_name: "Codex".to_string(),
-            session_used, 
-            weekly_used,
+            session: usage.session,
+            weekly: usage.weekly,
             plan_type: usage.plan_type,
             fetched_at: usage.fetched_at,
             status_message: usage.error_message,
@@ -83,7 +78,9 @@ impl ProviderUsage {
     }
 
     pub fn has_error(&self) -> bool {
-        self.status_message.is_some() && self.session_used.is_none() && self.weekly_used.is_none()
+        self.status_message.is_some()
+            && self.session.used_percent.is_none()
+            && self.weekly.used_percent.is_none()
     }
 }
 
@@ -192,6 +189,7 @@ pub fn fetch_all_provider_usage_sync() -> AccountUsage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::usage_reset::ResetTimestamp;
 
     #[test]
     fn test_provider_usage_not_available() {
@@ -205,9 +203,10 @@ mod tests {
 
     #[test]
     fn test_provider_usage_from_claude() {
+        let ts = ResetTimestamp::from_epoch_seconds(1700000000);
         let claude_usage = ClaudeUsage {
-            session_used: Some(5),
-            weekly_used: Some(41),
+            session: UsageWindow::with_percent_and_reset(5, ts),
+            weekly: UsageWindow::with_percent_and_reset(41, ts),
             plan_type: Some("Max".to_string()),
             fetched_at: Some(Instant::now()),
             error_message: None,
@@ -215,8 +214,8 @@ mod tests {
         let provider = ProviderUsage::from_claude_usage(claude_usage);
         assert_eq!(provider.provider, "claude");
         assert_eq!(provider.display_name, "Claude");
-        assert_eq!(provider.session_used, Some(5));
-        assert_eq!(provider.weekly_used, Some(41));
+        assert_eq!(provider.session.used_percent, Some(5));
+        assert_eq!(provider.weekly.used_percent, Some(41));
         assert_eq!(provider.plan_type, Some("Max".to_string()));
         assert!(provider.supports_usage);
     }
@@ -234,16 +233,17 @@ mod tests {
 
     #[test]
     fn test_provider_usage_from_gemini() {
+        let ts = ResetTimestamp::from_epoch_seconds(1700000000);
         let gemini_usage = GeminiUsage {
-            usage_remaining: Some(75),
+            daily: UsageWindow::with_percent_and_reset(25, ts), // 25% used = 75% remaining
             fetched_at: Some(Instant::now()),
             error_message: None,
         };
         let provider = ProviderUsage::from_gemini_usage(gemini_usage);
         assert_eq!(provider.provider, "gemini");
         assert_eq!(provider.display_name, "Gemini");
-        assert_eq!(provider.session_used, None); // Gemini doesn't have session usage
-        assert_eq!(provider.weekly_used, Some(25)); // 100 - 75 = 25% used
+        assert_eq!(provider.session.used_percent, None); // Gemini doesn't have session usage
+        assert_eq!(provider.weekly.used_percent, Some(25)); // daily maps to weekly
         assert_eq!(provider.plan_type, None);
         assert!(provider.supports_usage);
     }
@@ -253,8 +253,8 @@ mod tests {
         let error_usage = ProviderUsage {
             provider: "claude".to_string(),
             display_name: "Claude".to_string(),
-            session_used: None,
-            weekly_used: None,
+            session: UsageWindow::default(),
+            weekly: UsageWindow::default(),
             plan_type: None,
             fetched_at: Some(Instant::now()),
             status_message: Some("CLI not found".to_string()),
@@ -265,8 +265,8 @@ mod tests {
         let ok_usage = ProviderUsage {
             provider: "claude".to_string(),
             display_name: "Claude".to_string(),
-            session_used: Some(10),
-            weekly_used: Some(20),
+            session: UsageWindow::with_percent(10),
+            weekly: UsageWindow::with_percent(20),
             plan_type: None,
             fetched_at: Some(Instant::now()),
             status_message: None,
@@ -286,15 +286,17 @@ mod tests {
         if let Some(claude) = account.get("claude") {
             eprintln!("Claude:");
             eprintln!("  supports_usage: {}", claude.supports_usage);
-            eprintln!("  session_used: {:?}", claude.session_used);
-            eprintln!("  weekly_used: {:?}", claude.weekly_used);
+            eprintln!("  session: {:?}", claude.session);
+            eprintln!("  weekly: {:?}", claude.weekly);
             eprintln!("  plan_type: {:?}", claude.plan_type);
             eprintln!("  status_message: {:?}", claude.status_message);
 
             assert!(claude.supports_usage, "Claude should support usage");
             if claude.status_message.is_none() {
-                assert!(claude.session_used.is_some() || claude.weekly_used.is_some(),
-                    "Claude should have usage data");
+                assert!(
+                    claude.session.used_percent.is_some() || claude.weekly.used_percent.is_some(),
+                    "Claude should have usage data"
+                );
             }
         } else {
             eprintln!("Claude: not found (CLI not installed?)");
@@ -303,7 +305,7 @@ mod tests {
         if let Some(gemini) = account.get("gemini") {
             eprintln!("\nGemini:");
             eprintln!("  supports_usage: {}", gemini.supports_usage);
-            eprintln!("  daily_used (as weekly): {:?}", gemini.weekly_used);
+            eprintln!("  daily (as weekly): {:?}", gemini.weekly);
             eprintln!("  plan_type: {:?}", gemini.plan_type);
             eprintln!("  status_message: {:?}", gemini.status_message);
 
@@ -311,8 +313,11 @@ mod tests {
             // plan_type should be None - Gemini /stats doesn't provide plan info
             assert_eq!(gemini.plan_type, None, "Gemini plan_type should be None");
             if gemini.status_message.is_none() {
-                assert!(gemini.weekly_used.is_some(), "Gemini should have daily usage data");
-                eprintln!("  Daily used: {}%", gemini.weekly_used.unwrap());
+                assert!(
+                    gemini.weekly.used_percent.is_some(),
+                    "Gemini should have daily usage data"
+                );
+                eprintln!("  Daily used: {}%", gemini.weekly.used_percent.unwrap());
             }
         } else {
             eprintln!("\nGemini: not found (CLI not installed)");
@@ -321,21 +326,20 @@ mod tests {
         if let Some(codex) = account.get("codex") {
             eprintln!("\nCodex:");
             eprintln!("  supports_usage: {}", codex.supports_usage);
-            eprintln!("  session_used (5h): {:?}", codex.session_used);
-            eprintln!("  weekly_used: {:?}", codex.weekly_used);
+            eprintln!("  session (5h): {:?}", codex.session);
+            eprintln!("  weekly: {:?}", codex.weekly);
             eprintln!("  plan_type: {:?}", codex.plan_type);
             eprintln!("  status_message: {:?}", codex.status_message);
 
             assert!(codex.supports_usage, "Codex should support usage via /status");
             if codex.status_message.is_none() {
-
-                if let Some(session) = codex.session_used {
+                if let Some(session) = codex.session.used_percent {
                     eprintln!("  5h used: {}%", session);
                 }
-                if let Some(weekly) = codex.weekly_used {
+                if let Some(weekly) = codex.weekly.used_percent {
                     eprintln!("  Weekly used: {}%", weekly);
                 }
-                if codex.session_used.is_none() && codex.weekly_used.is_none() {
+                if codex.session.used_percent.is_none() && codex.weekly.used_percent.is_none() {
                     eprintln!("  (usage data not available yet - normal for fresh sessions)");
                 }
             }

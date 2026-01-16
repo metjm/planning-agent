@@ -1,4 +1,5 @@
 use crate::planning_paths;
+use crate::usage_reset::{ResetTimestamp, UsageWindow};
 use serde::Deserialize;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader};
@@ -13,8 +14,10 @@ fn is_debug_enabled() -> bool {
 
 #[derive(Debug, Clone, Default)]
 pub struct CodexUsage {
-    pub hourly_remaining: Option<u8>,
-    pub weekly_remaining: Option<u8>,
+    /// Session (5h) usage window with reset timestamp
+    pub session: UsageWindow,
+    /// Weekly usage window with reset timestamp
+    pub weekly: UsageWindow,
     pub plan_type: Option<String>,
     pub fetched_at: Option<Instant>,
     pub error_message: Option<String>,
@@ -61,6 +64,10 @@ struct RateLimits {
 #[derive(Debug, Deserialize)]
 struct LimitInfo {
     used_percent: f64,
+    /// Window duration in minutes (300 = 5h, 10080 = weekly)
+    window_minutes: Option<u64>,
+    /// Unix timestamp when this window resets
+    resets_at: Option<i64>,
 }
 
 pub fn is_codex_available() -> bool {
@@ -104,11 +111,22 @@ fn collect_jsonl_files(dir: &Path, files: &mut Vec<PathBuf>) {
     all_files
 }
 
-fn read_rate_limits_from_session(path: &Path) -> Option<(f64, f64)> {
+/// Parsed rate limit data from a Codex session
+struct ParsedRateLimits {
+    session_used: f64,
+    session_resets_at: Option<i64>,
+    weekly_used: f64,
+    weekly_resets_at: Option<i64>,
+}
+
+fn read_rate_limits_from_session(path: &Path) -> Option<ParsedRateLimits> {
     let file = File::open(path).ok()?;
     let reader = BufReader::new(file);
     let mut primary_used: Option<f64> = None;
+    let mut primary_resets_at: Option<i64> = None;
     let mut secondary_used: Option<f64> = None;
+    let mut secondary_resets_at: Option<i64> = None;
+
     for line in reader.lines().map_while(Result::ok) {
         if let Ok(entry) = serde_json::from_str::<SessionEntry>(&line) {
             if entry.entry_type == "event_msg" {
@@ -117,9 +135,17 @@ fn read_rate_limits_from_session(path: &Path) -> Option<(f64, f64)> {
                         if let Some(rate_limits) = payload.rate_limits {
                             if let Some(primary) = rate_limits.primary {
                                 primary_used = Some(primary.used_percent);
+                                // Only capture resets_at if window is 5h (300 minutes)
+                                if primary.window_minutes == Some(300) {
+                                    primary_resets_at = primary.resets_at;
+                                }
                             }
                             if let Some(secondary) = rate_limits.secondary {
                                 secondary_used = Some(secondary.used_percent);
+                                // Only capture resets_at if window is weekly (10080 minutes)
+                                if secondary.window_minutes == Some(10080) {
+                                    secondary_resets_at = secondary.resets_at;
+                                }
                             }
                         }
                     }
@@ -127,8 +153,14 @@ fn read_rate_limits_from_session(path: &Path) -> Option<(f64, f64)> {
             }
         }
     }
+
     match (primary_used, secondary_used) {
-        (Some(p), Some(s)) => Some((p, s)),
+        (Some(p), Some(s)) => Some(ParsedRateLimits {
+            session_used: p,
+            session_resets_at: primary_resets_at,
+            weekly_used: s,
+            weekly_resets_at: secondary_resets_at,
+        }),
         _ => None,
     }
 }
@@ -146,9 +178,10 @@ pub fn fetch_codex_usage_sync() -> CodexUsage {
         };
     }
     for session_file in session_files.iter().take(10) {
-        if let Some((primary_used, secondary_used)) = read_rate_limits_from_session(session_file) {
-            let hourly_remaining = (100.0 - primary_used).round().clamp(0.0, 100.0) as u8;
-            let weekly_remaining = (100.0 - secondary_used).round().clamp(0.0, 100.0) as u8;
+        if let Some(limits) = read_rate_limits_from_session(session_file) {
+            let session_used_pct = limits.session_used.round().clamp(0.0, 100.0) as u8;
+            let weekly_used_pct = limits.weekly_used.round().clamp(0.0, 100.0) as u8;
+
             if is_debug_enabled() {
                 // Use home-based log path
                 if let Ok(log_path) = planning_paths::codex_status_log_path() {
@@ -160,19 +193,33 @@ pub fn fetch_codex_usage_sync() -> CodexUsage {
                         use std::io::Write as _;
                         let _ = writeln!(file, "\n=== Session File Parse ===");
                         let _ = writeln!(file, "File: {:?}", session_file);
-                        let _ = writeln!(file, "Primary used: {}%", primary_used);
-                        let _ = writeln!(file, "Secondary used: {}%", secondary_used);
-                        let _ = writeln!(
-                            file,
-                            "Hourly remaining: {}%, Weekly remaining: {}%",
-                            hourly_remaining, weekly_remaining
-                        );
+                        let _ = writeln!(file, "Session used: {}%", limits.session_used);
+                        let _ = writeln!(file, "Session resets_at: {:?}", limits.session_resets_at);
+                        let _ = writeln!(file, "Weekly used: {}%", limits.weekly_used);
+                        let _ = writeln!(file, "Weekly resets_at: {:?}", limits.weekly_resets_at);
                     }
                 }
             }
+
+            // Build usage windows with reset timestamps
+            let session = match limits.session_resets_at {
+                Some(ts) => UsageWindow::with_percent_and_reset(
+                    session_used_pct,
+                    ResetTimestamp::from_epoch_seconds(ts),
+                ),
+                None => UsageWindow::with_percent(session_used_pct),
+            };
+            let weekly = match limits.weekly_resets_at {
+                Some(ts) => UsageWindow::with_percent_and_reset(
+                    weekly_used_pct,
+                    ResetTimestamp::from_epoch_seconds(ts),
+                ),
+                None => UsageWindow::with_percent(weekly_used_pct),
+            };
+
             return CodexUsage {
-                hourly_remaining: Some(hourly_remaining),
-                weekly_remaining: Some(weekly_remaining),
+                session,
+                weekly,
                 plan_type: None,
                 fetched_at: Some(Instant::now()),
                 error_message: None,
@@ -192,7 +239,7 @@ mod tests {
 
     #[test]
     fn test_codex_usage_with_error_sets_fetched_at() {
-        let usage = super::CodexUsage::with_error("Test error".to_string());
+        let usage = CodexUsage::with_error("Test error".to_string());
         assert!(usage.fetched_at.is_some());
         assert_eq!(usage.error_message, Some("Test error".to_string()));
     }
@@ -216,8 +263,8 @@ mod tests {
         eprintln!("Result: {:?}", usage);
         assert!(usage.fetched_at.is_some());
         if usage.error_message.is_none() {
-            eprintln!("5h remaining: {:?}%", usage.hourly_remaining);
-            eprintln!("Weekly remaining: {:?}%", usage.weekly_remaining);
+            eprintln!("5h used: {:?}%", usage.session.used_percent);
+            eprintln!("Weekly used: {:?}%", usage.weekly.used_percent);
             eprintln!("Plan: {:?}", usage.plan_type);
         }
     }

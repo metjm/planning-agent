@@ -258,16 +258,16 @@ fn test_fetch_claude_usage_real() {
     assert!(usage.fetched_at.is_some(), "fetched_at should be set");
 
     if usage.error_message.is_none() {
-        let has_data = usage.session_used.is_some()
-            || usage.weekly_used.is_some()
+        let has_data = usage.session.used_percent.is_some()
+            || usage.weekly.used_percent.is_some()
             || usage.plan_type.is_some();
         assert!(has_data, "Should have at least some usage data: {:?}", usage);
 
-        if let Some(session) = usage.session_used {
+        if let Some(session) = usage.session.used_percent {
             eprintln!("Session used: {}%", session);
             assert!(session <= 100, "Session percentage should be <= 100");
         }
-        if let Some(weekly) = usage.weekly_used {
+        if let Some(weekly) = usage.weekly.used_percent {
             eprintln!("Weekly used: {}%", weekly);
             assert!(weekly <= 100, "Weekly percentage should be <= 100");
         }
@@ -295,8 +295,108 @@ fn test_fetch_claude_usage_with_debug_logging() {
 
     if is_debug_enabled() {
         if let Ok(log_path) = planning_paths::claude_usage_log_path() {
-            assert!(log_path.exists(), "Debug log file should exist when CLAUDE_USAGE_DEBUG=1");
+            assert!(
+                log_path.exists(),
+                "Debug log file should exist when CLAUDE_USAGE_DEBUG=1"
+            );
             eprintln!("Debug log written to: {:?}", log_path);
         }
     }
+}
+
+// ============================================================================
+// Reset timestamp parsing tests
+// ============================================================================
+
+#[test]
+fn test_parse_am_pm_time() {
+    use chrono::NaiveTime;
+
+    assert_eq!(
+        parse_am_pm_time("9:59am"),
+        Some(NaiveTime::from_hms_opt(9, 59, 0).unwrap())
+    );
+    assert_eq!(
+        parse_am_pm_time("12:00pm"),
+        Some(NaiveTime::from_hms_opt(12, 0, 0).unwrap())
+    );
+    assert_eq!(
+        parse_am_pm_time("12:00am"),
+        Some(NaiveTime::from_hms_opt(0, 0, 0).unwrap())
+    );
+    assert_eq!(
+        parse_am_pm_time("5:59AM"),
+        Some(NaiveTime::from_hms_opt(5, 59, 0).unwrap())
+    );
+    assert_eq!(
+        parse_am_pm_time("11:30PM"),
+        Some(NaiveTime::from_hms_opt(23, 30, 0).unwrap())
+    );
+    assert_eq!(parse_am_pm_time("invalid"), None);
+    assert_eq!(parse_am_pm_time("9:59"), None); // No am/pm
+}
+
+#[test]
+fn test_parse_reset_line_time_only() {
+    // Time-only format should parse (exact timestamp depends on current time)
+    let line = "Resets 9:59am (America/Los_Angeles)";
+    let result = parse_reset_line(line);
+    assert!(result.is_some(), "Should parse time-only reset line");
+}
+
+#[test]
+fn test_parse_reset_line_with_date() {
+    // Date+time format should parse
+    let line = "Resets Dec 26, 5:59am (America/Los_Angeles)";
+    let result = parse_reset_line(line);
+    assert!(result.is_some(), "Should parse date+time reset line");
+}
+
+#[test]
+fn test_parse_reset_line_invalid_timezone() {
+    let line = "Resets 9:59am (Invalid/Timezone)";
+    let result = parse_reset_line(line);
+    assert!(result.is_none(), "Should return None for invalid timezone");
+}
+
+#[test]
+fn test_parse_reset_line_no_timezone() {
+    let line = "Resets 9:59am";
+    let result = parse_reset_line(line);
+    assert!(result.is_none(), "Should return None when no timezone");
+}
+
+#[test]
+fn test_parse_reset_timestamp_from_section() {
+    let output = r#"
+ Current session
+ ██▌                                                5% used
+ Resets 9:59am (America/Los_Angeles)
+
+ Current week (all models)
+ ████████████████████████████████████████████████████100% used
+ Resets Dec 26, 5:59am (America/Los_Angeles)
+"#;
+    let session_reset = parse_reset_timestamp(output, "current session");
+    assert!(
+        session_reset.is_some(),
+        "Should find session reset timestamp"
+    );
+
+    let weekly_reset = parse_reset_timestamp(output, "current week");
+    assert!(weekly_reset.is_some(), "Should find weekly reset timestamp");
+}
+
+#[test]
+fn test_parse_reset_timestamp_not_found() {
+    let output = r#"
+ Current session
+ ██▌                                                5% used
+ No reset info here
+"#;
+    let result = parse_reset_timestamp(output, "current session");
+    assert!(
+        result.is_none(),
+        "Should return None when no reset line found"
+    );
 }
