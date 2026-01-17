@@ -209,6 +209,11 @@ pub async fn check_workflow_completions(
                             resumable_sessions.push(resumable);
                         }
                     }
+                    Ok(Ok(WorkflowResult::ImplementationRequested)) => {
+                        // This should not happen as it's handled inside run_workflow_with_config,
+                        // but if it does reach here, treat it as planning in progress
+                        session.status = SessionStatus::Planning;
+                    }
                     Ok(Err(e)) => {
                         session.handle_error(&format!("Workflow failed: {}", e));
                     }
