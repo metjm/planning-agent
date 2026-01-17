@@ -7,7 +7,6 @@ pub mod protocol;
 pub mod runner;
 
 use crate::config::AgentConfig;
-use crate::mcp::McpServerConfig;
 use crate::session_logger::SessionLogger;
 use crate::state::ResumeStrategy;
 use crate::tui::SessionEventSender;
@@ -125,49 +124,17 @@ impl AgentType {
         match self {
             Self::Claude(agent) => {
                 agent
-                    .execute_streaming_with_prepared(prepared, context, None)
+                    .execute_streaming_with_prepared(prepared, context)
                     .await
             }
             Self::Codex(agent) => {
                 agent
-                    .execute_streaming_with_prepared(prepared, context, None)
+                    .execute_streaming_with_prepared(prepared, context)
                     .await
             }
             Self::Gemini(agent) => {
                 agent
-                    .execute_streaming_with_prepared(prepared, context, None)
-                    .await
-            }
-        }
-    }
-
-    /// Execute with MCP config for review feedback collection
-    /// All agents (Claude, Codex, Gemini) support MCP - no fallbacks
-    pub async fn execute_streaming_with_mcp(
-        &self,
-        prompt: String,
-        system_prompt: Option<String>,
-        max_turns: Option<u32>,
-        context: AgentContext,
-        mcp_config: &McpServerConfig,
-    ) -> Result<AgentResult> {
-        // Prepare prompt centrally - handles system prompt merging for non-Claude agents
-        let prepared = self.prepare_prompt(prompt, system_prompt, max_turns);
-
-        match self {
-            Self::Claude(agent) => {
-                agent
-                    .execute_streaming_with_prepared(prepared, context, Some(mcp_config))
-                    .await
-            }
-            Self::Codex(agent) => {
-                agent
-                    .execute_streaming_with_prepared(prepared, context, Some(mcp_config))
-                    .await
-            }
-            Self::Gemini(agent) => {
-                agent
-                    .execute_streaming_with_prepared(prepared, context, Some(mcp_config))
+                    .execute_streaming_with_prepared(prepared, context)
                     .await
             }
         }

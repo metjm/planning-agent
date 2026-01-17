@@ -1,10 +1,10 @@
-//! Review output parsing for MCP review feedback.
+//! Review output parsing for file-based review feedback.
 //!
-//! This module handles parsing of agent output to extract structured review feedback,
+//! This module handles parsing of review feedback content to extract structured review data,
 //! including verdict extraction, summary parsing, and critical issues identification.
 
 use crate::diagnostics::ParseFailureInfo;
-use crate::mcp::{ReviewVerdict, SubmittedReview};
+use crate::phases::review_schema::{ReviewVerdict, SubmittedReview};
 use regex::Regex;
 
 /// Extract content from <plan-feedback> tags if present
@@ -19,20 +19,27 @@ pub fn extract_plan_feedback(output: &str) -> String {
     output.to_string()
 }
 
-/// Try to parse a structured review from agent output
-/// Looks for JSON-like structured review or parses from <plan-feedback> tags
-#[allow(dead_code)]
-pub fn try_parse_mcp_review(output: &str) -> Option<SubmittedReview> {
-    parse_mcp_review(output).ok()
-}
+/// Parse review feedback content, returning detailed failure info on error.
+///
+/// # Arguments
+/// * `content` - The feedback file content to parse
+/// * `require_tags` - If true, requires <plan-feedback> tags to be present
+pub fn parse_review_feedback(content: &str, require_tags: bool) -> Result<SubmittedReview, ParseFailureInfo> {
+    // First, check if plan-feedback tags are present
+    let has_tags = content.contains("<plan-feedback>") && content.contains("</plan-feedback>");
 
-/// Parse MCP review from agent output, returning detailed failure info on error
-pub fn parse_mcp_review(output: &str) -> Result<SubmittedReview, ParseFailureInfo> {
-    // First, try to extract from <plan-feedback> tags
-    let feedback = extract_plan_feedback(output);
+    // If tags are required but not found, return error
+    if require_tags && !has_tags {
+        return Err(ParseFailureInfo {
+            error: "Required <plan-feedback> tags not found in feedback content".to_string(),
+            plan_feedback_found: false,
+            verdict_found: false,
+        });
+    }
 
-    // Check if plan-feedback tags were found (compare with original output)
-    let plan_feedback_found = feedback != output;
+    // Extract content from tags if present
+    let feedback = extract_plan_feedback(content);
+    let plan_feedback_found = has_tags;
 
     // Try to parse as JSON (if agent returned structured output)
     if let Ok(review) = serde_json::from_str::<SubmittedReview>(&feedback) {
@@ -247,5 +254,32 @@ mod tests {
         let output = "## Summary\nThis is good\n\nNo tags here";
         let feedback = extract_plan_feedback(output);
         assert_eq!(feedback, output);
+    }
+
+    #[test]
+    fn test_parse_review_feedback_without_tags_when_not_required() {
+        let content = "## Summary\nLooks good!\n\n## Overall Assessment: APPROVED";
+        let result = parse_review_feedback(content, false);
+        assert!(result.is_ok());
+        let review = result.unwrap();
+        assert_eq!(review.verdict, ReviewVerdict::Approved);
+    }
+
+    #[test]
+    fn test_parse_review_feedback_without_tags_when_required() {
+        let content = "## Summary\nLooks good!\n\n## Overall Assessment: APPROVED";
+        let result = parse_review_feedback(content, true);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.error.contains("tags not found"));
+    }
+
+    #[test]
+    fn test_parse_review_feedback_with_tags_when_required() {
+        let content = "<plan-feedback>\n## Summary\nLooks good!\n\n## Overall Assessment: APPROVED\n</plan-feedback>";
+        let result = parse_review_feedback(content, true);
+        assert!(result.is_ok());
+        let review = result.unwrap();
+        assert_eq!(review.verdict, ReviewVerdict::Approved);
     }
 }

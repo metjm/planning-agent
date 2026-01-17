@@ -4,51 +4,14 @@ use crate::agents::prompt::PreparedPrompt;
 use crate::agents::runner::{run_agent_process, ContextEmitter, EventEmitter, RunnerConfig};
 use crate::agents::{AgentContext, AgentResult};
 use crate::config::AgentConfig;
-use crate::mcp::McpServerConfig;
 use crate::state::ResumeStrategy;
 use anyhow::Result;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::Duration;
 use tokio::process::Command;
 
 const DEFAULT_ACTIVITY_TIMEOUT: Duration = Duration::from_secs(300);
 const DEFAULT_OVERALL_TIMEOUT: Duration = Duration::from_secs(21600); // 6 hours
-
-/// RAII guard for temporary Gemini config directory
-/// Cleans up the directory when dropped
-struct TempGeminiConfigDir {
-    path: PathBuf,
-}
-
-impl TempGeminiConfigDir {
-    /// Create a new temp config directory with MCP settings
-    fn new(mcp_config: &McpServerConfig) -> Result<Self> {
-        let uuid = &mcp_config.server_name
-            .strip_prefix("planning-agent-review-")
-            .unwrap_or(&mcp_config.server_name);
-        let base_path = std::env::temp_dir().join(format!("gemini-mcp-{}", uuid));
-        let gemini_dir = base_path.join(".gemini");
-        std::fs::create_dir_all(&gemini_dir)?;
-
-        // Write the settings.json file
-        let settings_path = gemini_dir.join("settings.json");
-        std::fs::write(&settings_path, mcp_config.to_gemini_settings_json())?;
-
-        Ok(Self { path: base_path })
-    }
-
-    /// Get the path to use as HOME for gemini
-    fn home_dir(&self) -> &Path {
-        &self.path
-    }
-}
-
-impl Drop for TempGeminiConfigDir {
-    fn drop(&mut self) {
-        // Best-effort cleanup
-        let _ = std::fs::remove_dir_all(&self.path);
-    }
-}
 
 #[derive(Debug, Clone)]
 pub struct GeminiAgent {
@@ -81,10 +44,9 @@ impl GeminiAgent {
         &self,
         prepared: PreparedPrompt,
         context: AgentContext,
-        mcp_config: Option<&McpServerConfig>,
     ) -> Result<AgentResult> {
         let emitter = ContextEmitter::new(context.clone(), self.name.clone());
-        self.execute_streaming_internal(prepared, &emitter, Some(&context), mcp_config).await
+        self.execute_streaming_internal(prepared, &emitter, Some(&context)).await
     }
 
     async fn execute_streaming_internal(
@@ -92,18 +54,11 @@ impl GeminiAgent {
         prepared: PreparedPrompt,
         emitter: &dyn EventEmitter,
         context: Option<&AgentContext>,
-        mcp_config: Option<&McpServerConfig>,
     ) -> Result<AgentResult> {
         let logger = context.map(|ctx| AgentLogger::new(&self.name, ctx.session_logger.clone()));
-        self.log_start(&logger, &prepared.prompt, context.is_some(), mcp_config.is_some());
+        self.log_start(&logger, &prepared.prompt, context.is_some());
 
-        // Create temp config dir if using MCP (will be cleaned up when dropped)
-        let _temp_config = match mcp_config {
-            Some(mcp) => Some(TempGeminiConfigDir::new(mcp)?),
-            None => None,
-        };
-
-        let cmd = self.build_command(&prepared.prompt, context, mcp_config, _temp_config.as_ref());
+        let cmd = self.build_command(&prepared.prompt, context);
         let mut config = RunnerConfig::new(self.name.clone(), self.working_dir.clone())
             .with_activity_timeout(self.activity_timeout)
             .with_overall_timeout(self.overall_timeout);
@@ -113,7 +68,6 @@ impl GeminiAgent {
         let mut parser = GeminiParser::new();
 
         let output = run_agent_process(cmd, &config, &mut parser, emitter).await?;
-        // _temp_config dropped here, cleaning up the temp directory
         Ok(output.into())
     }
 
@@ -121,15 +75,8 @@ impl GeminiAgent {
         &self,
         prompt: &str,
         context: Option<&AgentContext>,
-        mcp_config: Option<&McpServerConfig>,
-        temp_config: Option<&TempGeminiConfigDir>,
     ) -> Command {
         let mut cmd = Command::new(&self.config.command);
-
-        // Set HOME to temp directory if using MCP
-        if let Some(temp) = temp_config {
-            cmd.env("HOME", temp.home_dir());
-        }
 
         // Add --resume if we have a conversation ID and session persistence is enabled
         if self.config.session_persistence.enabled {
@@ -143,12 +90,6 @@ impl GeminiAgent {
             }
         }
 
-        // Add --allowed-mcp-server-names to restrict to our server only
-        if let Some(mcp) = mcp_config {
-            cmd.arg("--allowed-mcp-server-names");
-            cmd.arg(&mcp.server_name);
-        }
-
         // Add the regular config args
         for arg in &self.config.args {
             cmd.arg(arg);
@@ -158,7 +99,7 @@ impl GeminiAgent {
         cmd
     }
 
-    fn log_start(&self, logger: &Option<AgentLogger>, prompt: &str, has_context: bool, has_mcp: bool) {
+    fn log_start(&self, logger: &Option<AgentLogger>, prompt: &str, has_context: bool) {
         if let Some(ref logger) = logger {
             let args = if self.config.args.is_empty() {
                 String::new()
@@ -166,8 +107,7 @@ impl GeminiAgent {
                 format!(" {}", self.config.args.join(" "))
             };
             let context_suffix = if has_context { " (with context)" } else { "" };
-            let mcp_suffix = if has_mcp { " (with MCP)" } else { "" };
-            logger.log_line("start", &format!("command: {}{}{}{}", self.config.command, args, context_suffix, mcp_suffix));
+            logger.log_line("start", &format!("command: {}{}{}", self.config.command, args, context_suffix));
             logger.log_line("prompt", &prompt.chars().take(200).collect::<String>());
         }
     }
@@ -244,7 +184,7 @@ mod tests {
             Some("4e2f5f4f-c181-417a-855f-291bf3e9e515".to_string()),
             ResumeStrategy::ConversationResume,
         );
-        let cmd = agent.build_command("test prompt", Some(&ctx), None, None);
+        let cmd = agent.build_command("test prompt", Some(&ctx));
         let args = get_args(&cmd);
 
         assert!(
@@ -266,7 +206,7 @@ mod tests {
             Some("4e2f5f4f-c181-417a-855f-291bf3e9e515".to_string()),
             ResumeStrategy::Stateless,
         );
-        let cmd = agent.build_command("test prompt", Some(&ctx), None, None);
+        let cmd = agent.build_command("test prompt", Some(&ctx));
         let args = get_args(&cmd);
 
         assert!(
@@ -280,7 +220,7 @@ mod tests {
     fn test_build_command_no_resume_when_no_conversation_id() {
         let agent = make_agent(true);
         let ctx = make_context(None, ResumeStrategy::ConversationResume);
-        let cmd = agent.build_command("test prompt", Some(&ctx), None, None);
+        let cmd = agent.build_command("test prompt", Some(&ctx));
         let args = get_args(&cmd);
 
         assert!(
@@ -297,7 +237,7 @@ mod tests {
             Some("4e2f5f4f-c181-417a-855f-291bf3e9e515".to_string()),
             ResumeStrategy::ConversationResume,
         );
-        let cmd = agent.build_command("test prompt", Some(&ctx), None, None);
+        let cmd = agent.build_command("test prompt", Some(&ctx));
         let args = get_args(&cmd);
 
         assert!(

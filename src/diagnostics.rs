@@ -1,7 +1,7 @@
-//! Diagnostics bundle creation for MCP review failure recovery.
+//! Diagnostics bundle creation for review failure recovery.
 //!
-//! This module provides functionality to collect relevant artifacts when MCP review
-//! submission fails, package them into a ZIP archive, and surface the bundle path
+//! This module provides functionality to collect relevant artifacts when review
+//! feedback parsing fails, package them into a ZIP archive, and surface the bundle path
 //! to users for debugging purposes.
 
 use crate::planning_paths;
@@ -47,8 +47,8 @@ pub struct DiagnosticsManifest {
     pub agent_name: String,
     /// Reason for failure
     pub failure_reason: String,
-    /// MCP server name used
-    pub mcp_server_name: String,
+    /// Server name identifier (for diagnostics purposes)
+    pub server_name: String,
     /// Working directory hash
     pub working_dir_hash: String,
     /// Workflow run ID
@@ -70,7 +70,7 @@ pub struct BundleConfig<'a> {
     pub working_dir: &'a Path,
     pub agent_name: &'a str,
     pub failure_reason: &'a str,
-    pub mcp_server_name: &'a str,
+    pub server_name: &'a str,
     pub run_id: &'a str,
     pub plan_feedback_found: bool,
     pub verdict_found: bool,
@@ -92,11 +92,11 @@ struct RedactedConfigMetadata {
     pub phases: Vec<String>,
 }
 
-/// Creates a diagnostics bundle for a failed MCP review.
+/// Creates a diagnostics bundle for a failed review.
 ///
 /// Returns `Some(PathBuf)` with the bundle path on success, or `None` if bundle
 /// creation failed (errors are logged but don't abort the review flow).
-pub fn create_mcp_review_bundle(config: BundleConfig<'_>) -> Option<PathBuf> {
+pub fn create_review_bundle(config: BundleConfig<'_>) -> Option<PathBuf> {
     match create_bundle_internal(config) {
         Ok(path) => Some(path),
         Err(e) => {
@@ -110,7 +110,7 @@ fn create_bundle_internal(config: BundleConfig<'_>) -> Result<PathBuf> {
     let timestamp = chrono::Local::now().format("%Y%m%d-%H%M%S").to_string();
     let suffix = &uuid::Uuid::new_v4().to_string()[..8];
 
-    let bundle_path = planning_paths::mcp_review_bundle_path(
+    let bundle_path = planning_paths::review_bundle_path(
         config.working_dir,
         config.agent_name,
         &timestamp,
@@ -202,7 +202,7 @@ fn create_bundle_internal(config: BundleConfig<'_>) -> Result<PathBuf> {
         attempt_timestamps: config.attempt_timestamps,
         agent_name: config.agent_name.to_string(),
         failure_reason: config.failure_reason.to_string(),
-        mcp_server_name: config.mcp_server_name.to_string(),
+        server_name: config.server_name.to_string(),
         working_dir_hash: planning_paths::working_dir_hash(config.working_dir),
         run_id: config.run_id.to_string(),
         plan_feedback_found: config.plan_feedback_found,
@@ -348,7 +348,7 @@ mod tests {
             working_dir,
             agent_name: "test-agent",
             failure_reason: "Test failure",
-            mcp_server_name: "planning-agent-review-test",
+            server_name: "file-review-test",
             run_id: "20260112-120000",
             plan_feedback_found: false,
             verdict_found: false,
@@ -365,12 +365,12 @@ mod tests {
             workflow_session_id: None,
         };
 
-        let result = create_mcp_review_bundle(config);
+        let result = create_review_bundle(config);
         assert!(result.is_some());
 
         let bundle_path = result.unwrap();
         assert!(bundle_path.exists());
-        assert!(bundle_path.to_string_lossy().contains("mcp-review-test-agent"));
+        assert!(bundle_path.to_string_lossy().contains("review-test-agent"));
         assert!(bundle_path.extension().map(|e| e == "zip").unwrap_or(false));
     }
 
@@ -383,7 +383,7 @@ mod tests {
             working_dir,
             agent_name: "retry-agent",
             failure_reason: "Both attempts failed",
-            mcp_server_name: "planning-agent-review-test",
+            server_name: "file-review-test",
             run_id: "20260112-120000",
             plan_feedback_found: true,
             verdict_found: false,
@@ -407,7 +407,7 @@ mod tests {
             workflow_session_id: None,
         };
 
-        let result = create_mcp_review_bundle(config);
+        let result = create_review_bundle(config);
         assert!(result.is_some());
 
         // Verify bundle contains both outputs by reading and checking manifest
@@ -460,7 +460,7 @@ mod tests {
     #[test]
     fn test_bundle_path_format() {
         let dir = tempdir().unwrap();
-        let result = planning_paths::mcp_review_bundle_path(
+        let result = planning_paths::review_bundle_path(
             dir.path(),
             "claude",
             "20260112-120000",
@@ -470,6 +470,6 @@ mod tests {
         assert!(result.is_ok());
         let path = result.unwrap();
         assert!(path.to_string_lossy().contains("diagnostics"));
-        assert!(path.to_string_lossy().contains("mcp-review-claude-20260112-120000-abcd1234.zip"));
+        assert!(path.to_string_lossy().contains("review-claude-20260112-120000-abcd1234.zip"));
     }
 }

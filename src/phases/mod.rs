@@ -2,6 +2,7 @@ pub mod fixing;
 pub mod planning;
 mod review_parser;
 mod review_prompts;
+pub mod review_schema;
 pub mod reviewing;
 pub mod revising;
 pub mod summary;
@@ -15,6 +16,9 @@ pub use reviewing::{
 };
 pub use revising::run_revision_phase_with_context;
 pub use summary::spawn_summary_generation;
+// Re-export review schema types for potential external use
+#[allow(unused_imports)]
+pub use review_schema::{ReviewVerdict, SubmittedReview};
 pub use verification::{
     parse_verification_verdict, run_verification_phase, VerificationVerdictResult,
 };

@@ -324,16 +324,16 @@ pub fn diagnostics_dir(working_dir: &Path) -> Result<PathBuf> {
     Ok(dir)
 }
 
-/// Returns the path for an MCP review diagnostics bundle.
+/// Returns the path for a review diagnostics bundle.
 ///
-/// Format: `~/.planning-agent/diagnostics/<wd-hash>/mcp-review-<agent>-<timestamp>-<suffix>.zip`
-pub fn mcp_review_bundle_path(
+/// Format: `~/.planning-agent/diagnostics/<wd-hash>/review-<agent>-<timestamp>-<suffix>.zip`
+pub fn review_bundle_path(
     working_dir: &Path,
     agent_name: &str,
     timestamp: &str,
     suffix: &str,
 ) -> Result<PathBuf> {
-    let filename = format!("mcp-review-{}-{}-{}.zip", agent_name, timestamp, suffix);
+    let filename = format!("review-{}-{}-{}.zip", agent_name, timestamp, suffix);
     Ok(diagnostics_dir(working_dir)?.join(filename))
 }
 
