@@ -1,6 +1,6 @@
 use crate::agents::{AgentContext, AgentType};
 use crate::config::WorkflowConfig;
-use crate::phases::verification::extract_verification_feedback;
+use crate::phases::extract_verification_feedback;
 use crate::prompt_format::PromptBuilder;
 use crate::session_logger::SessionLogger;
 use crate::state::ResumeStrategy;

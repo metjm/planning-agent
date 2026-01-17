@@ -76,6 +76,11 @@ pub async fn handle_completion(
                     Some(UserApprovalResponse::Accept) => {
                         log_workflow(working_dir, "User ACCEPTED the plan");
                         sender.send_output("[planning] User accepted the plan!".to_string());
+                        // TODO: Step 5c TUI integration
+                        // If config.implementation.enabled, run implementation workflow here:
+                        // let impl_result = run_implementation_workflow(...).await?;
+                        // Then handle impl_result and potentially show additional UI for
+                        // implementation decisions (retry, edit feedback, abort)
                         return Ok(WorkflowResult::Accepted);
                     }
                     Some(UserApprovalResponse::Decline(feedback)) => {

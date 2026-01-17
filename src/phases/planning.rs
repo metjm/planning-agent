@@ -165,6 +165,7 @@ mod tests {
             last_failure: None,
             failure_history: Vec::new(),
             worktree_info: None,
+            implementation_state: None,
         }
     }
 

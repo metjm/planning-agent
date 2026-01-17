@@ -14,7 +14,6 @@ pub use context::SessionContext;
 use crate::app::WorkflowResult;
 use crate::cli_usage::AccountUsage;
 use crate::state::{Phase, State};
-use crate::tui::embedded_terminal::EmbeddedTerminal;
 use crate::tui::event::{TokenUsage, WorkflowCommand};
 use crate::tui::mention::MentionState;
 use crate::tui::slash::SlashState;
@@ -146,9 +145,6 @@ pub struct Session {
     pub todos: HashMap<String, Vec<TodoItem>>,
     pub todo_scroll_position: usize,
 
-    /// Embedded implementation terminal (runtime-only, not serialized)
-    pub implementation_terminal: Option<EmbeddedTerminal>,
-
     /// @-mention state for tab input field
     pub tab_mention_state: MentionState,
     /// @-mention state for feedback input field
@@ -247,8 +243,6 @@ impl Session {
 
             todos: HashMap::new(),
             todo_scroll_position: 0,
-
-            implementation_terminal: None,
 
             tab_mention_state: MentionState::new(),
             feedback_mention_state: MentionState::new(),
@@ -505,7 +499,7 @@ impl Session {
                 }
             }
             FocusedPanel::Summary => FocusedPanel::Output,
-            FocusedPanel::Implementation => FocusedPanel::Output,
+            FocusedPanel::Unknown => FocusedPanel::Output,
         };
     }
 
@@ -702,23 +696,6 @@ impl Session {
     }
 
     // Note: `to_ui_state` and `from_ui_state` are implemented in snapshot.rs
-
-    /// Check if implementation terminal is active
-    pub fn has_active_implementation_terminal(&self) -> bool {
-        self.implementation_terminal
-            .as_ref()
-            .map(|t| t.active)
-            .unwrap_or(false)
-    }
-
-    /// Stop the implementation terminal and return to normal mode
-    pub fn stop_implementation_terminal(&mut self) {
-        if let Some(mut terminal) = self.implementation_terminal.take() {
-            terminal.kill();
-        }
-        self.input_mode = InputMode::Normal;
-        self.focused_panel = FocusedPanel::Output;
-    }
 
     /// Accept the currently selected mention in the tab input field.
     /// Replaces the @query with the selected file path (absolute path when available).

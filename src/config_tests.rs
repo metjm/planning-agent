@@ -209,8 +209,17 @@ workflow:
           Focus on architecture:
           - Code organization
           - Design patterns
+
+# Implementation uses codex for implementing and claude for reviewing
+implementation:
+  enabled: true
+  implementing:
+    agent: codex
+  reviewing:
+    agent: claude
 "#;
-    let config: WorkflowConfig = serde_yaml::from_str(yaml).unwrap();
+    let mut config: WorkflowConfig = serde_yaml::from_str(yaml).unwrap();
+    config.implementation.normalize(&config.workflow).unwrap();
 
     // Should have 3 reviewers
     assert_eq!(config.workflow.reviewing.agents.len(), 3);
@@ -320,8 +329,17 @@ workflow:
 failure_policy:
   max_retries: 3
   on_all_reviewers_failed: save_state
+
+# Implementation uses claude for implementing and codex for reviewing
+implementation:
+  enabled: true
+  implementing:
+    agent: claude
+  reviewing:
+    agent: codex
 "#;
-    let config: WorkflowConfig = serde_yaml::from_str(yaml).unwrap();
+    let mut config: WorkflowConfig = serde_yaml::from_str(yaml).unwrap();
+    config.implementation.normalize(&config.workflow).unwrap();
 
     // Validate entire config
     assert!(config.validate().is_ok());
@@ -414,8 +432,17 @@ workflow:
 failure_policy:
   max_retries: 2
   on_all_reviewers_failed: save_state
+
+# Implementation uses claude for implementing and codex for reviewing
+implementation:
+  enabled: true
+  implementing:
+    agent: claude
+  reviewing:
+    agent: codex
 "#;
-    let config: WorkflowConfig = serde_yaml::from_str(yaml).unwrap();
+    let mut config: WorkflowConfig = serde_yaml::from_str(yaml).unwrap();
+    config.implementation.normalize(&config.workflow).unwrap();
 
     // Validate entire config
     let validation_result = config.validate();
@@ -522,4 +549,199 @@ failure_policy:
         config.workflow.reviewing.aggregation,
         AggregationMode::Majority
     );
+}
+
+// Implementation config tests
+
+#[test]
+fn test_config_backward_compatibility_without_implementation() {
+    // Test that configs without implementation section parse correctly
+    // and get defaults normalized from workflow section
+    let yaml = r#"
+agents:
+  claude:
+    command: "claude"
+    args: ["-p"]
+  codex:
+    command: "codex"
+    args: ["exec", "--json"]
+
+workflow:
+  planning:
+    agent: codex
+  reviewing:
+    agents: [claude, codex]
+"#;
+    let mut config: WorkflowConfig = serde_yaml::from_str(yaml).unwrap();
+    config.implementation.normalize(&config.workflow).unwrap();
+
+    // implementation should default to enabled
+    assert!(config.implementation.enabled);
+    assert_eq!(config.implementation.max_iterations, 3);
+
+    // implementing should default to planning agent (codex) with max_turns: 100
+    let implementing = config.implementation.implementing.as_ref().unwrap();
+    assert_eq!(implementing.agent, "codex");
+    assert_eq!(implementing.max_turns, Some(100));
+
+    // reviewing should default to first distinct reviewer (claude)
+    let reviewing = config.implementation.reviewing.as_ref().unwrap();
+    assert_eq!(reviewing.agent, "claude");
+
+    // Validation should pass
+    assert!(config.validate().is_ok());
+}
+
+#[test]
+fn test_implementation_config_explicit() {
+    let yaml = r#"
+agents:
+  claude:
+    command: "claude"
+    args: ["-p"]
+  codex:
+    command: "codex"
+    args: ["exec", "--json"]
+
+workflow:
+  planning:
+    agent: codex
+  reviewing:
+    agents: [claude]
+
+implementation:
+  enabled: true
+  max_iterations: 5
+  implementing:
+    agent: codex
+    max_turns: 150
+  reviewing:
+    agent: claude
+    max_turns: 50
+"#;
+    let mut config: WorkflowConfig = serde_yaml::from_str(yaml).unwrap();
+    config.implementation.normalize(&config.workflow).unwrap();
+
+    assert!(config.implementation.enabled);
+    assert_eq!(config.implementation.max_iterations, 5);
+
+    let implementing = config.implementation.implementing.as_ref().unwrap();
+    assert_eq!(implementing.agent, "codex");
+    assert_eq!(implementing.max_turns, Some(150));
+
+    let reviewing = config.implementation.reviewing.as_ref().unwrap();
+    assert_eq!(reviewing.agent, "claude");
+    assert_eq!(reviewing.max_turns, Some(50));
+
+    assert!(config.validate().is_ok());
+}
+
+#[test]
+fn test_implementation_config_disabled() {
+    let yaml = r#"
+agents:
+  claude:
+    command: "claude"
+
+workflow:
+  planning:
+    agent: claude
+  reviewing:
+    agents: [claude]
+
+implementation:
+  enabled: false
+"#;
+    let mut config: WorkflowConfig = serde_yaml::from_str(yaml).unwrap();
+    config.implementation.normalize(&config.workflow).unwrap();
+
+    assert!(!config.implementation.enabled);
+    // Validation should pass even without distinct reviewer when disabled
+    assert!(config.validate().is_ok());
+}
+
+#[test]
+fn test_implementation_validation_same_agent_fails() {
+    let yaml = r#"
+agents:
+  claude:
+    command: "claude"
+
+workflow:
+  planning:
+    agent: claude
+  reviewing:
+    agents: [claude]
+
+implementation:
+  enabled: true
+  implementing:
+    agent: claude
+  reviewing:
+    agent: claude
+"#;
+    let mut config: WorkflowConfig = serde_yaml::from_str(yaml).unwrap();
+    config.implementation.normalize(&config.workflow).unwrap();
+
+    // Validation should fail because implementing and reviewing are the same
+    let result = config.validate();
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("different agent"));
+}
+
+#[test]
+fn test_implementation_validation_missing_agent() {
+    let yaml = r#"
+agents:
+  claude:
+    command: "claude"
+
+workflow:
+  planning:
+    agent: claude
+  reviewing:
+    agents: [claude]
+
+implementation:
+  enabled: true
+  implementing:
+    agent: nonexistent
+  reviewing:
+    agent: claude
+"#;
+    let config: WorkflowConfig = serde_yaml::from_str(yaml).unwrap();
+
+    // Validation should fail because implementing agent doesn't exist
+    let result = config.validate();
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("implementing agent"));
+}
+
+#[test]
+fn test_implementation_single_agent_no_distinct_reviewer() {
+    // Single agent config without explicit implementation section
+    // should fail if enabled because no distinct reviewer can be found
+    let yaml = r#"
+agents:
+  claude:
+    command: "claude"
+
+workflow:
+  planning:
+    agent: claude
+  reviewing:
+    agents: [claude]
+"#;
+    let mut config: WorkflowConfig = serde_yaml::from_str(yaml).unwrap();
+    config.implementation.normalize(&config.workflow).unwrap();
+
+    // enabled is true by default, but no distinct reviewer
+    assert!(config.implementation.enabled);
+    // reviewing should not be set because only claude exists
+    assert!(config.implementation.reviewing.is_none());
+
+    // Validation should fail
+    let result = config.validate();
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("no distinct reviewing agent"));
 }

@@ -94,10 +94,7 @@ impl TabManager {
             return;
         }
 
-        let mut session = self.sessions.remove(index);
-
-        // Clean up implementation terminal if active
-        session.stop_implementation_terminal();
+        let session = self.sessions.remove(index);
 
         drop(session.approval_tx);
 

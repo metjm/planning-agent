@@ -45,3 +45,10 @@ workflow:
 #   max_retries: 2
 #   backoff_secs: 5
 #   on_all_reviewers_failed: abort
+
+# Implementation workflow configuration
+# Disabled for single-agent configs because implementation-review requires
+# a different agent than the implementing agent. To enable implementation,
+# add a second agent (e.g., codex or gemini) and configure it as the reviewer.
+implementation:
+  enabled: false

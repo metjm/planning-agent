@@ -10,6 +10,12 @@ agents:
       - "stream-json"
       - "--verbose"
       - "--dangerously-skip-permissions"
+    # Tools allowed for implementation-review (repo inspection)
+    allowed_tools:
+      - "Read"
+      - "Glob"
+      - "Grep"
+      - "Bash"
 
   codex:
     command: "codex"
@@ -74,6 +80,18 @@ failure_policy:
   # - save_state: Save state for later recovery in TUI mode
   # - continue_without_review: Proceed to revision phase without reviews
   on_all_reviewers_failed: abort
+
+# Implementation workflow configuration
+# Runs after plan approval to implement the plan using JSON-mode agents
+implementation:
+  enabled: true
+  max_iterations: 3
+  implementing:
+    agent: codex
+    max_turns: 100
+  reviewing:
+    agent: claude
+    # max_turns uses agent default
 
 # Optional: Post-implementation verification workflow
 # Uncomment to enable verification after implementation

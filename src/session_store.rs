@@ -29,7 +29,8 @@ use std::path::{Path, PathBuf};
 /// Version history:
 /// - v1: Initial version with session_used/weekly_used in ProviderUsage
 /// - v2: UsageWindow with reset timestamps (session/weekly fields)
-pub const SNAPSHOT_VERSION: u32 = 2;
+/// - v3: Removed embedded implementation terminal (InputMode/FocusedPanel have Unknown variants)
+pub const SNAPSHOT_VERSION: u32 = 3;
 
 /// A persistable snapshot of a workflow session.
 ///

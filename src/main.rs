@@ -1,5 +1,6 @@
 mod agents;
 mod app;
+mod change_fingerprint;
 mod claude_usage;
 mod cli_usage;
 mod codex_usage;

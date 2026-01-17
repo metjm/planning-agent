@@ -114,6 +114,93 @@ pub enum Phase {
     Complete,
 }
 
+/// Sub-phases within the implementation workflow.
+/// This is used by the implementation orchestrator to track progress.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ImplementationPhase {
+    /// Initial phase: implementing the approved plan
+    #[default]
+    Implementing,
+    /// Review phase: reviewing the implementation for completeness
+    ImplementationReview,
+    /// Implementation complete and approved
+    Complete,
+}
+
+#[allow(dead_code)]
+impl ImplementationPhase {
+    /// Returns a human-readable label for this phase.
+    pub fn label(&self) -> &'static str {
+        match self {
+            ImplementationPhase::Implementing => "Implementing",
+            ImplementationPhase::ImplementationReview => "Reviewing Implementation",
+            ImplementationPhase::Complete => "Implementation Complete",
+        }
+    }
+}
+
+/// State for the implementation workflow phase.
+///
+/// This is persisted as part of the main State and used by the
+/// implementation orchestrator to track implement/review iterations.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ImplementationPhaseState {
+    /// Current sub-phase within implementation workflow
+    pub phase: ImplementationPhase,
+    /// Current iteration (1-indexed)
+    pub iteration: u32,
+    /// Maximum allowed iterations before giving up
+    pub max_iterations: u32,
+    /// Last verdict from implementation review (if any)
+    pub last_verdict: Option<String>,
+    /// Last feedback from implementation review (for use in re-implementation)
+    pub last_feedback: Option<String>,
+}
+
+#[allow(dead_code)]
+impl ImplementationPhaseState {
+    /// Creates a new implementation phase state with the given max iterations.
+    pub fn new(max_iterations: u32) -> Self {
+        Self {
+            phase: ImplementationPhase::Implementing,
+            iteration: 1,
+            max_iterations,
+            last_verdict: None,
+            last_feedback: None,
+        }
+    }
+
+    /// Returns true if we can continue with another iteration.
+    pub fn can_continue(&self) -> bool {
+        self.phase != ImplementationPhase::Complete && self.iteration <= self.max_iterations
+    }
+
+    /// Returns true if the last verdict was APPROVED.
+    pub fn is_approved(&self) -> bool {
+        self.last_verdict
+            .as_ref()
+            .map(|v| v == "APPROVED")
+            .unwrap_or(false)
+    }
+
+    /// Transitions to the next phase.
+    pub fn advance_to_review(&mut self) {
+        self.phase = ImplementationPhase::ImplementationReview;
+    }
+
+    /// Transitions back to implementing for another round.
+    pub fn advance_to_next_iteration(&mut self) {
+        self.iteration += 1;
+        self.phase = ImplementationPhase::Implementing;
+    }
+
+    /// Marks implementation as complete.
+    pub fn mark_complete(&mut self) {
+        self.phase = ImplementationPhase::Complete;
+    }
+}
+
 impl Phase {
     /// Get a UI-friendly label for the phase.
     #[allow(dead_code)]
@@ -251,6 +338,11 @@ pub struct State {
     /// Git worktree information if session is using a worktree
     #[serde(default)]
     pub worktree_info: Option<WorktreeState>,
+
+    /// Implementation phase state for JSON-mode implementation workflow.
+    /// Only present when implementation workflow is active.
+    #[serde(default)]
+    pub implementation_state: Option<ImplementationPhaseState>,
 }
 
 /// Persisted worktree state for session resume.
@@ -300,6 +392,7 @@ impl State {
             last_failure: None,
             failure_history: Vec::new(),
             worktree_info: None,
+            implementation_state: None,
         })
     }
 
@@ -509,508 +602,5 @@ impl State {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_new_state() {
-        let state = State::new("user-auth", "Implement authentication", 3).unwrap();
-        assert_eq!(state.phase, Phase::Planning);
-        assert_eq!(state.iteration, 1);
-
-        // Plan file should be in session directory: ~/.planning-agent/sessions/<session-id>/plan.md
-        let plan_file_str = state.plan_file.to_string_lossy();
-        assert!(plan_file_str.contains(".planning-agent/sessions/"), "got: {}", plan_file_str);
-        assert!(plan_file_str.ends_with("/plan.md"), "got: {}", plan_file_str);
-        // Verify session ID is in the path
-        assert!(plan_file_str.contains(&state.workflow_session_id), "got: {}", plan_file_str);
-    }
-
-    #[test]
-    fn test_new_state_feedback_file_has_round_number() {
-        let state = State::new("user-auth", "Implement authentication", 3).unwrap();
-
-        // Feedback file should be in session directory: ~/.planning-agent/sessions/<session-id>/feedback_1.md
-        let feedback_file_str = state.feedback_file.to_string_lossy();
-        assert!(feedback_file_str.contains(".planning-agent/sessions/"), "got: {}", feedback_file_str);
-        assert!(feedback_file_str.ends_with("/feedback_1.md"), "got: {}", feedback_file_str);
-    }
-
-    #[test]
-    fn test_update_feedback_for_iteration() {
-        let mut state = State::new("test-feature", "Test objective", 3).unwrap();
-
-        // Initial feedback file should have round 1
-        assert!(state.feedback_file.to_string_lossy().ends_with("/feedback_1.md"));
-
-        // Update to round 2
-        state.update_feedback_for_iteration(2);
-        assert!(state.feedback_file.to_string_lossy().ends_with("/feedback_2.md"));
-
-        // Update to round 3
-        state.update_feedback_for_iteration(3);
-        assert!(state.feedback_file.to_string_lossy().ends_with("/feedback_3.md"));
-    }
-
-    #[test]
-    fn test_extract_plan_folder_new_format() {
-        // New format: ~/.planning-agent/plans/YYYYMMDD-HHMMSS-xxxxxxxx_my-feature/plan.md
-        let plan_file = PathBuf::from("/home/user/.planning-agent/plans/20250101-120000-abcd1234_my-feature/plan.md");
-        let folder = extract_plan_folder(&plan_file);
-        assert_eq!(folder, Some("20250101-120000-abcd1234_my-feature".to_string()));
-    }
-
-    #[test]
-    fn test_extract_plan_folder_legacy_format() {
-        let plan_file = PathBuf::from("docs/plans/existing-feature.md");
-        let folder = extract_plan_folder(&plan_file);
-        assert_eq!(folder, None);
-    }
-
-    #[test]
-    fn test_extract_sanitized_name_new_format() {
-        // New format: folder contains the feature name
-        let plan_file = PathBuf::from("/home/user/.planning-agent/plans/20250101-120000-abcd1234_my-feature/plan.md");
-        let name = extract_sanitized_name(&plan_file);
-        assert_eq!(name, Some("my-feature".to_string()));
-    }
-
-    #[test]
-    fn test_extract_sanitized_name_legacy_format() {
-        let plan_file = PathBuf::from("docs/plans/existing-feature.md");
-        let name = extract_sanitized_name(&plan_file);
-        assert_eq!(name, Some("existing-feature".to_string()));
-    }
-
-    #[test]
-    fn test_is_session_centric_path() {
-        // Session-centric path (UUID in parent)
-        let session_path = PathBuf::from("/home/user/.planning-agent/sessions/550e8400-e29b-41d4-a716-446655440000/plan.md");
-        assert!(is_session_centric_path(&session_path));
-
-        // Legacy plan path (timestamp-uuid_feature format)
-        let legacy_path = PathBuf::from("/home/user/.planning-agent/plans/20250101-120000-abcd1234_my-feature/plan.md");
-        assert!(!is_session_centric_path(&legacy_path));
-
-        // Docs path
-        let docs_path = PathBuf::from("docs/plans/feature.md");
-        assert!(!is_session_centric_path(&docs_path));
-    }
-
-    #[test]
-    fn test_update_feedback_for_iteration_with_legacy_plan_file() {
-        // Simulate loading a state with legacy plan file format
-        let mut state = State::new("test", "test", 3).unwrap();
-        let session_id = state.workflow_session_id.clone();
-        // Manually set to legacy format
-        state.plan_file = PathBuf::from("docs/plans/existing-feature.md");
-        state.feedback_file = PathBuf::from("docs/plans/existing-feature_feedback.md");
-
-        // Update to round 2 - should use session-centric path since session_id is set
-        state.update_feedback_for_iteration(2);
-
-        // Feedback file should use session directory since workflow_session_id is present
-        let feedback_str = state.feedback_file.to_string_lossy();
-        assert!(feedback_str.contains(".planning-agent/sessions/"), "got: {}", feedback_str);
-        assert!(feedback_str.ends_with("/feedback_2.md"), "got: {}", feedback_str);
-        assert!(feedback_str.contains(&session_id), "got: {}", feedback_str);
-    }
-
-    #[test]
-    fn test_update_feedback_for_iteration_with_legacy_plan_file_no_session_id() {
-        // Simulate loading a very old state with no session_id
-        let mut state = State::new("test", "test", 3).unwrap();
-        // Clear session ID to simulate legacy state
-        state.workflow_session_id = String::new();
-        // Manually set to legacy format
-        state.plan_file = PathBuf::from("docs/plans/existing-feature.md");
-        state.feedback_file = PathBuf::from("docs/plans/existing-feature_feedback.md");
-
-        // Update to round 2 - should generate a new folder for feedback (legacy path)
-        state.update_feedback_for_iteration(2);
-
-        // Feedback file should be in a new folder with the proper format
-        let feedback_str = state.feedback_file.to_string_lossy();
-        assert!(feedback_str.contains(".planning-agent/plans/"), "got: {}", feedback_str);
-        assert!(feedback_str.ends_with("/feedback_2.md"), "got: {}", feedback_str);
-        assert!(feedback_str.contains("_existing-feature/"), "got: {}", feedback_str);
-    }
-
-    #[test]
-    fn test_valid_transitions() {
-        let mut state = State::new("test", "test", 3).unwrap();
-
-        assert!(state.transition(Phase::Reviewing).is_ok());
-        assert_eq!(state.phase, Phase::Reviewing);
-
-        assert!(state.transition(Phase::Revising).is_ok());
-        assert_eq!(state.phase, Phase::Revising);
-
-        assert!(state.transition(Phase::Reviewing).is_ok());
-        assert!(state.transition(Phase::Complete).is_ok());
-    }
-
-    #[test]
-    fn test_invalid_transition() {
-        let mut state = State::new("test", "test", 3).unwrap();
-        assert!(state.transition(Phase::Complete).is_err());
-    }
-
-    #[test]
-    fn test_should_continue() {
-        let mut state = State::new("test", "test", 2).unwrap();
-        assert!(state.should_continue());
-
-        state.iteration = 3;
-        assert!(!state.should_continue());
-
-        state.iteration = 1;
-        state.phase = Phase::Complete;
-        assert!(!state.should_continue());
-    }
-
-    #[test]
-    fn test_new_state_has_workflow_session_id() {
-        let state = State::new("test", "test objective", 3).unwrap();
-        assert!(!state.workflow_session_id.is_empty());
-        assert!(state.agent_conversations.is_empty());
-        assert!(state.invocations.is_empty());
-    }
-
-    #[test]
-    fn test_workflow_session_id_is_stable() {
-        let state = State::new("test", "test objective", 3).unwrap();
-        let session_id = state.workflow_session_id.clone();
-        assert_eq!(state.workflow_session_id, session_id);
-    }
-
-    #[test]
-    fn test_get_or_create_agent_session_stateless() {
-        let mut state = State::new("test", "test objective", 3).unwrap();
-        let session = state.get_or_create_agent_session("claude", ResumeStrategy::Stateless);
-
-        assert_eq!(session.resume_strategy, ResumeStrategy::Stateless);
-        assert!(session.conversation_id.is_none());
-        assert!(!session.last_used_at.is_empty());
-    }
-
-    #[test]
-    fn test_get_or_create_agent_session_with_conversation_resume() {
-        let mut state = State::new("test", "test objective", 3).unwrap();
-        let session = state.get_or_create_agent_session("claude", ResumeStrategy::ConversationResume);
-
-        assert_eq!(session.resume_strategy, ResumeStrategy::ConversationResume);
-        // Initially None - will be captured from agent output after first run
-        assert!(session.conversation_id.is_none());
-    }
-
-    #[test]
-    fn test_update_agent_conversation_id() {
-        let mut state = State::new("test", "test objective", 3).unwrap();
-        state.get_or_create_agent_session("claude", ResumeStrategy::ConversationResume);
-
-        // Initially None
-        assert!(state.agent_conversations.get("claude").unwrap().conversation_id.is_none());
-
-        // Update with captured ID
-        state.update_agent_conversation_id("claude", "captured-uuid-123".to_string());
-
-        // Now it should be set
-        let session = state.agent_conversations.get("claude").unwrap();
-        assert_eq!(session.conversation_id, Some("captured-uuid-123".to_string()));
-    }
-
-    #[test]
-    fn test_agent_session_is_reused() {
-        let mut state = State::new("test", "test objective", 3).unwrap();
-
-        state.get_or_create_agent_session("claude", ResumeStrategy::ConversationResume);
-        state.update_agent_conversation_id("claude", "test-uuid".to_string());
-
-        let session1 = state.get_or_create_agent_session("claude", ResumeStrategy::ConversationResume);
-        let key1 = session1.conversation_id.clone();
-
-        let session2 = state.get_or_create_agent_session("claude", ResumeStrategy::ConversationResume);
-        let key2 = session2.conversation_id.clone();
-
-        assert_eq!(key1, key2);
-        assert_eq!(key1, Some("test-uuid".to_string()));
-    }
-
-    #[test]
-    fn test_record_invocation() {
-        let mut state = State::new("test", "test objective", 3).unwrap();
-        state.get_or_create_agent_session("claude", ResumeStrategy::ConversationResume);
-        state.update_agent_conversation_id("claude", "test-conv-id".to_string());
-        state.record_invocation("claude", "Planning");
-
-        assert_eq!(state.invocations.len(), 1);
-        let inv = &state.invocations[0];
-        assert_eq!(inv.agent, "claude");
-        assert_eq!(inv.phase, "Planning");
-        assert!(!inv.timestamp.is_empty());
-        assert_eq!(inv.conversation_id, Some("test-conv-id".to_string()));
-        assert_eq!(inv.resume_strategy, ResumeStrategy::ConversationResume);
-    }
-
-    #[test]
-    fn test_record_invocation_without_conversation_id() {
-        let mut state = State::new("test", "test objective", 3).unwrap();
-        state.get_or_create_agent_session("claude", ResumeStrategy::ConversationResume);
-        // Don't update conversation_id - simulating first run before capture
-        state.record_invocation("claude", "Planning");
-
-        let inv = &state.invocations[0];
-        assert!(inv.conversation_id.is_none());
-    }
-
-    #[test]
-    fn test_ensure_workflow_session_id() {
-        let mut state = State::new("test", "test objective", 3).unwrap();
-        state.workflow_session_id = String::new();
-        assert!(state.workflow_session_id.is_empty());
-
-        state.ensure_workflow_session_id();
-        assert!(!state.workflow_session_id.is_empty());
-    }
-
-    #[test]
-    fn test_backward_compatibility_with_existing_state() {
-        let old_state_json = r#"{
-            "phase": "reviewing",
-            "iteration": 2,
-            "max_iterations": 3,
-            "feature_name": "existing-feature",
-            "objective": "Some objective",
-            "plan_file": "docs/plans/existing-feature.md",
-            "feedback_file": "docs/plans/existing-feature_feedback.md",
-            "last_feedback_status": "needs_revision",
-            "approval_overridden": false
-        }"#;
-
-        let state: State = serde_json::from_str(old_state_json).unwrap();
-        assert_eq!(state.feature_name, "existing-feature");
-        assert!(state.workflow_session_id.is_empty());
-        assert!(state.agent_conversations.is_empty());
-        assert!(state.invocations.is_empty());
-    }
-
-    #[test]
-    fn test_state_serialization_with_session_data() {
-        let mut state = State::new("test", "test objective", 3).unwrap();
-        state.get_or_create_agent_session("claude", ResumeStrategy::ConversationResume);
-        state.record_invocation("claude", "Planning");
-
-        let json = serde_json::to_string(&state).unwrap();
-        let loaded: State = serde_json::from_str(&json).unwrap();
-
-        assert_eq!(loaded.workflow_session_id, state.workflow_session_id);
-        assert_eq!(loaded.agent_conversations.len(), 1);
-        assert!(loaded.agent_conversations.contains_key("claude"));
-        assert_eq!(loaded.invocations.len(), 1);
-    }
-
-    #[test]
-    fn test_phase_label_short() {
-        assert_eq!(PhaseLabel::Planning.short(), "Plan");
-        assert_eq!(PhaseLabel::Reviewing.short(), "Review");
-        assert_eq!(PhaseLabel::Revising.short(), "Revise");
-        assert_eq!(PhaseLabel::Complete.short(), "Done");
-    }
-
-    #[test]
-    fn test_phase_label_full() {
-        assert_eq!(PhaseLabel::Planning.full(), "Planning");
-        assert_eq!(PhaseLabel::Reviewing.full(), "Reviewing");
-        assert_eq!(PhaseLabel::Revising.full(), "Revising");
-        assert_eq!(PhaseLabel::Complete.full(), "Complete");
-    }
-
-    #[test]
-    fn test_phase_label_with_iteration() {
-        assert_eq!(PhaseLabel::Planning.with_iteration(1), "Planning");
-        assert_eq!(PhaseLabel::Reviewing.with_iteration(1), "Reviewing");
-        assert_eq!(PhaseLabel::Reviewing.with_iteration(2), "Reviewing #2");
-        assert_eq!(PhaseLabel::Revising.with_iteration(1), "Revising #1");
-        assert_eq!(PhaseLabel::Revising.with_iteration(3), "Revising #3");
-        assert_eq!(PhaseLabel::Complete.with_iteration(5), "Complete");
-    }
-
-    #[test]
-    fn test_phase_label_display() {
-        assert_eq!(format!("{}", PhaseLabel::Planning), "Planning");
-        assert_eq!(format!("{}", PhaseLabel::Reviewing), "Reviewing");
-    }
-
-    #[test]
-    fn test_phase_to_label() {
-        assert_eq!(Phase::Planning.label(), PhaseLabel::Planning);
-        assert_eq!(Phase::Reviewing.label(), PhaseLabel::Reviewing);
-        assert_eq!(Phase::Revising.label(), PhaseLabel::Revising);
-        assert_eq!(Phase::Complete.label(), PhaseLabel::Complete);
-    }
-
-    #[test]
-    fn test_new_state_has_updated_at() {
-        let state = State::new("test", "test objective", 3).unwrap();
-        assert!(!state.updated_at.is_empty());
-        assert!(state.has_updated_at());
-    }
-
-    #[test]
-    fn test_set_updated_at() {
-        let mut state = State::new("test", "test objective", 3).unwrap();
-        let original = state.updated_at.clone();
-
-        // Wait a tiny bit and update
-        std::thread::sleep(std::time::Duration::from_millis(10));
-        state.set_updated_at();
-
-        // Timestamp should have changed
-        assert_ne!(state.updated_at, original);
-        assert!(state.has_updated_at());
-    }
-
-    #[test]
-    fn test_set_updated_at_with() {
-        let mut state = State::new("test", "test objective", 3).unwrap();
-        let custom_time = "2025-12-29T15:00:00Z";
-        state.set_updated_at_with(custom_time);
-        assert_eq!(state.updated_at, custom_time);
-    }
-
-    #[test]
-    fn test_legacy_state_without_updated_at() {
-        // Simulate loading a legacy state file without updated_at field
-        let old_state_json = r#"{
-            "phase": "reviewing",
-            "iteration": 2,
-            "max_iterations": 3,
-            "feature_name": "existing-feature",
-            "objective": "Some objective",
-            "plan_file": "docs/plans/existing-feature.md",
-            "feedback_file": "docs/plans/existing-feature_feedback.md",
-            "last_feedback_status": "needs_revision",
-            "approval_overridden": false
-        }"#;
-
-        let state: State = serde_json::from_str(old_state_json).unwrap();
-        // updated_at should default to empty string
-        assert!(state.updated_at.is_empty());
-        assert!(!state.has_updated_at());
-    }
-
-    #[test]
-    fn test_set_failure() {
-        use crate::app::failure::{FailureContext, FailureKind};
-
-        let mut state = State::new("test", "test objective", 3).unwrap();
-        assert!(!state.has_failure());
-        assert!(state.last_failure.is_none());
-        assert!(state.failure_history.is_empty());
-
-        let failure = FailureContext::new(
-            FailureKind::Network,
-            Phase::Reviewing,
-            Some("codex".to_string()),
-            2,
-        );
-        state.set_failure(failure);
-
-        assert!(state.has_failure());
-        assert!(state.last_failure.is_some());
-        assert_eq!(state.failure_history.len(), 1);
-
-        let last = state.last_failure.as_ref().unwrap();
-        assert_eq!(last.kind, FailureKind::Network);
-        assert_eq!(last.phase, Phase::Reviewing);
-        assert_eq!(last.agent_name, Some("codex".to_string()));
-    }
-
-    #[test]
-    fn test_clear_failure() {
-        use crate::app::failure::{FailureContext, FailureKind};
-
-        let mut state = State::new("test", "test objective", 3).unwrap();
-        let failure = FailureContext::new(FailureKind::Timeout, Phase::Planning, None, 2);
-        state.set_failure(failure);
-
-        assert!(state.has_failure());
-        state.clear_failure();
-
-        assert!(!state.has_failure());
-        assert!(state.last_failure.is_none());
-        // History should still have the failure
-        assert_eq!(state.failure_history.len(), 1);
-    }
-
-    #[test]
-    fn test_failure_history_trimming() {
-        use crate::app::failure::{FailureContext, FailureKind, MAX_FAILURE_HISTORY};
-
-        let mut state = State::new("test", "test objective", 3).unwrap();
-
-        // Add more failures than the limit
-        for i in 0..(MAX_FAILURE_HISTORY + 10) {
-            let failure = FailureContext::new(
-                FailureKind::Network,
-                Phase::Reviewing,
-                Some(format!("agent-{}", i)),
-                2,
-            );
-            state.set_failure(failure);
-        }
-
-        // History should be trimmed to MAX_FAILURE_HISTORY
-        assert_eq!(state.failure_history.len(), MAX_FAILURE_HISTORY);
-
-        // The oldest failures should have been removed
-        // The first remaining failure should be agent-10 (since we added 60 and kept 50)
-        let first = &state.failure_history[0];
-        assert_eq!(first.agent_name, Some("agent-10".to_string()));
-    }
-
-    #[test]
-    fn test_state_serialization_with_failure() {
-        use crate::app::failure::{FailureContext, FailureKind};
-
-        let mut state = State::new("test", "test objective", 3).unwrap();
-        let failure = FailureContext::new(
-            FailureKind::AllReviewersFailed,
-            Phase::Reviewing,
-            None,
-            3,
-        );
-        state.set_failure(failure);
-
-        let json = serde_json::to_string(&state).unwrap();
-        let loaded: State = serde_json::from_str(&json).unwrap();
-
-        assert!(loaded.has_failure());
-        assert_eq!(loaded.failure_history.len(), 1);
-        let last = loaded.last_failure.as_ref().unwrap();
-        assert_eq!(last.kind, FailureKind::AllReviewersFailed);
-    }
-
-    #[test]
-    fn test_backward_compatibility_without_failure_fields() {
-        // Simulate loading a state without failure fields (pre-failure-handling state)
-        let old_state_json = r#"{
-            "phase": "reviewing",
-            "iteration": 2,
-            "max_iterations": 3,
-            "feature_name": "existing-feature",
-            "objective": "Some objective",
-            "plan_file": "docs/plans/existing-feature.md",
-            "feedback_file": "docs/plans/existing-feature_feedback.md",
-            "last_feedback_status": "needs_revision",
-            "approval_overridden": false
-        }"#;
-
-        let state: State = serde_json::from_str(old_state_json).unwrap();
-        // Failure fields should default properly
-        assert!(state.last_failure.is_none());
-        assert!(state.failure_history.is_empty());
-        assert!(!state.has_failure());
-    }
-}
+#[path = "state_tests.rs"]
+mod tests;
