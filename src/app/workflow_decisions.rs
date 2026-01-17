@@ -65,7 +65,7 @@ pub async fn wait_for_review_decision(
                 return match response {
                     Some(UserApprovalResponse::ReviewRetry) => ReviewDecision::Retry,
                     Some(UserApprovalResponse::ReviewContinue) => ReviewDecision::Continue,
-                    Some(UserApprovalResponse::Accept) => {
+                    Some(UserApprovalResponse::Accept) | Some(UserApprovalResponse::Implement) => {
                         log_workflow(working_dir, "Received plan approval while awaiting review decision, treating as continue");
                         ReviewDecision::Continue
                     }

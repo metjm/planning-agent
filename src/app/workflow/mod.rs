@@ -40,6 +40,7 @@ mod planning;
 mod reviewing;
 mod revising;
 
+use crate::app::implementation::run_implementation_workflow;
 use crate::config::WorkflowConfig;
 use crate::session_logger::{create_session_logger, LogCategory, LogLevel};
 use crate::session_tracking::SessionTracker;
@@ -58,6 +59,8 @@ use revising::run_revising_phase;
 
 pub enum WorkflowResult {
     Accepted,
+    /// User requested implementation workflow
+    ImplementationRequested,
     NeedsRestart { user_feedback: String },
     Aborted { reason: String },
     /// Workflow was cleanly stopped at a phase boundary
@@ -318,10 +321,63 @@ pub async fn run_workflow_with_config(
             &mut approval_rx,
             &mut control_rx,
         )
-        .await;
+        .await?;
+
+        // Check if implementation was requested
+        if matches!(result, WorkflowResult::ImplementationRequested) {
+            session_logger.log(LogLevel::Info, LogCategory::Workflow, "Starting implementation workflow");
+
+            let impl_result = run_implementation_workflow(
+                &mut state,
+                &config,
+                &working_dir,
+                sender.clone(),
+                session_logger.clone(),
+                None, // No initial feedback
+            )
+            .await;
+
+            // Mark session stopped after implementation
+            let _ = tracker.mark_stopped(&state.workflow_session_id).await;
+
+            match impl_result {
+                Ok(impl_outcome) => {
+                    use crate::app::implementation::ImplementationWorkflowResult;
+                    match impl_outcome {
+                        ImplementationWorkflowResult::Approved => {
+                            sender.send_output("[implementation] Implementation complete and approved!".to_string());
+                            return Ok(WorkflowResult::Accepted);
+                        }
+                        ImplementationWorkflowResult::Failed { iterations_used, last_feedback } => {
+                            let msg = format!(
+                                "Implementation failed after {} iterations. Last feedback: {}",
+                                iterations_used,
+                                last_feedback.as_deref().unwrap_or("none")
+                            );
+                            sender.send_output(format!("[implementation] {}", msg));
+                            return Ok(WorkflowResult::Aborted { reason: msg });
+                        }
+                        ImplementationWorkflowResult::Cancelled { iterations_used } => {
+                            sender.send_output(format!("[implementation] Cancelled after {} iterations", iterations_used));
+                            return Ok(WorkflowResult::Stopped);
+                        }
+                        ImplementationWorkflowResult::NoChanges { iterations_used } => {
+                            let msg = format!("No changes detected after {} iterations", iterations_used);
+                            sender.send_output(format!("[implementation] {}", msg));
+                            return Ok(WorkflowResult::Aborted { reason: msg });
+                        }
+                    }
+                }
+                Err(e) => {
+                    sender.send_output(format!("[implementation] Error: {}", e));
+                    return Err(e);
+                }
+            }
+        }
+
         // Mark session stopped after completion handling
         let _ = tracker.mark_stopped(&state.workflow_session_id).await;
-        return result;
+        return Ok(result);
     }
 
     sender.send_output("".to_string());

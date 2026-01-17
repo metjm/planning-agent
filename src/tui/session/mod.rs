@@ -620,6 +620,11 @@ impl Session {
                 // Note: snapshot saving happens in the caller (tui_runner/events.rs)
                 // before handle_completion is called
             }
+            WorkflowResult::ImplementationRequested => {
+                // This is handled inside run_workflow_with_config, should not reach here
+                // If it does, treat as planning since implementation is starting
+                self.status = SessionStatus::Planning;
+            }
         }
     }
 

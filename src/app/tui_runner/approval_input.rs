@@ -73,7 +73,14 @@ pub async fn handle_plan_approval_input(
             session.approval_mode = ApprovalMode::None;
             session.status = SessionStatus::Complete;
         }
-        // Implementation 'i' key will be re-added when JSON-mode implementation is ready
+        KeyCode::Char('i') | KeyCode::Char('I') => {
+            if let Some(tx) = session.approval_tx.take() {
+                let _ = tx.send(UserApprovalResponse::Implement).await;
+            }
+            session.approval_mode = ApprovalMode::None;
+            session.status = SessionStatus::Planning;
+            session.add_output("[planning] Starting implementation...".to_string());
+        }
         KeyCode::Char('d') | KeyCode::Char('D') => {
             session.start_feedback_input();
         }
@@ -487,7 +494,14 @@ pub async fn handle_user_override_input(
     _output_tx: &mpsc::UnboundedSender<Event>,
 ) -> Result<bool> {
     match key.code {
-        // Implementation 'i' key will be re-added when JSON-mode implementation is ready
+        KeyCode::Char('i') | KeyCode::Char('I') => {
+            if let Some(tx) = session.approval_tx.take() {
+                let _ = tx.send(UserApprovalResponse::Implement).await;
+            }
+            session.approval_mode = ApprovalMode::None;
+            session.status = SessionStatus::Planning;
+            session.add_output("[planning] Starting implementation...".to_string());
+        }
         KeyCode::Char('d') | KeyCode::Char('D') => {
             session.start_feedback_input();
         }

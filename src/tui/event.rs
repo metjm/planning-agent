@@ -219,6 +219,8 @@ pub enum Event {
 #[derive(Debug, Clone)]
 pub enum UserApprovalResponse {
     Accept,
+    /// Accept and start implementation workflow
+    Implement,
     Decline(String),
     ReviewRetry,
     ReviewContinue,
