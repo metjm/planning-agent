@@ -14,7 +14,6 @@ pub mod prompt_format;
 mod session_daemon;
 mod session_logger;
 mod session_store;
-mod session_store_migration;
 mod session_tracking;
 mod skills;
 mod state;

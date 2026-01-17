@@ -645,6 +645,7 @@ pub async fn run_headless(cli: Cli) -> Result<()> {
                     display_name,
                     input_preview,
                     agent_name,
+                    phase: _,
                 } => {
                     if input_preview.is_empty() {
                         eprintln!("[tool started] [{}] {}", agent_name, display_name);
@@ -667,7 +668,13 @@ pub async fn run_headless(cli: Cli) -> Result<()> {
                 Event::ModelDetected(name) => {
                     eprintln!("[model] {}", name);
                 }
-                Event::ToolResultReceived { tool_id, is_error, agent_name } => {
+                Event::ToolResultReceived {
+                    tool_id,
+                    is_error,
+                    agent_name,
+                    phase: _,
+                    summary: _,
+                } => {
                     if is_error {
                         if let Some(id) = tool_id {
                             eprintln!("[tool error] [{}] {}", agent_name, id);

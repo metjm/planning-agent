@@ -482,8 +482,11 @@ fn test_chat_message_with_summary_suffix_routes_to_existing_tab() {
     assert_eq!(session.run_tabs[0].phase, "Planning");
 
     // Message should be added to the Planning tab
-    assert_eq!(session.run_tabs[0].messages.len(), 1);
-    assert_eq!(session.run_tabs[0].messages[0].message, "Summary content");
+    assert_eq!(session.run_tabs[0].entries.len(), 1);
+    match &session.run_tabs[0].entries[0] {
+        RunTabEntry::Text(message) => assert_eq!(message.message, "Summary content"),
+        _ => panic!("Expected text entry"),
+    }
 }
 
 #[test]
@@ -510,7 +513,7 @@ fn test_review_iteration_phase_consistency() {
 
     // Should still have only one tab
     assert_eq!(session.run_tabs.len(), 1);
-    assert_eq!(session.run_tabs[0].messages.len(), 1);
+    assert_eq!(session.run_tabs[0].entries.len(), 1);
 }
 
 #[test]
@@ -534,9 +537,14 @@ fn test_add_chat_message() {
 
     session.add_chat_message("claude", "Planning", "Hello world".to_string());
     assert_eq!(session.run_tabs.len(), 1);
-    assert_eq!(session.run_tabs[0].messages.len(), 1);
-    assert_eq!(session.run_tabs[0].messages[0].agent_name, "claude");
-    assert_eq!(session.run_tabs[0].messages[0].message, "Hello world");
+    assert_eq!(session.run_tabs[0].entries.len(), 1);
+    match &session.run_tabs[0].entries[0] {
+        RunTabEntry::Text(message) => {
+            assert_eq!(message.agent_name, "claude");
+            assert_eq!(message.message, "Hello world");
+        }
+        _ => panic!("Expected text entry"),
+    }
 }
 
 #[test]
@@ -555,7 +563,7 @@ fn test_add_chat_message_filters_empty() {
 
     session.add_chat_message("claude", "Planning", "".to_string());
     session.add_chat_message("claude", "Planning", "   ".to_string());
-    assert!(session.run_tabs[0].messages.is_empty());
+    assert!(session.run_tabs[0].entries.is_empty());
 }
 
 #[test]

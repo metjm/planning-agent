@@ -30,7 +30,8 @@ use std::path::{Path, PathBuf};
 /// - v1: Initial version with session_used/weekly_used in ProviderUsage
 /// - v2: UsageWindow with reset timestamps (session/weekly fields)
 /// - v3: Removed embedded implementation terminal (InputMode/FocusedPanel have Unknown variants)
-pub const SNAPSHOT_VERSION: u32 = 3;
+/// - v4: Run-tab entries include tool timeline entries (no migration support)
+pub const SNAPSHOT_VERSION: u32 = 4;
 
 /// A persistable snapshot of a workflow session.
 ///
@@ -286,8 +287,6 @@ pub fn load_snapshot(working_dir: &Path, session_id: &str) -> Result<SessionSnap
 
 /// Loads a snapshot from a specific path.
 fn load_snapshot_from_path(snapshot_path: &Path) -> Result<SessionSnapshot> {
-    use crate::session_store_migration::{migrate_v1_to_v2, LegacySessionSnapshotV1};
-
     let content = fs::read_to_string(snapshot_path)
         .with_context(|| format!("Failed to read snapshot file: {}", snapshot_path.display()))?;
 
@@ -302,19 +301,12 @@ fn load_snapshot_from_path(snapshot_path: &Path) -> Result<SessionSnapshot> {
         .unwrap_or(1);
 
     // Version check
-    if version > SNAPSHOT_VERSION {
+    if version != SNAPSHOT_VERSION {
         anyhow::bail!(
-            "Snapshot version {} is newer than supported version {}. Please upgrade planning-agent.",
+            "Snapshot version {} is not supported (expected {}). Please delete old sessions or upgrade planning-agent.",
             version,
             SNAPSHOT_VERSION
         );
-    }
-
-    // Handle migration from v1
-    if version == 1 {
-        let legacy: LegacySessionSnapshotV1 = serde_json::from_str(&content)
-            .with_context(|| "Failed to parse v1 snapshot for migration")?;
-        return Ok(migrate_v1_to_v2(legacy));
     }
 
     // Parse as current version
