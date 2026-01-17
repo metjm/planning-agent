@@ -441,8 +441,9 @@ mod tests {
     fn test_claude_only_config() {
         let config = WorkflowConfig::claude_only_config();
 
-        // Should only have claude agent
+        // Should only have claude agents
         assert!(config.agents.contains_key("claude"));
+        assert!(config.agents.contains_key("claude-reviewer"));
         assert!(!config.agents.contains_key("codex"));
         assert!(!config.agents.contains_key("gemini"));
 
@@ -452,6 +453,14 @@ mod tests {
         assert_eq!(
             config.workflow.reviewing.agents,
             vec![AgentRef::Simple("claude".to_string())]
+        );
+
+        // Implementation should be enabled with distinct reviewer
+        assert!(config.implementation.enabled);
+        assert_eq!(config.implementation.implementing_agent(), Some("claude"));
+        assert_eq!(
+            config.implementation.reviewing_agent(),
+            Some("claude-reviewer")
         );
 
         // Should validate successfully
