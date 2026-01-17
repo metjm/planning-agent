@@ -152,6 +152,8 @@ impl Session {
             plan_modal_content: String::new(), // Content is re-read from disk when modal opens
 
             context: None, // Context is set by resume/new-session flows, not serialized
+
+            implementation_success_modal: None, // Runtime-only, reset on restore
         }
     }
 }

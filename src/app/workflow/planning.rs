@@ -14,6 +14,7 @@ use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
+#[allow(clippy::too_many_arguments)]
 pub async fn run_planning_phase(
     state: &mut State,
     working_dir: &Path,

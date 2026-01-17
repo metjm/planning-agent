@@ -189,3 +189,10 @@ pub struct PasteBlock {
     pub start_pos: usize,
     pub line_count: usize,
 }
+
+/// Runtime-only modal state for implementation success display.
+/// Not serialized - always reset to None on snapshot restore.
+#[derive(Debug, Clone)]
+pub struct ImplementationSuccessModal {
+    pub iterations_used: u32,
+}

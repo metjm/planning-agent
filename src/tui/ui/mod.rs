@@ -7,6 +7,7 @@ mod overlays;
 mod panels;
 mod session_browser_overlay;
 mod stats;
+mod success_overlay;
 pub mod util;
 
 use crate::tui::{ApprovalMode, InputMode, SessionStatus, TabManager};
@@ -47,6 +48,10 @@ pub fn draw(frame: &mut Frame, tab_manager: &TabManager) {
     // Render session browser overlay
     if tab_manager.session_browser.open {
         session_browser_overlay::draw_session_browser_overlay(frame, tab_manager);
+    }
+    // Render implementation success modal after session browser, before error overlay
+    if session.implementation_success_modal.is_some() {
+        success_overlay::draw_implementation_success_overlay(frame, session);
     }
     if session.error_state.is_some() {
         error_overlay::draw_error_overlay(frame, session);

@@ -26,9 +26,9 @@ use tokio::task::JoinHandle;
 use super::event::UserApprovalResponse;
 
 pub use model::{
-    ApprovalContext, ApprovalMode, FeedbackTarget, FocusedPanel, InputMode, PasteBlock, RunTab,
-    RunTabEntry, SessionStatus, SummaryState, TodoItem, TodoStatus, ToolKind, ToolResultSummary,
-    ToolTimelineEntry,
+    ApprovalContext, ApprovalMode, FeedbackTarget, FocusedPanel, ImplementationSuccessModal,
+    InputMode, PasteBlock, RunTab, RunTabEntry, SessionStatus, SummaryState, TodoItem, TodoStatus,
+    ToolKind, ToolResultSummary, ToolTimelineEntry,
 };
 
 /// Represents an active tool call with optional ID for correlation
@@ -172,6 +172,10 @@ pub struct Session {
     /// Per-session context tracking working directory, paths, and configuration.
     /// None for sessions created before this feature or not yet initialized.
     pub context: Option<SessionContext>,
+
+    /// Runtime-only modal for implementation success display.
+    /// Not serialized - always None on snapshot restore.
+    pub implementation_success_modal: Option<ImplementationSuccessModal>,
 }
 
 /// Session provides the full API surface for session management.
@@ -263,6 +267,8 @@ impl Session {
             plan_modal_content: String::new(),
 
             context: None,
+
+            implementation_success_modal: None,
         }
     }
 
@@ -851,6 +857,21 @@ impl Session {
     /// Scroll the plan modal up by a page (visible height).
     pub fn plan_modal_page_up(&mut self, visible_height: usize) {
         self.plan_modal_scroll = self.plan_modal_scroll.saturating_sub(visible_height);
+    }
+
+    /// Open the implementation success modal with the given iteration count.
+    /// Closes any conflicting modals (plan modal) if open.
+    pub fn open_implementation_success(&mut self, iterations_used: u32) {
+        // Close plan modal if open to avoid modal conflicts
+        if self.plan_modal_open {
+            self.close_plan_modal();
+        }
+        self.implementation_success_modal = Some(ImplementationSuccessModal { iterations_used });
+    }
+
+    /// Close the implementation success modal.
+    pub fn close_implementation_success(&mut self) {
+        self.implementation_success_modal = None;
     }
 }
 

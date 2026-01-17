@@ -18,6 +18,7 @@ DO NOT include timelines, schedules, dates, durations, or time estimates in the 
 Examples to reject: "in two weeks", "Phase 1: Week 1-2", "Q1 delivery", "Sprint 1", "by end of day".
 "#;
 
+#[allow(clippy::too_many_arguments)]
 pub async fn run_revision_phase_with_context(
     state: &mut State,
     working_dir: &Path,
