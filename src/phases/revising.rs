@@ -14,6 +14,8 @@ const REVISION_SYSTEM_PROMPT: &str = r#"You are revising an implementation plan 
 Focus on addressing all blocking issues first, then important improvements.
 Verify each finding before making changes. Only address those that require revision.
 IMPORTANT: Use absolute paths for all file references in the revised plan.
+DO NOT include timelines, schedules, dates, durations, or time estimates in the revised plan.
+Examples to reject: "in two weeks", "Phase 1: Week 1-2", "Q1 delivery", "Sprint 1", "by end of day".
 "#;
 
 pub async fn run_revision_phase_with_context(
@@ -113,6 +115,8 @@ fn build_revision_prompt_with_reviews(
         format!(
             "The reviewers have provided feedback on your plan. \
              Please revise the plan at {} to address all issues raised.\n\n\
+             IMPORTANT: Do not add timelines, schedules, dates, durations, or time estimates \
+             (e.g., \"in two weeks\", \"Sprint 1\", \"Q1 delivery\").\n\n\
              # Reviewer Feedback\n\n{}",
             plan_path,
             merged_feedback
@@ -122,6 +126,7 @@ fn build_revision_prompt_with_reviews(
         let instructions = format!(
             r#"Revise the plan to address all issues raised by the reviewers.
 Preserve the good parts of the existing plan - only modify what needs to change.
+DO NOT include timelines, schedules, dates, durations, or time estimates (e.g., "in two weeks", "Sprint 1", "Q1 delivery").
 
 IMPORTANT: Update the plan file at: {}"#,
             plan_path
@@ -239,5 +244,51 @@ mod tests {
 
         // Should reference the plan file
         assert!(prompt.contains("plan.md"));
+    }
+
+    #[test]
+    fn revision_system_prompt_contains_no_timeline_directive() {
+        assert!(
+            REVISION_SYSTEM_PROMPT.contains("DO NOT include timelines"),
+            "REVISION_SYSTEM_PROMPT must contain the no-timeline directive"
+        );
+        assert!(
+            REVISION_SYSTEM_PROMPT.contains("in two weeks"),
+            "REVISION_SYSTEM_PROMPT must contain example phrase 'in two weeks'"
+        );
+    }
+
+    #[test]
+    fn revision_prompt_session_resume_contains_no_timeline_directive() {
+        let mut state = State::new("test", "test objective", 3).unwrap();
+        state.phase = Phase::Revising;
+
+        let reviews = test_reviews();
+        let working_dir = Path::new("/workspaces/myproject");
+
+        // Test with session_resume_active = true (simplified continuation prompt)
+        let prompt = build_revision_prompt_with_reviews(&state, &reviews, working_dir, true);
+
+        assert!(
+            prompt.contains("Do not add timelines"),
+            "Session resume prompt must contain the no-timeline directive"
+        );
+    }
+
+    #[test]
+    fn revision_prompt_full_context_contains_no_timeline_directive() {
+        let mut state = State::new("test", "test objective", 3).unwrap();
+        state.phase = Phase::Revising;
+
+        let reviews = test_reviews();
+        let working_dir = Path::new("/workspaces/myproject");
+
+        // Test with session_resume_active = false (full context prompt)
+        let prompt = build_revision_prompt_with_reviews(&state, &reviews, working_dir, false);
+
+        assert!(
+            prompt.contains("DO NOT include timelines"),
+            "Full context prompt must contain the no-timeline directive"
+        );
     }
 }

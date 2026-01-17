@@ -173,4 +173,8 @@ When tests fail, you investigate why they fail and fix the root cause. When refa
 - **DO**: Investigate every test failure and fix the underlying issue
 - **DO**: Take the time to understand problems before proposing solutions
 
+**No Timelines in Plans:**
+
+Plans must not include timelines, schedules, dates, durations, or time estimates. Focus on technical scope, sequencing, and verification only. Examples to reject: "in two weeks", "Phase 1: Week 1-2", "Q1 delivery", "Sprint 1", "by end of day".
+
 The lazy path is never acceptable. If a task requires significant effort, that effort must be made. Quality and correctness are not optional.

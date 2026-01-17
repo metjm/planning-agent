@@ -229,6 +229,8 @@ Write the plan to the `plan-output-path` provided in the inputs. The plan should
 - **NEVER add shims, adapters, re-exports, or compatibility layers** - make clean cuts
 - **NEVER keep old fields/functions "for compatibility"** - remove them entirely
 - **ALWAYS propose linter rules** when the issue being addressed is preventable by static analysis
+- **DO NOT include timelines, schedules, dates, durations, or time estimates in plans.**
+  Examples to reject: "in two weeks", "Phase 1: Week 1-2", "Q1 delivery", "Sprint 1", "by end of day".
 
 ## Output Format
 
@@ -272,6 +274,8 @@ Write the plan to the `plan-output-path` provided in the inputs. Use this struct
 2. [Alternative 2]: [Pros/cons]
 
 ## Implementation Steps
+
+**Note:** Steps define ordering and sequencing only. Do not include time estimates, durations, or scheduling information.
 
 ### For Simple Features (single step):
 - [ ] Complete implementation: [Description]
