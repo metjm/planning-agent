@@ -2,16 +2,14 @@ use crate::agents::{AgentContext, AgentType};
 use crate::app::failure::FailureKind;
 use crate::app::workflow_common::is_network_error;
 use crate::config::{AgentRef, AggregationMode, WorkflowConfig};
-use crate::diagnostics::{create_mcp_review_bundle, AttemptTimestamp, BundleConfig};
-use crate::mcp::spawner::{
-    generate_mcp_server_config_with_command, prepare_mcp_server_binary,
-};
-use crate::mcp::{McpServerConfig, SubmittedReview};
-use crate::phases::review_parser::parse_mcp_review;
+use crate::diagnostics::{create_review_bundle, AttemptTimestamp, BundleConfig};
+use crate::phases::review_parser::parse_review_feedback;
 use crate::phases::review_prompts::{
-    build_mcp_agent_prompt, build_mcp_recovery_prompt, build_mcp_review_prompt, REVIEW_SYSTEM_PROMPT,
+    build_review_prompt_for_agent, build_review_recovery_prompt_for_agent, REVIEW_SYSTEM_PROMPT,
 };
+use crate::phases::review_schema::SubmittedReview;
 use crate::phases::reviewing_conversation_key;
+use crate::planning_paths;
 use crate::session_logger::SessionLogger;
 use crate::state::{FeedbackStatus, ResumeStrategy, State};
 use crate::tui::SessionEventSender;
@@ -29,7 +27,7 @@ pub struct ReviewResult {
     pub agent_name: String,
     pub needs_revision: bool,
     pub feedback: String,
-    /// Short summary of the review (from MCP or extracted from feedback)
+    /// Short summary of the review (from structured review or extracted from feedback)
     pub summary: String,
 }
 
@@ -79,10 +77,24 @@ enum ReviewExecutionResult {
         initial_output: String,
         retry_output: Option<String>,
         attempt_timestamps: Vec<AttemptTimestamp>,
-        mcp_server_name: String,
+        feedback_file_path: PathBuf,
     },
     /// Agent execution error (not a parse failure)
     ExecutionError(String),
+}
+
+/// Generate a stable feedback file path for a review agent.
+/// The path is deterministic based on session_id and agent_name, so recovery attempts
+/// use the same file.
+fn generate_feedback_file_path(
+    session_id: &str,
+    agent_name: &str,
+    iteration: u32,
+) -> Result<PathBuf> {
+    // Use session directory for feedback files
+    let session_dir = planning_paths::session_dir(session_id)?;
+    let filename = format!("feedback_{}_{}.md", iteration, agent_name);
+    Ok(session_dir.join(filename))
 }
 
 pub async fn run_multi_agent_review_with_context(
@@ -101,12 +113,15 @@ pub async fn run_multi_agent_review_with_context(
 
     let display_ids: Vec<&str> = agent_refs.iter().map(|r| r.display_id()).collect();
     session_sender.send_output(format!(
-        "[review] Running {} reviewer(s) in parallel with MCP: {}",
+        "[review] Running {} reviewer(s) in parallel: {}",
         agent_refs.len(),
         display_ids.join(", ")
     ));
 
     let phase_name = format!("Reviewing #{}", iteration);
+
+    // Check if tags are required from config
+    let require_tags = config.workflow.reviewing.require_plan_feedback_tags;
 
     // Build agent contexts: (display_id, conversation_id, resume_strategy, custom_prompt)
     let mut agent_contexts: Vec<(String, Option<String>, ResumeStrategy, Option<String>)> =
@@ -155,28 +170,28 @@ pub async fn run_multi_agent_review_with_context(
             )
             .collect::<Result<Vec<_>>>()?;
 
-    // Read plan content for MCP server
+    // Get plan path (absolute)
     let plan_path = state.plan_file.clone();
-    let plan_content = fs::read_to_string(&plan_path)?;
+    let plan_path_abs = if plan_path.is_absolute() {
+        plan_path.clone()
+    } else {
+        working_dir.join(&plan_path)
+    };
 
-    // Pre-build prompts outside the closure to avoid borrow issues
-    let mcp_review_prompt = build_mcp_review_prompt(state, working_dir);
-    let mcp_agent_prompt = build_mcp_agent_prompt(state, working_dir);
-
-    // Keep the per-review MCP binary alive until all reviewers finish.
-    let mcp_binary = prepare_mcp_server_binary()?;
-    let mcp_command = mcp_binary.command_path().to_path_buf();
+    // Get objective for prompts
+    let objective = state.objective.clone();
+    let session_id = state.workflow_session_id.clone();
 
     let futures: Vec<_> = agents
         .into_iter()
         .map(|(display_id, agent, conversation_id, resume_strategy, custom_prompt)| {
-            let plan = plan_content.clone();
-            let review_prompt = mcp_review_prompt.clone();
-            let mcp_prompt = mcp_agent_prompt.clone();
-            let mcp_command = mcp_command.clone();
             let sender = session_sender.clone();
             let phase = format!("Reviewing #{}", iteration);
             let logger = session_logger.clone();
+            let working_dir = working_dir.to_path_buf();
+            let plan_path_abs = plan_path_abs.clone();
+            let objective = objective.clone();
+            let session_id = session_id.clone();
 
             // Build the system prompt, appending custom prompt if present
             let system_prompt = match &custom_prompt {
@@ -185,41 +200,46 @@ pub async fn run_multi_agent_review_with_context(
             };
 
             async move {
-                sender.send_output(format!("[review:{}] Starting MCP review...", display_id));
+                sender.send_output(format!("[review:{}] Starting file-based review...", display_id));
 
-                // Generate MCP config for this agent
-                let mcp_config = match generate_mcp_server_config_with_command(
-                    &plan,
-                    &review_prompt,
-                    &mcp_command,
-                ) {
-                    Ok(cfg) => cfg,
+                // Generate stable feedback file path for this agent
+                let feedback_path = match generate_feedback_file_path(&session_id, &display_id, iteration) {
+                    Ok(p) => p,
                     Err(e) => {
                         return (
                             display_id,
                             ReviewExecutionResult::ExecutionError(format!(
-                                "MCP config injection failed: {}",
+                                "Failed to generate feedback path: {}",
                                 e
                             )),
                         );
                     }
                 };
 
-                // Execute agent with MCP - all agents use MCP, no fallbacks
+                // Build the review prompt
+                let review_prompt = build_review_prompt_for_agent(
+                    &objective,
+                    &plan_path_abs,
+                    &feedback_path,
+                    &working_dir,
+                    require_tags,
+                );
+
                 sender.send_output(format!(
-                    "[review:{}] Using MCP for structured feedback (server: {})",
-                    display_id, mcp_config.server_name
+                    "[review:{}] Plan: {}, Feedback: {}",
+                    display_id,
+                    plan_path_abs.display(),
+                    feedback_path.display()
                 ));
 
                 // First attempt
                 let attempt1_result = execute_review_attempt(
                     &agent,
-                    &mcp_prompt,
+                    &review_prompt,
                     &conversation_id,
                     &resume_strategy,
                     &sender,
                     &phase,
-                    &mcp_config,
                     &system_prompt,
                     logger.clone(),
                 )
@@ -239,31 +259,26 @@ pub async fn run_multi_agent_review_with_context(
                     }
                 };
 
-                if initial_output.trim().is_empty() {
-                    return (
-                        display_id,
-                        ReviewExecutionResult::ExecutionError("No output from reviewer".to_string()),
-                    );
-                }
-
-                // Try to parse the initial output
-                match parse_mcp_review(&initial_output) {
+                // Try to read and parse the feedback file
+                match try_parse_feedback_file(&feedback_path, require_tags) {
                     Ok(review) => {
                         sender.send_output(format!("[review:{}] Review complete", display_id));
-                        (display_id, ReviewExecutionResult::Success(review))
+                        return (display_id, ReviewExecutionResult::Success(review));
                     }
                     Err(parse_failure) => {
-                        // Initial attempt failed to parse - try recovery
+                        // Initial attempt failed - try recovery
                         sender.send_output(format!(
-                            "[review:{}] Failed to parse verdict: {}. Attempting recovery...",
+                            "[review:{}] Failed to parse feedback: {}. Attempting recovery...",
                             display_id, parse_failure.error
                         ));
 
-                        // Build recovery prompt with context
-                        let recovery_prompt = build_mcp_recovery_prompt(
-                            &mcp_config.server_name,
-                            &initial_output,
+                        // Build recovery prompt
+                        let recovery_prompt = build_review_recovery_prompt_for_agent(
+                            &plan_path_abs,
+                            &feedback_path,
                             &parse_failure.error,
+                            &initial_output,
+                            require_tags,
                         );
 
                         // Execute retry attempt
@@ -274,7 +289,6 @@ pub async fn run_multi_agent_review_with_context(
                             &resume_strategy,
                             &sender,
                             &format!("{} (recovery)", phase),
-                            &mcp_config,
                             &system_prompt,
                             logger.clone(),
                         )
@@ -298,48 +312,41 @@ pub async fn run_multi_agent_review_with_context(
                             }
                         };
 
-                        // Try to parse retry output
-                        if let Some(ref retry_out) = retry_output {
-                            if !retry_out.trim().is_empty() {
-                                if let Ok(review) = parse_mcp_review(retry_out) {
-                                    sender.send_output(format!(
-                                        "[review:{}] Recovery succeeded!",
-                                        display_id
-                                    ));
-                                    return (display_id, ReviewExecutionResult::Success(review));
+                        // Try to parse feedback file after recovery
+                        match try_parse_feedback_file(&feedback_path, require_tags) {
+                            Ok(review) => {
+                                sender.send_output(format!(
+                                    "[review:{}] Recovery succeeded!",
+                                    display_id
+                                ));
+                                return (display_id, ReviewExecutionResult::Success(review));
+                            }
+                            Err(final_failure) => {
+                                // Both attempts failed - prepare for bundle creation
+                                let mut timestamps = vec![attempt1_timestamp];
+                                if let Some(ts) = attempt2_timestamp {
+                                    timestamps.push(ts);
                                 }
+
+                                sender.send_output(format!(
+                                    "[review:{}] Recovery failed. Diagnostics bundle will be created.",
+                                    display_id
+                                ));
+
+                                (
+                                    display_id,
+                                    ReviewExecutionResult::ParseFailure {
+                                        error: final_failure.error,
+                                        plan_feedback_found: final_failure.plan_feedback_found,
+                                        verdict_found: final_failure.verdict_found,
+                                        initial_output,
+                                        retry_output,
+                                        attempt_timestamps: timestamps,
+                                        feedback_file_path: feedback_path,
+                                    },
+                                )
                             }
                         }
-
-                        // Both attempts failed - prepare for bundle creation
-                        let mut timestamps = vec![attempt1_timestamp];
-                        if let Some(ts) = attempt2_timestamp {
-                            timestamps.push(ts);
-                        }
-
-                        // Get the most recent parse failure info
-                        let final_parse_result = retry_output
-                            .as_ref()
-                            .and_then(|out| parse_mcp_review(out).err())
-                            .unwrap_or(parse_failure);
-
-                        sender.send_output(format!(
-                            "[review:{}] Recovery failed. Diagnostics bundle will be created.",
-                            display_id
-                        ));
-
-                        (
-                            display_id,
-                            ReviewExecutionResult::ParseFailure {
-                                error: final_parse_result.error,
-                                plan_feedback_found: final_parse_result.plan_feedback_found,
-                                verdict_found: final_parse_result.verdict_found,
-                                initial_output,
-                                retry_output,
-                                attempt_timestamps: timestamps,
-                                mcp_server_name: mcp_config.server_name.clone(),
-                            },
-                        )
                     }
                 }
             }
@@ -347,8 +354,6 @@ pub async fn run_multi_agent_review_with_context(
         .collect();
 
     let results = futures::future::join_all(futures).await;
-    // Hold the guard until all review tasks complete.
-    let _ = &mcp_binary;
 
     // Get run_id for bundle creation
     let run_id = crate::app::util::get_run_id();
@@ -358,9 +363,9 @@ pub async fn run_multi_agent_review_with_context(
 
     for (agent_name, result) in results {
         match result {
-            ReviewExecutionResult::Success(mcp_review) => {
-                let needs_revision = mcp_review.needs_revision();
-                let feedback = mcp_review.feedback_content();
+            ReviewExecutionResult::Success(review) => {
+                let needs_revision = review.needs_revision();
+                let feedback = review.feedback_content();
 
                 let verdict_str = if needs_revision {
                     "NEEDS REVISION"
@@ -369,15 +374,15 @@ pub async fn run_multi_agent_review_with_context(
                 };
 
                 session_sender.send_output(format!(
-                    "[review:{}] Verdict: {} (via MCP)",
+                    "[review:{}] Verdict: {}",
                     agent_name, verdict_str
                 ));
 
-                // Use MCP summary, with fallback to default if empty
-                let summary = if mcp_review.summary.trim().is_empty() {
+                // Use summary, with fallback to default if empty
+                let summary = if review.summary.trim().is_empty() {
                     "Review completed".to_string()
                 } else {
-                    mcp_review.summary.clone()
+                    review.summary.clone()
                 };
 
                 reviews.push(ReviewResult {
@@ -394,14 +399,14 @@ pub async fn run_multi_agent_review_with_context(
                 initial_output,
                 retry_output,
                 attempt_timestamps,
-                mcp_server_name,
+                feedback_file_path,
             } => {
                 // Create diagnostics bundle
                 let bundle_config = BundleConfig {
                     working_dir,
                     agent_name: &agent_name,
                     failure_reason: &error,
-                    mcp_server_name: &mcp_server_name,
+                    server_name: &format!("file-review-{}", agent_name),
                     run_id: &run_id,
                     plan_feedback_found,
                     verdict_found,
@@ -410,11 +415,11 @@ pub async fn run_multi_agent_review_with_context(
                     retry_output: retry_output.as_deref(),
                     state_path: Some(state_path),
                     plan_file: Some(&state.plan_file),
-                    feedback_file: Some(&state.feedback_file),
+                    feedback_file: Some(&feedback_file_path),
                     workflow_session_id: Some(&state.workflow_session_id),
                 };
 
-                let bundle_path = create_mcp_review_bundle(bundle_config);
+                let bundle_path = create_review_bundle(bundle_config);
 
                 if let Some(ref path) = bundle_path {
                     session_sender.send_output(format!(
@@ -454,6 +459,44 @@ pub async fn run_multi_agent_review_with_context(
     Ok(ReviewBatchResult { reviews, failures })
 }
 
+/// Try to read and parse the feedback file
+fn try_parse_feedback_file(
+    feedback_path: &Path,
+    require_tags: bool,
+) -> Result<SubmittedReview, crate::diagnostics::ParseFailureInfo> {
+    // Check if the file exists
+    if !feedback_path.exists() {
+        return Err(crate::diagnostics::ParseFailureInfo {
+            error: format!("Feedback file not found: {}", feedback_path.display()),
+            plan_feedback_found: false,
+            verdict_found: false,
+        });
+    }
+
+    // Read the file content
+    let content = match fs::read_to_string(feedback_path) {
+        Ok(c) => c,
+        Err(e) => {
+            return Err(crate::diagnostics::ParseFailureInfo {
+                error: format!("Failed to read feedback file: {}", e),
+                plan_feedback_found: false,
+                verdict_found: false,
+            });
+        }
+    };
+
+    if content.trim().is_empty() {
+        return Err(crate::diagnostics::ParseFailureInfo {
+            error: "Feedback file is empty".to_string(),
+            plan_feedback_found: false,
+            verdict_found: false,
+        });
+    }
+
+    // Parse the content
+    parse_review_feedback(&content, require_tags)
+}
+
 /// Execute a single review attempt and track timing
 #[allow(clippy::too_many_arguments)]
 async fn execute_review_attempt(
@@ -463,7 +506,6 @@ async fn execute_review_attempt(
     resume_strategy: &ResumeStrategy,
     sender: &SessionEventSender,
     phase: &str,
-    mcp_config: &McpServerConfig,
     system_prompt: &str,
     session_logger: Arc<SessionLogger>,
 ) -> Result<ReviewAttemptResult> {
@@ -478,12 +520,11 @@ async fn execute_review_attempt(
     };
 
     let result = agent
-        .execute_streaming_with_mcp(
+        .execute_streaming_with_context(
             prompt.to_string(),
             Some(system_prompt.to_string()),
             None,
             context,
-            mcp_config,
         )
         .await?;
 
@@ -542,7 +583,7 @@ fn classify_execution_error(error: &str) -> FailureKind {
 
 pub fn aggregate_reviews(reviews: &[ReviewResult], mode: &AggregationMode) -> FeedbackStatus {
     if reviews.is_empty() {
-        return FeedbackStatus::NeedsRevision; 
+        return FeedbackStatus::NeedsRevision;
     }
 
     let rejections = reviews.iter().filter(|r| r.needs_revision).count();

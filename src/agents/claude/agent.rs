@@ -4,48 +4,14 @@ use crate::agents::prompt::PreparedPrompt;
 use crate::agents::runner::{run_agent_process, ContextEmitter, EventEmitter, RunnerConfig};
 use crate::agents::{AgentContext, AgentResult};
 use crate::config::AgentConfig;
-use crate::mcp::McpServerConfig;
 use crate::state::ResumeStrategy;
 use anyhow::Result;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::Duration;
 use tokio::process::Command;
 
 const DEFAULT_ACTIVITY_TIMEOUT: Duration = Duration::from_secs(300);
 const DEFAULT_OVERALL_TIMEOUT: Duration = Duration::from_secs(21600); // 6 hours
-
-/// RAII guard for temporary MCP config file for Claude
-/// Claude's --mcp-config accepts both JSON strings and file paths.
-/// For large configs (like base64-encoded plans), we must use a file
-/// to avoid shell argument length limits.
-struct TempMcpConfigFile {
-    path: PathBuf,
-}
-
-impl TempMcpConfigFile {
-    /// Create a new temp file containing the MCP config JSON
-    fn new(mcp_config: &McpServerConfig) -> Result<Self> {
-        let uuid = mcp_config
-            .server_name
-            .strip_prefix("planning-agent-review-")
-            .unwrap_or(&mcp_config.server_name);
-        let path = std::env::temp_dir().join(format!("claude-mcp-{}.json", uuid));
-        let json = mcp_config.to_claude_json();
-        std::fs::write(&path, &json)?;
-        Ok(Self { path })
-    }
-
-    /// Get the path to pass to --mcp-config
-    fn config_path(&self) -> &Path {
-        &self.path
-    }
-}
-
-impl Drop for TempMcpConfigFile {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.path);
-    }
-}
 
 #[derive(Debug, Clone)]
 pub struct ClaudeAgent {
@@ -78,21 +44,10 @@ impl ClaudeAgent {
         &self,
         prepared: PreparedPrompt,
         context: AgentContext,
-        mcp_config: Option<&McpServerConfig>,
     ) -> Result<AgentResult> {
         let emitter = ContextEmitter::new(context.clone(), self.name.clone());
-
-        // Create temp MCP config file if needed (will be cleaned up when dropped)
-        // We use a file instead of passing JSON directly to avoid shell argument length limits
-        // when the config contains large base64-encoded plan content.
-        let _temp_mcp_file = match mcp_config {
-            Some(cfg) => Some(TempMcpConfigFile::new(cfg)?),
-            None => None,
-        };
-
-        self.execute_streaming_internal(prepared, &emitter, Some(&context), _temp_mcp_file.as_ref())
+        self.execute_streaming_internal(prepared, &emitter, Some(&context))
             .await
-        // _temp_mcp_file is dropped here, cleaning up the temp file
     }
 
     async fn execute_streaming_internal(
@@ -100,13 +55,12 @@ impl ClaudeAgent {
         prepared: PreparedPrompt,
         emitter: &dyn EventEmitter,
         context: Option<&AgentContext>,
-        mcp_config_file: Option<&TempMcpConfigFile>,
     ) -> Result<AgentResult> {
         let logger = context.map(|ctx| AgentLogger::new(&self.name, ctx.session_logger.clone()));
         self.log_start(&logger, &prepared, context.is_some());
         self.log_timeout(&logger);
 
-        let cmd = self.build_command(&prepared, context, mcp_config_file);
+        let cmd = self.build_command(&prepared, context);
         let mut config = RunnerConfig::new(self.name.clone(), self.working_dir.clone())
             .with_activity_timeout(self.activity_timeout)
             .with_overall_timeout(self.overall_timeout);
@@ -123,7 +77,6 @@ impl ClaudeAgent {
         &self,
         prepared: &PreparedPrompt,
         context: Option<&AgentContext>,
-        mcp_config_file: Option<&TempMcpConfigFile>,
     ) -> Command {
         let mut cmd = Command::new(&self.config.command);
 
@@ -156,12 +109,6 @@ impl ClaudeAgent {
                     }
                 }
             }
-        }
-
-        // Add MCP config file path if provided
-        // We pass a file path instead of JSON to avoid shell argument length limits
-        if let Some(mcp_file) = mcp_config_file {
-            cmd.arg("--mcp-config").arg(mcp_file.config_path());
         }
 
         cmd
@@ -283,7 +230,7 @@ mod tests {
             Some("abc-123-def".to_string()),
             ResumeStrategy::ConversationResume,
         );
-        let cmd = agent.build_command(&prepared, Some(&ctx), None);
+        let cmd = agent.build_command(&prepared, Some(&ctx));
         let args = get_args(&cmd);
 
         // Should contain --resume followed by the conversation ID
@@ -307,7 +254,7 @@ mod tests {
             Some("abc-123-def".to_string()),
             ResumeStrategy::Stateless, // Stateless strategy
         );
-        let cmd = agent.build_command(&prepared, Some(&ctx), None);
+        let cmd = agent.build_command(&prepared, Some(&ctx));
         let args = get_args(&cmd);
 
         // Should NOT contain --resume
@@ -326,7 +273,7 @@ mod tests {
             None, // No conversation ID yet
             ResumeStrategy::ConversationResume,
         );
-        let cmd = agent.build_command(&prepared, Some(&ctx), None);
+        let cmd = agent.build_command(&prepared, Some(&ctx));
         let args = get_args(&cmd);
 
         // Should NOT contain --resume (no ID to resume)
@@ -345,7 +292,7 @@ mod tests {
             Some("abc-123-def".to_string()),
             ResumeStrategy::ConversationResume,
         );
-        let cmd = agent.build_command(&prepared, Some(&ctx), None);
+        let cmd = agent.build_command(&prepared, Some(&ctx));
         let args = get_args(&cmd);
 
         // Should NOT contain --resume (persistence disabled)
@@ -360,7 +307,7 @@ mod tests {
     fn test_build_command_no_resume_when_no_context() {
         let agent = make_agent(true);
         let prepared = make_prepared_prompt();
-        let cmd = agent.build_command(&prepared, None, None); // No context
+        let cmd = agent.build_command(&prepared, None); // No context
         let args = get_args(&cmd);
 
         // Should NOT contain --resume (no context)
