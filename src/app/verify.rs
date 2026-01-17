@@ -103,7 +103,7 @@ pub async fn run_verification_workflow(
                 let verdict_str = match &verdict {
                     VerificationVerdictResult::Approved => "APPROVED",
                     VerificationVerdictResult::NeedsRevision => "NEEDS_REVISION",
-                    VerificationVerdictResult::ParseFailure(_) => "PARSE_FAILURE",
+                    VerificationVerdictResult::ParseFailure { .. } => "PARSE_FAILURE",
                 };
                 session_sender.send_verification_completed(verdict_str.to_string(), report.clone());
 
@@ -118,7 +118,7 @@ pub async fn run_verification_workflow(
                         return Ok(VerificationResult::Approved);
                     }
                     VerificationVerdictResult::NeedsRevision
-                    | VerificationVerdictResult::ParseFailure(_) => {
+                    | VerificationVerdictResult::ParseFailure { .. } => {
                         if verification_state.iteration >= verification_state.max_iterations {
                             session_sender.send_output(format!(
                                 "[verification] Max iterations ({}) reached without approval",

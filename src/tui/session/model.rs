@@ -92,7 +92,9 @@ pub enum FocusedPanel {
     Todos,
     Chat,
     Summary,
-    Implementation,
+    /// Legacy variant for old snapshots - mapped to Output on restore
+    #[serde(other)]
+    Unknown,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
@@ -100,7 +102,9 @@ pub enum InputMode {
     #[default]
     Normal,
     NamingTab,
-    ImplementationTerminal,
+    /// Legacy variant for old snapshots - mapped to Normal on restore
+    #[serde(other)]
+    Unknown,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]

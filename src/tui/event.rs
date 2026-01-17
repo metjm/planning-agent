@@ -154,13 +154,6 @@ pub enum Event {
 
     UpdateInstallFinished(UpdateResult),
 
-    /// Output data from the embedded implementation terminal
-    ImplementationOutput { session_id: usize, chunk: Vec<u8> },
-    /// Implementation terminal process has exited
-    ImplementationExited { session_id: usize, exit_code: Option<i32> },
-    /// Implementation terminal encountered an error
-    ImplementationError { session_id: usize, error: String },
-
     // Verification workflow events
     /// Verification phase started
     SessionVerificationStarted { session_id: usize, iteration: u32 },

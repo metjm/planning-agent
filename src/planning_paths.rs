@@ -254,6 +254,34 @@ pub fn session_workflow_log_path(session_id: &str) -> Result<PathBuf> {
     Ok(session_logs_dir(session_id)?.join("workflow.log"))
 }
 
+// ============================================================================
+// Implementation Phase Paths
+// ============================================================================
+
+/// Returns the implementation log path for a given iteration.
+/// Format: `~/.planning-agent/sessions/<session-id>/implementation_<iteration>.log`
+#[allow(dead_code)]
+pub fn session_implementation_log_path(session_id: &str, iteration: u32) -> Result<PathBuf> {
+    Ok(session_dir(session_id)?.join(format!("implementation_{}.log", iteration)))
+}
+
+/// Returns the implementation review report path for a given iteration.
+/// Format: `~/.planning-agent/sessions/<session-id>/implementation_review_<iteration>.md`
+#[allow(dead_code)]
+pub fn session_implementation_review_path(session_id: &str, iteration: u32) -> Result<PathBuf> {
+    Ok(session_dir(session_id)?.join(format!("implementation_review_{}.md", iteration)))
+}
+
+/// Returns the implementation change fingerprint file path.
+/// Format: `~/.planning-agent/sessions/<session-id>/implementation_fingerprint.json`
+///
+/// This file stores a hash of repository changes to detect if implementation
+/// has been modified between orchestrator runs.
+#[allow(dead_code)]
+pub fn session_implementation_fingerprint_path(session_id: &str) -> Result<PathBuf> {
+    Ok(session_dir(session_id)?.join("implementation_fingerprint.json"))
+}
+
 /// Returns the session diagnostics directory: `~/.planning-agent/sessions/<session-id>/diagnostics/`
 ///
 /// Creates the directory if it doesn't exist.
@@ -881,5 +909,61 @@ mod tests {
 
         let invalid = convert_rfc3339_to_timestamp("not-a-timestamp");
         assert!(invalid.is_none());
+    }
+
+    // ============================================================================
+    // Implementation Path Tests
+    // ============================================================================
+
+    #[test]
+    fn test_session_implementation_log_path() {
+        if env::var("HOME").is_err() {
+            return;
+        }
+
+        let session_id = format!("test-session-{}", uuid::Uuid::new_v4());
+        let result = session_implementation_log_path(&session_id, 1);
+        assert!(result.is_ok());
+        let path = result.unwrap();
+        assert!(path.ends_with("implementation_1.log"));
+        assert!(path.to_string_lossy().contains(&session_id));
+
+        let result2 = session_implementation_log_path(&session_id, 3);
+        assert!(result2.is_ok());
+        let path2 = result2.unwrap();
+        assert!(path2.ends_with("implementation_3.log"));
+    }
+
+    #[test]
+    fn test_session_implementation_review_path() {
+        if env::var("HOME").is_err() {
+            return;
+        }
+
+        let session_id = format!("test-session-{}", uuid::Uuid::new_v4());
+        let result = session_implementation_review_path(&session_id, 1);
+        assert!(result.is_ok());
+        let path = result.unwrap();
+        assert!(path.ends_with("implementation_review_1.md"));
+        assert!(path.to_string_lossy().contains(&session_id));
+
+        let result2 = session_implementation_review_path(&session_id, 2);
+        assert!(result2.is_ok());
+        let path2 = result2.unwrap();
+        assert!(path2.ends_with("implementation_review_2.md"));
+    }
+
+    #[test]
+    fn test_session_implementation_fingerprint_path() {
+        if env::var("HOME").is_err() {
+            return;
+        }
+
+        let session_id = format!("test-session-{}", uuid::Uuid::new_v4());
+        let result = session_implementation_fingerprint_path(&session_id);
+        assert!(result.is_ok());
+        let path = result.unwrap();
+        assert!(path.ends_with("implementation_fingerprint.json"));
+        assert!(path.to_string_lossy().contains(&session_id));
     }
 }

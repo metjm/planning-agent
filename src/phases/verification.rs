@@ -1,12 +1,12 @@
 use crate::agents::{AgentContext, AgentType};
 use crate::config::WorkflowConfig;
+use crate::phases::verdict::{parse_verification_verdict, VerificationVerdictResult};
 use crate::prompt_format::PromptBuilder;
 use crate::session_logger::SessionLogger;
 use crate::state::ResumeStrategy;
 use crate::tui::SessionEventSender;
 use crate::verification_state::VerificationState;
 use anyhow::Result;
-use regex::Regex;
 use std::fs;
 use std::sync::Arc;
 
@@ -21,47 +21,6 @@ Your task is to:
 Be thorough but fair - minor differences in implementation approach are acceptable if they achieve the plan's goals.
 Focus on functional correctness and completeness.
 IMPORTANT: Use absolute paths for all file references in your verification report."#;
-
-/// Result of parsing a verification verdict from the report
-#[derive(Debug, Clone, PartialEq)]
-pub enum VerificationVerdictResult {
-    Approved,
-    NeedsRevision,
-    ParseFailure(String),
-}
-
-/// Parses the verification verdict from a verification report.
-/// Looks for "Verdict: APPROVED" or "Verdict: NEEDS REVISION" patterns.
-pub fn parse_verification_verdict(report: &str) -> VerificationVerdictResult {
-    let re = Regex::new(r"(?i)(?:##\s*)?Verdict[:\*\s]*\**\s*(APPROVED|NEEDS\s*_?\s*REVISION)")
-        .unwrap();
-
-    if let Some(captures) = re.captures(report) {
-        if let Some(verdict_match) = captures.get(1) {
-            let verdict = verdict_match.as_str().to_uppercase();
-            let normalized = verdict.replace('_', " ").replace("  ", " ");
-
-            if normalized == "APPROVED" {
-                return VerificationVerdictResult::Approved;
-            } else if normalized.contains("NEEDS") && normalized.contains("REVISION") {
-                return VerificationVerdictResult::NeedsRevision;
-            }
-        }
-    }
-
-    VerificationVerdictResult::ParseFailure("No valid Verdict found in verification report".to_string())
-}
-
-/// Extracts feedback content from <verification-feedback> tags.
-pub fn extract_verification_feedback(report: &str) -> Option<String> {
-    let re = Regex::new(r"(?s)<verification-feedback>\s*(.*?)\s*</verification-feedback>").unwrap();
-    if let Some(captures) = re.captures(report) {
-        if let Some(content) = captures.get(1) {
-            return Some(content.as_str().to_string());
-        }
-    }
-    None
-}
 
 /// Runs the verification phase, comparing implementation against plan.
 pub async fn run_verification_phase(
@@ -145,7 +104,7 @@ pub async fn run_verification_phase(
 
     // Parse verdict and update state
     let verdict = parse_verification_verdict(&report);
-    match verdict {
+    match &verdict {
         VerificationVerdictResult::Approved => {
             session_sender.send_output("[verification] Verdict: APPROVED".to_string());
             verification_state.last_verdict = Some("APPROVED".to_string());
@@ -154,10 +113,10 @@ pub async fn run_verification_phase(
             session_sender.send_output("[verification] Verdict: NEEDS REVISION".to_string());
             verification_state.last_verdict = Some("NEEDS_REVISION".to_string());
         }
-        VerificationVerdictResult::ParseFailure(ref err) => {
+        VerificationVerdictResult::ParseFailure { reason } => {
             session_sender.send_output(format!(
                 "[verification] WARNING: Could not parse verdict: {}",
-                err
+                reason
             ));
             // Treat parse failure as needs revision to be safe
             verification_state.last_verdict = Some("NEEDS_REVISION".to_string());
@@ -224,83 +183,4 @@ If there are issues, wrap detailed fix instructions in <verification-feedback> t
         .build()
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_parse_verdict_approved() {
-        let report = "## Verdict\nAPPROVED\n\nAll requirements met.";
-        assert_eq!(
-            parse_verification_verdict(report),
-            VerificationVerdictResult::Approved
-        );
-    }
-
-    #[test]
-    fn test_parse_verdict_approved_with_colon() {
-        let report = "## Verdict: APPROVED";
-        assert_eq!(
-            parse_verification_verdict(report),
-            VerificationVerdictResult::Approved
-        );
-    }
-
-    #[test]
-    fn test_parse_verdict_needs_revision() {
-        let report = "## Verdict\nNEEDS REVISION\n\nSome issues found.";
-        assert_eq!(
-            parse_verification_verdict(report),
-            VerificationVerdictResult::NeedsRevision
-        );
-    }
-
-    #[test]
-    fn test_parse_verdict_needs_revision_underscore() {
-        let report = "## Verdict: NEEDS_REVISION";
-        assert_eq!(
-            parse_verification_verdict(report),
-            VerificationVerdictResult::NeedsRevision
-        );
-    }
-
-    #[test]
-    fn test_parse_verdict_case_insensitive() {
-        let report = "Verdict: approved";
-        assert_eq!(
-            parse_verification_verdict(report),
-            VerificationVerdictResult::Approved
-        );
-    }
-
-    #[test]
-    fn test_parse_verdict_missing() {
-        let report = "This report has no verdict section.";
-        assert!(matches!(
-            parse_verification_verdict(report),
-            VerificationVerdictResult::ParseFailure(_)
-        ));
-    }
-
-    #[test]
-    fn test_extract_verification_feedback() {
-        let report = r#"
-## Verdict
-NEEDS REVISION
-
-<verification-feedback>
-1. Fix the authentication logic in src/auth.rs
-2. Add missing test cases
-</verification-feedback>
-"#;
-        let feedback = extract_verification_feedback(report).unwrap();
-        assert!(feedback.contains("authentication logic"));
-        assert!(feedback.contains("test cases"));
-    }
-
-    #[test]
-    fn test_extract_verification_feedback_missing() {
-        let report = "## Verdict: APPROVED\nAll good!";
-        assert!(extract_verification_feedback(report).is_none());
-    }
-}
+// Verdict tests are now in the shared phases/verdict.rs module

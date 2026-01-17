@@ -146,6 +146,8 @@ pub struct AgentOutput {
     pub cost_usd: Option<f64>,
     /// Captured conversation ID for resume (from agent's init/start message)
     pub conversation_id: Option<String>,
+    /// Stop reason if agent was stopped (max_turns, max_tokens, cancelled, etc.)
+    pub stop_reason: Option<String>,
 }
 
 /// Trait for parsing agent-specific output formats into unified AgentEvent types.
@@ -228,6 +230,7 @@ mod tests {
             is_error: false,
             cost_usd: Some(0.01),
             conversation_id: None,
+            stop_reason: None,
         };
         assert_eq!(output.output, "test");
         assert!(!output.is_error);
@@ -241,6 +244,7 @@ mod tests {
             is_error: false,
             cost_usd: None,
             conversation_id: Some("abc-123".to_string()),
+            stop_reason: None,
         };
         assert_eq!(output.conversation_id, Some("abc-123".to_string()));
     }

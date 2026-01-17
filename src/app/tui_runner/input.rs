@@ -25,7 +25,6 @@ use std::path::Path;
 use tokio::sync::mpsc;
 
 use super::approval_input::{handle_awaiting_choice_input, handle_entering_feedback_input};
-use super::implementation_input::handle_implementation_terminal_input;
 use super::InitHandle;
 use crate::tui::ui::util::{compute_plan_modal_inner_size, parse_markdown_line};
 
@@ -257,13 +256,6 @@ pub async fn handle_key_event(
             update_in_progress,
         )
         .await?;
-        return Ok(should_quit);
-    }
-
-    // Handle implementation terminal input mode
-    let session = tab_manager.active_mut();
-    if session.input_mode == InputMode::ImplementationTerminal {
-        should_quit = handle_implementation_terminal_input(key, session)?;
         return Ok(should_quit);
     }
 
@@ -786,14 +778,14 @@ fn handle_none_mode_input(
             }
             FocusedPanel::Chat => session.chat_scroll_down(),
             FocusedPanel::Summary => session.summary_scroll_down(),
-            FocusedPanel::Implementation => {} // Handled by ImplementationTerminal mode
+            FocusedPanel::Unknown => {} // Legacy variant - no action
         },
         KeyCode::Char('k') | KeyCode::Up => match session.focused_panel {
             FocusedPanel::Output => session.scroll_up(),
             FocusedPanel::Todos => session.todo_scroll_up(),
             FocusedPanel::Chat => session.chat_scroll_up(),
             FocusedPanel::Summary => session.summary_scroll_up(),
-            FocusedPanel::Implementation => {} // Handled by ImplementationTerminal mode
+            FocusedPanel::Unknown => {} // Legacy variant - no action
         },
         KeyCode::Char('g') => match session.focused_panel {
             FocusedPanel::Output => session.scroll_to_top(),
@@ -805,7 +797,7 @@ fn handle_none_mode_input(
                 }
             }
             FocusedPanel::Summary => session.summary_scroll_to_top(),
-            FocusedPanel::Implementation => {} // Handled by ImplementationTerminal mode
+            FocusedPanel::Unknown => {} // Legacy variant - no action
         },
         KeyCode::Char('G') => match session.focused_panel {
             FocusedPanel::Output => session.scroll_to_bottom(),
@@ -822,7 +814,7 @@ fn handle_none_mode_input(
                     .unwrap_or(0);
                 session.summary_scroll_to_bottom(max_scroll);
             }
-            FocusedPanel::Implementation => {} // Handled by ImplementationTerminal mode
+            FocusedPanel::Unknown => {} // Legacy variant - no action
         },
         KeyCode::Left => {
             if session.focused_panel == FocusedPanel::Chat

@@ -1,7 +1,7 @@
 use crate::app::util::shorten_model_name;
 use crate::config::WorkflowConfig;
 use crate::session_daemon;
-use crate::tui::{ApprovalMode, Event, InputMode, SessionStatus, TabManager};
+use crate::tui::{ApprovalMode, Event, SessionStatus, TabManager};
 use crate::update;
 use anyhow::Result;
 use std::path::Path;
@@ -135,33 +135,6 @@ pub async fn process_event(
                 session.last_stop_reason = Some(reason);
             }
         }
-
-        Event::ImplementationOutput { session_id, chunk } => {
-            if let Some(session) = tab_manager.session_by_id_mut(session_id) {
-                if let Some(ref mut impl_term) = session.implementation_terminal {
-                    impl_term.process_output(&chunk);
-                }
-            }
-        }
-        Event::ImplementationExited { session_id, exit_code } => {
-            if let Some(session) = tab_manager.session_by_id_mut(session_id) {
-                if let Some(ref mut impl_term) = session.implementation_terminal {
-                    impl_term.mark_exited(exit_code);
-                }
-                // Return to normal mode
-                session.input_mode = InputMode::Normal;
-                session.add_output(format!(
-                    "[implementation] Claude Code exited{}",
-                    exit_code.map(|c| format!(" with code {}", c)).unwrap_or_default()
-                ));
-            }
-        }
-        Event::ImplementationError { session_id, error } => {
-            if let Some(session) = tab_manager.session_by_id_mut(session_id) {
-                session.add_output(format!("[implementation] Error: {}", error));
-                session.stop_implementation_terminal();
-            }
-        }
         Event::SnapshotRequest => {
             // Save snapshot for all active sessions (periodic auto-save)
             // Use each session's context base_working_dir if available
@@ -219,40 +192,14 @@ fn handle_tick_event(tab_manager: &mut TabManager, output_tx: &mpsc::UnboundedSe
     }
 }
 
-fn handle_resize_event(tab_manager: &mut TabManager) {
-    // Resize any active implementation terminals
-    let (term_width, term_height) = crossterm::terminal::size().unwrap_or((80, 24));
-
-    // Compute panel dimensions (similar to draw_main layout)
-    // Main layout: top bar (2) + footer (3) = 5 rows overhead
-    // Horizontal: 70% for left panel
-    let panel_height = term_height.saturating_sub(5);
-    let panel_width = (term_width as f32 * 0.70) as u16;
-
-    // Account for borders (2 rows, 2 cols)
-    let inner_height = panel_height.saturating_sub(2);
-    let inner_width = panel_width.saturating_sub(2);
-
-    for session in tab_manager.sessions_mut() {
-        if let Some(ref mut impl_term) = session.implementation_terminal {
-            if let Err(e) = impl_term.resize(inner_height, inner_width) {
-                // Log error but don't crash
-                session.add_output(format!("[implementation] Resize error: {}", e));
-            }
-        }
-    }
+fn handle_resize_event(_tab_manager: &mut TabManager) {
+    // No-op: terminal resize is handled automatically by ratatui
 }
 
 fn handle_paste_event(text: String, tab_manager: &mut TabManager) {
+    use crate::tui::InputMode;
     let session = tab_manager.active_mut();
-    if session.input_mode == InputMode::ImplementationTerminal {
-        // Forward paste to implementation terminal
-        if let Some(ref impl_term) = session.implementation_terminal {
-            if let Err(e) = impl_term.send_input(text.as_bytes()) {
-                session.add_output(format!("[implementation] Paste error: {}", e));
-            }
-        }
-    } else if session.input_mode == InputMode::NamingTab {
+    if session.input_mode == InputMode::NamingTab {
         session.insert_paste_tab_input(text);
     } else if session.approval_mode == ApprovalMode::EnteringFeedback {
         session.insert_paste_feedback(text);

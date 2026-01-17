@@ -36,6 +36,9 @@ pub struct AgentResult {
     pub cost_usd: Option<f64>,
     /// Captured conversation ID for future resume (from agent's init message)
     pub conversation_id: Option<String>,
+    /// Stop reason if agent was stopped (max_turns, max_tokens, cancelled, etc.)
+    #[allow(dead_code)]
+    pub stop_reason: Option<String>,
 }
 
 #[derive(Debug, Clone)]

@@ -15,6 +15,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
+use tokio::sync::watch;
 use tokio::time::Instant;
 
 /// Default timeout for activity (no output) before killing the process.
@@ -44,6 +45,9 @@ pub struct RunnerConfig {
     pub overall_timeout: Duration,
     /// Session logger for agent output
     pub session_logger: Option<Arc<SessionLogger>>,
+    /// Optional cancellation signal receiver.
+    /// When the sender sends `true`, the agent process will be killed.
+    pub cancel_rx: Option<watch::Receiver<bool>>,
 }
 
 impl std::fmt::Debug for RunnerConfig {
@@ -54,6 +58,7 @@ impl std::fmt::Debug for RunnerConfig {
             .field("activity_timeout", &self.activity_timeout)
             .field("overall_timeout", &self.overall_timeout)
             .field("session_logger", &self.session_logger.is_some())
+            .field("cancel_rx", &self.cancel_rx.is_some())
             .finish()
     }
 }
@@ -66,6 +71,7 @@ impl RunnerConfig {
             activity_timeout: DEFAULT_ACTIVITY_TIMEOUT,
             overall_timeout: DEFAULT_OVERALL_TIMEOUT,
             session_logger: None,
+            cancel_rx: None,
         }
     }
 
@@ -81,6 +87,14 @@ impl RunnerConfig {
 
     pub fn with_session_logger(mut self, logger: Arc<SessionLogger>) -> Self {
         self.session_logger = Some(logger);
+        self
+    }
+
+    /// Sets a cancellation receiver for cooperative cancellation.
+    /// When the sender sends `true`, the agent process will be killed.
+    #[allow(dead_code)]
+    pub fn with_cancel_rx(mut self, cancel_rx: watch::Receiver<bool>) -> Self {
+        self.cancel_rx = Some(cancel_rx);
         self
     }
 }
@@ -339,11 +353,15 @@ pub async fn run_agent_process<P: AgentStreamParser>(
     let mut total_cost: Option<f64> = None;
     let mut is_error = false;
     let mut captured_conversation_id: Option<String> = None;
+    let mut last_stop_reason: Option<String> = None;
 
     let start_time = Instant::now();
     let mut last_activity = Instant::now();
     // Track last activity emit time for throttling
     let mut last_activity_emit = Instant::now();
+
+    // Clone cancel_rx if present for use in select! loop
+    let mut cancel_rx = config.cancel_rx.clone();
 
     loop {
         // Check overall timeout
@@ -386,6 +404,10 @@ pub async fn run_agent_process<P: AgentStreamParser>(
                                             if let Some(ref logger) = logger {
                                                 logger.log_line("conversation_id", id);
                                             }
+                                        }
+                                        AgentEvent::StopReason(reason) => {
+                                            last_stop_reason = Some(reason.clone());
+                                            emit_agent_event(event, emitter);
                                         }
                                         AgentEvent::TextContent(text) => {
                                             final_output.push_str(text);
@@ -432,31 +454,67 @@ pub async fn run_agent_process<P: AgentStreamParser>(
             _ = tokio::time::sleep_until(activity_deadline) => {
                 handle_activity_timeout(config, &logger, emitter, &mut child).await?;
             }
+            _ = async {
+                if let Some(ref mut rx) = cancel_rx {
+                    // Wait for cancel signal
+                    loop {
+                        rx.changed().await.ok();
+                        if *rx.borrow() {
+                            return;
+                        }
+                    }
+                } else {
+                    // No cancel_rx, never resolves
+                    std::future::pending::<()>().await
+                }
+            } => {
+                // Cancellation requested
+                if let Some(ref logger) = logger {
+                    logger.log_line("cancelled", "cancellation signal received");
+                }
+                emitter.send_output(format!(
+                    "[agent:{}] Cancellation requested, terminating...",
+                    config.agent_name
+                ));
+                let _ = child.kill().await;
+                // Set stop reason and return early with partial output
+                last_stop_reason = Some("cancelled".to_string());
+                is_error = false; // Cancellation is not an error
+                break;
+            }
         }
     }
 
-    // Wait for process to exit
-    let status = wait_for_process(config, &logger, emitter, &mut child).await?;
+    // Wait for process to exit (skip if cancelled - process already killed)
+    let was_cancelled = last_stop_reason.as_deref() == Some("cancelled");
+    if !was_cancelled {
+        let status = wait_for_process(config, &logger, emitter, &mut child).await?;
 
-    if let Some(ref logger) = logger {
-        logger.log_line("exit", &format!("status: {}", status));
-    }
+        if let Some(ref logger) = logger {
+            logger.log_line("exit", &format!("status: {}", status));
+        }
 
-    if !status.success() {
-        is_error = true;
+        if !status.success() {
+            is_error = true;
+        }
     }
 
     if let Some(cost) = total_cost {
         emitter.send_output(format!("[agent:{}] Cost: ${:.4}", config.agent_name, cost));
     }
 
-    emitter.send_output(format!("[agent:{}] Complete", config.agent_name));
+    if was_cancelled {
+        emitter.send_output(format!("[agent:{}] Cancelled", config.agent_name));
+    } else {
+        emitter.send_output(format!("[agent:{}] Complete", config.agent_name));
+    }
 
     Ok(AgentOutput {
         output: final_output,
         is_error,
         cost_usd: total_cost,
         conversation_id: captured_conversation_id,
+        stop_reason: last_stop_reason,
     })
 }
 
@@ -548,6 +606,7 @@ impl From<AgentOutput> for AgentResult {
             is_error: output.is_error,
             cost_usd: output.cost_usd,
             conversation_id: output.conversation_id,
+            stop_reason: output.stop_reason,
         }
     }
 }
@@ -579,12 +638,14 @@ mod tests {
             is_error: false,
             cost_usd: Some(0.05),
             conversation_id: Some("conv-123".to_string()),
+            stop_reason: Some("max_turns".to_string()),
         };
         let result: AgentResult = output.into();
         assert_eq!(result.output, "test output");
         assert!(!result.is_error);
         assert_eq!(result.cost_usd, Some(0.05));
         assert_eq!(result.conversation_id, Some("conv-123".to_string()));
+        assert_eq!(result.stop_reason, Some("max_turns".to_string()));
     }
 
     #[test]
@@ -594,8 +655,10 @@ mod tests {
             is_error: false,
             cost_usd: None,
             conversation_id: None,
+            stop_reason: None,
         };
         let result: AgentResult = output.into();
         assert!(result.conversation_id.is_none());
+        assert!(result.stop_reason.is_none());
     }
 }

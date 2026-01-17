@@ -16,6 +16,10 @@ pub struct WorkflowConfig {
     /// Failure handling policy for transient failures and recovery.
     #[serde(default)]
     pub failure_policy: FailurePolicy,
+    /// Optional implementation workflow configuration.
+    /// When present and enabled, allows JSON-mode implementation after plan approval.
+    #[serde(default)]
+    pub implementation: ImplementationConfig,
 }
 
 /// Configuration for the post-implementation verification workflow.
@@ -49,6 +53,104 @@ impl Default for VerificationConfig {
 
 fn default_max_verification_iterations() -> u32 {
     3
+}
+
+/// Configuration for the JSON-mode implementation workflow.
+/// All fields have defaults to ensure backward compatibility with existing configs.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ImplementationConfig {
+    /// Whether implementation is enabled. Default: true
+    /// Set to false for single-agent configs where implementation-review requires a distinct reviewer.
+    #[serde(default = "default_implementation_enabled")]
+    pub enabled: bool,
+    /// Maximum implementation/review iterations before stopping. Default: 3
+    #[serde(default = "default_max_implementation_iterations")]
+    pub max_iterations: u32,
+    /// Configuration for the implementing phase agent.
+    /// Defaults to workflow.planning agent with max_turns: 100.
+    #[serde(default)]
+    pub implementing: Option<SingleAgentPhase>,
+    /// Configuration for the implementation-review phase agent.
+    /// Defaults to the first workflow.reviewing agent that differs from implementing agent.
+    #[serde(default)]
+    pub reviewing: Option<SingleAgentPhase>,
+}
+
+fn default_implementation_enabled() -> bool {
+    true
+}
+
+fn default_max_implementation_iterations() -> u32 {
+    3
+}
+
+fn default_implementation_max_turns() -> u32 {
+    100
+}
+
+impl Default for ImplementationConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_implementation_enabled(),
+            max_iterations: default_max_implementation_iterations(),
+            implementing: None,
+            reviewing: None,
+        }
+    }
+}
+
+impl ImplementationConfig {
+    /// Normalizes the implementation config by filling in defaults from the workflow config.
+    /// Returns an error if enabled but no valid reviewer can be determined.
+    pub fn normalize(&mut self, workflow: &PhaseConfigs) -> Result<()> {
+        if !self.enabled {
+            return Ok(());
+        }
+
+        // Default implementing to workflow.planning with max_turns: 100
+        if self.implementing.is_none() {
+            self.implementing = Some(SingleAgentPhase {
+                agent: workflow.planning.agent.clone(),
+                max_turns: Some(default_implementation_max_turns()),
+            });
+        }
+
+        // Default reviewing to first workflow.reviewing agent that differs from implementing
+        if self.reviewing.is_none() {
+            let implementing_agent = self.implementing.as_ref().map(|p| p.agent.as_str()).unwrap_or("");
+
+            // Find first reviewer that differs from the implementing agent
+            let reviewer = workflow.reviewing.agents.iter()
+                .map(|r| r.agent_name())
+                .find(|name| *name != implementing_agent);
+
+            if let Some(reviewer_name) = reviewer {
+                self.reviewing = Some(SingleAgentPhase {
+                    agent: reviewer_name.to_string(),
+                    max_turns: None, // Use agent default
+                });
+            } else if workflow.reviewing.agents.len() == 1
+                && workflow.reviewing.agents[0].agent_name() != implementing_agent {
+                // Single reviewer that is different from implementing agent
+                self.reviewing = Some(SingleAgentPhase {
+                    agent: workflow.reviewing.agents[0].agent_name().to_string(),
+                    max_turns: None,
+                });
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Returns the implementing agent name, or None if not configured.
+    pub fn implementing_agent(&self) -> Option<&str> {
+        self.implementing.as_ref().map(|p| p.agent.as_str())
+    }
+
+    /// Returns the reviewing agent name, or None if not configured.
+    pub fn reviewing_agent(&self) -> Option<&str> {
+        self.reviewing.as_ref().map(|p| p.agent.as_str())
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -178,26 +280,35 @@ impl WorkflowConfig {
     pub fn load(path: &Path) -> Result<Self> {
         let content = std::fs::read_to_string(path)
             .with_context(|| format!("Failed to read config file: {}", path.display()))?;
-        let config: Self = serde_yaml::from_str(&content)
+        let mut config: Self = serde_yaml::from_str(&content)
             .with_context(|| format!("Failed to parse config file as YAML: {}", path.display()))?;
+        // Normalize implementation config defaults before validation
+        config.implementation.normalize(&config.workflow)?;
         config.validate()?;
         Ok(config)
     }
 
     pub fn default_config() -> Self {
-
         const DEFAULT_WORKFLOW_YAML: &str = include_str!("../workflow.yaml");
 
-        serde_yaml::from_str(DEFAULT_WORKFLOW_YAML)
-            .expect("Failed to parse embedded workflow.yaml - this is a bug in the workflow.yaml file")
+        let mut config: Self = serde_yaml::from_str(DEFAULT_WORKFLOW_YAML)
+            .expect("Failed to parse embedded workflow.yaml - this is a bug in the workflow.yaml file");
+        // Normalize implementation config defaults
+        config.implementation.normalize(&config.workflow)
+            .expect("Failed to normalize implementation config - this is a bug");
+        config
     }
 
     /// Returns a Claude-only workflow configuration (no Codex or other agents)
     pub fn claude_only_config() -> Self {
         const CLAUDE_ONLY_YAML: &str = include_str!("../workflow-claude-only.yaml");
 
-        serde_yaml::from_str(CLAUDE_ONLY_YAML)
-            .expect("Failed to parse embedded workflow-claude-only.yaml - this is a bug")
+        let mut config: Self = serde_yaml::from_str(CLAUDE_ONLY_YAML)
+            .expect("Failed to parse embedded workflow-claude-only.yaml - this is a bug");
+        // Normalize implementation config defaults
+        config.implementation.normalize(&config.workflow)
+            .expect("Failed to normalize implementation config - this is a bug");
+        config
     }
 
     fn validate(&self) -> Result<()> {
@@ -245,6 +356,50 @@ impl WorkflowConfig {
 
         // Validate failure policy
         self.failure_policy.validate()?;
+
+        // Only validate implementation agents if implementation is enabled
+        if self.implementation.enabled {
+            // Ensure implementing agent exists
+            if let Some(ref implementing) = self.implementation.implementing {
+                if !self.agents.contains_key(&implementing.agent) {
+                    anyhow::bail!(
+                        "Implementation implementing agent '{}' not found in agents configuration",
+                        implementing.agent
+                    );
+                }
+            }
+
+            // Ensure reviewing agent exists
+            if let Some(ref reviewing) = self.implementation.reviewing {
+                if !self.agents.contains_key(&reviewing.agent) {
+                    anyhow::bail!(
+                        "Implementation reviewing agent '{}' not found in agents configuration",
+                        reviewing.agent
+                    );
+                }
+            }
+
+            // Ensure implementing and reviewing agents are different
+            let impl_agent = self.implementation.implementing_agent();
+            let review_agent = self.implementation.reviewing_agent();
+            if let (Some(impl_a), Some(rev_a)) = (impl_agent, review_agent) {
+                if impl_a == rev_a {
+                    anyhow::bail!(
+                        "Implementation review requires a different agent than the implementing agent. \
+                        Both are set to '{}'. Either configure a distinct reviewer or set implementation.enabled: false.",
+                        impl_a
+                    );
+                }
+            }
+
+            // If enabled but no reviewer could be determined, error
+            if self.implementation.reviewing.is_none() {
+                anyhow::bail!(
+                    "Implementation is enabled but no distinct reviewing agent could be determined. \
+                    Configure implementation.reviewing.agent explicitly or set implementation.enabled: false."
+                );
+            }
+        }
 
         Ok(())
     }
@@ -494,6 +649,10 @@ workflow:
     agent: claude
   reviewing:
     agents: [claude]
+
+# Single-agent config needs implementation disabled
+implementation:
+  enabled: false
 "#;
         let config: WorkflowConfig = serde_yaml::from_str(yaml).unwrap();
 
@@ -530,6 +689,10 @@ verification:
   fixing:
     agent: claude
     max_turns: 15
+
+# Single-agent config needs implementation disabled
+implementation:
+  enabled: false
 "#;
         let config: WorkflowConfig = serde_yaml::from_str(yaml).unwrap();
 
@@ -592,6 +755,10 @@ verification:
   enabled: false
   verifying:
     agent: nonexistent
+
+# Single-agent config needs implementation disabled
+implementation:
+  enabled: false
 "#;
         let config: WorkflowConfig = serde_yaml::from_str(yaml).unwrap();
 
@@ -622,4 +789,5 @@ workflow:
         assert!(err.contains("revising") || err.contains("unknown field"),
             "Error should mention 'revising' or 'unknown field': {}", err);
     }
+
 }

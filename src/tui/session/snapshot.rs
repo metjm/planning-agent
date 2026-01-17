@@ -82,8 +82,8 @@ impl Session {
             streaming_lines: ui_state.streaming_lines,
             streaming_scroll_position: ui_state.streaming_scroll_position,
             streaming_follow_mode: ui_state.streaming_follow_mode,
-            // Reset implementation panel focus since terminal can't be serialized
-            focused_panel: if ui_state.focused_panel == FocusedPanel::Implementation {
+            // Map Unknown variant (from old snapshots) to Output
+            focused_panel: if ui_state.focused_panel == FocusedPanel::Unknown {
                 FocusedPanel::Output
             } else {
                 ui_state.focused_panel
@@ -102,8 +102,8 @@ impl Session {
             user_feedback: ui_state.user_feedback,
             cursor_position: ui_state.cursor_position,
             feedback_scroll: ui_state.feedback_scroll,
-            // Reset implementation terminal mode since terminal can't be serialized
-            input_mode: if ui_state.input_mode == InputMode::ImplementationTerminal {
+            // Map Unknown variant (from old snapshots) to Normal
+            input_mode: if ui_state.input_mode == InputMode::Unknown {
                 InputMode::Normal
             } else {
                 ui_state.input_mode
@@ -144,7 +144,6 @@ impl Session {
             chat_follow_mode: ui_state.chat_follow_mode,
             todos: ui_state.todos,
             todo_scroll_position: ui_state.todo_scroll_position,
-            implementation_terminal: None, // Runtime-only, reset on resume
             tab_mention_state: MentionState::new(), // Runtime-only, reset on resume
             feedback_mention_state: MentionState::new(), // Runtime-only, reset on resume
             tab_slash_state: SlashState::new(), // Runtime-only, reset on resume

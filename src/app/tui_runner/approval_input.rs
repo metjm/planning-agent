@@ -14,8 +14,6 @@ use crossterm::event::{KeyCode, KeyModifiers};
 use std::path::Path;
 use tokio::sync::mpsc;
 
-use super::implementation_input::start_implementation_terminal;
-
 /// Compute the max scroll for the plan summary popup based on wrapped lines and terminal size.
 pub fn compute_plan_summary_max_scroll(plan_summary: &str) -> usize {
     let (term_width, term_height) = crossterm::terminal::size().unwrap_or((80, 24));
@@ -64,8 +62,8 @@ pub async fn handle_plan_approval_input(
     key: crossterm::event::KeyEvent,
     session: &mut Session,
     _terminal: &mut ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io::Stdout>>,
-    working_dir: &Path,
-    output_tx: &mpsc::UnboundedSender<Event>,
+    _working_dir: &Path,
+    _output_tx: &mpsc::UnboundedSender<Event>,
 ) -> Result<bool> {
     match key.code {
         KeyCode::Char('a') | KeyCode::Char('A') => {
@@ -75,20 +73,7 @@ pub async fn handle_plan_approval_input(
             session.approval_mode = ApprovalMode::None;
             session.status = SessionStatus::Complete;
         }
-        KeyCode::Char('i') | KeyCode::Char('I') => {
-            let plan_path = session
-                .workflow_state
-                .as_ref()
-                .map(|s| working_dir.join(&s.plan_file))
-                .unwrap_or_default();
-
-            session.approval_tx.take();
-            session.approval_mode = ApprovalMode::None;
-
-            if let Err(e) = start_implementation_terminal(session, plan_path, working_dir, output_tx) {
-                session.handle_error(&format!("Failed to start implementation: {}", e));
-            }
-        }
+        // Implementation 'i' key will be re-added when JSON-mode implementation is ready
         KeyCode::Char('d') | KeyCode::Char('D') => {
             session.start_feedback_input();
         }
@@ -498,24 +483,11 @@ pub async fn handle_user_override_input(
     key: crossterm::event::KeyEvent,
     session: &mut Session,
     _terminal: &mut ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io::Stdout>>,
-    working_dir: &Path,
-    output_tx: &mpsc::UnboundedSender<Event>,
+    _working_dir: &Path,
+    _output_tx: &mpsc::UnboundedSender<Event>,
 ) -> Result<bool> {
     match key.code {
-        KeyCode::Char('i') | KeyCode::Char('I') => {
-            let plan_path = session
-                .workflow_state
-                .as_ref()
-                .map(|s| working_dir.join(&s.plan_file))
-                .unwrap_or_default();
-
-            session.approval_tx.take();
-            session.approval_mode = ApprovalMode::None;
-
-            if let Err(e) = start_implementation_terminal(session, plan_path, working_dir, output_tx) {
-                session.handle_error(&format!("Failed to start implementation: {}", e));
-            }
-        }
+        // Implementation 'i' key will be re-added when JSON-mode implementation is ready
         KeyCode::Char('d') | KeyCode::Char('D') => {
             session.start_feedback_input();
         }

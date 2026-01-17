@@ -31,9 +31,6 @@ unicode-width = "0.2"
 portable-pty = "0.9"
 which = "8"
 
-# Terminal emulation for embedded Claude terminal
-vt100 = "0.16"
-
 # Unix-specific poll for PTY timeout handling
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.30", features = ["poll", "process", "signal"] }

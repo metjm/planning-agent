@@ -3,8 +3,7 @@ use super::cli_instances::{draw_cli_instances, CLI_INSTANCES_MIN_HEIGHT};
 use super::objective::{compute_objective_height, draw_objective, OBJECTIVE_MAX_FRACTION, OBJECTIVE_MIN_HEIGHT};
 use super::stats::draw_stats;
 use super::util::{compute_wrapped_line_count, parse_markdown_line};
-use crate::tui::embedded_terminal::vt100_cell_to_style;
-use crate::tui::{FocusedPanel, InputMode, RunTab, Session, SummaryState};
+use crate::tui::{FocusedPanel, RunTab, Session, SummaryState};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -14,31 +13,22 @@ use ratatui::{
 };
 
 pub fn draw_main(frame: &mut Frame, session: &Session, area: Rect) {
-    // Check if we're in implementation terminal mode
-    let in_implementation_mode = session.input_mode == InputMode::ImplementationTerminal
-        && session.implementation_terminal.is_some();
-
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(70), Constraint::Percentage(30)])
         .split(area);
 
-    if in_implementation_mode {
-        // In implementation mode, the left side is the terminal
-        draw_implementation_terminal(frame, session, chunks[0]);
-    } else {
-        // Normal mode: output and chat panels
-        let left_chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
-            .split(chunks[0]);
+    // Normal mode: output and chat panels
+    let left_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
+        .split(chunks[0]);
 
-        // Compute tool panel visibility based on chat area width
-        let show_tool_panel = left_chunks[1].width >= 70;
+    // Compute tool panel visibility based on chat area width
+    let show_tool_panel = left_chunks[1].width >= 70;
 
-        draw_output(frame, session, left_chunks[0]);
-        draw_chat(frame, session, left_chunks[1], show_tool_panel);
-    }
+    draw_output(frame, session, left_chunks[0]);
+    draw_chat(frame, session, left_chunks[1], show_tool_panel);
 
     // Split right column into Objective (top), CLI Instances (middle), and Stats (bottom)
     let right_area = chunks[1];
@@ -73,8 +63,8 @@ pub fn draw_main(frame: &mut Frame, session: &Session, area: Rect) {
 
     draw_objective(frame, session, right_chunks[0]);
     draw_cli_instances(frame, session, right_chunks[1]);
-    // Show live tools in Stats only when tool panel is NOT visible (narrow terminals)
-    draw_stats(frame, session, right_chunks[2], !in_implementation_mode);
+    // Always show live tools in Stats since implementation terminal mode is removed
+    draw_stats(frame, session, right_chunks[2], true);
 }
 
 fn draw_output(frame: &mut Frame, session: &Session, area: Rect) {
@@ -799,100 +789,4 @@ fn draw_tool_calls_panel(frame: &mut Frame, session: &Session, area: Rect) {
 
     let paragraph = Paragraph::new(lines).block(tool_block);
     frame.render_widget(paragraph, area);
-}
-
-/// Draw the embedded implementation terminal
-fn draw_implementation_terminal(frame: &mut Frame, session: &Session, area: Rect) {
-    let is_focused = session.focused_panel == FocusedPanel::Implementation;
-    let border_color = if is_focused { Color::Yellow } else { Color::Cyan };
-
-    let follow_indicator = if session.implementation_terminal
-        .as_ref()
-        .map(|t| t.follow_mode)
-        .unwrap_or(true)
-    {
-        ""
-    } else {
-        "[SCROLLED] "
-    };
-
-    let title = format!(" {}Implementation Terminal [Ctrl+\\ to exit] ", follow_indicator);
-
-    let terminal_block = Block::default()
-        .borders(Borders::ALL)
-        .title(title)
-        .border_style(Style::default().fg(border_color));
-
-    let inner_area = terminal_block.inner(area);
-    frame.render_widget(terminal_block, area);
-
-    // Render the vt100 screen content
-    if let Some(ref impl_term) = session.implementation_terminal {
-        let screen = impl_term.screen();
-        let screen_size = screen.size();
-        let screen_rows = screen_size.0 as usize;
-        let screen_cols = screen_size.1 as usize;
-        let visible_rows = inner_area.height as usize;
-        let visible_cols = inner_area.width as usize;
-
-        // Get scrollback info for scrollbar
-        let scrollback_len = screen.scrollback();
-        let total_content_rows = screen_rows + scrollback_len;
-        // Note: scroll_offset is tracked but scrollback viewing isn't implemented
-        // due to vt100 API limitations (no cell-level access to scrollback)
-        let _scroll_offset = impl_term.scroll_offset;
-
-        // Render each row of the visible screen
-        // Note: vt100's cell() API only provides access to the current visible screen,
-        // not the scrollback buffer. For full scrollback rendering, we'd need to use
-        // contents_formatted() and parse ANSI codes, which is complex.
-        // For now, we render the current screen with full styling.
-        let rows_to_render = visible_rows.min(screen_rows);
-        for y in 0..rows_to_render {
-            for x in 0..visible_cols.min(screen_cols) {
-                if let Some(cell) = screen.cell(y as u16, x as u16) {
-                    // Skip wide character continuation cells
-                    if cell.is_wide_continuation() {
-                        continue;
-                    }
-
-                    let contents = cell.contents();
-                    let style = vt100_cell_to_style(cell);
-
-                    // Write to the buffer
-                    let buf_x = inner_area.x + x as u16;
-                    let buf_y = inner_area.y + y as u16;
-
-                    if buf_x < inner_area.x + inner_area.width && buf_y < inner_area.y + inner_area.height {
-                        let buf = frame.buffer_mut();
-                        if let Some(buf_cell) = buf.cell_mut((buf_x, buf_y)) {
-                            buf_cell.set_symbol(if contents.is_empty() { " " } else { contents });
-                            buf_cell.set_style(style);
-                        }
-                    }
-                }
-            }
-        }
-
-        // Show scrollbar indicator if there's scrollback history
-        // This shows that content exists above even though we can't scroll to it
-        if total_content_rows > visible_rows || scrollback_len > 0 {
-            let current_pos = total_content_rows.saturating_sub(screen_rows);
-            let mut scrollbar_state = ScrollbarState::new(total_content_rows).position(current_pos);
-            frame.render_stateful_widget(
-                Scrollbar::new(ScrollbarOrientation::VerticalRight)
-                    .begin_symbol(Some("↑"))
-                    .end_symbol(Some("↓")),
-                area,
-                &mut scrollbar_state,
-            );
-        }
-    } else {
-        // No terminal, show placeholder
-        let placeholder = Paragraph::new(Line::from(Span::styled(
-            "No implementation terminal active",
-            Style::default().fg(Color::DarkGray),
-        )));
-        frame.render_widget(placeholder, inner_area);
-    }
 }
