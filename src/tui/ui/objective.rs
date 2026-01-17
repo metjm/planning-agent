@@ -1,9 +1,10 @@
 
+use super::theme::Theme;
 use super::util::compute_wrapped_line_count_text;
 use crate::tui::Session;
 use ratatui::{
     layout::Rect,
-    style::{Color, Style},
+    style::Style,
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Wrap},
     Frame,
@@ -44,6 +45,7 @@ pub fn compute_objective_height(objective: &str, available_width: u16, max_heigh
 /// Displays the planning objective from `session.workflow_state.objective`.
 /// Shows a placeholder when no objective is set.
 pub fn draw_objective(frame: &mut Frame, session: &Session, area: Rect) {
+    let theme = Theme::for_session(session);
     let objective_text = session
         .workflow_state
         .as_ref()
@@ -53,18 +55,18 @@ pub fn draw_objective(frame: &mut Frame, session: &Session, area: Rect) {
     let block = Block::default()
         .borders(Borders::ALL)
         .title(" Objective ")
-        .border_style(Style::default().fg(Color::Cyan));
+        .border_style(Style::default().fg(theme.objective_border));
 
     let lines: Vec<Line> = if objective_text.is_empty() {
         vec![Line::from(Span::styled(
             "(not set)",
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(theme.muted),
         ))]
     } else {
         // Split by newlines to preserve user formatting
         objective_text
             .lines()
-            .map(|line| Line::from(Span::styled(line.to_string(), Style::default().fg(Color::White))))
+            .map(|line| Line::from(Span::styled(line.to_string(), Style::default().fg(theme.text))))
             .collect()
     };
 

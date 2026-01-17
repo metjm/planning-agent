@@ -128,6 +128,17 @@ pub enum ImplementationPhase {
     Complete,
 }
 
+/// UI mode for theming and display purposes.
+/// Determines which color palette and phase labels to use in the TUI.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum UiMode {
+    /// Planning workflow is active (planning, reviewing, revising phases)
+    #[default]
+    Planning,
+    /// Implementation workflow is active (implementing, implementation review phases)
+    Implementation,
+}
+
 #[allow(dead_code)]
 impl ImplementationPhase {
     /// Returns a human-readable label for this phase.
@@ -598,6 +609,29 @@ impl State {
     #[allow(dead_code)]
     pub fn has_failure(&self) -> bool {
         self.last_failure.is_some()
+    }
+
+    /// Returns the current UI mode based on implementation state.
+    ///
+    /// Returns `UiMode::Implementation` if:
+    /// - `implementation_state` is present, AND
+    /// - The implementation phase is NOT `Complete`
+    ///
+    /// Otherwise returns `UiMode::Planning`.
+    pub fn workflow_stage(&self) -> UiMode {
+        match &self.implementation_state {
+            Some(impl_state) if impl_state.phase != ImplementationPhase::Complete => {
+                UiMode::Implementation
+            }
+            _ => UiMode::Planning,
+        }
+    }
+
+    /// Returns true if implementation workflow is currently active.
+    /// This is a convenience wrapper around `workflow_stage()`.
+    #[allow(dead_code)]
+    pub fn implementation_active(&self) -> bool {
+        self.workflow_stage() == UiMode::Implementation
     }
 }
 

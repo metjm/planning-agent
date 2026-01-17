@@ -13,7 +13,7 @@ pub use cli_instances::{CliInstance, CliInstanceId};
 pub use context::SessionContext;
 use crate::app::WorkflowResult;
 use crate::cli_usage::AccountUsage;
-use crate::state::{Phase, State};
+use crate::state::{ImplementationPhase, Phase, State, UiMode};
 use crate::tui::event::{TokenUsage, WorkflowCommand};
 use crate::tui::mention::MentionState;
 use crate::tui::slash::SlashState;
@@ -532,14 +532,32 @@ impl Session {
         }
     }
 
+    /// Returns the current UI mode (Planning or Implementation).
+    /// Used by the theme system to determine which color palette to use.
+    pub fn ui_mode(&self) -> UiMode {
+        match &self.workflow_state {
+            Some(state) => state.workflow_stage(),
+            None => UiMode::Planning,
+        }
+    }
+
     pub fn phase_name(&self) -> &str {
         match &self.workflow_state {
-            Some(state) => match state.phase {
-                Phase::Planning => "Planning",
-                Phase::Reviewing => "Reviewing",
-                Phase::Revising => "Revising",
-                Phase::Complete => "Complete",
-            },
+            Some(state) => {
+                // If implementation is active, show implementation sub-phase
+                if let Some(impl_state) = &state.implementation_state {
+                    if impl_state.phase != ImplementationPhase::Complete {
+                        return impl_state.phase.label();
+                    }
+                }
+                // Otherwise show planning workflow phase
+                match state.phase {
+                    Phase::Planning => "Planning",
+                    Phase::Reviewing => "Reviewing",
+                    Phase::Revising => "Revising",
+                    Phase::Complete => "Complete",
+                }
+            }
             None => match self.status {
                 SessionStatus::Verifying => "Verifying",
                 SessionStatus::Fixing => "Fixing",
@@ -600,7 +618,16 @@ impl Session {
 
     pub fn iteration(&self) -> (u32, u32) {
         match &self.workflow_state {
-            Some(state) => (state.iteration, state.max_iterations),
+            Some(state) => {
+                // If implementation is active, show implementation iteration
+                if let Some(impl_state) = &state.implementation_state {
+                    if impl_state.phase != ImplementationPhase::Complete {
+                        return (impl_state.iteration, impl_state.max_iterations);
+                    }
+                }
+                // Otherwise show planning workflow iteration
+                (state.iteration, state.max_iterations)
+            }
             None => (0, 0),
         }
     }

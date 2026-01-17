@@ -1,4 +1,5 @@
 
+mod approval_overlay;
 mod cli_instances;
 mod dropdowns;
 mod error_overlay;
@@ -8,12 +9,13 @@ mod panels;
 mod session_browser_overlay;
 mod stats;
 mod success_overlay;
+pub mod theme;
 pub mod util;
 
 use crate::tui::{ApprovalMode, InputMode, SessionStatus, TabManager};
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
     Frame,
@@ -59,6 +61,8 @@ pub fn draw(frame: &mut Frame, tab_manager: &TabManager) {
 }
 
 fn draw_tab_bar(frame: &mut Frame, tab_manager: &TabManager, area: Rect) {
+    let active_session = tab_manager.active();
+    let theme = theme::Theme::for_session(active_session);
     let mut spans: Vec<Span> = Vec::new();
     spans.push(Span::raw(" "));
 
@@ -96,20 +100,19 @@ fn draw_tab_bar(frame: &mut Frame, tab_manager: &TabManager, area: Rect) {
         };
 
         let style = if is_active {
-            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+            Style::default().fg(theme.tab_active).add_modifier(Modifier::BOLD)
         } else if session.approval_mode != ApprovalMode::None {
-            Style::default().fg(Color::Magenta)
+            Style::default().fg(theme.tab_approval)
         } else {
-            Style::default().fg(Color::DarkGray)
+            Style::default().fg(theme.tab_inactive)
         };
 
         spans.push(Span::styled(label, style));
         spans.push(Span::raw(" "));
     }
 
-    spans.push(Span::styled("[Ctrl++]", Style::default().fg(Color::Green).dim()));
+    spans.push(Span::styled("[Ctrl++]", Style::default().fg(theme.success).dim()));
 
-    let active_session = tab_manager.active();
     let title = if let Some(ref state) = active_session.workflow_state {
         let plan_path = state.plan_file.display().to_string();
         format!(" Planning Agent - {} ", plan_path)
@@ -120,7 +123,7 @@ fn draw_tab_bar(frame: &mut Frame, tab_manager: &TabManager, area: Rect) {
     let tabs = Paragraph::new(Line::from(spans)).block(
         Block::default()
             .borders(Borders::BOTTOM)
-            .border_style(Style::default().fg(Color::DarkGray))
+            .border_style(Style::default().fg(theme.muted))
             .title(title)
             .title_alignment(Alignment::Center),
     );

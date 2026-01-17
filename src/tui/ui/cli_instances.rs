@@ -2,11 +2,12 @@
 //!
 //! Displays active CLI agent processes with elapsed runtime and idle time.
 
+use super::theme::Theme;
 use super::util::format_duration;
 use crate::tui::Session;
 use ratatui::{
     layout::Rect,
-    style::{Color, Style},
+    style::Style,
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
     Frame,
@@ -24,10 +25,11 @@ pub const CLI_INSTANCES_MIN_HEIGHT: u16 = 3;
 ///
 /// Shows "(none)" when no instances are active.
 pub fn draw_cli_instances(frame: &mut Frame, session: &Session, area: Rect) {
+    let theme = Theme::for_session(session);
     let block = Block::default()
         .borders(Borders::ALL)
         .title(" CLI Instances ")
-        .border_style(Style::default().fg(Color::Blue));
+        .border_style(Style::default().fg(theme.cli_border));
 
     let inner_area = block.inner(area);
     let visible_height = inner_area.height as usize;
@@ -37,7 +39,7 @@ pub fn draw_cli_instances(frame: &mut Frame, session: &Session, area: Rect) {
     let lines: Vec<Line> = if instances.is_empty() {
         vec![Line::from(Span::styled(
             "(none)",
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(theme.muted),
         ))]
     } else {
         let mut result: Vec<Line> = Vec::new();
@@ -55,12 +57,12 @@ pub fn draw_cli_instances(frame: &mut Frame, session: &Session, area: Rect) {
 
             let label = instance.display_label();
             let line = Line::from(vec![
-                Span::styled("▶ ", Style::default().fg(Color::Green)),
-                Span::styled(label, Style::default().fg(Color::White)),
-                Span::styled(" | up ", Style::default().fg(Color::DarkGray)),
-                Span::styled(elapsed, Style::default().fg(Color::Cyan)),
-                Span::styled(" | idle ", Style::default().fg(Color::DarkGray)),
-                Span::styled(idle, Style::default().fg(Color::Yellow)),
+                Span::styled("▶ ", Style::default().fg(theme.cli_running)),
+                Span::styled(label, Style::default().fg(theme.text)),
+                Span::styled(" | up ", Style::default().fg(theme.muted)),
+                Span::styled(elapsed, Style::default().fg(theme.cli_elapsed)),
+                Span::styled(" | idle ", Style::default().fg(theme.muted)),
+                Span::styled(idle, Style::default().fg(theme.cli_idle)),
             ]);
             result.push(line);
         }
@@ -70,7 +72,7 @@ pub fn draw_cli_instances(frame: &mut Frame, session: &Session, area: Rect) {
             let remaining_count = instances.len().saturating_sub(display_capacity);
             result.push(Line::from(Span::styled(
                 format!("+{} more", remaining_count),
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(theme.muted),
             )));
         }
 
