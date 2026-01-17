@@ -59,8 +59,13 @@ pub fn spawn_summary_generation(
 fn build_plan_summary_input(plan_content: &str, phase: &str) -> String {
     let max_len = 8000;
     let content = if plan_content.len() > max_len {
+        // Find valid UTF-8 boundary at or before max_len
+        let truncate_at = (0..=max_len)
+            .rev()
+            .find(|&i| plan_content.is_char_boundary(i))
+            .unwrap_or(0);
         format!("{}...\n\n[Content truncated, {} characters total]",
-                &plan_content[..max_len], plan_content.len())
+                &plan_content[..truncate_at], plan_content.len())
     } else {
         plan_content.to_string()
     };
@@ -130,4 +135,37 @@ async fn run_summary_generation(
         .await?;
 
     Ok(result.output)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_build_plan_summary_input_utf8_boundary() {
+        // Create content that exceeds 8000 bytes with multi-byte chars near the boundary
+        // '─' is 3 bytes (U+2500: 0xE2 0x94 0x80)
+        let padding = "a".repeat(7998);
+        let content = format!("{}───", padding); // 7998 + 9 = 8007 bytes
+
+        // This should not panic
+        let result = build_plan_summary_input(&content, "test");
+        assert!(result.contains("Content truncated"));
+    }
+
+    #[test]
+    fn test_build_plan_summary_input_just_over_boundary() {
+        // Content just over the boundary (8001 bytes)
+        let content = "a".repeat(8001);
+        let result = build_plan_summary_input(&content, "test");
+        assert!(result.contains("Content truncated"));
+    }
+
+    #[test]
+    fn test_build_plan_summary_input_under_limit() {
+        let content = "short content";
+        let result = build_plan_summary_input(&content, "test");
+        assert!(!result.contains("Content truncated"));
+        assert!(result.contains("short content"));
+    }
 }
