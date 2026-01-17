@@ -15,6 +15,9 @@ Use the available tools to read the codebase and understand the existing structu
 
 When replacing or refactoring functionality, your plan must remove the old code entirely—no backward compatibility shims, re-exports, or conversion methods are allowed.
 
+DO NOT include timelines, schedules, dates, durations, or time estimates in plans.
+Examples to reject: "in two weeks", "Phase 1: Week 1-2", "Q1 delivery", "Sprint 1", "by end of day".
+
 Use the "planning" skill to create the plan.
 Before finalizing your plan, perform a self-review against the "plan-review" skill criteria, so you can be confident that it will pass review.
 Your plan should be structured to pass review without requiring revision cycles."#;
@@ -106,6 +109,7 @@ Requirements:
 4. Consider edge cases and potential issues
 5. Include a testing strategy
 6. When replacing functionality, remove old code entirely—update all callers and do not add backward-compatibility shims or re-exports
+7. DO NOT include timelines, schedules, dates, durations, or time estimates (e.g., "in two weeks", "Sprint 1", "Q1 delivery")
 
 IMPORTANT: Write the final plan to this file: {}"#,
         plan_path
@@ -204,6 +208,30 @@ mod tests {
         assert!(
             prompt.contains("/tmp/test-plan.md"),
             "Planning prompt should contain the plan file path"
+        );
+    }
+
+    #[test]
+    fn planning_system_prompt_contains_no_timeline_directive() {
+        assert!(
+            PLANNING_SYSTEM_PROMPT.contains("DO NOT include timelines"),
+            "PLANNING_SYSTEM_PROMPT must contain the no-timeline directive"
+        );
+        assert!(
+            PLANNING_SYSTEM_PROMPT.contains("in two weeks"),
+            "PLANNING_SYSTEM_PROMPT must contain example phrase 'in two weeks'"
+        );
+    }
+
+    #[test]
+    fn build_planning_prompt_contains_no_timeline_directive() {
+        let state = minimal_state();
+        let working_dir = PathBuf::from("/tmp/workspace");
+        let prompt = build_planning_prompt(&state, &working_dir);
+
+        assert!(
+            prompt.contains("DO NOT include timelines"),
+            "Planning prompt must contain the no-timeline directive"
         );
     }
 }

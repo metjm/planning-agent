@@ -275,6 +275,8 @@ How to Proceed:
 
 ## Output Format
 
+**Note:** All plan sections define ordering and sequencing only. Do not include time estimates, durations, or scheduling information.
+
 Generate debugging analysis in this structure:
 
 ```markdown
@@ -342,6 +344,8 @@ Generate debugging analysis in this structure:
 - DO NOT abandon the process when frustrated - trust the methodology
 - DO NOT propose "safe" workarounds - fix the actual problem
 - DO NOT leave backwards-compatibility code - update all callers
+- DO NOT include timelines, schedules, dates, durations, or time estimates in debugging plans.
+  Examples to reject: "in two weeks", "Phase 1: Week 1-2", "Q1 delivery", "Sprint 1", "by end of day".
 - ALWAYS use sub-agents for parallel investigation
 - ALWAYS document findings and reasoning
 - ALWAYS start with the most likely hypothesis when testing

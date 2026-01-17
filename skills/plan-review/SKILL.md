@@ -89,6 +89,18 @@ Look for red flags:
 
 If a bug or code issue could have been prevented by static analysis and the plan doesn't propose a linter rule, send it back for revision.
 
+### Timeline Prohibition Check
+
+**REJECT any plan that includes timelines, schedules, dates, durations, or time estimates.**
+
+Plans must focus on technical scope, sequencing, and verification—not scheduling. Look for red flags:
+- Time-based phrases: "in two weeks", "by Friday", "Sprint 1", "Q1 delivery"
+- Duration estimates: "2-3 days", "a few hours", "takes about a week"
+- Scheduling language: "Phase 1: Week 1-2", "Milestone 1 due March", "target completion"
+- Calendar references: specific dates, quarters, sprints, iterations with time bounds
+
+If any timeline content is present, send the plan back for revision with instructions to remove all time-related content.
+
 ## Review Process
 
 ### Phase 1: Initial Read-Through
@@ -439,6 +451,7 @@ Use this **only** when:
 - **The plan uses weak typing** - String/map where domain types are needed
 - **The plan leaves backwards-compatibility code** - all callers must be updated
 - **The plan misses linter rules** - issues preventable by static analysis need rules proposed
+- **The plan includes timelines, schedules, dates, durations, or time estimates** - plans must focus on technical scope only (reject phrases like "in two weeks", "Sprint 1", "Q1 delivery", "2-3 days")
 - The plan fundamentally won't work (e.g., relies on APIs that don't exist, logic errors)
 - There's a clearly superior alternative that would significantly improve the outcome
 - Critical steps are missing that would cause implementation to fail
