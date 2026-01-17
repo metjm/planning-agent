@@ -7,7 +7,7 @@ use crate::agents::log::AgentLogger;
 use crate::agents::protocol::{AgentEvent, AgentOutput, AgentStreamParser};
 use crate::agents::{AgentContext, AgentResult};
 use crate::session_logger::SessionLogger;
-use crate::tui::{CliInstanceId, TokenUsage};
+use crate::tui::{CliInstanceId, TokenUsage, ToolResultSummary};
 use anyhow::{Context, Result};
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -112,7 +112,12 @@ pub trait EventEmitter: Send + Sync {
     fn send_token_usage(&self, usage: TokenUsage);
     fn send_tool_started(&self, tool_id: Option<String>, display_name: String, input_preview: String);
     fn send_tool_finished(&self, tool_id: Option<String>);
-    fn send_tool_result_received(&self, tool_id: Option<String>, is_error: bool);
+    fn send_tool_result_received(
+        &self,
+        tool_id: Option<String>,
+        is_error: bool,
+        summary: ToolResultSummary,
+    );
     fn send_agent_message(&self, msg: String);
     fn send_todos_update(&self, items: Vec<crate::tui::TodoItem>);
 
@@ -166,6 +171,7 @@ impl EventEmitter for ContextEmitter {
     }
     fn send_tool_started(&self, tool_id: Option<String>, display_name: String, input_preview: String) {
         self.context.session_sender.send_tool_started(
+            self.context.phase.clone(),
             tool_id,
             display_name,
             input_preview,
@@ -177,10 +183,21 @@ impl EventEmitter for ContextEmitter {
             .session_sender
             .send_tool_finished(tool_id, self.agent_name.clone());
     }
-    fn send_tool_result_received(&self, tool_id: Option<String>, is_error: bool) {
+    fn send_tool_result_received(
+        &self,
+        tool_id: Option<String>,
+        is_error: bool,
+        summary: ToolResultSummary,
+    ) {
         self.context
             .session_sender
-            .send_tool_result_received(tool_id, is_error, self.agent_name.clone());
+            .send_tool_result_received(
+                self.context.phase.clone(),
+                tool_id,
+                is_error,
+                summary,
+                self.agent_name.clone(),
+            );
     }
     fn send_agent_message(&self, msg: String) {
         self.context.session_sender.send_agent_message(
@@ -258,7 +275,6 @@ fn emit_agent_event(event: AgentEvent, emitter: &dyn EventEmitter) {
             ..
         } => {
             emitter.send_tool_started(tool_use_id, display_name.clone(), input_preview.clone());
-            emitter.send_streaming(format!("[Tool: {}] {}", display_name, input_preview));
         }
         AgentEvent::ToolResult {
             tool_use_id,
@@ -272,20 +288,17 @@ fn emit_agent_event(event: AgentEvent, emitter: &dyn EventEmitter) {
             } else {
                 Some(tool_use_id.clone())
             };
-            emitter.send_tool_result_received(normalized_id.clone(), is_error);
+            let summary = ToolResultSummary {
+                first_line: content_lines.first().cloned().unwrap_or_default(),
+                line_count: content_lines.len(),
+                truncated: has_more,
+            };
+            emitter.send_tool_result_received(normalized_id.clone(), is_error, summary);
             emitter.send_tool_finished(normalized_id);
-            for (i, line) in content_lines.iter().enumerate() {
-                let prefix = if i == 0 { "[Result] " } else { "         " };
-                emitter.send_streaming(format!("{}{}", prefix, line));
-            }
-            if has_more {
-                emitter.send_streaming("         ...".to_string());
-            }
         }
         AgentEvent::TodosUpdate(items) => emitter.send_todos_update(items),
         AgentEvent::ContentBlockStart { name } => {
             emitter.send_tool_started(None, name.clone(), String::new());
-            emitter.send_streaming(format!("[Tool: {}] starting...", name));
         }
         AgentEvent::ContentDelta(text) => {
             emitter.send_streaming(text.clone());

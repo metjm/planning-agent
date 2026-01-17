@@ -3,7 +3,7 @@
 //! This module provides tool lifecycle tracking (started, finished, result received)
 //! for the TUI session.
 
-use super::{ActiveTool, CompletedTool, Session, MAX_COMPLETED_TOOLS};
+use super::{ActiveTool, CompletedTool, Session, ToolCompletionInfo, MAX_COMPLETED_TOOLS};
 use std::time::Instant;
 
 impl Session {
@@ -57,15 +57,14 @@ impl Session {
         }
     }
 
-    /// Remove a tool and return its duration (for ToolResult events).
+    /// Remove a tool and return completion info (for ToolResult events).
     /// Uses ID-based matching with FIFO fallback.
-    /// Returns Some(duration_ms) if a tool was found and completed, None otherwise.
     pub fn tool_result_received_for_agent(
         &mut self,
         tool_id: Option<&str>,
         is_error: bool,
         agent_name: &str,
-    ) -> Option<u64> {
+    ) -> ToolCompletionInfo {
         // Normalize empty string to None
         let normalized_id = tool_id.filter(|s| !s.is_empty());
 
@@ -95,13 +94,15 @@ impl Session {
             }
         };
 
-        if let Some((display_name, input_preview, duration_ms)) = tool_info {
+        let (display_name, input_preview, duration_ms) = if let Some((display_name, input_preview, duration_ms)) =
+            tool_info
+        {
             let completed_at = Instant::now();
 
             // Move to completed tools list
             let completed_tool = CompletedTool {
-                display_name,
-                input_preview,
+                display_name: display_name.clone(),
+                input_preview: input_preview.clone(),
                 duration_ms,
                 is_error,
                 completed_at,
@@ -122,28 +123,38 @@ impl Session {
                     self.active_tools_by_agent.remove(agent_name);
                 }
             }
+            (display_name, input_preview, duration_ms)
+        } else {
+            // No active tools found - create a synthetic completed entry only for true orphan results
+            // (This is an edge case where we got a result without a matching start)
+            let display_name = normalized_id.unwrap_or("unknown").to_string();
+            let input_preview = String::new();
+            let duration_ms = 0;
 
-            return Some(duration_ms);
-        }
+            let completed_tool = CompletedTool {
+                display_name: display_name.clone(),
+                input_preview: input_preview.clone(),
+                duration_ms,
+                is_error,
+                completed_at: Instant::now(),
+            };
 
-        // No active tools found - create a synthetic completed entry only for true orphan results
-        // (This is an edge case where we got a result without a matching start)
-        let completed_tool = CompletedTool {
-            display_name: normalized_id.unwrap_or("unknown").to_string(),
-            input_preview: String::new(),
-            duration_ms: 0,
-            is_error,
-            completed_at: Instant::now(),
+            self.completed_tools_by_agent
+                .entry(agent_name.to_string())
+                .or_default()
+                .insert(0, completed_tool);
+
+            self.trim_completed_tools();
+
+            (display_name, input_preview, duration_ms)
         };
 
-        self.completed_tools_by_agent
-            .entry(agent_name.to_string())
-            .or_default()
-            .insert(0, completed_tool);
-
-        self.trim_completed_tools();
-
-        Some(0)
+        ToolCompletionInfo {
+            display_name,
+            input_preview,
+            duration_ms,
+            is_error,
+        }
     }
 
     /// Trim completed tools to stay under the retention cap

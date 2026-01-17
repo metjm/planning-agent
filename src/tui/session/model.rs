@@ -19,6 +19,66 @@ pub struct ChatMessage {
     pub message: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolResultSummary {
+    pub first_line: String,
+    pub line_count: usize,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ToolKind {
+    Read,
+    Write,
+    Bash,
+    Search,
+    Other(String),
+}
+
+impl ToolKind {
+    pub fn from_display_name(display_name: &str) -> Self {
+        let normalized = display_name.trim().to_ascii_lowercase();
+        if normalized == "read" || normalized.starts_with("read_") {
+            return ToolKind::Read;
+        }
+        if normalized == "write" || normalized.starts_with("write_") {
+            return ToolKind::Write;
+        }
+        if normalized == "bash" || normalized == "shell" || normalized == "run_shell_command" {
+            return ToolKind::Bash;
+        }
+        if normalized == "search" || normalized.starts_with("search_") {
+            return ToolKind::Search;
+        }
+        ToolKind::Other(display_name.to_string())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ToolTimelineEntry {
+    Started {
+        agent_name: String,
+        kind: ToolKind,
+        display_name: String,
+        input_preview: String,
+    },
+    Finished {
+        agent_name: String,
+        kind: ToolKind,
+        display_name: String,
+        input_preview: String,
+        duration_ms: u64,
+        is_error: bool,
+        result_summary: ToolResultSummary,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum RunTabEntry {
+    Text(ChatMessage),
+    Tool(ToolTimelineEntry),
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum SummaryState {
     #[default]
@@ -31,7 +91,7 @@ pub enum SummaryState {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunTab {
     pub phase: String,
-    pub messages: Vec<ChatMessage>,
+    pub entries: Vec<RunTabEntry>,
     pub scroll_position: usize,
 
     pub summary_text: String,
@@ -46,7 +106,7 @@ impl RunTab {
     pub fn new(phase: String) -> Self {
         Self {
             phase,
-            messages: Vec::new(),
+            entries: Vec::new(),
             scroll_position: 0,
             summary_text: String::new(),
             summary_scroll: 0,

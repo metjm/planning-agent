@@ -3,7 +3,7 @@ use super::cli_instances::{draw_cli_instances, CLI_INSTANCES_MIN_HEIGHT};
 use super::objective::{compute_objective_height, draw_objective, OBJECTIVE_MAX_FRACTION, OBJECTIVE_MIN_HEIGHT};
 use super::stats::draw_stats;
 use super::util::{compute_wrapped_line_count, parse_markdown_line};
-use crate::tui::{FocusedPanel, RunTab, Session, SummaryState};
+use crate::tui::{FocusedPanel, RunTab, RunTabEntry, Session, SummaryState, ToolResultSummary, ToolTimelineEntry};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -277,11 +277,7 @@ pub fn draw_streaming(frame: &mut Frame, session: &Session, area: Rect) {
             .streaming_lines
             .iter()
             .map(|line| {
-                if line.starts_with("[Tool:") {
-                    Line::from(Span::styled(line.clone(), Style::default().fg(Color::Yellow)))
-                } else if line.starts_with("[Result]") {
-                    Line::from(Span::styled(line.clone(), Style::default().fg(Color::Cyan)))
-                } else if line.starts_with("[stderr]") {
+                if line.starts_with("[stderr]") {
                     Line::from(Span::styled(line.clone(), Style::default().fg(Color::Magenta)))
                 } else if line.contains("error") || line.contains("Error") {
                     Line::from(Span::styled(line.clone(), Style::default().fg(Color::Red)))
@@ -403,30 +399,96 @@ fn draw_chat_content(
     let inner_width = inner_area.width;
 
     let lines: Vec<Line> = if let Some(tab) = active_tab {
-        if tab.messages.is_empty() {
+        if tab.entries.is_empty() {
             vec![Line::from(Span::styled(
                 "Waiting for agent output...",
                 Style::default().fg(Color::DarkGray),
             ))]
         } else {
-            tab.messages
+            let max_preview_len = 60;
+            let max_summary_len = 60;
+            tab.entries
                 .iter()
-                .flat_map(|msg| {
-                    let agent_color = match msg.agent_name.as_str() {
-                        "claude" => Color::Cyan,
-                        "codex" => Color::Magenta,
-                        "gemini" => Color::Blue,
-                        _ => Color::Yellow,
-                    };
-                    let badge = Span::styled(
-                        format!("[{}] ", msg.agent_name),
-                        Style::default().fg(agent_color).add_modifier(Modifier::BOLD),
-                    );
-                    let content = Span::styled(
-                        msg.message.clone(),
-                        Style::default().fg(Color::White),
-                    );
-                    vec![Line::from(vec![badge, content])]
+                .map(|entry| match entry {
+                    RunTabEntry::Text(msg) => {
+                        let agent_color = match msg.agent_name.as_str() {
+                            "claude" => Color::Cyan,
+                            "codex" => Color::Magenta,
+                            "gemini" => Color::Blue,
+                            _ => Color::Yellow,
+                        };
+                        let badge = Span::styled(
+                            format!("[{}] ", msg.agent_name),
+                            Style::default().fg(agent_color).add_modifier(Modifier::BOLD),
+                        );
+                        let content = Span::styled(
+                            msg.message.clone(),
+                            Style::default().fg(Color::White),
+                        );
+                        Line::from(vec![badge, content])
+                    }
+                    RunTabEntry::Tool(tool_entry) => {
+                        let (agent_name, label, icon, style, suffix) = match tool_entry {
+                            ToolTimelineEntry::Started {
+                                agent_name,
+                                display_name,
+                                input_preview,
+                                ..
+                            } => {
+                                let label =
+                                    format_tool_label(display_name, input_preview, max_preview_len);
+                                (
+                                    agent_name,
+                                    label,
+                                    "▶ ",
+                                    Style::default().fg(Color::Yellow),
+                                    String::new(),
+                                )
+                            }
+                            ToolTimelineEntry::Finished {
+                                agent_name,
+                                display_name,
+                                input_preview,
+                                duration_ms,
+                                is_error,
+                                result_summary,
+                                ..
+                            } => {
+                                let label =
+                                    format_tool_label(display_name, input_preview, max_preview_len);
+                                let duration = format_duration_secs(*duration_ms);
+                                let summary = format_result_summary(result_summary, max_summary_len);
+                                let suffix = if summary.is_empty() {
+                                    format!(" ({})", duration)
+                                } else {
+                                    format!(" ({}) - {}", duration, summary)
+                                };
+                                let (icon, style) = if *is_error {
+                                    ("✗ ", Style::default().fg(Color::Red))
+                                } else {
+                                    ("✓ ", Style::default().fg(Color::DarkGray))
+                                };
+                                (agent_name, label, icon, style, suffix)
+                            }
+                        };
+
+                        let agent_color = match agent_name.as_str() {
+                            "claude" => Color::Cyan,
+                            "codex" => Color::Magenta,
+                            "gemini" => Color::Blue,
+                            _ => Color::Yellow,
+                        };
+                        let badge = Span::styled(
+                            format!("[{}] ", agent_name),
+                            Style::default().fg(agent_color).add_modifier(Modifier::BOLD),
+                        );
+                        let details = format!("{}{}", label, suffix);
+                        Line::from(vec![
+                            badge,
+                            Span::styled(icon, style),
+                            Span::styled(details, style),
+                        ])
+                    }
                 })
                 .collect()
         }
@@ -622,6 +684,27 @@ fn format_tool_label(display_name: &str, input_preview: &str, max_preview_len: u
         let truncated = truncate_input_preview(input_preview, max_preview_len);
         format!("{}: {}", display_name, truncated)
     }
+}
+
+fn format_result_summary(summary: &ToolResultSummary, max_len: usize) -> String {
+    if summary.line_count == 0 {
+        return "no output".to_string();
+    }
+
+    let first_line = summary.first_line.trim();
+    let display_line = if first_line.is_empty() { "..." } else { first_line };
+    let truncated_line = truncate_input_preview(display_line, max_len);
+
+    if summary.line_count == 1 && !summary.truncated {
+        return truncated_line;
+    }
+
+    let count_label = if summary.truncated {
+        format!("{}+", summary.line_count)
+    } else {
+        summary.line_count.to_string()
+    };
+    format!("{} ({} lines)", truncated_line, count_label)
 }
 
 /// Format duration for display

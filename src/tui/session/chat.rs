@@ -1,5 +1,5 @@
 
-use super::model::{ChatMessage, RunTab, SummaryState};
+use super::model::{ChatMessage, RunTab, RunTabEntry, SummaryState, ToolTimelineEntry};
 use super::Session;
 
 /// Normalize a phase name by stripping trailing " Summary" suffix.
@@ -33,10 +33,30 @@ impl Session {
             }
         };
 
-        self.run_tabs[idx].messages.push(ChatMessage {
-            agent_name: agent_name.to_string(),
-            message,
-        });
+        self.run_tabs[idx]
+            .entries
+            .push(RunTabEntry::Text(ChatMessage {
+                agent_name: agent_name.to_string(),
+                message,
+            }));
+
+        if self.chat_follow_mode {
+
+        }
+    }
+
+    pub fn add_tool_entry(&mut self, phase: &str, entry: ToolTimelineEntry) {
+        let normalized_phase = normalize_phase(phase);
+        let tab_idx = self.run_tabs.iter().position(|t| t.phase == normalized_phase);
+        let idx = match tab_idx {
+            Some(i) => i,
+            None => {
+                self.add_run_tab(normalized_phase.to_string());
+                self.run_tabs.len() - 1
+            }
+        };
+
+        self.run_tabs[idx].entries.push(RunTabEntry::Tool(entry));
 
         if self.chat_follow_mode {
 

@@ -1,7 +1,7 @@
 use crate::app::util::shorten_model_name;
 use crate::config::WorkflowConfig;
 use crate::session_daemon;
-use crate::tui::{ApprovalMode, Event, SessionStatus, TabManager};
+use crate::tui::{ApprovalMode, Event, SessionStatus, TabManager, ToolKind, ToolResultSummary, ToolTimelineEntry};
 use crate::update;
 use anyhow::Result;
 use std::path::Path;
@@ -63,10 +63,25 @@ pub async fn process_event(
             display_name,
             input_preview,
             agent_name,
+            phase,
         } => {
             if let Some(session) = tab_manager.session_by_id_mut(first_session_id) {
-                session.tool_started(tool_id, display_name, input_preview, agent_name);
+                session.tool_started(
+                    tool_id,
+                    display_name.clone(),
+                    input_preview.clone(),
+                    agent_name.clone(),
+                );
                 session.tool_call_count += 1;
+                session.add_tool_entry(
+                    &phase,
+                    ToolTimelineEntry::Started {
+                        agent_name,
+                        kind: ToolKind::from_display_name(&display_name),
+                        display_name,
+                        input_preview,
+                    },
+                );
             }
         }
         Event::ToolFinished { tool_id, agent_name } => {
@@ -127,8 +142,18 @@ pub async fn process_event(
             tool_id,
             is_error,
             agent_name,
+            phase,
+            summary,
         } => {
-            handle_tool_result(first_session_id, tool_id.as_deref(), is_error, &agent_name, tab_manager);
+            handle_tool_result(
+                first_session_id,
+                tool_id.as_deref(),
+                is_error,
+                &agent_name,
+                &phase,
+                summary,
+                tab_manager,
+            );
         }
         Event::StopReason(reason) => {
             if let Some(session) = tab_manager.session_by_id_mut(first_session_id) {
@@ -224,16 +249,29 @@ fn handle_tool_result(
     tool_id: Option<&str>,
     is_error: bool,
     agent_name: &str,
+    phase: &str,
+    summary: ToolResultSummary,
     tab_manager: &mut TabManager,
 ) {
     if let Some(session) = tab_manager.session_by_id_mut(session_id) {
-        if is_error {
+        let info = session.tool_result_received_for_agent(tool_id, is_error, agent_name);
+        if info.is_error {
             session.tool_error_count += 1;
         }
-        if let Some(duration_ms) = session.tool_result_received_for_agent(tool_id, is_error, agent_name) {
-            session.total_tool_duration_ms += duration_ms;
-            session.completed_tool_count += 1;
-        }
+        session.total_tool_duration_ms += info.duration_ms;
+        session.completed_tool_count += 1;
+        session.add_tool_entry(
+            phase,
+            ToolTimelineEntry::Finished {
+                agent_name: agent_name.to_string(),
+                kind: ToolKind::from_display_name(&info.display_name),
+                display_name: info.display_name,
+                input_preview: info.input_preview,
+                duration_ms: info.duration_ms,
+                is_error: info.is_error,
+                result_summary: summary,
+            },
+        );
     }
 }
 
@@ -288,10 +326,25 @@ async fn handle_session_event(
             display_name,
             input_preview,
             agent_name,
+            phase,
         } => {
             if let Some(session) = tab_manager.session_by_id_mut(session_id) {
-                session.tool_started(tool_id, display_name, input_preview, agent_name);
+                session.tool_started(
+                    tool_id,
+                    display_name.clone(),
+                    input_preview.clone(),
+                    agent_name.clone(),
+                );
                 session.tool_call_count += 1;
+                session.add_tool_entry(
+                    &phase,
+                    ToolTimelineEntry::Started {
+                        agent_name,
+                        kind: ToolKind::from_display_name(&display_name),
+                        display_name,
+                        input_preview,
+                    },
+                );
             }
         }
         Event::SessionToolFinished { session_id, tool_id, agent_name } => {
@@ -337,15 +390,28 @@ async fn handle_session_event(
             tool_id,
             is_error,
             agent_name,
+            phase,
+            summary,
         } => {
             if let Some(session) = tab_manager.session_by_id_mut(session_id) {
-                if is_error {
+                let info = session.tool_result_received_for_agent(tool_id.as_deref(), is_error, &agent_name);
+                if info.is_error {
                     session.tool_error_count += 1;
                 }
-                if let Some(duration_ms) = session.tool_result_received_for_agent(tool_id.as_deref(), is_error, &agent_name) {
-                    session.total_tool_duration_ms += duration_ms;
-                    session.completed_tool_count += 1;
-                }
+                session.total_tool_duration_ms += info.duration_ms;
+                session.completed_tool_count += 1;
+                session.add_tool_entry(
+                    &phase,
+                    ToolTimelineEntry::Finished {
+                        agent_name: agent_name.clone(),
+                        kind: ToolKind::from_display_name(&info.display_name),
+                        display_name: info.display_name,
+                        input_preview: info.input_preview,
+                        duration_ms: info.duration_ms,
+                        is_error: info.is_error,
+                        result_summary: summary,
+                    },
+                );
             }
         }
         Event::SessionStopReason { session_id, reason } => {

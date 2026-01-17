@@ -59,8 +59,9 @@ fn test_tool_result_id_matched_completion() {
     );
 
     // Complete the second by ID
-    let duration = session.tool_result_received_for_agent(Some("tool_2"), false, "claude");
-    assert!(duration.is_some());
+    let info = session.tool_result_received_for_agent(Some("tool_2"), false, "claude");
+    assert_eq!(info.display_name, "Write");
+    assert_eq!(info.input_preview, "file2.rs");
 
     // First tool should still be active
     let active = session.active_tools_by_agent.get("claude").unwrap();
@@ -84,8 +85,8 @@ fn test_tool_result_fifo_fallback_when_no_ids() {
     session.tool_started(None, "Write".to_string(), "second.rs".to_string(), "gemini".to_string());
 
     // Result without ID should complete the FIRST tool (FIFO)
-    let duration = session.tool_result_received_for_agent(None, false, "gemini");
-    assert!(duration.is_some());
+    let info = session.tool_result_received_for_agent(None, false, "gemini");
+    assert_eq!(info.display_name, "Read");
 
     let active = session.active_tools_by_agent.get("gemini").unwrap();
     assert_eq!(active.len(), 1);
@@ -104,8 +105,8 @@ fn test_tool_result_fifo_fallback_when_id_not_matched() {
     session.tool_started(None, "search_file".to_string(), "query".to_string(), "gemini".to_string());
 
     // Result with an ID that doesn't match any active tool (like Gemini provides function name)
-    let duration = session.tool_result_received_for_agent(Some("search_file"), false, "gemini");
-    assert!(duration.is_some());
+    let info = session.tool_result_received_for_agent(Some("search_file"), false, "gemini");
+    assert_eq!(info.display_name, "search_file");
 
     // Tool should be completed via FIFO fallback
     assert!(!session.active_tools_by_agent.contains_key("gemini"));
@@ -121,8 +122,8 @@ fn test_tool_result_empty_string_id_treated_as_none() {
     session.tool_started(None, "Tool".to_string(), "preview".to_string(), "agent".to_string());
 
     // Empty string ID should be treated as None and use FIFO
-    let duration = session.tool_result_received_for_agent(Some(""), false, "agent");
-    assert!(duration.is_some());
+    let info = session.tool_result_received_for_agent(Some(""), false, "agent");
+    assert_eq!(info.display_name, "Tool");
 
     assert!(session.active_tools_by_agent.is_empty());
     assert_eq!(session.completed_tools_by_agent.get("agent").unwrap().len(), 1);
@@ -194,9 +195,10 @@ fn test_orphan_result_creates_synthetic_entry() {
     let mut session = Session::new(0);
 
     // No active tools - receive a result anyway
-    let duration = session.tool_result_received_for_agent(Some("orphan_tool"), true, "agent");
+    let info = session.tool_result_received_for_agent(Some("orphan_tool"), true, "agent");
 
-    assert_eq!(duration, Some(0)); // Duration is 0 for synthetic entries
+    assert_eq!(info.duration_ms, 0); // Duration is 0 for synthetic entries
+    assert_eq!(info.display_name, "orphan_tool");
     let completed = session.completed_tools_by_agent.get("agent").unwrap();
     assert_eq!(completed.len(), 1);
     assert_eq!(completed[0].display_name, "orphan_tool");

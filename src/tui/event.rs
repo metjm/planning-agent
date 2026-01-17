@@ -9,7 +9,7 @@ use crate::cli_usage::AccountUsage;
 use crate::session_logger::{LogCategory, LogLevel, SessionLogger};
 use crate::state::State;
 use crate::tui::file_index::FileIndex;
-use crate::tui::session::{CliInstanceId, TodoItem};
+use crate::tui::session::{CliInstanceId, TodoItem, ToolResultSummary};
 use crate::update::{UpdateResult, UpdateStatus, VersionInfo};
 use std::sync::Arc;
 use std::time::Instant;
@@ -63,6 +63,7 @@ pub enum Event {
         display_name: String,
         input_preview: String,
         agent_name: String,
+        phase: String,
     },
     ToolFinished { tool_id: Option<String>, agent_name: String },
     StateUpdate(State),
@@ -72,7 +73,13 @@ pub enum Event {
     PhaseStarted(String),
     TurnCompleted,
     ModelDetected(String),
-    ToolResultReceived { tool_id: Option<String>, is_error: bool, agent_name: String },
+    ToolResultReceived {
+        tool_id: Option<String>,
+        is_error: bool,
+        agent_name: String,
+        phase: String,
+        summary: ToolResultSummary,
+    },
     StopReason(String),
 
     SessionOutput { session_id: usize, line: String },
@@ -87,13 +94,21 @@ pub enum Event {
         display_name: String,
         input_preview: String,
         agent_name: String,
+        phase: String,
     },
     SessionToolFinished { session_id: usize, tool_id: Option<String>, agent_name: String },
     SessionBytesReceived { session_id: usize, bytes: usize },
     SessionPhaseStarted { session_id: usize, phase: String },
     SessionTurnCompleted { session_id: usize },
     SessionModelDetected { session_id: usize, name: String },
-    SessionToolResultReceived { session_id: usize, tool_id: Option<String>, is_error: bool, agent_name: String },
+    SessionToolResultReceived {
+        session_id: usize,
+        tool_id: Option<String>,
+        is_error: bool,
+        agent_name: String,
+        phase: String,
+        summary: ToolResultSummary,
+    },
     SessionStopReason { session_id: usize, reason: String },
     SessionWorkflowComplete { session_id: usize },
     SessionWorkflowError { session_id: usize, error: String },
@@ -420,6 +435,7 @@ impl SessionEventSender {
 
     pub fn send_tool_started(
         &self,
+        phase: String,
         tool_id: Option<String>,
         display_name: String,
         input_preview: String,
@@ -431,6 +447,7 @@ impl SessionEventSender {
             display_name,
             input_preview,
             agent_name,
+            phase,
         });
     }
 
@@ -469,12 +486,21 @@ impl SessionEventSender {
         });
     }
 
-    pub fn send_tool_result_received(&self, tool_id: Option<String>, is_error: bool, agent_name: String) {
+    pub fn send_tool_result_received(
+        &self,
+        phase: String,
+        tool_id: Option<String>,
+        is_error: bool,
+        summary: ToolResultSummary,
+        agent_name: String,
+    ) {
         let _ = self.inner.send(Event::SessionToolResultReceived {
             session_id: self.session_id,
             tool_id,
             is_error,
             agent_name,
+            phase,
+            summary,
         });
     }
 

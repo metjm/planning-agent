@@ -27,7 +27,8 @@ use super::event::UserApprovalResponse;
 
 pub use model::{
     ApprovalContext, ApprovalMode, FeedbackTarget, FocusedPanel, InputMode, PasteBlock, RunTab,
-    SessionStatus, SummaryState, TodoItem, TodoStatus,
+    RunTabEntry, SessionStatus, SummaryState, TodoItem, TodoStatus, ToolKind, ToolResultSummary,
+    ToolTimelineEntry,
 };
 
 /// Represents an active tool call with optional ID for correlation
@@ -56,6 +57,15 @@ pub struct CompletedTool {
     pub is_error: bool,
     /// When the tool completed (for ordering/truncation)
     pub completed_at: Instant,
+}
+
+/// Summary info returned on tool completion for timeline updates.
+#[derive(Debug, Clone)]
+pub struct ToolCompletionInfo {
+    pub display_name: String,
+    pub input_preview: String,
+    pub duration_ms: u64,
+    pub is_error: bool,
 }
 
 /// Maximum number of completed tools to retain per session
