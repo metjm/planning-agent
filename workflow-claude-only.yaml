@@ -1,4 +1,4 @@
-# Single-agent Claude-only workflow configuration
+# Claude-only workflow configuration with a distinct implementation reviewer.
 # This configuration enables session persistence for planning->revision continuity.
 
 agents:
@@ -16,6 +16,7 @@ agents:
       - "Grep"
       - "Write"
       - "Edit"
+      - "Bash"
       - "WebSearch"
       - "WebFetch"
       - "Skill"
@@ -24,6 +25,19 @@ agents:
     session_persistence:
       enabled: true
       strategy: conversation_resume
+  claude-reviewer:
+    command: "claude"
+    args:
+      - "-p"
+      - "--output-format"
+      - "stream-json"
+      - "--verbose"
+      - "--dangerously-skip-permissions"
+    allowed_tools:
+      - "Read"
+      - "Glob"
+      - "Grep"
+      - "Bash"
 
 workflow:
   planning:
@@ -46,9 +60,10 @@ workflow:
 #   backoff_secs: 5
 #   on_all_reviewers_failed: abort
 
-# Implementation workflow configuration
-# Disabled for single-agent configs because implementation-review requires
-# a different agent than the implementing agent. To enable implementation,
-# add a second agent (e.g., codex or gemini) and configure it as the reviewer.
+# Implementation workflow configuration (requires a distinct reviewer agent).
 implementation:
-  enabled: false
+  enabled: true
+  implementing:
+    agent: claude
+  reviewing:
+    agent: claude-reviewer
