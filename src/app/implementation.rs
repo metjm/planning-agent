@@ -86,6 +86,10 @@ pub async fn run_implementation_workflow(
         }
     }
 
+    // Emit initial state update so TUI switches to implementation palette
+    session_sender.send_state_update(state.clone());
+    session_sender.send_phase_started("Implementing".to_string());
+
     // Use initial feedback if provided
     let mut current_feedback = initial_feedback.or_else(|| {
         state.implementation_state.as_ref().and_then(|s| s.last_feedback.clone())
@@ -164,6 +168,9 @@ pub async fn run_implementation_workflow(
             let impl_state = state.implementation_state.as_mut().unwrap();
             impl_state.phase = ImplementationPhase::ImplementationReview;
         }
+        // Emit state update and phase event for review phase
+        session_sender.send_state_update(state.clone());
+        session_sender.send_phase_started("Implementation Review".to_string());
         session_sender.send_output(format!(
             "[implementation] === Review Round {}/{} ===",
             iteration, max_iterations
@@ -193,6 +200,9 @@ pub async fn run_implementation_workflow(
                 let impl_state = state.implementation_state.as_mut().unwrap();
                 impl_state.phase = ImplementationPhase::Complete;
                 impl_state.mark_complete();
+                // Emit state update so TUI reverts to planning palette
+                session_sender.send_state_update(state.clone());
+                session_sender.send_phase_started("Implementation Complete".to_string());
                 session_sender.send_output(
                     "[implementation] Implementation approved!".to_string()
                 );
@@ -246,6 +256,9 @@ pub async fn run_implementation_workflow(
                     impl_state.advance_to_next_iteration();
                 }
                 let new_iteration = state.implementation_state.as_ref().unwrap().iteration;
+                // Emit state update for new iteration
+                session_sender.send_state_update(state.clone());
+                session_sender.send_phase_started("Implementing".to_string());
                 session_sender.send_output(format!(
                     "[implementation] Issues found, starting iteration {}...",
                     new_iteration

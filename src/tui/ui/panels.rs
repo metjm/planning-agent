@@ -2,6 +2,7 @@
 use super::cli_instances::{draw_cli_instances, CLI_INSTANCES_MIN_HEIGHT};
 use super::objective::{compute_objective_height, draw_objective, OBJECTIVE_MAX_FRACTION, OBJECTIVE_MIN_HEIGHT};
 use super::stats::draw_stats;
+use super::theme::Theme;
 use super::util::{compute_wrapped_line_count, parse_markdown_line};
 use crate::tui::{FocusedPanel, RunTab, RunTabEntry, Session, SummaryState, ToolResultSummary, ToolTimelineEntry};
 use ratatui::{
@@ -84,6 +85,7 @@ fn draw_output(frame: &mut Frame, session: &Session, area: Rect) {
 }
 
 fn draw_output_panel(frame: &mut Frame, session: &Session, area: Rect) {
+    let theme = Theme::for_session(session);
     let is_focused = session.focused_panel == FocusedPanel::Output;
     let title = if session.output_follow_mode {
         if is_focused {
@@ -97,7 +99,7 @@ fn draw_output_panel(frame: &mut Frame, session: &Session, area: Rect) {
         " Output [SCROLLED] "
     };
 
-    let border_color = if is_focused { Color::Yellow } else { Color::Blue };
+    let border_color = if is_focused { theme.border_focused } else { theme.border };
 
     let output_block = Block::default()
         .borders(Borders::ALL)
@@ -121,18 +123,20 @@ fn draw_output_panel(frame: &mut Frame, session: &Session, area: Rect) {
     let lines: Vec<Line> = if total_lines == 0 {
         vec![Line::from(Span::styled(
             "Waiting for output...",
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(theme.muted),
         ))]
     } else {
         session.output_lines[start..end]
             .iter()
             .map(|line| {
                 if line.starts_with("[planning]") {
-                    Line::from(Span::styled(line.clone(), Style::default().fg(Color::Cyan)))
+                    Line::from(Span::styled(line.clone(), Style::default().fg(theme.tag_planning)))
+                } else if line.starts_with("[implementation]") {
+                    Line::from(Span::styled(line.clone(), Style::default().fg(theme.tag_implementation)))
                 } else if line.starts_with("[claude]") || line.starts_with("[planning-agent]") {
-                    Line::from(Span::styled(line.clone(), Style::default().fg(Color::Green)))
+                    Line::from(Span::styled(line.clone(), Style::default().fg(theme.tag_agent)))
                 } else if line.contains("error") || line.contains("Error") {
-                    Line::from(Span::styled(line.clone(), Style::default().fg(Color::Red)))
+                    Line::from(Span::styled(line.clone(), Style::default().fg(theme.error)))
                 } else {
                     Line::from(line.clone())
                 }
@@ -158,8 +162,9 @@ fn draw_output_panel(frame: &mut Frame, session: &Session, area: Rect) {
 }
 
 fn draw_todos(frame: &mut Frame, session: &Session, area: Rect) {
+    let theme = Theme::for_session(session);
     let is_focused = session.focused_panel == FocusedPanel::Todos;
-    let border_color = if is_focused { Color::Yellow } else { Color::Magenta };
+    let border_color = if is_focused { theme.border_focused } else { theme.accent_alt };
 
     let title = if is_focused { " Todos [*] " } else { " Todos " };
 
@@ -180,40 +185,40 @@ fn draw_todos(frame: &mut Frame, session: &Session, area: Rect) {
             if line.ends_with(':') && !line.starts_with(' ') {
                 Line::from(Span::styled(
                     line.clone(),
-                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                    Style::default().fg(theme.todo_header).add_modifier(Modifier::BOLD),
                 ))
             } else if line.contains("[~]") {
                 Line::from(vec![
-                    Span::styled("  [", Style::default().fg(Color::DarkGray)),
-                    Span::styled("~", Style::default().fg(Color::Yellow)),
-                    Span::styled("] ", Style::default().fg(Color::DarkGray)),
+                    Span::styled("  [", Style::default().fg(theme.muted)),
+                    Span::styled("~", Style::default().fg(theme.todo_in_progress)),
+                    Span::styled("] ", Style::default().fg(theme.muted)),
                     Span::styled(
                         line.trim_start().strip_prefix("[~] ").unwrap_or(line).to_string(),
-                        Style::default().fg(Color::Yellow),
+                        Style::default().fg(theme.todo_in_progress),
                     ),
                 ])
             } else if line.contains("[x]") {
                 Line::from(vec![
-                    Span::styled("  [", Style::default().fg(Color::DarkGray)),
-                    Span::styled("x", Style::default().fg(Color::Green)),
-                    Span::styled("] ", Style::default().fg(Color::DarkGray)),
+                    Span::styled("  [", Style::default().fg(theme.muted)),
+                    Span::styled("x", Style::default().fg(theme.todo_complete)),
+                    Span::styled("] ", Style::default().fg(theme.muted)),
                     Span::styled(
                         line.trim_start().strip_prefix("[x] ").unwrap_or(line).to_string(),
-                        Style::default().fg(Color::Green).add_modifier(Modifier::DIM),
+                        Style::default().fg(theme.todo_complete).add_modifier(Modifier::DIM),
                     ),
                 ])
             } else if line.contains("[ ]") {
                 Line::from(vec![
-                    Span::styled("  [ ] ", Style::default().fg(Color::DarkGray)),
+                    Span::styled("  [ ] ", Style::default().fg(theme.muted)),
                     Span::styled(
                         line.trim_start().strip_prefix("[ ] ").unwrap_or(line).to_string(),
-                        Style::default().fg(Color::White),
+                        Style::default().fg(theme.todo_pending),
                     ),
                 ])
             } else if line.is_empty() {
                 Line::from("")
             } else {
-                Line::from(Span::styled(line.clone(), Style::default().fg(Color::DarkGray)))
+                Line::from(Span::styled(line.clone(), Style::default().fg(theme.muted)))
             }
         })
         .collect();
@@ -243,6 +248,7 @@ fn draw_todos(frame: &mut Frame, session: &Session, area: Rect) {
 }
 
 pub fn draw_streaming(frame: &mut Frame, session: &Session, area: Rect) {
+    let theme = Theme::for_session(session);
     let is_focused = session.focused_panel == FocusedPanel::Chat;
     let title = if session.streaming_follow_mode {
         if is_focused {
@@ -256,7 +262,7 @@ pub fn draw_streaming(frame: &mut Frame, session: &Session, area: Rect) {
         " Agent Output [SCROLLED] "
     };
 
-    let border_color = if is_focused { Color::Yellow } else { Color::Green };
+    let border_color = if is_focused { theme.border_focused } else { theme.success };
 
     let streaming_block = Block::default()
         .borders(Borders::ALL)
@@ -270,7 +276,7 @@ pub fn draw_streaming(frame: &mut Frame, session: &Session, area: Rect) {
     let lines: Vec<Line> = if session.streaming_lines.is_empty() {
         vec![Line::from(Span::styled(
             "Waiting for Claude output...",
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(theme.muted),
         ))]
     } else {
         session
@@ -278,11 +284,11 @@ pub fn draw_streaming(frame: &mut Frame, session: &Session, area: Rect) {
             .iter()
             .map(|line| {
                 if line.starts_with("[stderr]") {
-                    Line::from(Span::styled(line.clone(), Style::default().fg(Color::Magenta)))
+                    Line::from(Span::styled(line.clone(), Style::default().fg(theme.accent_alt)))
                 } else if line.contains("error") || line.contains("Error") {
-                    Line::from(Span::styled(line.clone(), Style::default().fg(Color::Red)))
+                    Line::from(Span::styled(line.clone(), Style::default().fg(theme.error)))
                 } else {
-                    Line::from(Span::styled(line.clone(), Style::default().fg(Color::White)))
+                    Line::from(Span::styled(line.clone(), Style::default().fg(theme.text)))
                 }
             })
             .collect()
@@ -370,8 +376,9 @@ fn draw_chat_content(
     active_tab: Option<&RunTab>,
     area: Rect,
 ) {
+    let theme = Theme::for_session(session);
     let is_focused = session.focused_panel == FocusedPanel::Chat;
-    let border_color = if is_focused { Color::Yellow } else { Color::Green };
+    let border_color = if is_focused { theme.border_focused } else { theme.success };
 
     let title = if let Some(tab) = active_tab {
         if session.chat_follow_mode {
