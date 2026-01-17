@@ -743,3 +743,41 @@ fn test_clear_todos_resets_scroll() {
     assert!(session.todos.is_empty());
     assert_eq!(session.todo_scroll_position, 0);
 }
+
+#[test]
+fn test_open_implementation_success() {
+    let mut session = Session::new(0);
+    assert!(session.implementation_success_modal.is_none());
+
+    session.open_implementation_success(3);
+
+    assert!(session.implementation_success_modal.is_some());
+    let modal = session.implementation_success_modal.as_ref().unwrap();
+    assert_eq!(modal.iterations_used, 3);
+}
+
+#[test]
+fn test_close_implementation_success() {
+    let mut session = Session::new(0);
+    session.open_implementation_success(2);
+    assert!(session.implementation_success_modal.is_some());
+
+    session.close_implementation_success();
+
+    assert!(session.implementation_success_modal.is_none());
+}
+
+#[test]
+fn test_open_implementation_success_closes_plan_modal() {
+    let mut session = Session::new(0);
+    session.plan_modal_open = true;
+    session.plan_modal_content = "Some plan content".to_string();
+
+    session.open_implementation_success(1);
+
+    // Plan modal should be closed
+    assert!(!session.plan_modal_open);
+    assert!(session.plan_modal_content.is_empty());
+    // Success modal should be open
+    assert!(session.implementation_success_modal.is_some());
+}

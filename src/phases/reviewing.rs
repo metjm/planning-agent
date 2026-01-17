@@ -97,6 +97,7 @@ fn generate_feedback_file_path(
     Ok(session_dir.join(filename))
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn run_multi_agent_review_with_context(
     state: &mut State,
     working_dir: &Path,
@@ -263,7 +264,7 @@ pub async fn run_multi_agent_review_with_context(
                 match try_parse_feedback_file(&feedback_path, require_tags) {
                     Ok(review) => {
                         sender.send_output(format!("[review:{}] Review complete", display_id));
-                        return (display_id, ReviewExecutionResult::Success(review));
+                        (display_id, ReviewExecutionResult::Success(review))
                     }
                     Err(parse_failure) => {
                         // Initial attempt failed - try recovery
@@ -319,7 +320,7 @@ pub async fn run_multi_agent_review_with_context(
                                     "[review:{}] Recovery succeeded!",
                                     display_id
                                 ));
-                                return (display_id, ReviewExecutionResult::Success(review));
+                                (display_id, ReviewExecutionResult::Success(review))
                             }
                             Err(final_failure) => {
                                 // Both attempts failed - prepare for bundle creation

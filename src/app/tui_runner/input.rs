@@ -202,6 +202,17 @@ pub async fn handle_key_event(
         }
     }
 
+    // Handle implementation success modal input (intercept keys before other handlers)
+    if session.implementation_success_modal.is_some() {
+        match key.code {
+            KeyCode::Esc | KeyCode::Enter => {
+                session.close_implementation_success();
+            }
+            _ => {}
+        }
+        return Ok(false);
+    }
+
     // Handle 'p' to toggle plan modal (global hotkey, works from any mode except error state or input areas)
     let in_text_input = session.input_mode != InputMode::Normal
         || session.approval_mode == ApprovalMode::EnteringFeedback;

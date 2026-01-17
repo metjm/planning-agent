@@ -196,6 +196,8 @@ pub async fn run_implementation_workflow(
                 session_sender.send_output(
                     "[implementation] Implementation approved!".to_string()
                 );
+                // Emit success event to trigger the success modal in TUI
+                session_sender.send_implementation_success(iteration);
                 return Ok(ImplementationWorkflowResult::Approved);
             }
             VerificationVerdictResult::NeedsRevision | VerificationVerdictResult::ParseFailure { .. } => {

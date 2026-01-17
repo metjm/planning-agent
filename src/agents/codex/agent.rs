@@ -80,7 +80,7 @@ impl CodexAgent {
 
         // Check if we should resume an existing conversation
         let should_resume = self.config.session_persistence.enabled
-            && context.map_or(false, |ctx| {
+            && context.is_some_and(|ctx| {
                 ctx.resume_strategy == ResumeStrategy::ConversationResume
                     && ctx.conversation_id.is_some()
             });

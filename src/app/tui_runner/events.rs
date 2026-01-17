@@ -694,6 +694,11 @@ async fn handle_session_event(
                 session.cli_instance_finished(id);
             }
         }
+        Event::SessionImplementationSuccess { session_id, iterations_used } => {
+            if let Some(session) = tab_manager.session_by_id_mut(session_id) {
+                session.open_implementation_success(iterations_used);
+            }
+        }
         _ => {}
     }
     Ok(())

@@ -229,6 +229,12 @@ pub enum Event {
     /// Request to save snapshots for all active sessions.
     /// Used by periodic auto-save and signal handlers.
     SnapshotRequest,
+
+    /// Implementation workflow was approved - show success modal
+    SessionImplementationSuccess {
+        session_id: usize,
+        iterations_used: u32,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -694,6 +700,14 @@ impl SessionEventSender {
         let _ = self.inner.send(Event::SessionCliInstanceFinished {
             session_id: self.session_id,
             id,
+        });
+    }
+
+    /// Sends an implementation success event to trigger the success modal.
+    pub fn send_implementation_success(&self, iterations_used: u32) {
+        let _ = self.inner.send(Event::SessionImplementationSuccess {
+            session_id: self.session_id,
+            iterations_used,
         });
     }
 }
