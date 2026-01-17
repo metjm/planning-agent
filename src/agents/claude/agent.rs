@@ -7,12 +7,45 @@ use crate::config::AgentConfig;
 use crate::mcp::McpServerConfig;
 use crate::state::ResumeStrategy;
 use anyhow::Result;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tokio::process::Command;
 
 const DEFAULT_ACTIVITY_TIMEOUT: Duration = Duration::from_secs(300);
 const DEFAULT_OVERALL_TIMEOUT: Duration = Duration::from_secs(21600); // 6 hours
+
+/// RAII guard for temporary MCP config file for Claude
+/// Claude's --mcp-config accepts both JSON strings and file paths.
+/// For large configs (like base64-encoded plans), we must use a file
+/// to avoid shell argument length limits.
+struct TempMcpConfigFile {
+    path: PathBuf,
+}
+
+impl TempMcpConfigFile {
+    /// Create a new temp file containing the MCP config JSON
+    fn new(mcp_config: &McpServerConfig) -> Result<Self> {
+        let uuid = mcp_config
+            .server_name
+            .strip_prefix("planning-agent-review-")
+            .unwrap_or(&mcp_config.server_name);
+        let path = std::env::temp_dir().join(format!("claude-mcp-{}.json", uuid));
+        let json = mcp_config.to_claude_json();
+        std::fs::write(&path, &json)?;
+        Ok(Self { path })
+    }
+
+    /// Get the path to pass to --mcp-config
+    fn config_path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for TempMcpConfigFile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct ClaudeAgent {
@@ -48,9 +81,18 @@ impl ClaudeAgent {
         mcp_config: Option<&McpServerConfig>,
     ) -> Result<AgentResult> {
         let emitter = ContextEmitter::new(context.clone(), self.name.clone());
-        let mcp_json = mcp_config.map(|c| c.to_claude_json());
-        self.execute_streaming_internal(prepared, &emitter, Some(&context), mcp_json.as_deref())
+
+        // Create temp MCP config file if needed (will be cleaned up when dropped)
+        // We use a file instead of passing JSON directly to avoid shell argument length limits
+        // when the config contains large base64-encoded plan content.
+        let _temp_mcp_file = match mcp_config {
+            Some(cfg) => Some(TempMcpConfigFile::new(cfg)?),
+            None => None,
+        };
+
+        self.execute_streaming_internal(prepared, &emitter, Some(&context), _temp_mcp_file.as_ref())
             .await
+        // _temp_mcp_file is dropped here, cleaning up the temp file
     }
 
     async fn execute_streaming_internal(
@@ -58,13 +100,13 @@ impl ClaudeAgent {
         prepared: PreparedPrompt,
         emitter: &dyn EventEmitter,
         context: Option<&AgentContext>,
-        mcp_config: Option<&str>,
+        mcp_config_file: Option<&TempMcpConfigFile>,
     ) -> Result<AgentResult> {
         let logger = context.map(|ctx| AgentLogger::new(&self.name, ctx.session_logger.clone()));
         self.log_start(&logger, &prepared, context.is_some());
         self.log_timeout(&logger);
 
-        let cmd = self.build_command(&prepared, context, mcp_config);
+        let cmd = self.build_command(&prepared, context, mcp_config_file);
         let mut config = RunnerConfig::new(self.name.clone(), self.working_dir.clone())
             .with_activity_timeout(self.activity_timeout)
             .with_overall_timeout(self.overall_timeout);
@@ -81,7 +123,7 @@ impl ClaudeAgent {
         &self,
         prepared: &PreparedPrompt,
         context: Option<&AgentContext>,
-        mcp_config: Option<&str>,
+        mcp_config_file: Option<&TempMcpConfigFile>,
     ) -> Command {
         let mut cmd = Command::new(&self.config.command);
 
@@ -116,9 +158,10 @@ impl ClaudeAgent {
             }
         }
 
-        // Add MCP config if provided
-        if let Some(config) = mcp_config {
-            cmd.arg("--mcp-config").arg(config);
+        // Add MCP config file path if provided
+        // We pass a file path instead of JSON to avoid shell argument length limits
+        if let Some(mcp_file) = mcp_config_file {
+            cmd.arg("--mcp-config").arg(mcp_file.config_path());
         }
 
         cmd
