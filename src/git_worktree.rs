@@ -148,7 +148,8 @@ pub fn create_session_worktree(
     let branch_name = if let Some(custom) = custom_branch {
         custom.to_string()
     } else {
-        let short_id = &session_id[..8.min(session_id.len())];
+        // Session IDs are UUIDs (ASCII hex + hyphens), safe to slice at char boundary
+        let short_id = session_id.get(..8).unwrap_or(session_id);
         let safe_feature: String = feature_name
             .chars()
             .map(|c| if c.is_alphanumeric() || c == '-' { c } else { '-' })

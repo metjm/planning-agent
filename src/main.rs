@@ -149,6 +149,8 @@ fn list_plans() -> Result<()> {
 
     for plan in plans {
         // Format timestamp (YYYYMMDD-HHMMSS -> YYYY-MM-DD HH:MM:SS)
+        // Timestamp format is ASCII digits + dash, so byte indexing is safe
+        #[allow(clippy::string_slice)]
         let formatted_ts = if plan.timestamp.len() >= 15 {
             format!(
                 "{}-{}-{} {}:{}:{}",
@@ -191,13 +193,19 @@ struct SessionDisplayEntry {
 
 /// Formats a timestamp as relative time (e.g., "2m ago", "1h ago")
 fn format_relative_time(timestamp: &str) -> String {
-    let parsed = chrono::DateTime::parse_from_rfc3339(timestamp)
-        .or_else(|_| {
-            // Try parsing without timezone (some timestamps are ISO format without tz)
-            chrono::NaiveDateTime::parse_from_str(timestamp, "%Y-%m-%dT%H:%M:%S")
-                .or_else(|_| chrono::NaiveDateTime::parse_from_str(&timestamp[..19], "%Y-%m-%dT%H:%M:%S"))
-                .map(|dt| dt.and_utc().fixed_offset())
-        });
+    let parsed = chrono::DateTime::parse_from_rfc3339(timestamp).or_else(|_| {
+        // Try parsing without timezone (some timestamps are ISO format without tz)
+        chrono::NaiveDateTime::parse_from_str(timestamp, "%Y-%m-%dT%H:%M:%S")
+            .or_else(|e| {
+                // Truncate to first 19 chars if longer (e.g., "2024-01-15T10:30:00.123Z" -> "2024-01-15T10:30:00")
+                if let Some(truncated) = timestamp.get(..19) {
+                    chrono::NaiveDateTime::parse_from_str(truncated, "%Y-%m-%dT%H:%M:%S")
+                } else {
+                    Err(e)
+                }
+            })
+            .map(|dt| dt.and_utc().fixed_offset())
+    });
 
     match parsed {
         Ok(dt) => {
@@ -335,6 +343,7 @@ fn truncate_string(s: &str, max_len: usize) -> String {
     if s.len() <= max_len {
         s.to_string()
     } else {
-        format!("{}...", &s[..max_len - 3])
+        let prefix = s.get(..max_len.saturating_sub(3)).unwrap_or("");
+        format!("{}...", prefix)
     }
 }

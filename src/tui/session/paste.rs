@@ -75,8 +75,10 @@ impl Session {
 
             self.tab_input = format!(
                 "{}{}",
-                &self.tab_input[..paste.start_pos],
-                &self.tab_input[paste.start_pos + placeholder_len..]
+                self.tab_input.get(..paste.start_pos).unwrap_or(""),
+                self.tab_input
+                    .get(paste.start_pos + placeholder_len..)
+                    .unwrap_or("")
             );
 
             self.tab_input_cursor = paste.start_pos;
@@ -141,9 +143,9 @@ impl Session {
             if placeholder_end <= result.len() {
                 result = format!(
                     "{}{}{}",
-                    &result[..paste.start_pos],
+                    result.get(..paste.start_pos).unwrap_or(""),
                     &paste.content,
-                    &result[placeholder_end..]
+                    result.get(placeholder_end..).unwrap_or("")
                 );
             }
         }

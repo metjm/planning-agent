@@ -766,7 +766,14 @@ impl Session {
                 let display_name = agent_name
                     .chars()
                     .next()
-                    .map(|c| c.to_uppercase().to_string() + &agent_name[1..])
+                    .map(|c| {
+                        let rest = agent_name
+                            .char_indices()
+                            .nth(1)
+                            .map(|(i, _)| agent_name.get(i..).unwrap_or(""))
+                            .unwrap_or("");
+                        c.to_uppercase().to_string() + rest
+                    })
                     .unwrap_or_else(|| agent_name.clone());
                 lines.push(format!("{}:", display_name));
                 for todo in todos {
@@ -807,8 +814,8 @@ impl Session {
             let end = self.tab_input_cursor;
 
             // Replace @query with the file path
-            let before = &self.tab_input[..start];
-            let after = &self.tab_input[end..];
+            let before = self.tab_input.get(..start).unwrap_or("");
+            let after = self.tab_input.get(end..).unwrap_or("");
             self.tab_input = format!("{}{} {}", before, path, after);
 
             // Move cursor to after the inserted path + space
@@ -828,8 +835,8 @@ impl Session {
             let end = self.cursor_position;
 
             // Replace @query with the file path
-            let before = &self.user_feedback[..start];
-            let after = &self.user_feedback[end..];
+            let before = self.user_feedback.get(..start).unwrap_or("");
+            let after = self.user_feedback.get(end..).unwrap_or("");
             self.user_feedback = format!("{}{} {}", before, path, after);
 
             // Move cursor to after the inserted path + space
@@ -849,8 +856,8 @@ impl Session {
             let end = self.tab_slash_state.end_byte;
 
             // Replace the command token with the selected command
-            let before = &self.tab_input[..start];
-            let after = &self.tab_input[end..];
+            let before = self.tab_input.get(..start).unwrap_or("");
+            let after = self.tab_input.get(end..).unwrap_or("");
             self.tab_input = format!("{}{}{}", before, insert, after);
 
             // Move cursor to the end of the inserted command

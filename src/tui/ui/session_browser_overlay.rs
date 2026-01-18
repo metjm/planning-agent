@@ -145,7 +145,8 @@ pub fn draw_session_browser_overlay(frame: &mut Frame, tab_manager: &TabManager)
         let dir_str = selected.working_dir.display().to_string();
         let max_len = popup_width.saturating_sub(6) as usize; // " → " prefix + margins
         let truncated_dir = if dir_str.len() > max_len {
-            format!("...{}", &dir_str[dir_str.len() - max_len + 3..])
+            let start = dir_str.len().saturating_sub(max_len.saturating_sub(3));
+            format!("...{}", dir_str.get(start..).unwrap_or(""))
         } else {
             dir_str
         };
@@ -266,7 +267,7 @@ pub fn draw_session_browser_overlay(frame: &mut Frame, tab_manager: &TabManager)
             // Truncate feature name if too long (expanded from 16 to 23 chars)
             let max_name_len = 23;
             let feature_name: String = if entry.feature_name.len() > max_name_len {
-                format!("{}...", &entry.feature_name[..max_name_len - 3])
+                format!("{}...", entry.feature_name.get(..max_name_len - 3).unwrap_or(""))
             } else {
                 entry.feature_name.clone()
             };
@@ -538,8 +539,8 @@ fn truncate_str(s: &str, max_len: usize) -> String {
     if s.len() <= max_len {
         s.to_string()
     } else if max_len > 3 {
-        format!("{}...", &s[..max_len - 3])
+        format!("{}...", s.get(..max_len - 3).unwrap_or(""))
     } else {
-        s[..max_len].to_string()
+        s.get(..max_len).unwrap_or("").to_string()
     }
 }

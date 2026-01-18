@@ -108,7 +108,10 @@ pub fn create_review_bundle(config: BundleConfig<'_>) -> Option<PathBuf> {
 
 fn create_bundle_internal(config: BundleConfig<'_>) -> Result<PathBuf> {
     let timestamp = chrono::Local::now().format("%Y%m%d-%H%M%S").to_string();
-    let suffix = &uuid::Uuid::new_v4().to_string()[..8];
+    let uuid_str = uuid::Uuid::new_v4().to_string();
+    // UUID is ASCII hex, so byte indexing is safe
+    #[allow(clippy::string_slice)]
+    let suffix = &uuid_str[..8];
 
     let bundle_path = planning_paths::review_bundle_path(
         config.working_dir,
@@ -230,7 +233,7 @@ fn add_content_to_zip(
 ) -> Result<IncludedFile> {
     let original_size = content.len() as u64;
     let (content_to_write, truncated) = if original_size > MAX_FILE_SIZE {
-        let truncated_content = &content[..MAX_FILE_SIZE as usize];
+        let truncated_content = content.get(..MAX_FILE_SIZE as usize).unwrap_or(content);
         let notice = format!(
             "\n\n--- TRUNCATED: Original size {} bytes, showing first {} bytes ---",
             original_size, MAX_FILE_SIZE
@@ -297,7 +300,7 @@ pub fn truncate_for_recovery_prompt(output: &str) -> String {
     if output.len() <= MAX_RECOVERY_PROMPT_OUTPUT_SIZE {
         output.to_string()
     } else {
-        let truncated = &output[..MAX_RECOVERY_PROMPT_OUTPUT_SIZE];
+        let truncated = output.get(..MAX_RECOVERY_PROMPT_OUTPUT_SIZE).unwrap_or(output);
         format!(
             "{}\n\n--- OUTPUT TRUNCATED (showing first {} of {} bytes) ---",
             truncated,

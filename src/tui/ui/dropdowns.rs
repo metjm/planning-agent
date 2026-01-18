@@ -204,7 +204,7 @@ pub fn draw_slash_dropdown(
 
             // Truncate description if needed
             let desc: String = if m.description.len() > desc_space {
-                format!("{}...", &m.description[..desc_space.saturating_sub(3)])
+                format!("{}...", m.description.get(..desc_space.saturating_sub(3)).unwrap_or(""))
             } else {
                 m.description.clone()
             };

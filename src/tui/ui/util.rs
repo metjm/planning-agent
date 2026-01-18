@@ -83,8 +83,7 @@ pub fn parse_markdown_line(line: &str) -> Line<'static> {
         )]);
     }
 
-    if trimmed.starts_with("- ") || trimmed.starts_with("* ") {
-        let rest = &trimmed[2..];
+    if let Some(rest) = trimmed.strip_prefix("- ").or_else(|| trimmed.strip_prefix("* ")) {
         let mut spans = vec![Span::styled("• ", Style::default().fg(Color::Yellow))];
         spans.extend(parse_inline_markdown(rest));
         return Line::from(spans);

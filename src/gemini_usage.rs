@@ -454,31 +454,33 @@ fn parse_reset_duration(line: &str) -> Option<Duration> {
     // Find "Resets in" pattern
     let lower = line.to_lowercase();
     let resets_pos = lower.find("resets in ")?;
-    let after_resets = &line[resets_pos + 10..];
+    // "resets in " is 10 ASCII bytes, so resets_pos + 10 is safe
+    let after_resets = lower.get(resets_pos + 10..)?;
 
     // Extract duration text (until ')' or end of line)
     let duration_text = if let Some(paren_pos) = after_resets.find(')') {
-        after_resets[..paren_pos].trim()
+        // paren_pos is from find() on ASCII ')', so it's a valid boundary
+        after_resets.get(..paren_pos).unwrap_or("").trim()
     } else {
         after_resets.trim()
     };
 
     // Parse duration components (e.g., "23h 18m", "24h", "18m")
     let mut total_secs: u64 = 0;
-    let lower_duration = duration_text.to_lowercase();
 
     // Parse hours
-    if let Some(h_pos) = lower_duration.find('h') {
-        let h_str = lower_duration[..h_pos].split_whitespace().last()?;
+    if let Some(h_pos) = duration_text.find('h') {
+        // h_pos is from find() on ASCII 'h', so it's a valid boundary
+        let h_str = duration_text.get(..h_pos)?.split_whitespace().last()?;
         if let Ok(hours) = h_str.parse::<u64>() {
             total_secs += hours * 3600;
         }
     }
 
     // Parse minutes
-    if let Some(m_pos) = lower_duration.find('m') {
-        // Find the number before 'm'
-        let before_m = &lower_duration[..m_pos];
+    if let Some(m_pos) = duration_text.find('m') {
+        // m_pos is from find() on ASCII 'm', so it's a valid boundary
+        let before_m = duration_text.get(..m_pos)?;
         let m_str = before_m.split_whitespace().last()?;
         // Strip 'h' suffix if present (e.g., "23h" from "23h 18m")
         let m_str = m_str.trim_end_matches('h');

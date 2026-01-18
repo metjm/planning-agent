@@ -74,7 +74,7 @@ impl GeminiParser {
                     .map(|v| {
                         let s = v.to_string();
                         if s.len() > 100 {
-                            format!("{}...", &s[..100])
+                            format!("{}...", s.get(..100).unwrap_or(&s))
                         } else {
                             s
                         }

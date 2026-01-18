@@ -80,10 +80,11 @@ pub async fn run_planning_phase_with_context(
         state.update_agent_conversation_id(&conversation_id_name, captured_id.clone());
         state.set_updated_at();
         state.save_atomic(state_path)?;
+        // Conversation IDs are ASCII identifiers, safe to slice at char boundary
+        let id_preview = captured_id.get(..8).unwrap_or(captured_id);
         session_sender.send_output(format!(
             "[planning:{}] Captured conversation ID for resume: {}",
-            agent_name,
-            &captured_id[..8.min(captured_id.len())]
+            agent_name, id_preview
         ));
     }
 

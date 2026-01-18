@@ -278,7 +278,7 @@ pub fn build_file_index(working_dir: &std::path::Path) -> FileIndex {
                     // Extract all parent directories
                     let mut current = *path;
                     while let Some(pos) = current.rfind('/') {
-                        let folder = &current[..pos];
+                        let folder = current.get(..pos).unwrap_or("");
                         if !folder.is_empty() && folder_set.insert(folder.to_string()) {
                             // Continue to extract parent folders
                         }
