@@ -8,13 +8,14 @@ use crate::config::WorkflowConfig;
 use crate::phases::implementing_conversation_key;
 use crate::planning_paths;
 use crate::prompt_format::{xml_escape, PromptBuilder};
-use crate::session_logger::SessionLogger;
+use crate::session_logger::{create_session_logger, SessionLogger};
 use crate::state::{ResumeStrategy, State};
 use crate::tui::SessionEventSender;
 use anyhow::{Context, Result};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use tokio::sync::watch;
 
 const IMPLEMENTATION_SYSTEM_PROMPT: &str = r#"You are an implementation agent that executes approved plans.
 
@@ -32,6 +33,8 @@ Be precise and methodical:
 
 IMPORTANT: You are operating in JSON mode. All tool calls and file operations
 should be done via the provided tools, not through a terminal."#;
+
+pub const IMPLEMENTATION_FOLLOWUP_PHASE: &str = "Implementation Follow-up";
 
 /// Result of running the implementation phase.
 #[derive(Debug, Clone)]
@@ -123,6 +126,7 @@ pub async fn run_implementation_phase(
         phase: phase_name,
         conversation_id: conversation_id.clone(),
         resume_strategy: ResumeStrategy::ConversationResume,
+        cancel_rx: None,
         session_logger,
     };
 
@@ -161,6 +165,109 @@ pub async fn run_implementation_phase(
         stop_reason: None, // TODO: Populate from AgentResult when available
         conversation_id: result.conversation_id,
     })
+}
+
+/// Runs a follow-up interaction after implementation is complete.
+pub async fn run_implementation_interaction(
+    mut state: State,
+    config: WorkflowConfig,
+    working_dir: PathBuf,
+    state_path: PathBuf,
+    user_message: String,
+    mut session_sender: SessionEventSender,
+    cancel_rx: watch::Receiver<bool>,
+) -> Result<()> {
+    let result = run_implementation_interaction_inner(
+        &mut state,
+        &config,
+        &working_dir,
+        &state_path,
+        &user_message,
+        &mut session_sender,
+        cancel_rx,
+    )
+    .await;
+
+    if let Err(err) = &result {
+        session_sender.send_output(format!(
+            "[implementation] Follow-up failed: {}",
+            err
+        ));
+    }
+
+    session_sender.send_implementation_interaction_finished();
+    result
+}
+
+async fn run_implementation_interaction_inner(
+    state: &mut State,
+    config: &WorkflowConfig,
+    working_dir: &Path,
+    state_path: &Path,
+    user_message: &str,
+    session_sender: &mut SessionEventSender,
+    cancel_rx: watch::Receiver<bool>,
+) -> Result<()> {
+    let impl_config = &config.implementation;
+    if !impl_config.enabled {
+        anyhow::bail!("Implementation is disabled in config");
+    }
+
+    let agent_name = impl_config
+        .implementing_agent()
+        .ok_or_else(|| anyhow::anyhow!("No implementing agent configured"))?;
+
+    let agent_config = config
+        .get_agent(agent_name)
+        .ok_or_else(|| anyhow::anyhow!("Implementing agent '{}' not found in config", agent_name))?;
+
+    let agent = AgentType::from_config(agent_name, agent_config, working_dir.to_path_buf())?;
+
+    let conversation_key = implementing_conversation_key(agent_name);
+    let agent_session =
+        state.get_or_create_agent_session(&conversation_key, ResumeStrategy::ConversationResume);
+    let conversation_id = agent_session.conversation_id.clone().ok_or_else(|| {
+        anyhow::anyhow!("No conversation ID available for implementation follow-up")
+    })?;
+
+    let session_logger = create_session_logger(&state.workflow_session_id)?;
+    session_sender.set_logger(session_logger.clone());
+
+    session_sender.send_output(format!(
+        "[implementation] Starting follow-up using agent: {}",
+        agent_name
+    ));
+
+    let prompt = build_implementation_followup_prompt(state, working_dir, user_message);
+
+    let context = AgentContext {
+        session_sender: session_sender.clone(),
+        phase: IMPLEMENTATION_FOLLOWUP_PHASE.to_string(),
+        conversation_id: Some(conversation_id),
+        resume_strategy: ResumeStrategy::ConversationResume,
+        cancel_rx: Some(cancel_rx),
+        session_logger,
+    };
+
+    let result = agent
+        .execute_streaming_with_context(
+            prompt,
+            Some(IMPLEMENTATION_SYSTEM_PROMPT.to_string()),
+            None,
+            context,
+        )
+        .await
+        .context("Implementation follow-up agent execution failed")?;
+
+    if let Some(conv_id) = result.conversation_id {
+        state.update_agent_conversation_id(&conversation_key, conv_id);
+    }
+
+    state.set_updated_at();
+    state.save_atomic(state_path)?;
+    session_sender.send_state_update(state.clone());
+
+    Ok(())
 }
 
 /// Builds the implementation prompt.
@@ -209,6 +316,30 @@ Focus on:
     }
 
     builder.build()
+}
+
+fn build_implementation_followup_prompt(
+    state: &State,
+    working_dir: &Path,
+    user_message: &str,
+) -> String {
+    let plan_path = if state.plan_file.is_absolute() {
+        state.plan_file.clone()
+    } else {
+        working_dir.join(&state.plan_file)
+    };
+
+    PromptBuilder::new()
+        .phase("implementation-followup")
+        .instructions(
+            "Continue the implementation conversation. Respond to the user's follow-up and apply any requested changes using the available tools.",
+        )
+        .input("workspace-root", &xml_escape(&working_dir.display().to_string()))
+        .input("plan-path", &xml_escape(&plan_path.display().to_string()))
+        .input("user-message", &xml_escape(user_message))
+        .tools("Use Read/Write/Glob/Grep/Bash tools; edit files via tools only (no PTY).")
+        .constraint("Use absolute paths for all file references")
+        .build()
 }
 
 #[cfg(test)]

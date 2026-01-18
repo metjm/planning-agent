@@ -1,30 +1,24 @@
 use crate::app::cli::Cli;
-use crate::app::headless::extract_feature_name;
-use crate::app::workflow_common::pre_create_plan_files_with_working_dir;
 use crate::config::WorkflowConfig;
-use crate::planning_paths;
-use crate::state::State;
+use crate::phases::implementation::{run_implementation_interaction, IMPLEMENTATION_FOLLOWUP_PHASE};
 use crate::tui::file_index::FileIndex;
-use crate::tui::mention::update_mention_state;
-use crate::tui::slash::update_slash_state;
 use crate::tui::ui::util::{
     compute_summary_panel_inner_size, compute_wrapped_line_count,
     compute_wrapped_line_count_text,
 };
 use crate::tui::{
-    ApprovalMode, Event, FeedbackTarget, FocusedPanel, InputMode, Session, SessionStatus,
-    TabManager, WorkflowCommand,
+    ApprovalMode, Event, FeedbackTarget, FocusedPanel, InputMode, Session,
+    SessionEventSender, TabManager, WorkflowCommand,
 };
-use crate::update;
-use anyhow::{Context, Result};
+use anyhow::Result;
 
-use super::slash_commands::{apply_dangerous_defaults, parse_slash_command, SlashCommand};
 use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::text::Line;
 use std::path::Path;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 
 use super::approval_input::{handle_awaiting_choice_input, handle_entering_feedback_input};
+use super::input_naming::handle_naming_tab_input;
 use super::InitHandle;
 use crate::tui::ui::util::{compute_plan_modal_inner_size, parse_markdown_line};
 
@@ -283,125 +277,36 @@ pub async fn handle_key_event(
     Ok(should_quit)
 }
 
-async fn handle_naming_tab_input(
+async fn handle_implementation_chat_input(
     key: crossterm::event::KeyEvent,
-    tab_manager: &mut TabManager,
+    session: &mut Session,
     output_tx: &mpsc::UnboundedSender<Event>,
-    working_dir: &Path,
-    cli: &Cli,
-    init_handle: &mut InitHandle,
-    update_in_progress: bool,
+    _working_dir: &Path,
 ) -> Result<bool> {
-
-    if update_in_progress {
-        if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
-            return Ok(true);
-        }
+    if !session.can_interact_with_implementation() {
+        session.add_output(
+            "[implementation] Follow-up unavailable: no conversation ID or configuration".to_string(),
+        );
+        session.focused_panel = FocusedPanel::Chat;
         return Ok(false);
-    }
-
-    // Clone file_index before getting mutable session reference
-    let file_index = tab_manager.file_index.clone();
-    let session = tab_manager.active_mut();
-
-    // Handle @-mention dropdown navigation when active (takes priority over slash)
-    if session.tab_mention_state.active && !session.tab_mention_state.matches.is_empty() {
-        match key.code {
-            KeyCode::Up => {
-                session.tab_mention_state.select_prev();
-                return Ok(false);
-            }
-            KeyCode::Down => {
-                session.tab_mention_state.select_next();
-                return Ok(false);
-            }
-            KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                session.tab_mention_state.select_prev();
-                return Ok(false);
-            }
-            KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                session.tab_mention_state.select_next();
-                return Ok(false);
-            }
-            KeyCode::Tab | KeyCode::Enter
-                if key.code == KeyCode::Tab
-                    || !key.modifiers.contains(KeyModifiers::SHIFT) =>
-            {
-                session.accept_tab_mention();
-                update_mention_state(
-                    &mut session.tab_mention_state,
-                    &session.tab_input,
-                    session.tab_input_cursor,
-                    &file_index,
-                );
-                return Ok(false);
-            }
-            KeyCode::Esc => {
-                session.tab_mention_state.clear();
-                return Ok(false);
-            }
-            _ => {}
-        }
-    }
-
-    // Handle slash command dropdown navigation when active (only if mention not active)
-    // Disabled when paste blocks exist
-    if !session.has_tab_input_pastes()
-        && session.tab_slash_state.active
-        && !session.tab_slash_state.matches.is_empty()
-    {
-        match key.code {
-            KeyCode::Up => {
-                session.tab_slash_state.select_prev();
-                return Ok(false);
-            }
-            KeyCode::Down => {
-                session.tab_slash_state.select_next();
-                return Ok(false);
-            }
-            KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                session.tab_slash_state.select_prev();
-                return Ok(false);
-            }
-            KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                session.tab_slash_state.select_next();
-                return Ok(false);
-            }
-            KeyCode::Tab | KeyCode::Enter
-                if key.code == KeyCode::Tab
-                    || !key.modifiers.contains(KeyModifiers::SHIFT) =>
-            {
-                // If Enter is pressed and the input is already a valid slash command,
-                // skip autocomplete acceptance and let it fall through to submit.
-                // This allows Enter to execute `/update` without requiring a trailing space.
-                let is_complete_slash_command = key.code == KeyCode::Enter
-                    && parse_slash_command(session.tab_input.trim()).is_some();
-
-                if !is_complete_slash_command {
-                    session.accept_tab_slash();
-                    update_slash_state(
-                        &mut session.tab_slash_state,
-                        &session.tab_input,
-                        session.tab_input_cursor,
-                    );
-                    return Ok(false);
-                }
-                // Fall through to submit block for complete slash commands
-            }
-            KeyCode::Esc => {
-                session.tab_slash_state.clear();
-                return Ok(false);
-            }
-            _ => {}
-        }
     }
 
     match key.code {
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             return Ok(true);
         }
-        KeyCode::Char('q') if session.tab_input.is_empty() => {
-            return Ok(true);
+        KeyCode::Tab => {
+            let todos_visible = is_todo_panel_visible(session);
+            session.toggle_focus_with_visibility(todos_visible);
+        }
+        KeyCode::Esc => {
+            if session.implementation_interaction.running {
+                if let Some(tx) = session.implementation_interaction.cancel_tx.as_ref() {
+                    let _ = tx.send(true);
+                }
+            } else {
+                session.focused_panel = FocusedPanel::Chat;
+            }
         }
         KeyCode::Enter if key.modifiers.contains(KeyModifiers::SHIFT) => {
             session.insert_tab_input_newline();
@@ -412,237 +317,74 @@ async fn handle_naming_tab_input(
             session.last_key_was_backslash = false;
         }
         KeyCode::Enter => {
+            if session.implementation_interaction.running {
+                session.add_output(
+                    "[implementation] Follow-up already running. Press Esc to cancel.".to_string(),
+                );
+                return Ok(false);
+            }
+
             let has_content =
                 !session.tab_input.trim().is_empty() || session.has_tab_input_pastes();
-            let input_text = session.tab_input.trim().to_string();
-
-            // Check for slash commands (only if no paste blocks)
-            if !session.has_tab_input_pastes() {
-                if let Some((cmd, _args)) = parse_slash_command(&input_text) {
-                    // Clear input for all slash commands
-                    session.tab_input.clear();
-                    session.tab_input_cursor = 0;
-                    session.tab_input_scroll = 0;
-                    session.tab_mention_state.clear();
-                    session.tab_slash_state.clear();
-
-                    match cmd {
-                        SlashCommand::Update => {
-                            if let update::UpdateStatus::UpdateAvailable(_) = &tab_manager.update_status {
-                                tab_manager.update_error = None;
-                                tab_manager.update_in_progress = true;
-                                tab_manager.update_spinner_frame = 0;
-
-                                let update_tx = output_tx.clone();
-                                tokio::spawn(async move {
-                                    let result = tokio::task::spawn_blocking(update::perform_update)
-                                        .await
-                                        .unwrap_or_else(|_| {
-                                            update::UpdateResult::InstallFailed(
-                                                "Update task panicked".to_string(),
-                                            )
-                                        });
-                                    let _ = update_tx.send(Event::UpdateInstallFinished(result));
-                                });
-                            } else {
-                                tab_manager.update_error = Some("No update available".to_string());
-                            }
-                        }
-                        SlashCommand::ConfigDangerous => {
-                            // Get session_id before accessing tab_manager
-                            let session_id = session.id;
-
-                            // Clear any previous command state
-                            tab_manager.command_error = None;
-                            tab_manager.command_notice = None;
-                            tab_manager.command_in_progress = true;
-
-                            let cmd_tx = output_tx.clone();
-                            tokio::spawn(async move {
-                                let result = tokio::task::spawn_blocking(apply_dangerous_defaults)
-                                    .await
-                                    .map_err(|e| format!("Task panicked: {}", e));
-
-                                match result {
-                                    Ok(config_result) => {
-                                        let error = if config_result.has_errors() {
-                                            Some("Some configurations failed".to_string())
-                                        } else {
-                                            None
-                                        };
-                                        let _ = cmd_tx.send(Event::SlashCommandResult {
-                                            session_id,
-                                            command: "config-dangerous".to_string(),
-                                            summary: config_result.summary(),
-                                            error,
-                                        });
-                                    }
-                                    Err(e) => {
-                                        let _ = cmd_tx.send(Event::SlashCommandResult {
-                                            session_id,
-                                            command: "config-dangerous".to_string(),
-                                            summary: String::new(),
-                                            error: Some(e),
-                                        });
-                                    }
-                                }
-                            });
-                        }
-                        SlashCommand::Sessions => {
-                            // Open the session browser overlay
-                            tab_manager.session_browser.open(working_dir);
-                        }
-                    }
-                    return Ok(false);
-                }
+            if !has_content {
+                return Ok(false);
             }
 
-            if has_content {
-                let objective = session.get_submit_text_tab();
-                session.tab_input.clear();
-                session.tab_input_cursor = 0;
-                session.tab_input_scroll = 0;
-                session.clear_tab_input_pastes();
-                session.input_mode = InputMode::Normal;
-                session.status = SessionStatus::Planning;
-
-                let session_id = session.id;
-                let tx = output_tx.clone();
-                let wd = working_dir.to_path_buf();
-                let max_iter = cli.max_iterations;
-
-                // Capture worktree-related CLI flags
-                let worktree_flag = cli.worktree;
-                let custom_worktree_dir = cli.worktree_dir.clone();
-                let custom_worktree_branch = cli.worktree_branch.clone();
-
-                let new_init_handle = tokio::spawn(async move {
-                    let _ = tx.send(Event::SessionOutput {
-                        session_id,
-                        line: "[planning] Initializing...".to_string(),
-                    });
-
-                    let feature_name = extract_feature_name(&objective, Some(&tx)).await?;
-
-                    let state_path = planning_paths::state_path(&wd, &feature_name)?;
-
-                    let _ = tx.send(Event::SessionOutput {
-                        session_id,
-                        line: format!("[planning] Starting new workflow: {}", feature_name),
-                    });
-                    let _ = tx.send(Event::SessionOutput {
-                        session_id,
-                        line: format!("[planning] Objective: {}", objective),
-                    });
-
-                    let mut state = State::new(&feature_name, &objective, max_iter)?;
-
-                    // Set up git worktree if enabled via --worktree
-                    let effective_working_dir = if !worktree_flag {
-                        // Worktree is disabled by default
-                        wd.clone()
-                    } else {
-                        // Get session directory for worktree
-                        let session_dir = match crate::planning_paths::session_dir(&state.workflow_session_id) {
-                            Ok(dir) => dir,
-                            Err(e) => {
-                                let _ = tx.send(Event::SessionOutput {
-                                    session_id,
-                                    line: format!("[planning] Warning: Could not get session directory: {}", e),
-                                });
-                                return Ok::<_, anyhow::Error>((state, state_path, feature_name, wd.clone()));
-                            }
-                        };
-
-                        let worktree_base = custom_worktree_dir
-                            .as_ref()
-                            .map(|d| d.to_path_buf())
-                            .unwrap_or(session_dir);
-
-                        match crate::git_worktree::create_session_worktree(
-                            &wd,
-                            &state.workflow_session_id,
-                            &feature_name,
-                            &worktree_base,
-                            custom_worktree_branch.as_deref(),
-                        ) {
-                            crate::git_worktree::WorktreeSetupResult::Created(info) => {
-                                let _ = tx.send(Event::SessionOutput {
-                                    session_id,
-                                    line: format!("[planning] Created git worktree at: {}", info.worktree_path.display()),
-                                });
-                                let _ = tx.send(Event::SessionOutput {
-                                    session_id,
-                                    line: format!("[planning] Working on branch: {}", info.branch_name),
-                                });
-                                if let Some(ref source) = info.source_branch {
-                                    let _ = tx.send(Event::SessionOutput {
-                                        session_id,
-                                        line: format!("[planning] Will merge into: {}", source),
-                                    });
-                                }
-                                if info.has_submodules {
-                                    let _ = tx.send(Event::SessionOutput {
-                                        session_id,
-                                        line: "[planning] Warning: Repository has submodules".to_string(),
-                                    });
-                                }
-                                let wt_state = crate::state::WorktreeState {
-                                    worktree_path: info.worktree_path.clone(),
-                                    branch_name: info.branch_name,
-                                    source_branch: info.source_branch,
-                                    original_dir: info.original_dir,
-                                };
-                                state.worktree_info = Some(wt_state);
-                                info.worktree_path
-                            }
-                            crate::git_worktree::WorktreeSetupResult::NotAGitRepo => {
-                                let _ = tx.send(Event::SessionOutput {
-                                    session_id,
-                                    line: "[planning] Not a git repository, using original directory".to_string(),
-                                });
-                                wd.clone()
-                            }
-                            crate::git_worktree::WorktreeSetupResult::Failed(err) => {
-                                let _ = tx.send(Event::SessionOutput {
-                                    session_id,
-                                    line: format!("[planning] Warning: Git worktree setup failed: {}", err),
-                                });
-                                wd.clone()
-                            }
-                        }
-                    };
-
-                    // Pre-create plan folder and files (in ~/.planning-agent/sessions/)
-                    pre_create_plan_files_with_working_dir(&state, Some(&effective_working_dir))
-                        .context("Failed to pre-create plan files")?;
-
-                    state.set_updated_at();
-                    state.save(&state_path)?;
-
-                    let _ = tx.send(Event::SessionStateUpdate {
-                        session_id,
-                        state: state.clone(),
-                    });
-
-                    Ok::<_, anyhow::Error>((state, state_path, feature_name, effective_working_dir))
-                });
-
-                *init_handle = Some((session_id, new_init_handle));
+            let message = session.get_submit_text_tab().trim().to_string();
+            if message.is_empty() {
+                return Ok(false);
             }
-        }
-        KeyCode::Esc => {
-            tab_manager.update_error = None;
-            tab_manager.command_notice = None;
-            tab_manager.command_error = None;
-            tab_manager.close_current_if_empty();
+
+            let Some(context) = session.context.clone() else {
+                session.add_output(
+                    "[implementation] Follow-up unavailable: missing session context".to_string(),
+                );
+                return Ok(false);
+            };
+            let Some(state) = session.workflow_state.clone() else {
+                session.add_output(
+                    "[implementation] Follow-up unavailable: missing workflow state".to_string(),
+                );
+                return Ok(false);
+            };
+
+            let session_id = session.id;
+            let run_id = session.current_run_id;
+            let (cancel_tx, cancel_rx) = watch::channel(false);
+
+            session.implementation_interaction.running = true;
+            session.implementation_interaction.cancel_tx = Some(cancel_tx);
+
+            session.add_chat_message("user", IMPLEMENTATION_FOLLOWUP_PHASE, message.clone());
+            session.tab_input.clear();
+            session.tab_input_cursor = 0;
+            session.tab_input_scroll = 0;
+            session.last_key_was_backslash = false;
+            session.clear_tab_input_pastes();
+            session.tab_mention_state.clear();
+            session.tab_slash_state.clear();
+
+            let working_dir = context.effective_working_dir.clone();
+            let state_path = context.state_path.clone();
+            let workflow_config = context.workflow_config.clone();
+            let session_sender = SessionEventSender::new(session_id, run_id, output_tx.clone());
+
+            tokio::spawn(async move {
+                let _ = run_implementation_interaction(
+                    state,
+                    workflow_config,
+                    working_dir,
+                    state_path,
+                    message,
+                    session_sender,
+                    cancel_rx,
+                )
+                .await;
+            });
         }
         KeyCode::Char(c) => {
             session.insert_tab_input_char(c);
             session.last_key_was_backslash = c == '\\';
-            tab_manager.update_error = None;
-            tab_manager.command_notice = None;
-            tab_manager.command_error = None;
         }
         KeyCode::Backspace => {
             session.last_key_was_backslash = false;
@@ -650,39 +392,11 @@ async fn handle_naming_tab_input(
                 session.delete_tab_input_char();
             }
         }
-        KeyCode::Left => {
-            session.move_tab_input_cursor_left();
-        }
-        KeyCode::Right => {
-            session.move_tab_input_cursor_right();
-        }
-        KeyCode::Up => {
-            session.move_tab_input_cursor_up();
-        }
-        KeyCode::Down => {
-            session.move_tab_input_cursor_down();
-        }
+        KeyCode::Left => session.move_tab_input_cursor_left(),
+        KeyCode::Right => session.move_tab_input_cursor_right(),
+        KeyCode::Up => session.move_tab_input_cursor_up(),
+        KeyCode::Down => session.move_tab_input_cursor_down(),
         _ => {}
-    }
-
-    // Update @-mention state after any input change
-    let session = tab_manager.active_mut();
-    update_mention_state(
-        &mut session.tab_mention_state,
-        &session.tab_input,
-        session.tab_input_cursor,
-        &file_index,
-    );
-
-    // Update slash command state after any input change (only if no paste blocks)
-    if !session.has_tab_input_pastes() {
-        update_slash_state(
-            &mut session.tab_slash_state,
-            &session.tab_input,
-            session.tab_input_cursor,
-        );
-    } else {
-        session.tab_slash_state.clear();
     }
 
     Ok(false)
@@ -738,6 +452,12 @@ async fn handle_approval_mode_input(
     workflow_config: &WorkflowConfig,
     file_index: &FileIndex,
 ) -> Result<bool> {
+    if session.approval_mode == ApprovalMode::None
+        && session.focused_panel == FocusedPanel::ChatInput
+    {
+        return handle_implementation_chat_input(key, session, output_tx, working_dir).await;
+    }
+
     match session.approval_mode {
         ApprovalMode::AwaitingChoice => {
             handle_awaiting_choice_input(key, session, terminal, working_dir, output_tx, workflow_config).await
@@ -763,7 +483,11 @@ fn handle_none_mode_input(
         }
         KeyCode::Esc => {
             // Escape: Start interrupt feedback mode if workflow is running, otherwise quit
-            if session.running && session.workflow_control_tx.is_some() {
+            if session.implementation_interaction.running {
+                if let Some(tx) = session.implementation_interaction.cancel_tx.as_ref() {
+                    let _ = tx.send(true);
+                }
+            } else if session.running && session.workflow_control_tx.is_some() {
                 session.start_feedback_input_for(FeedbackTarget::WorkflowInterrupt);
             } else {
                 return Ok(true);
@@ -788,6 +512,7 @@ fn handle_none_mode_input(
                 session.todo_scroll_down(max_scroll);
             }
             FocusedPanel::Chat => session.chat_scroll_down(),
+            FocusedPanel::ChatInput => {}
             FocusedPanel::Summary => session.summary_scroll_down(),
             FocusedPanel::Unknown => {} // Legacy variant - no action
         },
@@ -795,6 +520,7 @@ fn handle_none_mode_input(
             FocusedPanel::Output => session.scroll_up(),
             FocusedPanel::Todos => session.todo_scroll_up(),
             FocusedPanel::Chat => session.chat_scroll_up(),
+            FocusedPanel::ChatInput => {}
             FocusedPanel::Summary => session.summary_scroll_up(),
             FocusedPanel::Unknown => {} // Legacy variant - no action
         },
@@ -807,6 +533,7 @@ fn handle_none_mode_input(
                     tab.scroll_position = 0;
                 }
             }
+            FocusedPanel::ChatInput => {}
             FocusedPanel::Summary => session.summary_scroll_to_top(),
             FocusedPanel::Unknown => {} // Legacy variant - no action
         },
@@ -817,6 +544,7 @@ fn handle_none_mode_input(
                 session.todo_scroll_to_bottom(max_scroll);
             }
             FocusedPanel::Chat => session.chat_scroll_to_bottom(),
+            FocusedPanel::ChatInput => {}
             FocusedPanel::Summary => {
                 let max_scroll = session
                     .run_tabs

@@ -64,6 +64,9 @@ impl GeminiAgent {
             .with_overall_timeout(self.overall_timeout);
         if let Some(ctx) = context {
             config = config.with_session_logger(ctx.session_logger.clone());
+            if let Some(cancel_rx) = ctx.cancel_rx.clone() {
+                config = config.with_cancel_rx(cancel_rx);
+            }
         }
         let mut parser = GeminiParser::new();
 
@@ -150,6 +153,7 @@ mod tests {
             phase: "Testing".to_string(),
             conversation_id,
             resume_strategy,
+            cancel_rx: None,
             session_logger,
         }
     }

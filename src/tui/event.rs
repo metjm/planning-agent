@@ -235,6 +235,10 @@ pub enum Event {
         session_id: usize,
         iterations_used: u32,
     },
+    /// Implementation follow-up interaction finished (success or error)
+    SessionImplementationInteractionFinished {
+        session_id: usize,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -708,6 +712,13 @@ impl SessionEventSender {
         let _ = self.inner.send(Event::SessionImplementationSuccess {
             session_id: self.session_id,
             iterations_used,
+        });
+    }
+
+    /// Sends an implementation interaction finished event.
+    pub fn send_implementation_interaction_finished(&self) {
+        let _ = self.inner.send(Event::SessionImplementationInteractionFinished {
+            session_id: self.session_id,
         });
     }
 }

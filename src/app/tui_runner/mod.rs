@@ -2,6 +2,7 @@
 mod approval_input;
 mod events;
 mod input;
+mod input_naming;
 mod session_browser_input;
 pub mod slash_commands;
 pub mod snapshot_helper;

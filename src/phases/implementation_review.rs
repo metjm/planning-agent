@@ -121,6 +121,7 @@ pub async fn run_implementation_review_phase(
         phase: phase_name,
         conversation_id: None, // Stateless - no conversation resume
         resume_strategy: ResumeStrategy::Stateless,
+        cancel_rx: None,
         session_logger,
     };
 

@@ -63,6 +63,7 @@ pub async fn run_verification_phase(
         phase: phase_name,
         conversation_id: None, // Verification is stateless per round
         resume_strategy: ResumeStrategy::Stateless,
+        cancel_rx: None,
         session_logger,
     };
 

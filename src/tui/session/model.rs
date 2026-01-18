@@ -151,6 +151,7 @@ pub enum FocusedPanel {
     Output,
     Todos,
     Chat,
+    ChatInput,
     Summary,
     /// Legacy variant for old snapshots - mapped to Output on restore
     #[serde(other)]

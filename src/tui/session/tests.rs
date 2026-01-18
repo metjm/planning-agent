@@ -1,5 +1,9 @@
 
 use super::*;
+use crate::config::WorkflowConfig;
+use crate::phases::implementing_conversation_key;
+use crate::state::{ImplementationPhase, ImplementationPhaseState, ResumeStrategy, State};
+use std::path::PathBuf;
 
 #[test]
 fn test_scroll_up_disables_follow_mode() {
@@ -656,6 +660,58 @@ fn test_toggle_focus_with_summary() {
     assert_eq!(session.focused_panel, FocusedPanel::Summary);
 
     session.toggle_focus_with_visibility(true);
+    assert_eq!(session.focused_panel, FocusedPanel::Output);
+}
+
+fn build_interactive_session() -> Session {
+    let mut session = Session::new(0);
+    let mut state = State::new("feature", "objective", 1).expect("state");
+    state.implementation_state = Some(ImplementationPhaseState {
+        phase: ImplementationPhase::Complete,
+        iteration: 1,
+        max_iterations: 1,
+        last_verdict: Some("APPROVED".to_string()),
+        last_feedback: None,
+    });
+
+    let config = WorkflowConfig::claude_only_config();
+    let agent_name = config
+        .implementation
+        .implementing_agent()
+        .expect("implementing agent");
+    let conversation_key = implementing_conversation_key(agent_name);
+    state.get_or_create_agent_session(&conversation_key, ResumeStrategy::ConversationResume);
+    state.update_agent_conversation_id(&conversation_key, "conv-id".to_string());
+
+    session.workflow_state = Some(state);
+    session.context = Some(SessionContext::new(
+        PathBuf::from("/tmp"),
+        Some(PathBuf::from("/tmp")),
+        PathBuf::from("/tmp/state.json"),
+        config,
+    ));
+
+    session
+}
+
+#[test]
+fn test_can_interact_with_implementation() {
+    let session = build_interactive_session();
+    assert!(session.can_interact_with_implementation());
+}
+
+#[test]
+fn test_toggle_focus_with_interaction() {
+    let mut session = build_interactive_session();
+    assert_eq!(session.focused_panel, FocusedPanel::Output);
+
+    session.toggle_focus_with_visibility(false);
+    assert_eq!(session.focused_panel, FocusedPanel::Chat);
+
+    session.toggle_focus_with_visibility(false);
+    assert_eq!(session.focused_panel, FocusedPanel::ChatInput);
+
+    session.toggle_focus_with_visibility(false);
     assert_eq!(session.focused_panel, FocusedPanel::Output);
 }
 

@@ -3,7 +3,7 @@ use super::dropdowns::{draw_mention_dropdown, draw_slash_dropdown};
 use super::theme::Theme;
 use super::util::{compute_wrapped_line_count, parse_markdown_line, wrap_text_at_width};
 use crate::state::{ImplementationPhase, Phase, UiMode};
-use crate::tui::{ApprovalMode, Session, TabManager};
+use crate::tui::{ApprovalMode, FocusedPanel, Session, TabManager};
 use crate::update::UpdateStatus;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
@@ -63,6 +63,16 @@ pub fn draw_footer(frame: &mut Frame, session: &Session, tab_manager: &TabManage
 
     if session.approval_mode != ApprovalMode::None {
         spans.push(Span::styled("[↑/↓] Scroll  [Enter] Select  [Esc] Cancel", Style::default().fg(theme.muted)));
+    } else if session.implementation_interaction.running {
+        spans.push(Span::styled("[Esc] Cancel Follow-up  ", Style::default().fg(theme.warning)));
+        spans.push(Span::styled("[Ctrl+PgUp/Dn] Switch Tabs", Style::default().fg(theme.muted)));
+    } else if session.can_interact_with_implementation() {
+        if session.focused_panel == FocusedPanel::ChatInput {
+            spans.push(Span::styled("[Enter] Send  [Shift+Enter] Newline  [Esc] Cancel", Style::default().fg(theme.muted)));
+        } else {
+            spans.push(Span::styled("[Tab] Focus Follow-up  ", Style::default().fg(theme.accent_alt)));
+            spans.push(Span::styled("[Ctrl+PgUp/Dn] Switch Tabs", Style::default().fg(theme.muted)));
+        }
     } else if session.running && session.workflow_control_tx.is_some() {
         spans.push(Span::styled("[Esc] Interrupt  ", Style::default().fg(theme.accent_alt)));
         spans.push(Span::styled("[Ctrl+S] Stop  ", Style::default().fg(theme.warning)));

@@ -13,6 +13,7 @@ pub use cli_instances::{CliInstance, CliInstanceId};
 pub use context::SessionContext;
 use crate::app::WorkflowResult;
 use crate::cli_usage::AccountUsage;
+use crate::phases::implementing_conversation_key;
 use crate::state::{ImplementationPhase, Phase, State, UiMode};
 use crate::tui::event::{TokenUsage, WorkflowCommand};
 use crate::tui::mention::MentionState;
@@ -20,7 +21,7 @@ use crate::tui::slash::SlashState;
 use anyhow::Result;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use tokio::task::JoinHandle;
 
 use super::event::UserApprovalResponse;
@@ -176,6 +177,16 @@ pub struct Session {
     /// Runtime-only modal for implementation success display.
     /// Not serialized - always None on snapshot restore.
     pub implementation_success_modal: Option<ImplementationSuccessModal>,
+    /// Runtime-only state for post-implementation interaction.
+    /// Not serialized - always reset on snapshot restore.
+    pub implementation_interaction: ImplementationInteractionState,
+}
+
+/// Runtime-only state for post-implementation interaction.
+#[derive(Debug)]
+pub struct ImplementationInteractionState {
+    pub running: bool,
+    pub cancel_tx: Option<watch::Sender<bool>>,
 }
 
 /// Session provides the full API surface for session management.
@@ -269,6 +280,10 @@ impl Session {
             context: None,
 
             implementation_success_modal: None,
+            implementation_interaction: ImplementationInteractionState {
+                running: false,
+                cancel_tx: None,
+            },
         }
     }
 
@@ -497,6 +512,7 @@ impl Session {
             .get(self.active_run_tab)
             .map(|tab| tab.summary_state != SummaryState::None)
             .unwrap_or(false);
+        let can_interact = self.can_interact_with_implementation();
 
         self.focused_panel = match self.focused_panel {
             FocusedPanel::Output => {
@@ -508,6 +524,15 @@ impl Session {
             }
             FocusedPanel::Todos => FocusedPanel::Chat,
             FocusedPanel::Chat => {
+                if can_interact {
+                    FocusedPanel::ChatInput
+                } else if has_summary {
+                    FocusedPanel::Summary
+                } else {
+                    FocusedPanel::Output
+                }
+            }
+            FocusedPanel::ChatInput => {
                 if has_summary {
                     FocusedPanel::Summary
                 } else {
@@ -530,6 +555,34 @@ impl Session {
         if self.is_focus_on_invisible_todos(todos_visible) {
             self.focused_panel = FocusedPanel::Output;
         }
+    }
+
+    /// Returns true if implementation follow-up interaction is available.
+    pub fn can_interact_with_implementation(&self) -> bool {
+        let Some(state) = self.workflow_state.as_ref() else {
+            return false;
+        };
+        let Some(impl_state) = state.implementation_state.as_ref() else {
+            return false;
+        };
+        if impl_state.phase != ImplementationPhase::Complete {
+            return false;
+        }
+        let Some(context) = self.context.as_ref() else {
+            return false;
+        };
+        if !context.workflow_config.implementation.enabled {
+            return false;
+        }
+        let Some(agent_name) = context.workflow_config.implementation.implementing_agent() else {
+            return false;
+        };
+        let conversation_key = implementing_conversation_key(agent_name);
+        state
+            .agent_conversations
+            .get(&conversation_key)
+            .and_then(|conv| conv.conversation_id.as_ref())
+            .is_some()
     }
 
     /// Returns the current UI mode (Planning or Implementation).
