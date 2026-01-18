@@ -62,9 +62,9 @@ fn compute_git_fingerprint(working_dir: &Path) -> Result<u64> {
     if status_output.status.success() {
         let status_str = String::from_utf8_lossy(&status_output.stdout);
         for line in status_str.lines() {
-            if line.len() > 3 {
-                // Format: "XY filename" where XY is status, space at position 2
-                let filename = line[3..].trim();
+            // Format: "XY filename" where XY is status, space at position 2
+            // Use safe slicing: skip first 3 ASCII chars (status + space)
+            if let Some(filename) = line.get(3..).map(str::trim) {
                 if !filename.is_empty() {
                     changed_files.insert(filename.to_string());
                 }

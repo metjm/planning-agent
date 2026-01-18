@@ -135,7 +135,7 @@ impl CodexParser {
                             .map(|v| {
                                 let s = v.to_string();
                                 if s.len() > 100 {
-                                    format!("{}...", &s[..100])
+                                    format!("{}...", s.get(..100).unwrap_or(&s))
                                 } else {
                                     s
                                 }
@@ -264,7 +264,7 @@ impl CodexParser {
             .trim_matches('"');
 
         if core_command.len() > max_len {
-            format!("{}...", &core_command[..max_len.saturating_sub(3)])
+            format!("{}...", core_command.get(..max_len.saturating_sub(3)).unwrap_or(""))
         } else {
             core_command.to_string()
         }

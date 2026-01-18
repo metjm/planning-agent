@@ -117,11 +117,9 @@ fn format_relative_time(timestamp: &str) -> String {
             chrono::NaiveDateTime::parse_from_str(timestamp, "%Y-%m-%dT%H:%M:%S")
                 .ok()
                 .or_else(|| {
-                    if timestamp.len() >= 19 {
-                        chrono::NaiveDateTime::parse_from_str(&timestamp[..19], "%Y-%m-%dT%H:%M:%S").ok()
-                    } else {
-                        None
-                    }
+                    timestamp
+                        .get(..19)
+                        .and_then(|s| chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S").ok())
                 })
                 .map(|dt| dt.and_utc())
         });

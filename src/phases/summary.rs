@@ -65,7 +65,7 @@ fn build_plan_summary_input(plan_content: &str, phase: &str) -> String {
             .find(|&i| plan_content.is_char_boundary(i))
             .unwrap_or(0);
         format!("{}...\n\n[Content truncated, {} characters total]",
-                &plan_content[..truncate_at], plan_content.len())
+                plan_content.get(..truncate_at).unwrap_or(""), plan_content.len())
     } else {
         plan_content.to_string()
     };
@@ -165,7 +165,7 @@ mod tests {
     #[test]
     fn test_build_plan_summary_input_under_limit() {
         let content = "short content";
-        let result = build_plan_summary_input(&content, "test");
+        let result = build_plan_summary_input(content, "test");
         assert!(!result.contains("Content truncated"));
         assert!(result.contains("short content"));
     }

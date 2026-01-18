@@ -157,8 +157,9 @@ fn format_commit_date(iso_date: &str) -> String {
             .split('-')
             .next()
             .unwrap_or(time);
-        if time_clean.len() >= 5 {
-            let hh_mm = &time_clean[..5];
+        // Time format is "HH:MM:SS", all ASCII, so byte index 5 is safe
+        // Use .get() for consistency with clippy::string_slice lint
+        if let Some(hh_mm) = time_clean.get(..5) {
             return format!("{} {} {}", month, day, hh_mm);
         }
     }

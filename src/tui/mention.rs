@@ -74,13 +74,13 @@ pub fn detect_mention_at_cursor(input: &str, cursor: usize) -> Option<(usize, St
         return None;
     }
 
-    let text_before = &input[..cursor];
+    let text_before = input.get(..cursor)?;
 
     // Find the nearest @ before cursor
     let mut search_pos = cursor;
     while search_pos > 0 {
         // Find @ going backwards
-        let at_pos = text_before[..search_pos].rfind('@')?;
+        let at_pos = text_before.get(..search_pos)?.rfind('@')?;
 
         // Check if this @ is escaped
         let is_escaped = at_pos > 0 && text_before.as_bytes().get(at_pos - 1) == Some(&b'\\');
@@ -92,7 +92,7 @@ pub fn detect_mention_at_cursor(input: &str, cursor: usize) -> Option<(usize, St
 
         // Check if @ is at valid position (start or after whitespace/punctuation)
         let valid_position = at_pos == 0 || {
-            let prev_char = text_before[..at_pos].chars().last().unwrap();
+            let prev_char = text_before.get(..at_pos)?.chars().last()?;
             prev_char.is_whitespace() || is_punctuation(prev_char)
         };
 
@@ -104,7 +104,7 @@ pub fn detect_mention_at_cursor(input: &str, cursor: usize) -> Option<(usize, St
 
         // Extract the query (text between @ and cursor)
         let query_start = at_pos + 1;
-        let query = &input[query_start..cursor];
+        let query = input.get(query_start..cursor)?;
 
         // Check for whitespace in the query - if found, mention is broken
         if query.chars().any(|c| c.is_whitespace()) {

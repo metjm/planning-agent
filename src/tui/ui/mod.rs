@@ -89,7 +89,7 @@ fn draw_tab_bar(frame: &mut Frame, tab_manager: &TabManager, area: Rect) {
             &session.name
         };
         let display_name: String = if name.len() > 15 {
-            format!("{}...", &name[..12])
+            format!("{}...", name.get(..12).unwrap_or(name))
         } else {
             name.to_string()
         };

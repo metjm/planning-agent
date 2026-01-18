@@ -484,11 +484,10 @@ pub fn list_plans() -> Result<Vec<PlanInfo>> {
             // Example: 20251230-123632-a3529aa2_plan-verification-phase
             if let Some((timestamp_part, feature_part)) = folder_name.split_once('_') {
                 // Extract just the timestamp (first 15 chars: YYYYMMDD-HHMMSS)
-                let timestamp = if timestamp_part.len() >= 15 {
-                    timestamp_part[..15].to_string()
-                } else {
-                    timestamp_part.to_string()
-                };
+                let timestamp = timestamp_part
+                    .get(..15)
+                    .unwrap_or(timestamp_part)
+                    .to_string();
 
                 plans.push(PlanInfo {
                     path,

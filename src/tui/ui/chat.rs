@@ -380,7 +380,7 @@ pub(super) fn draw_run_tabs(frame: &mut Frame, session: &Session, area: Rect) {
         let is_active = i == session.active_run_tab;
 
         let display_name: String = if tab.phase.len() > 12 {
-            format!("{}...", &tab.phase[..9])
+            format!("{}...", tab.phase.get(..9).unwrap_or(&tab.phase))
         } else {
             tab.phase.clone()
         };
@@ -410,7 +410,7 @@ fn truncate_input_preview(preview: &str, max_len: usize) -> String {
     if preview.len() <= max_len {
         preview.to_string()
     } else {
-        format!("{}...", &preview[..max_len.saturating_sub(3)])
+        format!("{}...", preview.get(..max_len.saturating_sub(3)).unwrap_or(""))
     }
 }
 

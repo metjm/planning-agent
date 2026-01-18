@@ -60,6 +60,7 @@ warnings = "deny"
 
 [lints.clippy]
 all = { level = "deny", priority = -1 }
+string_slice = "deny"
 
 [dev-dependencies]
 tempfile = "3"

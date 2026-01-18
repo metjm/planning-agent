@@ -658,7 +658,7 @@ async fn handle_session_event(
                 }
                 update::UpdateResult::InstallFailed(err) => {
                     let short_err = if err.len() > 60 {
-                        format!("{}...", &err[..57])
+                        format!("{}...", err.get(..57).unwrap_or(&err))
                     } else {
                         err
                     };

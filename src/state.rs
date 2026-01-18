@@ -15,7 +15,10 @@ use uuid::Uuid;
 /// New sessions use session-centric paths directly.
 fn generate_plan_folder_name(sanitized_name: &str) -> String {
     let timestamp = Utc::now().format("%Y%m%d-%H%M%S");
-    let uuid_suffix = &Uuid::new_v4().to_string()[..8];
+    let uuid_str = Uuid::new_v4().to_string();
+    // UUID is ASCII hex, safe to slice at byte boundaries
+    #[allow(clippy::string_slice)]
+    let uuid_suffix = &uuid_str[..8];
     format!("{}-{}_{}", timestamp, uuid_suffix, sanitized_name)
 }
 
@@ -71,8 +74,8 @@ fn extract_plan_folder(plan_file: &Path) -> Option<String> {
 fn extract_sanitized_name(plan_file: &Path) -> Option<String> {
     // Try new format first: folder name like "YYYYMMDD-HHMMSS-xxxxxxxx_feature-name"
     if let Some(folder_name) = extract_plan_folder(plan_file) {
-        if let Some(underscore_pos) = folder_name.find('_') {
-            return Some(folder_name[underscore_pos + 1..].to_string());
+        if let Some((_, feature_part)) = folder_name.split_once('_') {
+            return Some(feature_part.to_string());
         }
     }
 
@@ -80,10 +83,9 @@ fn extract_sanitized_name(plan_file: &Path) -> Option<String> {
     let filename = plan_file.file_stem()?.to_str()?;
 
     // Check for old timestamp format in filename
-    if let Some(underscore_pos) = filename.find('_') {
-        let prefix = &filename[..underscore_pos];
+    if let Some((prefix, suffix)) = filename.split_once('_') {
         if prefix.len() >= 24 && prefix.chars().nth(8) == Some('-') {
-            return Some(filename[underscore_pos + 1..].to_string());
+            return Some(suffix.to_string());
         }
     }
 

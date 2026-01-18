@@ -510,7 +510,9 @@ fn truncate_to_bytes_boundary(text: &str, max_bytes: usize) -> &str {
         }
         last_index = next;
     }
-    &text[..last_index]
+    // last_index is guaranteed to be at a valid UTF-8 char boundary
+    // because we only update it via char_indices()
+    text.get(..last_index).unwrap_or("")
 }
 
 fn truncate_for_excerpt(text: &str, max_chars: usize) -> String {
@@ -589,9 +591,9 @@ fn parse_usage_used_percent(text: &str, section_keyword: &str) -> Option<u8> {
 
             for candidate in lines.iter().skip(i).take(5) {
                 if candidate.to_lowercase().contains("used") {
-
+                    // '%' is ASCII, so pct_pos is guaranteed to be at a valid UTF-8 boundary
                     if let Some(pct_pos) = candidate.find('%') {
-                        let before = &candidate[..pct_pos];
+                        let before = candidate.get(..pct_pos).unwrap_or("");
                         let digits: String = before
                             .chars()
                             .rev()
@@ -624,8 +626,9 @@ fn parse_plan_type(text: &str) -> Option<String> {
     for line in text.lines() {
         let line_lower = line.to_lowercase();
         if line_lower.contains("plan") {
+            // ':' is ASCII, so colon_pos + 1 is guaranteed to be at a valid UTF-8 boundary
             if let Some(colon_pos) = line.find(':') {
-                let after_colon = line[colon_pos + 1..].trim();
+                let after_colon = line.get(colon_pos + 1..).unwrap_or("").trim();
                 if !after_colon.is_empty() {
                     let plan = after_colon.split_whitespace().next()?;
                     return Some(plan.to_string());
@@ -670,17 +673,19 @@ fn parse_reset_line(line: &str) -> Option<ResetTimestamp> {
     // Find "Resets" keyword (case-insensitive)
     let lower = line.to_lowercase();
     let resets_pos = lower.find("resets ")?;
-    let after_resets = &line[resets_pos + 7..];
+    // "resets " is 7 ASCII characters, so resets_pos + 7 is at a valid UTF-8 boundary
+    let after_resets = line.get(resets_pos + 7..)?;
 
     // Extract timezone from parentheses
+    // '(' and ')' are ASCII, so tz_start and tz_end are at valid UTF-8 boundaries
     let tz_start = after_resets.find('(')?;
     let tz_end = after_resets.find(')')?;
     if tz_start >= tz_end {
         return None;
     }
 
-    let tz_str = after_resets[tz_start + 1..tz_end].trim();
-    let time_part = after_resets[..tz_start].trim();
+    let tz_str = after_resets.get(tz_start + 1..tz_end)?.trim();
+    let time_part = after_resets.get(..tz_start)?.trim();
 
     // Parse timezone
     let tz: Tz = Tz::from_str(tz_str).ok()?;
@@ -716,12 +721,14 @@ fn parse_datetime_with_date(
     let month_idx = months.iter().position(|m| lower.starts_with(m))?;
 
     // Extract day number - find digits after month
-    let after_month = &time_part[3..].trim_start();
+    // Month abbreviations (jan, feb, etc.) are 3 ASCII characters, so index 3 is valid
+    let after_month = time_part.get(3..)?.trim_start();
 
     // Find the comma that separates day from time
+    // ',' is ASCII, so comma_pos and comma_pos + 1 are at valid UTF-8 boundaries
     let comma_pos = after_month.find(',')?;
-    let day_str = after_month[..comma_pos].trim();
-    let time_str = after_month[comma_pos + 1..].trim();
+    let day_str = after_month.get(..comma_pos)?.trim();
+    let time_str = after_month.get(comma_pos + 1..)?.trim();
 
     let day: u32 = day_str.parse().ok()?;
 

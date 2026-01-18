@@ -167,7 +167,7 @@ pub fn detect_slash_at_cursor(input: &str, cursor: usize) -> Option<SlashContext
 
     // Case 1: Cursor is within the first token (the command itself)
     if cursor_in_trimmed <= first_token_end {
-        let query = &text[..cursor_in_trimmed];
+        let query = text.get(..cursor_in_trimmed).unwrap_or("");
         return Some(SlashContext::Command {
             start_byte: trimmed_start,
             end_byte: cursor,
@@ -179,13 +179,15 @@ pub fn detect_slash_at_cursor(input: &str, cursor: usize) -> Option<SlashContext
     let first_token_lower = first_token.to_lowercase();
     if first_token_lower == "/config" && parts.len() <= 2 {
         // Find where the second token starts (if any)
-        let after_first = &text[first_token_end..];
+        let after_first = text.get(first_token_end..).unwrap_or("");
         let arg_text_start = after_first.len() - after_first.trim_start().len();
         let arg_start_in_text = first_token_end + arg_text_start;
 
         // The argument query is from arg_start_in_text to cursor_in_trimmed
         let arg_query = if cursor_in_trimmed > arg_start_in_text {
-            text[arg_start_in_text..cursor_in_trimmed].to_string()
+            text.get(arg_start_in_text..cursor_in_trimmed)
+                .unwrap_or("")
+                .to_string()
         } else {
             String::new()
         };
