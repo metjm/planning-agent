@@ -71,6 +71,7 @@ pub async fn run_revision_phase_with_context(
         phase: phase_name,
         conversation_id,
         resume_strategy,
+        cancel_rx: None,
         session_logger,
     };
 

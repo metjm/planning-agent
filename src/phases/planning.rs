@@ -62,6 +62,7 @@ pub async fn run_planning_phase_with_context(
         phase: "Planning".to_string(),
         conversation_id,
         resume_strategy,
+        cancel_rx: None,
         session_logger,
     };
 

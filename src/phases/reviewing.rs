@@ -517,6 +517,7 @@ async fn execute_review_attempt(
         phase: phase.to_string(),
         conversation_id: conversation_id.clone(),
         resume_strategy: resume_strategy.clone(),
+        cancel_rx: None,
         session_logger,
     };
 

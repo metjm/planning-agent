@@ -14,6 +14,7 @@ use anyhow::Result;
 use prompt::{prepare_prompt, AgentCapabilities, PreparedPrompt, PromptRequest};
 use std::path::PathBuf;
 use std::sync::Arc;
+use tokio::sync::watch;
 
 #[derive(Clone)]
 pub struct AgentContext {
@@ -22,6 +23,8 @@ pub struct AgentContext {
     /// The AI agent's conversation ID for session resume (e.g., Claude's session UUID)
     pub conversation_id: Option<String>,
     pub resume_strategy: ResumeStrategy,
+    /// Optional cancellation signal receiver for cooperative cancellation.
+    pub cancel_rx: Option<watch::Receiver<bool>>,
     /// Session logger for agent events.
     #[allow(dead_code)]
     pub session_logger: Arc<SessionLogger>,

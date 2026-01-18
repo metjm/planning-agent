@@ -1,5 +1,6 @@
 
 mod approval_overlay;
+mod chat;
 mod cli_instances;
 mod dropdowns;
 mod error_overlay;

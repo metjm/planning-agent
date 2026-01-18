@@ -1,7 +1,7 @@
 use crate::app::util::shorten_model_name;
 use crate::config::WorkflowConfig;
 use crate::session_daemon;
-use crate::tui::{ApprovalMode, Event, SessionStatus, TabManager, ToolKind, ToolResultSummary, ToolTimelineEntry};
+use crate::tui::{ApprovalMode, Event, FocusedPanel, SessionStatus, TabManager, ToolKind, ToolResultSummary, ToolTimelineEntry};
 use crate::update;
 use anyhow::Result;
 use std::path::Path;
@@ -228,6 +228,8 @@ fn handle_paste_event(text: String, tab_manager: &mut TabManager) {
         session.insert_paste_tab_input(text);
     } else if session.approval_mode == ApprovalMode::EnteringFeedback {
         session.insert_paste_feedback(text);
+    } else if session.focused_panel == FocusedPanel::ChatInput {
+        session.insert_paste_tab_input(text);
     }
 }
 
@@ -697,6 +699,12 @@ async fn handle_session_event(
         Event::SessionImplementationSuccess { session_id, iterations_used } => {
             if let Some(session) = tab_manager.session_by_id_mut(session_id) {
                 session.open_implementation_success(iterations_used);
+            }
+        }
+        Event::SessionImplementationInteractionFinished { session_id } => {
+            if let Some(session) = tab_manager.session_by_id_mut(session_id) {
+                session.implementation_interaction.running = false;
+                session.implementation_interaction.cancel_tx = None;
             }
         }
         _ => {}

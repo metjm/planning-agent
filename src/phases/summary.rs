@@ -122,6 +122,7 @@ async fn run_summary_generation(
         phase: phase.to_string(),
         conversation_id: None,
         resume_strategy: ResumeStrategy::Stateless,
+        cancel_rx: None,
         session_logger,
     };
 

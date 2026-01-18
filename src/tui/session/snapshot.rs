@@ -154,6 +154,10 @@ impl Session {
             context: None, // Context is set by resume/new-session flows, not serialized
 
             implementation_success_modal: None, // Runtime-only, reset on restore
+            implementation_interaction: super::ImplementationInteractionState {
+                running: false,
+                cancel_tx: None,
+            },
         }
     }
 }

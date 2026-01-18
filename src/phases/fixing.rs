@@ -63,6 +63,7 @@ pub async fn run_fixing_phase(
         phase: phase_name,
         conversation_id: None, // Fixing is stateless per round
         resume_strategy: ResumeStrategy::Stateless,
+        cancel_rx: None,
         session_logger,
     };
 
