@@ -438,7 +438,7 @@ impl SessionDaemonClient {
                         writer,
                     });
                 }
-                Err(e) if attempt < MAX_CONNECT_ATTEMPTS => {
+                Err(_e) if attempt < MAX_CONNECT_ATTEMPTS => {
                     // Add jitter (±25%)
                     let jitter = (delay_ms as f64 * 0.25 * (rng.gen::<f64>() * 2.0 - 1.0)) as u64;
                     let actual_delay = delay_ms.saturating_add_signed(jitter as i64);
