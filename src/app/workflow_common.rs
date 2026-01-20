@@ -13,25 +13,26 @@ use std::time::Duration;
 #[allow(dead_code)]
 pub const DEFAULT_REVIEW_FAILURE_RETRY_LIMIT: usize = 2;
 
-/// Pre-creates the plan folder and empty plan/feedback files before agent execution.
+/// Pre-creates the plan folder and empty plan file before agent execution.
 /// Plan files are stored in ~/.planning-agent/sessions/<session-id>/ so paths are absolute.
 /// Handles `AlreadyExists` as success for resumed workflows.
 ///
 /// Also creates session_info.json for fast session listing.
+/// Note: Feedback files are created by individual reviewers during the reviewing phase.
 #[allow(dead_code)]
 pub fn pre_create_plan_files(state: &State) -> anyhow::Result<()> {
     pre_create_plan_files_with_working_dir(state, None)
 }
 
-/// Pre-creates the plan folder and empty plan/feedback files, optionally with a working directory.
+/// Pre-creates the plan folder and empty plan file, optionally with a working directory.
 ///
 /// The working directory is stored in session_info.json for session listing.
+/// Note: Feedback files are created by individual reviewers during the reviewing phase.
 pub fn pre_create_plan_files_with_working_dir(
     state: &State,
     working_dir: Option<&Path>,
 ) -> anyhow::Result<()> {
     let plan_path = &state.plan_file;
-    let feedback_path = &state.feedback_file;
 
     // Create the plan folder (parent directory of plan file)
     if let Some(plan_folder) = plan_path.parent() {
@@ -61,22 +62,8 @@ pub fn pre_create_plan_files_with_working_dir(
         }
     }
 
-    // Pre-create feedback file
-    match OpenOptions::new()
-        .create_new(true)
-        .write(true)
-        .open(feedback_path)
-    {
-        Ok(_) => {}
-        Err(e) if e.kind() == ErrorKind::AlreadyExists => {}
-        Err(e) => {
-            return Err(anyhow::anyhow!(
-                "Failed to pre-create feedback file {}: {}",
-                feedback_path.display(),
-                e
-            ))
-        }
-    }
+    // Note: Individual reviewer feedback files (feedback_{iteration}_{agent_name}.md)
+    // are created by the reviewing phase, not pre-created here.
 
     // Create session_info.json for fast listing
     let default_wd = std::env::current_dir().unwrap_or_default();
@@ -303,11 +290,10 @@ mod tests {
         let result = pre_create_plan_files(&state);
         assert!(result.is_ok(), "pre_create_plan_files should succeed: {:?}", result);
 
-        // Verify files exist and are empty
+        // Verify plan file exists and is empty
         assert!(state.plan_file.exists(), "Plan file should exist at {}", state.plan_file.display());
-        assert!(state.feedback_file.exists(), "Feedback file should exist at {}", state.feedback_file.display());
         assert_eq!(fs::read_to_string(&state.plan_file).unwrap(), "");
-        assert_eq!(fs::read_to_string(&state.feedback_file).unwrap(), "");
+        // Note: Feedback files are NOT pre-created; they are created by individual reviewers
 
         // Verify session_info.json was created
         let session_info_path = planning_paths::session_info_path(&state.workflow_session_id);
@@ -324,12 +310,11 @@ mod tests {
     fn test_pre_create_plan_files_handles_already_exists() {
         let state = State::new("test-feature-exists", "Test objective", 3).unwrap();
 
-        // First, create the folder and files with content
+        // First, create the folder and plan file with content
         if let Some(parent) = state.plan_file.parent() {
             fs::create_dir_all(parent).unwrap();
         }
         fs::write(&state.plan_file, "existing plan content").unwrap();
-        fs::write(&state.feedback_file, "existing feedback content").unwrap();
 
         // Should succeed without error (AlreadyExists is handled)
         let result = pre_create_plan_files(&state);
@@ -337,7 +322,6 @@ mod tests {
 
         // Original content should be preserved (not overwritten)
         assert_eq!(fs::read_to_string(&state.plan_file).unwrap(), "existing plan content");
-        assert_eq!(fs::read_to_string(&state.feedback_file).unwrap(), "existing feedback content");
 
         // Cleanup
         if let Some(parent) = state.plan_file.parent() {
