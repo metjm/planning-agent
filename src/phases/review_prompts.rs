@@ -69,32 +69,22 @@ pub fn build_review_recovery_prompt_for_agent(
     format!(
         r###"Your review attempt failed: {failure_reason}
 
-Re-read the plan at: {plan}
-
-Then write a feedback file to: {feedback}
-
-The feedback file MUST contain these sections:
-
-## Summary
-[2-3 sentence overview]
-
-## Critical Issues
-[Blocking issues, or "None."]
-
-## Recommendations
-[Non-blocking suggestions]
-
-## Overall Assessment: APPROVED
-(or "## Overall Assessment: NEEDS REVISION")
-
 Previous output for reference:
 ---
 {previous_output}
----"###,
+---
+
+Plan file: {plan}
+Feedback output: {feedback}
+
+The feedback file MUST contain these sections:
+## Summary, ## Critical Issues, ## Recommendations, ## Overall Assessment: APPROVED (or NEEDS REVISION)
+
+Run the "plan-review" skill to complete the review."###,
         failure_reason = failure_reason,
+        previous_output = truncated_output,
         plan = plan_path_abs.display(),
         feedback = feedback_path_abs.display(),
-        previous_output = truncated_output,
     )
 }
 
@@ -198,10 +188,24 @@ mod tests {
             false,
         );
 
-        assert!(prompt.contains("## Summary"));
-        assert!(prompt.contains("## Critical Issues"));
-        assert!(prompt.contains("## Recommendations"));
-        assert!(prompt.contains("## Overall Assessment"));
+        assert!(prompt.contains("Summary"));
+        assert!(prompt.contains("Critical Issues"));
+        assert!(prompt.contains("Recommendations"));
+        assert!(prompt.contains("Overall Assessment"));
+    }
+
+    #[test]
+    fn test_build_recovery_prompt_ends_with_skill() {
+        let prompt = build_review_recovery_prompt_for_agent(
+            Path::new("/home/user/plan.md"),
+            Path::new("/home/user/feedback.md"),
+            Path::new("/home/user/.planning-agent/sessions/abc123"),
+            "Parse failure",
+            "Previous output",
+            false,
+        );
+
+        assert!(prompt.ends_with(r#"Run the "plan-review" skill to complete the review."#));
     }
 
     #[test]
