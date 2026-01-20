@@ -194,11 +194,8 @@ pub async fn run_multi_agent_review_with_context(
             let objective = objective.clone();
             let session_id = session_id.clone();
 
-            // Build the system prompt, appending custom prompt if present
-            let system_prompt = match &custom_prompt {
-                Some(custom) => format!("{}\n\n{}", REVIEW_SYSTEM_PROMPT, custom),
-                None => REVIEW_SYSTEM_PROMPT.to_string(),
-            };
+            // System prompt is minimal - skill handles details
+            let system_prompt = REVIEW_SYSTEM_PROMPT.to_string();
 
             async move {
                 sender.send_output(format!("[review:{}] Starting file-based review...", display_id));
@@ -231,7 +228,7 @@ pub async fn run_multi_agent_review_with_context(
                     }
                 };
 
-                // Build the review prompt
+                // Build the review prompt with custom focus if present
                 let review_prompt = build_review_prompt_for_agent(
                     &objective,
                     &plan_path_abs,
@@ -239,6 +236,7 @@ pub async fn run_multi_agent_review_with_context(
                     &working_dir,
                     &session_folder,
                     require_tags,
+                    custom_prompt.as_deref(),
                 );
 
                 sender.send_output(format!(
