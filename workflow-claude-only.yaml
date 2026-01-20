@@ -49,6 +49,15 @@ workflow:
   reviewing:
     agents:
       - claude
+      - agent: claude
+        id: claude-practices
+        prompt: |
+          Focus your review on repository practices and code reuse:
+          - Does the plan follow existing patterns and conventions in the codebase?
+          - Are there existing utilities, helpers, or abstractions that should be reused?
+          - Does the plan introduce unnecessary code duplication?
+          - Are new abstractions justified, or should existing ones be extended?
+          - Does the proposed structure align with the project's module organization?
     aggregation: any_rejects
 
   # Note: Revision phase uses the planning agent automatically.
