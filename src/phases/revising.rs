@@ -61,6 +61,7 @@ pub async fn run_revision_phase_with_context(
         working_dir,
         &session_folder,
         session_resume_active,
+        iteration,
     );
 
     let phase_name = format!("Revising #{}", iteration);
@@ -113,14 +114,54 @@ fn build_revision_prompt_with_reviews(
     working_dir: &Path,
     session_folder: &Path,
     session_resume_active: bool,
+    iteration: u32,
 ) -> String {
-    let merged_feedback = reviews
-        .iter()
-        .map(|r| format!("## {} Review\n\n{}", r.agent_name.to_uppercase(), r.feedback))
-        .collect::<Vec<_>>()
-        .join("\n\n---\n\n");
-
     let plan_path = state.plan_file.display().to_string();
+
+    // Build summary table
+    let mut summary_table = String::from("| Reviewer | Verdict | Summary |\n|----------|---------|---------|");
+    for review in reviews {
+        let verdict = if review.needs_revision {
+            "NEEDS REVISION"
+        } else {
+            "APPROVED"
+        };
+        summary_table.push_str(&format!(
+            "\n| {} | {} | {} |",
+            review.agent_name, verdict, review.summary
+        ));
+    }
+
+    // Build feedback file paths lists
+    let (needs_revision_reviews, approved_reviews): (Vec<_>, Vec<_>) =
+        reviews.iter().partition(|r| r.needs_revision);
+
+    let mut feedback_files = String::new();
+
+    if !needs_revision_reviews.is_empty() {
+        feedback_files.push_str("Read the detailed feedback from each reviewer who requested revision:");
+        for review in &needs_revision_reviews {
+            let feedback_path = session_folder.join(format!(
+                "feedback_{}_{}.md",
+                iteration, review.agent_name
+            ));
+            feedback_files.push_str(&format!("\n- {}: {}", review.agent_name, feedback_path.display()));
+        }
+    }
+
+    if !approved_reviews.is_empty() {
+        if !feedback_files.is_empty() {
+            feedback_files.push_str("\n\n");
+        }
+        feedback_files.push_str("Reviewers who approved (no action needed):");
+        for review in &approved_reviews {
+            let feedback_path = session_folder.join(format!(
+                "feedback_{}_{}.md",
+                iteration, review.agent_name
+            ));
+            feedback_files.push_str(&format!("\n- {}: {}", review.agent_name, feedback_path.display()));
+        }
+    }
 
     if session_resume_active {
         // Continuation prompt - leverages existing session context
@@ -131,10 +172,13 @@ fn build_revision_prompt_with_reviews(
              IMPORTANT: Do not add timelines, schedules, dates, durations, or time estimates \
              (e.g., \"in two weeks\", \"Sprint 1\", \"Q1 delivery\").\n\n\
              You may create supplementary files in the session folder: {}\n\n\
-             # Reviewer Feedback\n\n{}",
+             # Review Summary\n\n{}\n\n\
+             # Feedback Files\n\n{}\n\n\
+             Please address all issues raised by reviewers who requested revision.",
             plan_path,
             session_folder.display(),
-            merged_feedback
+            summary_table,
+            feedback_files
         )
     } else {
         // Full context prompt - for fresh sessions (Codex, Gemini, or session persistence disabled)
@@ -147,16 +191,19 @@ IMPORTANT: Update the plan file at: {}"#,
             plan_path
         );
 
+        let context = format!(
+            "# Review Summary\n\n{}\n\n# Feedback Files\n\n{}\n\n\
+             Please address all issues raised by reviewers who requested revision.",
+            summary_table, feedback_files
+        );
+
         PromptBuilder::new()
             .phase("revising")
             .instructions(&instructions)
             .input("workspace-root", &working_dir.display().to_string())
             .input("plan-output-path", &plan_path)
             .input("session-folder-path", &session_folder.display().to_string())
-            .context(&format!(
-                "# Consolidated Reviewer Feedback\n\n{}",
-                merged_feedback
-            ))
+            .context(&context)
             .constraint("Use absolute paths for all file references in the revised plan")
             .build()
     }
@@ -197,7 +244,7 @@ mod tests {
 
         // Test with session_resume_active = false (full context prompt)
         let prompt =
-            build_revision_prompt_with_reviews(&state, &reviews, working_dir, session_folder, false);
+            build_revision_prompt_with_reviews(&state, &reviews, working_dir, session_folder, false, 1);
 
         eprintln!("Generated revision prompt:\n{}", prompt);
 
@@ -223,17 +270,19 @@ mod tests {
 
         // Test with session_resume_active = false (full context prompt)
         let prompt =
-            build_revision_prompt_with_reviews(&state, &reviews, working_dir, session_folder, false);
+            build_revision_prompt_with_reviews(&state, &reviews, working_dir, session_folder, false, 1);
 
         // Check XML structure
         assert!(prompt.starts_with("<user-prompt>"));
         assert!(prompt.ends_with("</user-prompt>"));
         assert!(prompt.contains("<phase>revising</phase>"));
-        // Check feedback content is present
-        assert!(prompt.contains("CLAUDE Review"));
-        assert!(prompt.contains("CODEX Review"));
-        assert!(prompt.contains("Issue 1: Missing tests"));
-        assert!(prompt.contains("Issue 2: Unclear architecture"));
+        // Check summary table is present
+        assert!(prompt.contains("| Reviewer | Verdict | Summary |"));
+        assert!(prompt.contains("| claude | NEEDS REVISION | Missing test coverage |"));
+        assert!(prompt.contains("| codex | NEEDS REVISION | Architecture needs clarification |"));
+        // Check feedback file paths are present
+        assert!(prompt.contains("feedback_1_claude.md"));
+        assert!(prompt.contains("feedback_1_codex.md"));
         // Check inputs
         assert!(prompt.contains("<workspace-root>/workspaces/myproject</workspace-root>"));
         // Check constraints
@@ -251,7 +300,7 @@ mod tests {
 
         // Test with session_resume_active = true (simplified continuation prompt)
         let prompt =
-            build_revision_prompt_with_reviews(&state, &reviews, working_dir, session_folder, true);
+            build_revision_prompt_with_reviews(&state, &reviews, working_dir, session_folder, true, 1);
 
         // Should NOT be XML structured
         assert!(!prompt.starts_with("<user-prompt>"));
@@ -261,11 +310,14 @@ mod tests {
         assert!(prompt.contains("The reviewers have provided feedback"));
         assert!(prompt.contains("Please revise the plan"));
 
-        // Should still contain the feedback
-        assert!(prompt.contains("CLAUDE Review"));
-        assert!(prompt.contains("CODEX Review"));
-        assert!(prompt.contains("Issue 1: Missing tests"));
-        assert!(prompt.contains("Issue 2: Unclear architecture"));
+        // Check summary table is present
+        assert!(prompt.contains("| Reviewer | Verdict | Summary |"));
+        assert!(prompt.contains("| claude | NEEDS REVISION | Missing test coverage |"));
+        assert!(prompt.contains("| codex | NEEDS REVISION | Architecture needs clarification |"));
+
+        // Check feedback file paths are present
+        assert!(prompt.contains("feedback_1_claude.md"));
+        assert!(prompt.contains("feedback_1_codex.md"));
 
         // Should reference the plan file
         assert!(prompt.contains("plan.md"));
@@ -294,7 +346,7 @@ mod tests {
 
         // Test with session_resume_active = true (simplified continuation prompt)
         let prompt =
-            build_revision_prompt_with_reviews(&state, &reviews, working_dir, session_folder, true);
+            build_revision_prompt_with_reviews(&state, &reviews, working_dir, session_folder, true, 1);
 
         assert!(
             prompt.contains("Do not add timelines"),
@@ -313,7 +365,7 @@ mod tests {
 
         // Test with session_resume_active = false (full context prompt)
         let prompt =
-            build_revision_prompt_with_reviews(&state, &reviews, working_dir, session_folder, false);
+            build_revision_prompt_with_reviews(&state, &reviews, working_dir, session_folder, false, 1);
 
         assert!(
             prompt.contains("DO NOT include timelines"),
@@ -331,7 +383,7 @@ mod tests {
         let session_folder = Path::new("/home/user/.planning-agent/sessions/abc123");
 
         let prompt =
-            build_revision_prompt_with_reviews(&state, &reviews, working_dir, session_folder, false);
+            build_revision_prompt_with_reviews(&state, &reviews, working_dir, session_folder, false, 1);
 
         assert!(prompt.contains("<session-folder-path>"));
         assert!(prompt.contains("/home/user/.planning-agent/sessions/abc123"));
@@ -347,7 +399,7 @@ mod tests {
         let session_folder = Path::new("/home/user/.planning-agent/sessions/abc123");
 
         let prompt =
-            build_revision_prompt_with_reviews(&state, &reviews, working_dir, session_folder, true);
+            build_revision_prompt_with_reviews(&state, &reviews, working_dir, session_folder, true, 1);
 
         assert!(prompt.contains("session folder"));
         assert!(prompt.contains("/home/user/.planning-agent/sessions/abc123"));

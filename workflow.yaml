@@ -97,7 +97,7 @@ claude_mode:
           - Are new abstractions justified, or should existing ones be extended?
           - Does the proposed structure align with the project's module organization?
       - agent: claude
-        id: claude-practices
+        id: claude-completeness
         prompt: |
           Focus your review on completeness:
           - Does the plan cover every single requirement from the task description?
