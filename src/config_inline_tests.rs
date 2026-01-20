@@ -421,3 +421,66 @@ implementation:
     assert!(err.contains("feedback files are named"),
         "Error should explain why duplicates are problematic: {}", err);
 }
+
+#[test]
+fn test_validation_empty_agent_command() {
+    let yaml = r#"
+agents:
+  claude:
+    command: ""
+    args: ["-p"]
+
+workflow:
+  planning:
+    agent: claude
+  reviewing:
+    agents: [claude]
+"#;
+    let config: WorkflowConfig = serde_yaml::from_str(yaml).unwrap();
+    let result = config.validate();
+    assert!(result.is_err(), "Config with empty agent command should fail validation");
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("empty command"),
+        "Error should mention empty command: {}", err);
+}
+
+#[test]
+fn test_validation_whitespace_only_command() {
+    let yaml = r#"
+agents:
+  claude:
+    command: "   "
+    args: ["-p"]
+
+workflow:
+  planning:
+    agent: claude
+  reviewing:
+    agents: [claude]
+"#;
+    let config: WorkflowConfig = serde_yaml::from_str(yaml).unwrap();
+    let result = config.validate();
+    assert!(result.is_err(), "Config with whitespace-only command should fail validation");
+}
+
+#[test]
+fn test_validation_zero_max_turns() {
+    let yaml = r#"
+agents:
+  claude:
+    command: "claude"
+
+workflow:
+  planning:
+    agent: claude
+    max_turns: 0
+  reviewing:
+    agents: [claude]
+"#;
+    let config: WorkflowConfig = serde_yaml::from_str(yaml).unwrap();
+    let result = config.validate();
+    assert!(result.is_err(), "Config with zero max_turns should fail validation");
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("max_turns=0"),
+        "Error should mention max_turns=0: {}", err);
+}

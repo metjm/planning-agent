@@ -450,6 +450,25 @@ impl WorkflowConfig {
     }
 
     fn validate(&self) -> Result<()> {
+        // Validate all agent configs have non-empty commands
+        for (name, config) in &self.agents {
+            if config.command.trim().is_empty() {
+                anyhow::bail!(
+                    "Agent '{}' has an empty command. Each agent must specify a valid command.",
+                    name
+                );
+            }
+        }
+
+        // Validate max_turns is not zero (which would prevent any work)
+        if let Some(max_turns) = self.workflow.planning.max_turns {
+            if max_turns == 0 {
+                anyhow::bail!(
+                    "Planning phase has max_turns=0, which would prevent any work. \
+                     Either remove max_turns to use the default, or set a positive value."
+                );
+            }
+        }
 
         if !self.agents.contains_key(&self.workflow.planning.agent) {
             anyhow::bail!(

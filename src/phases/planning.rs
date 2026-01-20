@@ -10,18 +10,8 @@ use anyhow::Result;
 use std::path::Path;
 use std::sync::Arc;
 
-const PLANNING_SYSTEM_PROMPT: &str = r#"You are a technical planning agent.
-Create a detailed implementation plan for the given objective.
-Use the available tools to read the codebase and understand the existing structure.
-
-When replacing or refactoring functionality, your plan must remove the old code entirely—no backward compatibility shims, re-exports, or conversion methods are allowed.
-
-DO NOT include timelines, schedules, dates, durations, or time estimates in plans.
-Examples to reject: "in two weeks", "Phase 1: Week 1-2", "Q1 delivery", "Sprint 1", "by end of day".
-
-Use the "planning" skill to create the plan.
-Before finalizing your plan, perform a self-review against the "plan-review" skill criteria, so you can be confident that it will pass review.
-Your plan should be structured to pass review without requiring revision cycles."#;
+/// System prompt for planning phase - simple instruction to use the planning skill.
+pub const PLANNING_SYSTEM_PROMPT: &str = r#"Use the "planning" skill to create the plan. Write your plan to the plan-output-path file."#;
 
 pub async fn run_planning_phase_with_context(
     state: &mut State,
@@ -116,33 +106,14 @@ fn build_planning_prompt(state: &State, working_dir: &Path) -> String {
                 .unwrap_or_default()
         });
 
-    let instructions = format!(
-        r#"Create a detailed implementation plan for the given objective.
-
-Requirements:
-1. Analyze the existing codebase to understand the current architecture
-2. Identify all files that need to be modified or created (use absolute paths)
-3. Break down the implementation into clear, actionable steps
-4. Consider edge cases and potential issues
-5. Include a testing strategy
-6. When replacing functionality, remove old code entirely—update all callers and do not add backward-compatibility shims or re-exports
-7. DO NOT include timelines, schedules, dates, durations, or time estimates (e.g., "in two weeks", "Sprint 1", "Q1 delivery")
-
-IMPORTANT: Write the final plan to this file: {}
-You may create supplementary files (extended examples, schemas, etc.) in the session folder: {}"#,
-        plan_path, session_folder
-    );
-
     let mut builder = PromptBuilder::new()
         .phase("planning")
-        .instructions(&instructions)
+        .instructions(r#"Use the "planning" skill to create the plan. Write your plan to the plan-output-path file."#)
         .input("workspace-root", &working_dir.display().to_string())
         .input("feature-name", &state.feature_name)
         .input("objective", &state.objective)
         .input("plan-output-path", &plan_path)
-        .input("session-folder-path", &session_folder)
-        .constraint("Use absolute paths for all file references in your plan")
-        .tools("Use the Read, Glob, and Grep tools to explore the codebase as needed.");
+        .input("session-folder-path", &session_folder);
 
     // Add worktree context if applicable
     if let Some(ref wt_state) = state.worktree_info {
@@ -153,8 +124,6 @@ You may create supplementary files (extended examples, schemas, etc.) in the ses
         if let Some(ref source) = wt_state.source_branch {
             builder = builder.input("source-branch", source);
         }
-        builder = builder
-            .constraint("All file operations should be performed in the worktree directory, not the original directory.");
     }
 
     builder.build()
@@ -190,26 +159,14 @@ mod tests {
     }
 
     #[test]
-    fn planning_prompt_includes_no_backward_compatibility_directive() {
+    fn planning_system_prompt_references_skill() {
         assert!(
-            PLANNING_SYSTEM_PROMPT.contains("no backward compatibility"),
-            "PLANNING_SYSTEM_PROMPT should contain 'no backward compatibility'"
-        );
-    }
-
-    #[test]
-    fn build_planning_prompt_includes_deletion_requirement() {
-        let state = minimal_state();
-        let working_dir = PathBuf::from("/tmp/workspace");
-        let prompt = build_planning_prompt(&state, &working_dir);
-
-        assert!(
-            prompt.contains("remove old code entirely"),
-            "Planning prompt should contain 'remove old code entirely'"
+            PLANNING_SYSTEM_PROMPT.contains("planning"),
+            "PLANNING_SYSTEM_PROMPT should reference the planning skill"
         );
         assert!(
-            prompt.contains("backward-compatibility shims"),
-            "Planning prompt should contain 'backward-compatibility shims'"
+            PLANNING_SYSTEM_PROMPT.contains("plan-output-path"),
+            "PLANNING_SYSTEM_PROMPT should reference plan-output-path"
         );
     }
 
@@ -219,9 +176,6 @@ mod tests {
         let working_dir = PathBuf::from("/tmp/workspace");
         let prompt = build_planning_prompt(&state, &working_dir);
 
-        // Print for debugging
-        eprintln!("Generated prompt:\n{}", prompt);
-
         assert!(
             prompt.contains("<plan-output-path>"),
             "Planning prompt should contain <plan-output-path> tag"
@@ -229,30 +183,6 @@ mod tests {
         assert!(
             prompt.contains("/tmp/test-plan.md"),
             "Planning prompt should contain the plan file path"
-        );
-    }
-
-    #[test]
-    fn planning_system_prompt_contains_no_timeline_directive() {
-        assert!(
-            PLANNING_SYSTEM_PROMPT.contains("DO NOT include timelines"),
-            "PLANNING_SYSTEM_PROMPT must contain the no-timeline directive"
-        );
-        assert!(
-            PLANNING_SYSTEM_PROMPT.contains("in two weeks"),
-            "PLANNING_SYSTEM_PROMPT must contain example phrase 'in two weeks'"
-        );
-    }
-
-    #[test]
-    fn build_planning_prompt_contains_no_timeline_directive() {
-        let state = minimal_state();
-        let working_dir = PathBuf::from("/tmp/workspace");
-        let prompt = build_planning_prompt(&state, &working_dir);
-
-        assert!(
-            prompt.contains("DO NOT include timelines"),
-            "Planning prompt must contain the no-timeline directive"
         );
     }
 
@@ -266,13 +196,49 @@ mod tests {
             prompt.contains("<session-folder-path>"),
             "Planning prompt should contain <session-folder-path> tag"
         );
+    }
+
+    #[test]
+    fn build_planning_prompt_includes_workspace_root() {
+        let state = minimal_state();
+        let working_dir = PathBuf::from("/tmp/workspace");
+        let prompt = build_planning_prompt(&state, &working_dir);
+
         assert!(
-            prompt.contains("session folder"),
-            "Planning prompt should mention session folder in instructions"
+            prompt.contains("<workspace-root>"),
+            "Planning prompt should contain <workspace-root> tag"
         );
         assert!(
-            prompt.contains("supplementary files"),
-            "Planning prompt should mention supplementary files"
+            prompt.contains("/tmp/workspace"),
+            "Planning prompt should contain the workspace path"
+        );
+    }
+
+    #[test]
+    fn build_planning_prompt_includes_objective() {
+        let state = minimal_state();
+        let working_dir = PathBuf::from("/tmp/workspace");
+        let prompt = build_planning_prompt(&state, &working_dir);
+
+        assert!(
+            prompt.contains("<objective>"),
+            "Planning prompt should contain <objective> tag"
+        );
+        assert!(
+            prompt.contains("Test objective"),
+            "Planning prompt should contain the objective"
+        );
+    }
+
+    #[test]
+    fn build_planning_prompt_references_skill() {
+        let state = minimal_state();
+        let working_dir = PathBuf::from("/tmp/workspace");
+        let prompt = build_planning_prompt(&state, &working_dir);
+
+        assert!(
+            prompt.contains("planning"),
+            "Planning prompt should reference the planning skill"
         );
     }
 }

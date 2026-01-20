@@ -656,6 +656,17 @@ fn feedback_path_for_agent(
         .join(format!("{}_{}.{}", stem, agent_name, ext))
 }
 
+/// Write content to a file atomically using temp-file-then-rename pattern.
+/// This prevents data corruption if the process crashes during write.
+fn write_atomic(path: &Path, content: &str) -> Result<()> {
+    let temp_path = path.with_extension("tmp");
+    fs::write(&temp_path, content)
+        .map_err(|e| anyhow::anyhow!("Failed to write temp file {}: {}", temp_path.display(), e))?;
+    fs::rename(&temp_path, path)
+        .map_err(|e| anyhow::anyhow!("Failed to rename {} to {}: {}", temp_path.display(), path.display(), e))?;
+    Ok(())
+}
+
 pub fn write_feedback_files(
     reviews: &[ReviewResult],
     base_feedback_path: &Path,
@@ -665,7 +676,7 @@ pub fn write_feedback_files(
     for review in reviews {
         let feedback_path =
             feedback_path_for_agent(base_feedback_path, &review.agent_name, reviews.len());
-        std::fs::write(&feedback_path, &review.feedback)?;
+        write_atomic(&feedback_path, &review.feedback)?;
         paths.push(feedback_path);
     }
 
@@ -695,8 +706,7 @@ pub fn merge_feedback(reviews: &[ReviewResult], output_path: &Path) -> Result<()
             .join(", ")
     );
 
-    std::fs::write(output_path, format!("{}{}", header, merged))?;
-    Ok(())
+    write_atomic(output_path, &format!("{}{}", header, merged))
 }
 
 #[cfg(test)]
