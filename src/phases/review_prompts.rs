@@ -8,16 +8,7 @@ use crate::prompt_format::PromptBuilder;
 use std::path::Path;
 
 /// System prompt for file-based review
-pub const REVIEW_SYSTEM_PROMPT: &str = r#"You are a technical plan reviewer.
-Review the plan for correctness, completeness, and technical accuracy.
-Use the "plan-review" skill to review.
-IMPORTANT: Use absolute paths for all file references in your feedback.
-
-CRITICAL: You MUST:
-1. Read the plan from the plan-path input
-2. Write your complete review to the feedback-output-path file
-3. Your review MUST include an "Overall Assessment: APPROVED" or "Overall Assessment: NEEDS REVISION"
-"#;
+pub const REVIEW_SYSTEM_PROMPT: &str = r#"Use the "plan-review" skill to review the plan. Write your review to the feedback-output-path file."#;
 
 /// Build the review prompt that instructs the agent to read the plan and write feedback to a file.
 /// This is the primary prompt builder for initial review attempts.
@@ -71,27 +62,12 @@ Your review will ONLY be read from the feedback-output-path file. Do NOT rely on
 
     PromptBuilder::new()
         .phase("reviewing")
-        .instructions(r#"Review the implementation plan for technical correctness and completeness.
-
-Follow these steps:
-1. Read the plan from the plan-path input
-2. Analyze the plan for technical correctness, completeness, and feasibility
-3. You may read codebase files to verify the plan's technical claims
-4. Write your complete review to the feedback-output-path file
-
-Your review must include:
-- A summary of the plan quality
-- Any critical issues that must be fixed
-- Recommendations for improvement
-- An Overall Assessment verdict: APPROVED or NEEDS REVISION"#)
+        .instructions(r#"Use the "plan-review" skill to review the plan. Write your review to the feedback-output-path file."#)
         .input("workspace-root", &working_dir.display().to_string())
         .input("objective", objective)
         .input("plan-path", &plan_path_abs.display().to_string())
         .input("feedback-output-path", &feedback_path_abs.display().to_string())
         .input("session-folder-path", &session_folder_abs.display().to_string())
-        .constraint("Use absolute paths for all file references in your feedback")
-        .constraint("You MUST write your review to the feedback-output-path file")
-        .constraint("Your review MUST include 'Overall Assessment: APPROVED' or 'Overall Assessment: NEEDS REVISION'")
         .output_format(output_format)
         .build()
 }
@@ -202,7 +178,7 @@ mod tests {
     }
 
     #[test]
-    fn test_build_review_prompt_requires_file_write() {
+    fn test_build_review_prompt_requires_skill_and_file() {
         let prompt = build_review_prompt_for_agent(
             "Implement feature X",
             Path::new("/home/user/plan.md"),
@@ -212,8 +188,8 @@ mod tests {
             false,
         );
 
-        assert!(prompt.contains("MUST write your review to the feedback-output-path"));
-        assert!(prompt.contains("Overall Assessment"));
+        assert!(prompt.contains("plan-review"));
+        assert!(prompt.contains("feedback-output-path"));
     }
 
     #[test]
@@ -299,9 +275,8 @@ mod tests {
 
     #[test]
     fn test_review_system_prompt_file_based() {
-        assert!(REVIEW_SYSTEM_PROMPT.contains("plan-path"));
+        assert!(REVIEW_SYSTEM_PROMPT.contains("plan-review"));
         assert!(REVIEW_SYSTEM_PROMPT.contains("feedback-output-path"));
-        assert!(REVIEW_SYSTEM_PROMPT.contains("Overall Assessment"));
     }
 
     #[test]
