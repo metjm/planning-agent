@@ -42,6 +42,45 @@ For EVERY library, function, or API mentioned in the plan:
 
 **Never trust the plan's claims about libraries - always verify independently.**
 
+## Precision Requirements Verification (CRITICAL)
+
+Plans must be precise. Vague plans lead to implementation errors. REJECT any plan missing these elements.
+
+### Code Example Check
+
+**REJECT any plan that proposes new functionality without code examples.**
+
+For each new function, method, type, or component, verify:
+- [ ] A code example is provided (10-30 lines minimum)
+- [ ] The example shows the actual signature and key logic
+- [ ] The example uses the project's real types and patterns
+- [ ] The example specifies the file path and location
+
+**Red flags requiring rejection:**
+- "Add a function that does X" without showing the function
+- "Implement Y algorithm" without showing the algorithm
+- "Create a new type for Z" without showing the type definition
+- "Integrate with W" without showing the integration code
+
+### Formula Check
+
+**REJECT any plan involving calculations without mathematical formulas.**
+
+For each calculation or algorithm, verify:
+- [ ] The formula is explicitly stated
+- [ ] Variables are defined with types
+- [ ] An example calculation with concrete numbers is provided
+
+### Library/API Example Check
+
+**REJECT any plan using libraries or APIs without verified usage examples.**
+
+For each library or API, verify:
+- [ ] The exact import statement is shown
+- [ ] A working code example demonstrates actual usage
+- [ ] Input and expected output are concrete, not described
+- [ ] The library method was verified to exist
+
 ## Code Quality Verification (CRITICAL)
 
 When reviewing any plan, strictly verify these non-negotiable requirements:
@@ -335,6 +374,26 @@ Write feedback to the `feedback-output-path` file in this structure:
 | [Risk 1] | [High/Medium/Low] | [Explanation] |
 | [Risk 2] | [High/Medium/Low] | [Explanation] |
 
+### Precision Requirements
+
+**Status:** [COMPLIANT / VIOLATIONS FOUND]
+
+**Code Examples Review:**
+| Proposed Feature | Code Example Provided? | Assessment |
+|------------------|------------------------|------------|
+| [New function X] | YES/NO | ADEQUATE / MISSING / INSUFFICIENT |
+| [New type Y] | YES/NO | ADEQUATE / MISSING / INSUFFICIENT |
+
+**Formula Review:**
+| Calculation | Formula Provided? | Variables Defined? | Example Given? | Assessment |
+|-------------|-------------------|--------------------| ---------------|------------|
+| [Calc name] | YES/NO | YES/NO | YES/NO | ADEQUATE / MISSING |
+
+**Library/API Usage Review:**
+| Library/API | Import Shown? | Working Example? | Verified? | Assessment |
+|-------------|---------------|------------------|-----------|------------|
+| [Library X] | YES/NO | YES/NO | YES/NO | ADEQUATE / MISSING |
+
 ### Code Quality Principles
 
 **Status:** [COMPLIANT / VIOLATIONS FOUND]
@@ -452,6 +511,9 @@ Use this **only** when:
 - **The plan leaves backwards-compatibility code** - all callers must be updated
 - **The plan misses linter rules** - issues preventable by static analysis need rules proposed
 - **The plan includes timelines, schedules, dates, durations, or time estimates** - plans must focus on technical scope only (reject phrases like "in two weeks", "Sprint 1", "Q1 delivery", "2-3 days")
+- **The plan proposes new functions/types without code examples** - see Precision Requirements
+- **The plan involves calculations without mathematical formulas** - formulas with variables and example calculations required
+- **The plan uses libraries/APIs without verified working examples** - imports and concrete input/output required
 - The plan fundamentally won't work (e.g., relies on APIs that don't exist, logic errors)
 - There's a clearly superior alternative that would significantly improve the outcome
 - Critical steps are missing that would cause implementation to fail

@@ -32,6 +32,96 @@ When referencing existing code as a pattern to copy or mirror:
 
 **"Code exists" ≠ "Code works". Always verify existing patterns function correctly before proposing to replicate them.**
 
+## Precision Requirements (CRITICAL)
+
+Plans must be precise and actionable. Vague descriptions lead to implementation errors.
+
+### Code Examples Required
+
+For ANY new functionality, the plan MUST include a code example showing:
+- The function/method signature
+- Key implementation logic (not full implementation, but the critical parts)
+- How it integrates with existing code
+
+**Template for code examples:**
+
+```[language]
+// File: /absolute/path/to/file.ext
+// Location: After line N / Replace lines X-Y / New file
+
+[code example - 10-30 lines showing the key implementation pattern]
+```
+
+**When code examples are required:**
+- Adding a new function/method
+- Modifying an existing function's behavior
+- Adding a new data structure or type
+- Implementing an algorithm
+- Integrating with external systems
+
+### Mathematical Formulas Required
+
+For ANY calculation or algorithm, the plan MUST include:
+- The mathematical formula in clear notation
+- Variable definitions
+- Example calculation with concrete numbers
+
+**Template for formulas:**
+
+```
+Formula: [name]
+  [formula using standard notation]
+
+Variables:
+  - x: [description and type]
+  - y: [description and type]
+
+Example:
+  Given x = 5, y = 10:
+  Result = [calculation] = [concrete answer]
+```
+
+**When formulas are required:**
+- Any numerical calculation
+- Algorithms with mathematical basis
+- Performance calculations (complexity, throughput, etc.)
+- Financial calculations
+- Statistical operations
+
+### Library/API Examples Required
+
+For ANY library or API usage, the plan MUST include:
+- The exact import/require statement
+- A working code example showing actual usage
+- Expected input/output with concrete values
+
+**Template for library usage:**
+
+```[language]
+// Library: [name]@[version]
+// Verified at: [file path or documentation URL]
+
+import { specific, functions } from 'library';
+
+// Example usage:
+const input = { /* concrete example */ };
+const result = specific(input);
+// Expected output: { /* concrete result */ }
+```
+
+### Supplementary Files
+
+You may create supplementary files in the session folder for:
+- Extended code examples too large for inline inclusion
+- Data schemas or type definitions
+- Configuration file examples
+- Test data fixtures
+
+Use the `session-folder-path` input to determine where to place these files.
+Name files descriptively: `example_[feature].[ext]`, `schema_[name].json`, etc.
+
+Reference supplementary files in the plan using absolute paths.
+
 ## Code Quality Principles (CRITICAL)
 
 ### No Mocking - Ever
@@ -231,6 +321,9 @@ Write the plan to the `plan-output-path` provided in the inputs. The plan should
 - **ALWAYS propose linter rules** when the issue being addressed is preventable by static analysis
 - **DO NOT include timelines, schedules, dates, durations, or time estimates in plans.**
   Examples to reject: "in two weeks", "Phase 1: Week 1-2", "Q1 delivery", "Sprint 1", "by end of day".
+- **ALWAYS include code examples** for new functions, types, and algorithms (see Precision Requirements)
+- **ALWAYS include mathematical formulas** for calculations with variable definitions and example calculations
+- **ALWAYS include working library/API examples** with imports and concrete input/output
 
 ## Output Format
 
@@ -272,6 +365,21 @@ Write the plan to the `plan-output-path` provided in the inputs. Use this struct
 ### Alternative Approaches Considered
 1. [Alternative 1]: [Pros/cons]
 2. [Alternative 2]: [Pros/cons]
+
+## Code Examples
+
+[Include concrete code examples for all new functionality - see Precision Requirements section]
+
+### [Feature/Component Name]
+```[language]
+// File: /absolute/path/to/file.ext
+// Location: After line N / Replace lines X-Y / New file
+
+[10-30 lines of key implementation code]
+```
+
+### [Another Feature if applicable]
+...
 
 ## Implementation Steps
 

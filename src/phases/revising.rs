@@ -2,6 +2,7 @@ use crate::agents::{AgentContext, AgentType};
 use crate::config::WorkflowConfig;
 use crate::phases::planning_conversation_key;
 use crate::phases::ReviewResult;
+use crate::planning_paths;
 use crate::prompt_format::PromptBuilder;
 use crate::session_logger::SessionLogger;
 use crate::state::{ResumeStrategy, State};
@@ -51,7 +52,16 @@ pub async fn run_revision_phase_with_context(
         if session_resume_active { " (session resume)" } else { "" }
     ));
 
-    let prompt = build_revision_prompt_with_reviews(state, reviews, working_dir, session_resume_active);
+    // Compute session folder for supplementary file access
+    let session_folder = planning_paths::session_dir(&state.workflow_session_id)?;
+
+    let prompt = build_revision_prompt_with_reviews(
+        state,
+        reviews,
+        working_dir,
+        &session_folder,
+        session_resume_active,
+    );
 
     let phase_name = format!("Revising #{}", iteration);
     // Revision always uses ConversationResume to continue the planning conversation.
@@ -101,6 +111,7 @@ fn build_revision_prompt_with_reviews(
     state: &State,
     reviews: &[ReviewResult],
     working_dir: &Path,
+    session_folder: &Path,
     session_resume_active: bool,
 ) -> String {
     let merged_feedback = reviews
@@ -119,8 +130,10 @@ fn build_revision_prompt_with_reviews(
              Please revise the plan at {} to address all issues raised.\n\n\
              IMPORTANT: Do not add timelines, schedules, dates, durations, or time estimates \
              (e.g., \"in two weeks\", \"Sprint 1\", \"Q1 delivery\").\n\n\
+             You may create supplementary files in the session folder: {}\n\n\
              # Reviewer Feedback\n\n{}",
             plan_path,
+            session_folder.display(),
             merged_feedback
         )
     } else {
@@ -139,7 +152,11 @@ IMPORTANT: Update the plan file at: {}"#,
             .instructions(&instructions)
             .input("workspace-root", &working_dir.display().to_string())
             .input("plan-output-path", &plan_path)
-            .context(&format!("# Consolidated Reviewer Feedback\n\n{}", merged_feedback))
+            .input("session-folder-path", &session_folder.display().to_string())
+            .context(&format!(
+                "# Consolidated Reviewer Feedback\n\n{}",
+                merged_feedback
+            ))
             .constraint("Use absolute paths for all file references in the revised plan")
             .build()
     }
@@ -176,9 +193,11 @@ mod tests {
 
         let reviews = test_reviews();
         let working_dir = std::path::Path::new("/workspaces/myproject");
+        let session_folder = Path::new("/home/user/.planning-agent/sessions/abc123");
 
         // Test with session_resume_active = false (full context prompt)
-        let prompt = build_revision_prompt_with_reviews(&state, &reviews, working_dir, false);
+        let prompt =
+            build_revision_prompt_with_reviews(&state, &reviews, working_dir, session_folder, false);
 
         eprintln!("Generated revision prompt:\n{}", prompt);
 
@@ -200,9 +219,11 @@ mod tests {
 
         let reviews = test_reviews();
         let working_dir = Path::new("/workspaces/myproject");
+        let session_folder = Path::new("/home/user/.planning-agent/sessions/abc123");
 
         // Test with session_resume_active = false (full context prompt)
-        let prompt = build_revision_prompt_with_reviews(&state, &reviews, working_dir, false);
+        let prompt =
+            build_revision_prompt_with_reviews(&state, &reviews, working_dir, session_folder, false);
 
         // Check XML structure
         assert!(prompt.starts_with("<user-prompt>"));
@@ -226,9 +247,11 @@ mod tests {
 
         let reviews = test_reviews();
         let working_dir = Path::new("/workspaces/myproject");
+        let session_folder = Path::new("/home/user/.planning-agent/sessions/abc123");
 
         // Test with session_resume_active = true (simplified continuation prompt)
-        let prompt = build_revision_prompt_with_reviews(&state, &reviews, working_dir, true);
+        let prompt =
+            build_revision_prompt_with_reviews(&state, &reviews, working_dir, session_folder, true);
 
         // Should NOT be XML structured
         assert!(!prompt.starts_with("<user-prompt>"));
@@ -267,9 +290,11 @@ mod tests {
 
         let reviews = test_reviews();
         let working_dir = Path::new("/workspaces/myproject");
+        let session_folder = Path::new("/home/user/.planning-agent/sessions/abc123");
 
         // Test with session_resume_active = true (simplified continuation prompt)
-        let prompt = build_revision_prompt_with_reviews(&state, &reviews, working_dir, true);
+        let prompt =
+            build_revision_prompt_with_reviews(&state, &reviews, working_dir, session_folder, true);
 
         assert!(
             prompt.contains("Do not add timelines"),
@@ -284,13 +309,47 @@ mod tests {
 
         let reviews = test_reviews();
         let working_dir = Path::new("/workspaces/myproject");
+        let session_folder = Path::new("/home/user/.planning-agent/sessions/abc123");
 
         // Test with session_resume_active = false (full context prompt)
-        let prompt = build_revision_prompt_with_reviews(&state, &reviews, working_dir, false);
+        let prompt =
+            build_revision_prompt_with_reviews(&state, &reviews, working_dir, session_folder, false);
 
         assert!(
             prompt.contains("DO NOT include timelines"),
             "Full context prompt must contain the no-timeline directive"
         );
+    }
+
+    #[test]
+    fn test_revision_prompt_includes_session_folder_full_context() {
+        let mut state = State::new("test", "test objective", 3).unwrap();
+        state.phase = Phase::Revising;
+
+        let reviews = test_reviews();
+        let working_dir = Path::new("/workspaces/myproject");
+        let session_folder = Path::new("/home/user/.planning-agent/sessions/abc123");
+
+        let prompt =
+            build_revision_prompt_with_reviews(&state, &reviews, working_dir, session_folder, false);
+
+        assert!(prompt.contains("<session-folder-path>"));
+        assert!(prompt.contains("/home/user/.planning-agent/sessions/abc123"));
+    }
+
+    #[test]
+    fn test_revision_prompt_includes_session_folder_session_resume() {
+        let mut state = State::new("test", "test objective", 3).unwrap();
+        state.phase = Phase::Revising;
+
+        let reviews = test_reviews();
+        let working_dir = Path::new("/workspaces/myproject");
+        let session_folder = Path::new("/home/user/.planning-agent/sessions/abc123");
+
+        let prompt =
+            build_revision_prompt_with_reviews(&state, &reviews, working_dir, session_folder, true);
+
+        assert!(prompt.contains("session folder"));
+        assert!(prompt.contains("/home/user/.planning-agent/sessions/abc123"));
     }
 }

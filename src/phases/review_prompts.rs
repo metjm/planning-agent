@@ -26,6 +26,7 @@ pub fn build_review_prompt_for_agent(
     plan_path_abs: &Path,
     feedback_path_abs: &Path,
     working_dir: &Path,
+    session_folder_abs: &Path,
     require_tags: bool,
 ) -> String {
     let output_format = if require_tags {
@@ -87,6 +88,7 @@ Your review must include:
         .input("objective", objective)
         .input("plan-path", &plan_path_abs.display().to_string())
         .input("feedback-output-path", &feedback_path_abs.display().to_string())
+        .input("session-folder-path", &session_folder_abs.display().to_string())
         .constraint("Use absolute paths for all file references in your feedback")
         .constraint("You MUST write your review to the feedback-output-path file")
         .constraint("Your review MUST include 'Overall Assessment: APPROVED' or 'Overall Assessment: NEEDS REVISION'")
@@ -99,6 +101,7 @@ Your review must include:
 pub fn build_review_recovery_prompt_for_agent(
     plan_path_abs: &Path,
     feedback_path_abs: &Path,
+    session_folder_abs: &Path,
     failure_reason: &str,
     previous_output: &str,
     require_tags: bool,
@@ -147,6 +150,7 @@ You MUST complete your review by writing valid feedback to the feedback file.
 Steps to complete:
 1. If needed, re-read the plan from: {}
 2. Write your complete review to: {}
+3. Session folder for reference: {}
 
 CRITICAL REQUIREMENTS:
 - The feedback file MUST contain an "Overall Assessment: APPROVED" or "Overall Assessment: NEEDS REVISION"
@@ -165,6 +169,7 @@ Please complete your review now by writing the feedback file."###,
             failure_reason,
             plan_path_abs.display(),
             feedback_path_abs.display(),
+            session_folder_abs.display(),
             template,
             truncated_output
         ))
@@ -184,6 +189,7 @@ mod tests {
             Path::new("/home/user/plan.md"),
             Path::new("/home/user/feedback.md"),
             Path::new("/home/user/project"),
+            Path::new("/home/user/.planning-agent/sessions/abc123"),
             false,
         );
 
@@ -202,6 +208,7 @@ mod tests {
             Path::new("/home/user/plan.md"),
             Path::new("/home/user/feedback.md"),
             Path::new("/home/user/project"),
+            Path::new("/home/user/.planning-agent/sessions/abc123"),
             false,
         );
 
@@ -216,6 +223,7 @@ mod tests {
             Path::new("/home/user/plan.md"),
             Path::new("/home/user/feedback.md"),
             Path::new("/home/user/project"),
+            Path::new("/home/user/.planning-agent/sessions/abc123"),
             true,
         );
 
@@ -230,6 +238,7 @@ mod tests {
             Path::new("/home/user/plan.md"),
             Path::new("/home/user/feedback.md"),
             Path::new("/home/user/project"),
+            Path::new("/home/user/.planning-agent/sessions/abc123"),
             false,
         );
 
@@ -243,6 +252,7 @@ mod tests {
         let prompt = build_review_recovery_prompt_for_agent(
             Path::new("/home/user/plan.md"),
             Path::new("/home/user/feedback.md"),
+            Path::new("/home/user/.planning-agent/sessions/abc123"),
             "Missing Overall Assessment",
             "Some previous output",
             false,
@@ -260,6 +270,7 @@ mod tests {
         let prompt = build_review_recovery_prompt_for_agent(
             Path::new("/home/user/plan.md"),
             Path::new("/home/user/feedback.md"),
+            Path::new("/home/user/.planning-agent/sessions/abc123"),
             "Missing tags",
             "Previous output",
             true,
@@ -275,6 +286,7 @@ mod tests {
         let prompt = build_review_recovery_prompt_for_agent(
             Path::new("/home/user/plan.md"),
             Path::new("/home/user/feedback.md"),
+            Path::new("/home/user/.planning-agent/sessions/abc123"),
             "Parse failure",
             &long_output,
             false,
@@ -290,5 +302,35 @@ mod tests {
         assert!(REVIEW_SYSTEM_PROMPT.contains("plan-path"));
         assert!(REVIEW_SYSTEM_PROMPT.contains("feedback-output-path"));
         assert!(REVIEW_SYSTEM_PROMPT.contains("Overall Assessment"));
+    }
+
+    #[test]
+    fn test_build_review_prompt_includes_session_folder() {
+        let prompt = build_review_prompt_for_agent(
+            "Implement feature X",
+            Path::new("/home/user/plan.md"),
+            Path::new("/home/user/feedback.md"),
+            Path::new("/home/user/project"),
+            Path::new("/home/user/.planning-agent/sessions/abc123"),
+            false,
+        );
+
+        assert!(prompt.contains("<session-folder-path>"));
+        assert!(prompt.contains("/home/user/.planning-agent/sessions/abc123"));
+    }
+
+    #[test]
+    fn test_build_recovery_prompt_includes_session_folder() {
+        let prompt = build_review_recovery_prompt_for_agent(
+            Path::new("/home/user/plan.md"),
+            Path::new("/home/user/feedback.md"),
+            Path::new("/home/user/.planning-agent/sessions/abc123"),
+            "Missing Overall Assessment",
+            "Some previous output",
+            false,
+        );
+
+        assert!(prompt.contains("/home/user/.planning-agent/sessions/abc123"));
+        assert!(prompt.contains("Session folder for reference"));
     }
 }

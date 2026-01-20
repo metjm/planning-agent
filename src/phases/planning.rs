@@ -1,6 +1,7 @@
 use crate::agents::{AgentContext, AgentType};
 use crate::config::WorkflowConfig;
 use crate::phases::planning_conversation_key;
+use crate::planning_paths;
 use crate::prompt_format::PromptBuilder;
 use crate::session_logger::SessionLogger;
 use crate::state::{ResumeStrategy, State};
@@ -99,8 +100,22 @@ pub async fn run_planning_phase_with_context(
 }
 
 fn build_planning_prompt(state: &State, working_dir: &Path) -> String {
-    // state.plan_file is now an absolute path (in ~/.planning-agent/plans/)
+    // state.plan_file is now an absolute path (in ~/.planning-agent/sessions/)
     let plan_path = state.plan_file.display().to_string();
+
+    // Get session folder path for supplementary files
+    // session_dir() creates the directory if it doesn't exist; only fails if home dir unavailable
+    let session_folder = planning_paths::session_dir(&state.workflow_session_id)
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|_| {
+            // Defensive fallback: derive from plan_file parent
+            state
+                .plan_file
+                .parent()
+                .map(|p| p.display().to_string())
+                .unwrap_or_default()
+        });
+
     let instructions = format!(
         r#"Create a detailed implementation plan for the given objective.
 
@@ -113,8 +128,9 @@ Requirements:
 6. When replacing functionality, remove old code entirely—update all callers and do not add backward-compatibility shims or re-exports
 7. DO NOT include timelines, schedules, dates, durations, or time estimates (e.g., "in two weeks", "Sprint 1", "Q1 delivery")
 
-IMPORTANT: Write the final plan to this file: {}"#,
-        plan_path
+IMPORTANT: Write the final plan to this file: {}
+You may create supplementary files (extended examples, schemas, etc.) in the session folder: {}"#,
+        plan_path, session_folder
     );
 
     let mut builder = PromptBuilder::new()
@@ -124,6 +140,7 @@ IMPORTANT: Write the final plan to this file: {}"#,
         .input("feature-name", &state.feature_name)
         .input("objective", &state.objective)
         .input("plan-output-path", &plan_path)
+        .input("session-folder-path", &session_folder)
         .constraint("Use absolute paths for all file references in your plan")
         .tools("Use the Read, Glob, and Grep tools to explore the codebase as needed.");
 
@@ -136,7 +153,8 @@ IMPORTANT: Write the final plan to this file: {}"#,
         if let Some(ref source) = wt_state.source_branch {
             builder = builder.input("source-branch", source);
         }
-        builder = builder.constraint("All file operations should be performed in the worktree directory, not the original directory.");
+        builder = builder
+            .constraint("All file operations should be performed in the worktree directory, not the original directory.");
     }
 
     builder.build()
@@ -235,6 +253,26 @@ mod tests {
         assert!(
             prompt.contains("DO NOT include timelines"),
             "Planning prompt must contain the no-timeline directive"
+        );
+    }
+
+    #[test]
+    fn build_planning_prompt_includes_session_folder() {
+        let state = minimal_state();
+        let working_dir = PathBuf::from("/tmp/workspace");
+        let prompt = build_planning_prompt(&state, &working_dir);
+
+        assert!(
+            prompt.contains("<session-folder-path>"),
+            "Planning prompt should contain <session-folder-path> tag"
+        );
+        assert!(
+            prompt.contains("session folder"),
+            "Planning prompt should mention session folder in instructions"
+        );
+        assert!(
+            prompt.contains("supplementary files"),
+            "Planning prompt should mention supplementary files"
         );
     }
 }

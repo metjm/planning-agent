@@ -217,12 +217,27 @@ pub async fn run_multi_agent_review_with_context(
                     }
                 };
 
+                // Compute session folder for supplementary file access
+                let session_folder = match planning_paths::session_dir(&session_id) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        return (
+                            display_id,
+                            ReviewExecutionResult::ExecutionError(format!(
+                                "Failed to get session folder: {}",
+                                e
+                            )),
+                        );
+                    }
+                };
+
                 // Build the review prompt
                 let review_prompt = build_review_prompt_for_agent(
                     &objective,
                     &plan_path_abs,
                     &feedback_path,
                     &working_dir,
+                    &session_folder,
                     require_tags,
                 );
 
@@ -277,6 +292,7 @@ pub async fn run_multi_agent_review_with_context(
                         let recovery_prompt = build_review_recovery_prompt_for_agent(
                             &plan_path_abs,
                             &feedback_path,
+                            &session_folder,
                             &parse_failure.error,
                             &initial_output,
                             require_tags,
