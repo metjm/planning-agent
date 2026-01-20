@@ -3,8 +3,7 @@ use crate::phases::{ReviewFailure, ReviewResult};
 use crate::planning_paths::SessionInfo;
 use crate::state::State;
 use regex::Regex;
-use std::fs::{self, OpenOptions};
-use std::io::ErrorKind;
+use std::fs;
 use std::path::Path;
 use std::time::Duration;
 
@@ -13,57 +12,41 @@ use std::time::Duration;
 #[allow(dead_code)]
 pub const DEFAULT_REVIEW_FAILURE_RETRY_LIMIT: usize = 2;
 
-/// Pre-creates the plan folder and empty plan file before agent execution.
+/// Creates the session folder before agent execution.
 /// Plan files are stored in ~/.planning-agent/sessions/<session-id>/ so paths are absolute.
-/// Handles `AlreadyExists` as success for resumed workflows.
 ///
 /// Also creates session_info.json for fast session listing.
+/// Note: Plan file is created by AI agent, not pre-created empty.
 /// Note: Feedback files are created by individual reviewers during the reviewing phase.
 #[allow(dead_code)]
-pub fn pre_create_plan_files(state: &State) -> anyhow::Result<()> {
-    pre_create_plan_files_with_working_dir(state, None)
+pub fn pre_create_session_folder(state: &State) -> anyhow::Result<()> {
+    pre_create_session_folder_with_working_dir(state, None)
 }
 
-/// Pre-creates the plan folder and empty plan file, optionally with a working directory.
+/// Creates the session folder, optionally recording a working directory.
 ///
 /// The working directory is stored in session_info.json for session listing.
+/// Note: Plan file is created by AI agent, not pre-created empty.
 /// Note: Feedback files are created by individual reviewers during the reviewing phase.
-pub fn pre_create_plan_files_with_working_dir(
+pub fn pre_create_session_folder_with_working_dir(
     state: &State,
     working_dir: Option<&Path>,
 ) -> anyhow::Result<()> {
     let plan_path = &state.plan_file;
 
-    // Create the plan folder (parent directory of plan file)
-    if let Some(plan_folder) = plan_path.parent() {
-        fs::create_dir_all(plan_folder).map_err(|e| {
+    // Create the session folder (parent directory of plan file)
+    if let Some(session_folder) = plan_path.parent() {
+        fs::create_dir_all(session_folder).map_err(|e| {
             anyhow::anyhow!(
-                "Failed to create plan folder {}: {}",
-                plan_folder.display(),
+                "Failed to create session folder {}: {}",
+                session_folder.display(),
                 e
             )
         })?;
     }
 
-    // Pre-create plan file
-    match OpenOptions::new()
-        .create_new(true)
-        .write(true)
-        .open(plan_path)
-    {
-        Ok(_) => {}
-        Err(e) if e.kind() == ErrorKind::AlreadyExists => {}
-        Err(e) => {
-            return Err(anyhow::anyhow!(
-                "Failed to pre-create plan file {}: {}",
-                plan_path.display(),
-                e
-            ))
-        }
-    }
-
-    // Note: Individual reviewer feedback files (feedback_{iteration}_{agent_name}.md)
-    // are created by the reviewing phase, not pre-created here.
+    // Note: Plan file is created by AI agent with actual content.
+    // Note: Feedback files are created by individual reviewers.
 
     // Create session_info.json for fast listing
     let default_wd = std::env::current_dir().unwrap_or_default();
@@ -280,20 +263,22 @@ mod tests {
     }
 
     #[test]
-    fn test_pre_create_plan_files_creates_folder_and_files() {
+    fn test_pre_create_session_folder_creates_folder() {
         // State::new creates paths in ~/.planning-agent/sessions/ which are absolute
         let state = State::new("test-feature", "Test objective", 3).unwrap();
 
         // The paths should be absolute (starting with home dir)
         assert!(state.plan_file.is_absolute() || state.plan_file.to_string_lossy().starts_with("/"));
 
-        let result = pre_create_plan_files(&state);
-        assert!(result.is_ok(), "pre_create_plan_files should succeed: {:?}", result);
+        let result = pre_create_session_folder(&state);
+        assert!(result.is_ok(), "pre_create_session_folder should succeed: {:?}", result);
 
-        // Verify plan file exists and is empty
-        assert!(state.plan_file.exists(), "Plan file should exist at {}", state.plan_file.display());
-        assert_eq!(fs::read_to_string(&state.plan_file).unwrap(), "");
-        // Note: Feedback files are NOT pre-created; they are created by individual reviewers
+        // Verify session folder exists
+        let session_folder = state.plan_file.parent().unwrap();
+        assert!(session_folder.exists(), "Session folder should exist at {}", session_folder.display());
+
+        // Plan file should NOT be pre-created (AI creates it with content)
+        assert!(!state.plan_file.exists(), "Plan file should NOT be pre-created");
 
         // Verify session_info.json was created
         let session_info_path = planning_paths::session_info_path(&state.workflow_session_id);
@@ -307,7 +292,7 @@ mod tests {
     }
 
     #[test]
-    fn test_pre_create_plan_files_handles_already_exists() {
+    fn test_pre_create_session_folder_preserves_existing_plan() {
         let state = State::new("test-feature-exists", "Test objective", 3).unwrap();
 
         // First, create the folder and plan file with content
@@ -316,11 +301,11 @@ mod tests {
         }
         fs::write(&state.plan_file, "existing plan content").unwrap();
 
-        // Should succeed without error (AlreadyExists is handled)
-        let result = pre_create_plan_files(&state);
+        // Should succeed without error
+        let result = pre_create_session_folder(&state);
         assert!(result.is_ok());
 
-        // Original content should be preserved (not overwritten)
+        // Original content should be preserved (not touched)
         assert_eq!(fs::read_to_string(&state.plan_file).unwrap(), "existing plan content");
 
         // Cleanup
@@ -330,13 +315,13 @@ mod tests {
     }
 
     #[test]
-    fn test_pre_create_plan_files_with_working_dir() {
+    fn test_pre_create_session_folder_with_working_dir() {
         let state = State::new("test-feature-wd", "Test with working dir", 3).unwrap();
         let temp_dir = tempdir().unwrap();
         let working_dir = temp_dir.path();
 
-        let result = pre_create_plan_files_with_working_dir(&state, Some(working_dir));
-        assert!(result.is_ok(), "pre_create_plan_files_with_working_dir should succeed: {:?}", result);
+        let result = pre_create_session_folder_with_working_dir(&state, Some(working_dir));
+        assert!(result.is_ok(), "pre_create_session_folder_with_working_dir should succeed: {:?}", result);
 
         // Verify session_info.json was created with correct working_dir
         let info = SessionInfo::load(&state.workflow_session_id);

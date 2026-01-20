@@ -22,9 +22,6 @@ pub struct Cli {
     pub working_dir: Option<PathBuf>,
 
     #[arg(long)]
-    pub headless: bool,
-
-    #[arg(long)]
     pub config: Option<PathBuf>,
 
     /// Use Claude-only workflow (no Codex or other agents)

@@ -507,6 +507,56 @@ pub fn format_window_title(tab_manager: &TabManager) -> String {
     }
 }
 
+/// Extracts a short kebab-case feature name from an objective using Claude.
+pub async fn extract_feature_name(
+    objective: &str,
+    output_tx: Option<&tokio::sync::mpsc::UnboundedSender<crate::tui::Event>>,
+) -> anyhow::Result<String> {
+    use crate::prompt_format::PromptBuilder;
+    use std::process::Stdio;
+    use tokio::process::Command;
+
+    if let Some(tx) = output_tx {
+        let _ = tx.send(crate::tui::Event::Output(
+            "[planning] Extracting feature name...".to_string(),
+        ));
+    }
+
+    let prompt = PromptBuilder::new()
+        .phase("feature-name-extraction")
+        .instructions(r#"Extract a short kebab-case feature name (2-4 words, lowercase, hyphens) from the given objective.
+Output ONLY the feature name, nothing else.
+
+Example outputs: "sharing-permissions", "user-auth", "api-rate-limiting""#)
+        .input("objective", objective)
+        .build();
+
+    let output = Command::new("claude")
+        .arg("-p")
+        .arg(&prompt)
+        .arg("--output-format")
+        .arg("text")
+        .arg("--dangerously-skip-permissions")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?
+        .wait_with_output()
+        .await?;
+
+    let name = String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .to_lowercase()
+        .chars()
+        .filter(|c| c.is_alphanumeric() || *c == '-')
+        .collect::<String>();
+
+    if name.is_empty() {
+        Ok("feature".to_string())
+    } else {
+        Ok(name)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

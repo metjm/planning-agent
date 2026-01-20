@@ -9,10 +9,9 @@ pub mod snapshot_helper;
 mod workflow_lifecycle;
 
 use crate::app::cli::Cli;
-use crate::app::headless::extract_feature_name;
-use crate::app::util::{build_resume_command, debug_log, format_window_title};
+use crate::app::util::{build_resume_command, debug_log, extract_feature_name, format_window_title};
 use crate::app::workflow::run_workflow_with_config;
-use crate::app::workflow_common::pre_create_plan_files_with_working_dir;
+use crate::app::workflow_common::pre_create_session_folder_with_working_dir;
 use crate::cli_usage;
 use crate::config::WorkflowConfig;
 use crate::planning_paths;
@@ -562,7 +561,7 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
             };
 
             // Pre-create plan folder and files using effective_working_dir
-            pre_create_plan_files_with_working_dir(&state, Some(&effective_working_dir))
+            pre_create_session_folder_with_working_dir(&state, Some(&effective_working_dir))
                 .context("Failed to pre-create plan files")?;
 
             state.set_updated_at();

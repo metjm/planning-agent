@@ -1,6 +1,6 @@
 use crate::app::cli::Cli;
-use crate::app::headless::extract_feature_name;
-use crate::app::workflow_common::pre_create_plan_files_with_working_dir;
+use crate::app::util::extract_feature_name;
+use crate::app::workflow_common::pre_create_session_folder_with_working_dir;
 use crate::planning_paths;
 use crate::state::State;
 use crate::tui::mention::update_mention_state;
@@ -345,7 +345,7 @@ pub(crate) async fn handle_naming_tab_input(
                     };
 
                     // Pre-create plan folder and files (in ~/.planning-agent/sessions/)
-                    pre_create_plan_files_with_working_dir(&state, Some(&effective_working_dir))
+                    pre_create_session_folder_with_working_dir(&state, Some(&effective_working_dir))
                         .context("Failed to pre-create plan files")?;
 
                     state.set_updated_at();

@@ -23,7 +23,7 @@ mod usage_reset;
 mod verification_state;
 
 use anyhow::Result;
-use app::{cli::Cli, headless::run_headless, tui_runner::run_tui, verify::run_headless_verification};
+use app::{cli::Cli, tui_runner::run_tui, verify::run_headless_verification};
 use clap::Parser;
 use std::path::{Path, PathBuf};
 
@@ -94,12 +94,8 @@ async fn async_main() -> Result<()> {
         .await;
     }
 
-    // Resume session or normal workflow
-    let result = if cli.headless {
-        run_headless(cli).await
-    } else {
-        run_tui(cli, start).await
-    };
+    // Run TUI workflow
+    let result = run_tui(cli, start).await;
     session_logger::log_startup("main function returning");
     result
 }
