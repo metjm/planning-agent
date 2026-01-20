@@ -1,5 +1,6 @@
 # Multi-reviewer workflow configuration
-# Uses Claude for planning and revising, with multiple reviewers
+# Uses Codex for planning and Claude for review by default.
+# With --claude flag, all agents are substituted with Claude variants.
 
 agents:
   claude:
@@ -33,6 +34,69 @@ agents:
       - "--output-format"
       - "json"
     allowed_tools: []
+
+# Claude-mode configuration (activated with --claude flag)
+# Defines Claude-specific agents, substitution rules, and phase overrides
+claude_mode:
+  # Claude agents for Claude-only mode (merge into agents map)
+  agents:
+    claude:
+      command: "claude"
+      args:
+        - "-p"
+        - "--output-format"
+        - "stream-json"
+        - "--verbose"
+        - "--dangerously-skip-permissions"
+      allowed_tools:
+        - "Read"
+        - "Glob"
+        - "Grep"
+        - "Write"
+        - "Edit"
+        - "Bash"
+        - "WebSearch"
+        - "WebFetch"
+        - "Skill"
+        - "Task"
+      session_persistence:
+        enabled: true
+        strategy: conversation_resume
+
+    claude-reviewer:
+      command: "claude"
+      args:
+        - "-p"
+        - "--output-format"
+        - "stream-json"
+        - "--verbose"
+        - "--dangerously-skip-permissions"
+      allowed_tools:
+        - "Read"
+        - "Glob"
+        - "Grep"
+        - "Bash"
+
+  # Agent name substitutions when --claude is active
+  substitutions:
+    codex: claude
+    gemini: claude
+
+  # Override the reviewing phase to use specialized Claude reviewers
+  # This replaces workflow.reviewing entirely when --claude is active
+  reviewing:
+    agents:
+      - claude
+      - agent: claude
+        id: claude-practices
+        prompt: |
+          Focus your review on repository practices and code reuse:
+          - Does the plan follow existing patterns and conventions in the codebase?
+          - Are there existing utilities, helpers, or abstractions that should be reused?
+          - Does the plan introduce unnecessary code duplication?
+          - Are new abstractions justified, or should existing ones be extended?
+          - Does the proposed structure align with the project's module organization?
+    aggregation: any_rejects
 
 workflow:
   planning:

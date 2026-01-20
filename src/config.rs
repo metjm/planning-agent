@@ -20,6 +20,9 @@ pub struct WorkflowConfig {
     /// When present and enabled, allows JSON-mode implementation after plan approval.
     #[serde(default)]
     pub implementation: ImplementationConfig,
+    /// Claude-mode configuration for --claude flag transformation.
+    #[serde(default)]
+    pub claude_mode: ClaudeModeConfig,
 }
 
 /// Configuration for the post-implementation verification workflow.
@@ -189,6 +192,28 @@ pub struct AgentConfig {
     pub session_persistence: SessionPersistenceConfig,
 }
 
+/// Configuration for Claude-only mode transformation.
+/// Defines Claude-specific agents, substitution rules, and optional phase overrides.
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct ClaudeModeConfig {
+    /// Claude-specific agent definitions that replace/supplement
+    /// the base agents section when --claude is passed.
+    #[serde(default)]
+    pub agents: HashMap<String, AgentConfig>,
+
+    /// Maps non-Claude agent names to their Claude replacements.
+    /// Example: { "codex": "claude", "gemini": "claude" }
+    #[serde(default)]
+    pub substitutions: HashMap<String, String>,
+
+    /// Optional override for the reviewing phase configuration.
+    /// When present, replaces workflow.reviewing entirely instead of
+    /// applying agent substitutions. This preserves extended AgentRef
+    /// configurations like custom prompts.
+    #[serde(default)]
+    pub reviewing: Option<MultiAgentPhase>,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct PhaseConfigs {
@@ -299,16 +324,129 @@ impl WorkflowConfig {
         config
     }
 
-    /// Returns a Claude-only workflow configuration (no Codex or other agents)
+    /// Returns a Claude-only workflow configuration.
+    /// Transforms the default config by applying claude_mode substitutions.
     pub fn claude_only_config() -> Self {
-        const CLAUDE_ONLY_YAML: &str = include_str!("../workflow-claude-only.yaml");
-
-        let mut config: Self = serde_yaml::from_str(CLAUDE_ONLY_YAML)
-            .expect("Failed to parse embedded workflow-claude-only.yaml - this is a bug");
-        // Normalize implementation config defaults
+        let mut config = Self::default_config();
+        config.transform_to_claude_only()
+            .expect("Failed to transform config to Claude-only mode - this is a bug");
+        // Re-normalize after transformation to update implementation defaults
         config.implementation.normalize(&config.workflow)
-            .expect("Failed to normalize implementation config - this is a bug");
+            .expect("Failed to normalize implementation config after transformation - this is a bug");
+        // Validate the transformed config to catch any configuration errors
+        config.validate()
+            .expect("Transformed Claude-only config failed validation - this is a bug");
         config
+    }
+
+    /// Transforms this configuration for Claude-only mode.
+    ///
+    /// This method:
+    /// 1. Validates all substitution targets exist in claude_mode.agents or base agents
+    /// 2. Merges claude_mode.agents into the main agents map
+    /// 3. Applies substitutions to planning phase
+    /// 4. Replaces reviewing phase if claude_mode.reviewing is specified, otherwise applies substitutions
+    /// 5. Applies substitutions to implementation and verification configs
+    /// 6. Resolves implementation reviewer conflicts (uses claude-reviewer if available)
+    ///
+    /// Returns an error if a substitution target doesn't exist.
+    pub fn transform_to_claude_only(&mut self) -> Result<()> {
+        // Clone substitutions map upfront to avoid borrowing conflicts
+        let substitutions = self.claude_mode.substitutions.clone();
+
+        // Validate substitution targets exist before proceeding
+        for (from, to) in &substitutions {
+            let target_exists = self.claude_mode.agents.contains_key(to)
+                || self.agents.contains_key(to);
+            if !target_exists {
+                anyhow::bail!(
+                    "Claude-mode substitution target '{}' not found. \
+                     Substitution '{}' -> '{}' is invalid. \
+                     Ensure claude_mode.agents defines '{}' or it exists in the base agents.",
+                    to, from, to, to
+                );
+            }
+        }
+
+        // Merge claude_mode agents into main agents map
+        for (name, config) in std::mem::take(&mut self.claude_mode.agents) {
+            self.agents.insert(name, config);
+        }
+
+        // Apply substitutions to planning phase
+        if let Some(target) = substitutions.get(&self.workflow.planning.agent) {
+            self.workflow.planning.agent = target.clone();
+        }
+
+        // Handle reviewing phase: use override if present, otherwise apply substitutions
+        if let Some(reviewing_override) = std::mem::take(&mut self.claude_mode.reviewing) {
+            self.workflow.reviewing = reviewing_override;
+        } else {
+            // Apply substitutions to reviewing agents
+            for agent_ref in &mut self.workflow.reviewing.agents {
+                Self::apply_substitution_to_agent_ref(agent_ref, &substitutions);
+            }
+        }
+
+        // Apply to implementation config with conflict resolution
+        if let Some(ref mut impl_phase) = self.implementation.implementing {
+            if let Some(target) = substitutions.get(&impl_phase.agent) {
+                impl_phase.agent = target.clone();
+            }
+        }
+        if let Some(ref mut review_phase) = self.implementation.reviewing {
+            let original = &review_phase.agent;
+            let substituted = substitutions.get(original).cloned()
+                .unwrap_or_else(|| original.clone());
+
+            let impl_agent = self.implementation.implementing
+                .as_ref()
+                .map(|p| p.agent.as_str())
+                .unwrap_or("");
+
+            // If substitution would create conflict (same agent for impl and review),
+            // use claude-reviewer if it exists in the agents map
+            if substituted == impl_agent && self.agents.contains_key("claude-reviewer") {
+                review_phase.agent = "claude-reviewer".to_string();
+            } else {
+                review_phase.agent = substituted;
+            }
+        }
+
+        // Apply to verification config
+        if let Some(ref mut verify_phase) = self.verification.verifying {
+            if let Some(target) = substitutions.get(&verify_phase.agent) {
+                verify_phase.agent = target.clone();
+            }
+        }
+        if let Some(ref mut fix_phase) = self.verification.fixing {
+            if let Some(target) = substitutions.get(&fix_phase.agent) {
+                fix_phase.agent = target.clone();
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Applies agent name substitution to an AgentRef.
+    /// For Extended refs, only the agent name is substituted; id and prompt are preserved.
+    fn apply_substitution_to_agent_ref(
+        agent_ref: &mut AgentRef,
+        substitutions: &HashMap<String, String>,
+    ) {
+        match agent_ref {
+            AgentRef::Simple(name) => {
+                if let Some(target) = substitutions.get(name) {
+                    *name = target.clone();
+                }
+            }
+            AgentRef::Extended(inst) => {
+                if let Some(target) = substitutions.get(&inst.agent) {
+                    inst.agent = target.clone();
+                }
+                // Note: id and prompt fields are preserved
+            }
+        }
     }
 
     fn validate(&self) -> Result<()> {
@@ -414,6 +552,10 @@ impl WorkflowConfig {
 mod config_tests;
 
 #[cfg(test)]
+#[path = "config_claude_mode_tests.rs"]
+mod config_claude_mode_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -441,19 +583,32 @@ mod tests {
     fn test_claude_only_config() {
         let config = WorkflowConfig::claude_only_config();
 
-        // Should only have claude agents
+        // Claude agents should be present (claude-reviewer added from claude_mode.agents)
         assert!(config.agents.contains_key("claude"));
         assert!(config.agents.contains_key("claude-reviewer"));
-        assert!(!config.agents.contains_key("codex"));
-        assert!(!config.agents.contains_key("gemini"));
+        // Original agents are still in the map, just not used in workflow phases
+        assert!(config.agents.contains_key("codex"));
+        assert!(config.agents.contains_key("gemini"));
 
-        // Planning and reviewing phases should use claude
-        // Note: revision now uses the planning agent automatically
+        // Planning phase should use claude (substituted from codex)
         assert_eq!(config.workflow.planning.agent, "claude");
+
+        // Reviewing phase should use the claude_mode.reviewing override
+        // which includes claude-practices extended reviewer
+        assert_eq!(config.workflow.reviewing.agents.len(), 2);
         assert_eq!(
-            config.workflow.reviewing.agents,
-            vec![AgentRef::Simple("claude".to_string())]
+            config.workflow.reviewing.agents[0],
+            AgentRef::Simple("claude".to_string())
         );
+        // Second agent is claude-practices (extended AgentRef)
+        match &config.workflow.reviewing.agents[1] {
+            AgentRef::Extended(inst) => {
+                assert_eq!(inst.agent, "claude");
+                assert_eq!(inst.id, Some("claude-practices".to_string()));
+                assert!(inst.prompt.is_some());
+            }
+            _ => panic!("Expected extended AgentRef for claude-practices"),
+        }
 
         // Implementation should be enabled with distinct reviewer
         assert!(config.implementation.enabled);
