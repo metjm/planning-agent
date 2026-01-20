@@ -96,6 +96,16 @@ claude_mode:
           - Does the plan introduce unnecessary code duplication?
           - Are new abstractions justified, or should existing ones be extended?
           - Does the proposed structure align with the project's module organization?
+      - agent: claude
+        id: claude-practices
+        prompt: |
+          Focus your review on completeness:
+          - Does the plan cover every single requirement from the task description?
+          - Are there any edge cases or scenarios that have been overlooked?
+          - Does the plan include necessary error handling and validation steps?
+          - Are all dependencies and integrations accounted for?
+          - Is there a clear path for testing and verification of the implemented plan?
+          - If any of these aspects are missing, reject the plan with detailed and specific feedback. Mention all missing elements and what you'd expect to see included.
     aggregation: any_rejects
 
 workflow:
@@ -137,8 +147,8 @@ workflow:
 # Failure handling policy
 # Controls how transient failures and recovery are handled
 failure_policy:
-  max_retries: 2           # Maximum retry attempts for transient failures
-  backoff_secs: 5          # Backoff multiplier in seconds between retries
+  max_retries: 2 # Maximum retry attempts for transient failures
+  backoff_secs: 5 # Backoff multiplier in seconds between retries
   # Action when all reviewers fail after retries:
   # - abort: Stop workflow with error (default)
   # - save_state: Save state for later recovery in TUI mode
