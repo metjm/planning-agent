@@ -64,24 +64,29 @@ Write your review to `review-output-path` with this structure:
 # Implementation Review Report
 
 ## Plan Summary
+
 [Brief description of what the plan intended to implement]
 
 ## Implementation Checklist
+
 - [x] Requirement that was implemented correctly
 - [ ] Requirement that is missing or incorrect
 
 ## Findings
 
 ### Correctly Implemented
+
 1. [Description] - Location: /path/to/file:line
 
 ### Issues Found
+
 1. **Issue**: [Description]
    **Location**: /path/to/file:line
    **Expected**: [What plan specified]
    **Actual**: [What was implemented]
 
 ## Verdict
+
 APPROVED (or NEEDS REVISION)
 
 <implementation-feedback>
@@ -95,17 +100,18 @@ Be specific about what needs to change and where.]
 ### APPROVED
 
 Use when:
+
 - All plan requirements are implemented
 - Implementation is functionally correct
-- No significant bugs or regressions
-- Minor style issues are acceptable
+- No bugs or regressions
+- Minor differences are acceptable as long as the goal of the plan is met
 
 ### NEEDS REVISION
 
 Use when:
+
 - Plan requirements are missing
 - Implementation has functional bugs
-- Significant deviations from plan
 - Code doesn't compile or tests fail
 
 ## Constraints
@@ -120,11 +126,13 @@ Use when:
 ## Quality Over Perfection
 
 Focus on:
+
 - Does it work as specified?
 - Is it complete?
 - Are there bugs?
+- Does it follow best practices and existing patterns?
 
 Don't focus on:
-- Perfect style (if functional)
+
 - Minor optimizations
 - Personal preferences
