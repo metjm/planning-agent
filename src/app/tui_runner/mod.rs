@@ -643,14 +643,20 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                 // Save snapshot if we have state
                 if let Some(ref state) = session.workflow_state {
                     debug_log(start, &format!("Saving snapshot for session {}", state.workflow_session_id));
-                    if let Err(e) = snapshot_helper::create_and_save_snapshot(session, state, &working_dir) {
+                    // Use session context's base_working_dir if available (preserves original session directory)
+                    let session_working_dir = session
+                        .context
+                        .as_ref()
+                        .map(|ctx| ctx.base_working_dir.clone())
+                        .unwrap_or_else(|| working_dir.clone());
+                    if let Err(e) = snapshot_helper::create_and_save_snapshot(session, state, &session_working_dir) {
                         debug_log(start, &format!("Failed to save snapshot: {}", e));
                     } else {
                         debug_log(start, "Snapshot saved successfully");
                         resumable_sessions.push(ResumableSession {
                             feature_name: state.feature_name.clone(),
                             session_id: state.workflow_session_id.clone(),
-                            working_dir: working_dir.clone(),
+                            working_dir: session_working_dir,
                         });
                     }
                 }
