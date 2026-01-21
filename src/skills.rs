@@ -4,6 +4,8 @@ use std::path::PathBuf;
 const PLANNING_SKILL: &str = include_str!("../skills/planning/SKILL.md");
 const PLAN_REVIEW_SKILL: &str = include_str!("../skills/plan-review/SKILL.md");
 const METHODICAL_DEBUGGING_SKILL: &str = include_str!("../skills/methodical-debugging/SKILL.md");
+const IMPLEMENTATION_SKILL: &str = include_str!("../skills/implementation/SKILL.md");
+const IMPLEMENTATION_REVIEW_SKILL: &str = include_str!("../skills/implementation-review/SKILL.md");
 
 pub fn install_skills_if_needed() -> anyhow::Result<()> {
     let home =
@@ -17,6 +19,8 @@ pub fn install_skills_if_needed() -> anyhow::Result<()> {
         ("planning", PLANNING_SKILL),
         ("plan-review", PLAN_REVIEW_SKILL),
         ("methodical-debugging", METHODICAL_DEBUGGING_SKILL),
+        ("implementation", IMPLEMENTATION_SKILL),
+        ("implementation-review", IMPLEMENTATION_REVIEW_SKILL),
     ];
 
     for skills_dir in skills_dirs {

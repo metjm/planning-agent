@@ -7,7 +7,6 @@ use crate::agents::{AgentContext, AgentType};
 use crate::config::WorkflowConfig;
 use crate::phases::implementing_conversation_key;
 use crate::planning_paths;
-use crate::prompt_format::{xml_escape, PromptBuilder};
 use crate::session_logger::{create_session_logger, SessionLogger};
 use crate::state::{ResumeStrategy, State};
 use crate::tui::SessionEventSender;
@@ -17,22 +16,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::watch;
 
-const IMPLEMENTATION_SYSTEM_PROMPT: &str = r#"You are an implementation agent that executes approved plans.
-
-Your task is to:
-1. Read the approved plan to understand exactly what needs to be implemented
-2. Implement each step of the plan using the available tools
-3. Make precise, focused changes - only implement what the plan specifies
-4. Verify your changes compile and don't break existing functionality
-
-Be precise and methodical:
-- Follow the plan exactly, step by step
-- Use Read/Write/Glob/Grep/Bash tools to implement changes
-- Do not introduce new features or make unrelated changes
-- Use absolute paths for all file references
-
-IMPORTANT: You are operating in JSON mode. All tool calls and file operations
-should be done via the provided tools, not through a terminal."#;
+/// Minimal system prompt - the skill handles the details.
+const IMPLEMENTATION_SYSTEM_PROMPT: &str = "You are an implementation agent that executes approved plans.";
 
 pub const IMPLEMENTATION_FOLLOWUP_PHASE: &str = "Implementation Follow-up";
 
@@ -270,7 +255,7 @@ async fn run_implementation_interaction_inner(
     Ok(())
 }
 
-/// Builds the implementation prompt.
+/// Builds the implementation prompt with clean format and skill invocation at the end.
 fn build_implementation_prompt(
     state: &State,
     working_dir: &Path,
@@ -284,38 +269,29 @@ fn build_implementation_prompt(
         working_dir.join(&state.plan_file)
     };
 
-    let mut builder = PromptBuilder::new()
-        .phase("implementation")
-        .instructions(&format!(
-            r#"Implementation attempt #{}: implement the approved plan fully within the workspace root.
-
-1. Read the plan file to understand what needs to be implemented
-2. Implement each step of the plan in order
-3. Use the available tools (Read, Write, Glob, Grep, Bash) to make changes
-4. Verify your changes don't break existing functionality
-
-Focus on:
-- Implementing exactly what the plan specifies
-- Not introducing bugs or unrelated changes
-- Maintaining code quality and consistency with existing patterns"#,
-            iteration
-        ))
-        .input("workspace-root", &xml_escape(&working_dir.display().to_string()))
-        .input("plan-path", &xml_escape(&plan_path.display().to_string()))
-        .input("iteration", &iteration.to_string())
-        .tools("Use Read/Write/Glob/Grep/Bash tools; edit files via tools only (no PTY).")
-        .constraint("Use absolute paths for all file references");
-
-    // Add feedback if provided
-    if let Some(fb) = feedback {
-        let feedback_context = format!(
-            "# Feedback from Previous Review\n\nThe previous implementation attempt was not approved. Address the following feedback:\n\n{}",
+    let feedback_section = match feedback {
+        Some(fb) => format!(
+            "\n####################### FEEDBACK FROM REVIEW #######################\n{}\n######################################################################\n",
             fb
-        );
-        builder = builder.context(&xml_escape(&feedback_context));
-    }
+        ),
+        None => String::new(),
+    };
 
-    builder.build()
+    format!(
+        r#"Implement the approved plan.
+
+######################### IMPLEMENTATION #{iteration} #########################
+
+Paths:
+- Workspace: {workspace}
+- Plan file: {plan}
+{feedback_section}
+Run the "implementation" skill to execute the plan."#,
+        iteration = iteration,
+        workspace = working_dir.display(),
+        plan = plan_path.display(),
+        feedback_section = feedback_section,
+    )
 }
 
 fn build_implementation_followup_prompt(
@@ -329,17 +305,22 @@ fn build_implementation_followup_prompt(
         working_dir.join(&state.plan_file)
     };
 
-    PromptBuilder::new()
-        .phase("implementation-followup")
-        .instructions(
-            "Continue the implementation conversation. Respond to the user's follow-up and apply any requested changes using the available tools.",
-        )
-        .input("workspace-root", &xml_escape(&working_dir.display().to_string()))
-        .input("plan-path", &xml_escape(&plan_path.display().to_string()))
-        .input("user-message", &xml_escape(user_message))
-        .tools("Use Read/Write/Glob/Grep/Bash tools; edit files via tools only (no PTY).")
-        .constraint("Use absolute paths for all file references")
-        .build()
+    format!(
+        r#"Continue the implementation.
+
+Paths:
+- Workspace: {workspace}
+- Plan file: {plan}
+
+############################ USER MESSAGE ############################
+{user_message}
+######################################################################
+
+Apply the requested changes using available tools."#,
+        workspace = working_dir.display(),
+        plan = plan_path.display(),
+        user_message = user_message,
+    )
 }
 
 #[cfg(test)]
@@ -378,18 +359,15 @@ mod tests {
         let working_dir = PathBuf::from("/tmp/workspace");
         let prompt = build_implementation_prompt(&state, &working_dir, 1, None);
 
-        // Check XML structure
-        assert!(prompt.starts_with("<user-prompt>"));
-        assert!(prompt.ends_with("</user-prompt>"));
-        assert!(prompt.contains("<phase>implementation</phase>"));
+        // Check paths are included
+        assert!(prompt.contains("/tmp/workspace"));
+        assert!(prompt.contains("/tmp/test-plan/plan.md"));
 
-        // Check inputs
-        assert!(prompt.contains("<workspace-root>"));
-        assert!(prompt.contains("<plan-path>"));
-        assert!(prompt.contains("<iteration>1</iteration>"));
+        // Check iteration
+        assert!(prompt.contains("IMPLEMENTATION #1"));
 
-        // Check instructions
-        assert!(prompt.contains("Implementation attempt #1"));
+        // Check skill instruction is last
+        assert!(prompt.ends_with(r#"Run the "implementation" skill to execute the plan."#));
     }
 
     #[test]
@@ -399,35 +377,25 @@ mod tests {
         let feedback = "Missing error handling in src/main.rs";
         let prompt = build_implementation_prompt(&state, &working_dir, 2, Some(feedback));
 
-        // Should include the feedback
-        assert!(prompt.contains("Feedback from Previous Review"));
+        // Should include the feedback section
+        assert!(prompt.contains("FEEDBACK FROM REVIEW"));
         assert!(prompt.contains("Missing error handling"));
 
         // Iteration should be 2
-        assert!(prompt.contains("Implementation attempt #2"));
+        assert!(prompt.contains("IMPLEMENTATION #2"));
+
+        // Skill instruction still last
+        assert!(prompt.ends_with(r#"Run the "implementation" skill to execute the plan."#));
     }
 
     #[test]
-    fn test_build_implementation_prompt_escapes_special_chars() {
-        let mut state = minimal_state();
-        state.plan_file = PathBuf::from("/path/with<special>&chars/plan.md");
-        let working_dir = PathBuf::from("/tmp/workspace");
-        let prompt = build_implementation_prompt(&state, &working_dir, 1, None);
-
-        // Special characters should be escaped
-        assert!(prompt.contains("&lt;"));
-        assert!(prompt.contains("&amp;"));
-    }
-
-    #[test]
-    fn test_build_implementation_prompt_with_xml_in_feedback() {
+    fn test_build_implementation_followup_prompt() {
         let state = minimal_state();
         let working_dir = PathBuf::from("/tmp/workspace");
-        let feedback = "Add <error-handling> to the <config> module";
-        let prompt = build_implementation_prompt(&state, &working_dir, 2, Some(feedback));
+        let prompt = build_implementation_followup_prompt(&state, &working_dir, "Fix the bug");
 
-        // XML in feedback should be escaped
-        assert!(prompt.contains("&lt;error-handling&gt;"));
-        assert!(prompt.contains("&lt;config&gt;"));
+        assert!(prompt.contains("USER MESSAGE"));
+        assert!(prompt.contains("Fix the bug"));
+        assert!(prompt.contains("/tmp/workspace"));
     }
 }

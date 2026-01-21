@@ -10,7 +10,6 @@ use crate::phases::verdict::{
     extract_implementation_feedback, parse_verification_verdict, VerificationVerdictResult,
 };
 use crate::planning_paths;
-use crate::prompt_format::{xml_escape, PromptBuilder};
 use crate::session_logger::SessionLogger;
 use crate::state::{ResumeStrategy, State};
 use crate::tui::SessionEventSender;
@@ -19,24 +18,8 @@ use std::fs;
 use std::path::Path;
 use std::sync::Arc;
 
-const IMPLEMENTATION_REVIEW_SYSTEM_PROMPT: &str = r#"You are an implementation review agent that compares implementations against their approved plans.
-
-Your task is to:
-1. Read the approved plan to understand what was supposed to be implemented
-2. Inspect the repository state (file contents, structure, changes)
-3. Compare each requirement in the plan against the actual implementation
-4. Generate a structured review report with a clear verdict
-
-Be thorough but fair:
-- Minor differences in implementation approach are acceptable if they achieve the plan's goals
-- Focus on functional correctness and completeness
-- Verify that all required changes were made
-- Check for regressions or unintended side effects
-
-IMPORTANT:
-- Use absolute paths for all file references
-- Your report MUST include a "Verdict" section followed by either "APPROVED" or "NEEDS REVISION"
-- If there are issues, wrap detailed fix instructions in <implementation-feedback> tags"#;
+/// Minimal system prompt - the skill handles the details.
+const IMPLEMENTATION_REVIEW_SYSTEM_PROMPT: &str = "You are an implementation review agent.";
 
 /// Result of running the implementation review phase.
 #[derive(Debug, Clone)]
@@ -199,7 +182,7 @@ pub async fn run_implementation_review_phase(
     })
 }
 
-/// Builds the implementation review prompt.
+/// Builds the implementation review prompt with clean format and skill invocation at the end.
 fn build_implementation_review_prompt(
     state: &State,
     working_dir: &Path,
@@ -213,85 +196,35 @@ fn build_implementation_review_prompt(
         working_dir.join(&state.plan_file)
     };
 
-    let output_format = format!(
-        r###"Your report MUST follow this structure:
+    // Get review output path
+    let review_output = planning_paths::session_implementation_review_path(
+        &state.workflow_session_id,
+        iteration,
+    )
+    .unwrap_or_else(|_| working_dir.join(format!("review_{}.md", iteration)));
 
-```markdown
-# Implementation Review Report - Round {}
+    let log_section = match implementation_log_path {
+        Some(log) => format!("- Implementation log: {}\n", log.display()),
+        None => String::new(),
+    };
 
-## Plan Summary
-[Brief summary of what the plan intended to implement]
+    format!(
+        r#"Review the implementation against the approved plan.
 
-## Implementation Checklist
-- [x] Feature/step that was implemented correctly
-- [ ] Feature/step that is missing or incorrect
-...
+##################### IMPLEMENTATION REVIEW #{iteration} #####################
 
-## Findings
-
-### Correctly Implemented
-1. [Description of correctly implemented feature]
-   **Location**: [absolute/path/to/file:line]
-
-### Issues Found
-1. **Issue**: [Description]
-   **Location**: [absolute/path/to/file:line]
-   **Expected**: [What the plan specified]
-   **Actual**: [What was implemented or missing]
-
-## Verdict
-APPROVED (if implementation matches plan)
-NEEDS REVISION (if there are issues to fix)
-
-<implementation-feedback>
-[Detailed feedback for the implementation agent if NEEDS REVISION.
-Include specific instructions on what needs to be fixed, using absolute paths.
-Be clear and actionable so the next implementation attempt can succeed.]
-</implementation-feedback>
-```
-
-CRITICAL: Your report MUST include "## Verdict" followed by either "APPROVED" or "NEEDS REVISION".
-If there are issues, wrap detailed fix instructions in <implementation-feedback> tags."###,
-        iteration
-    );
-
-    let mut builder = PromptBuilder::new()
-        .phase("implementation-review")
-        .instructions(
-            r#"Review the implementation against the approved plan.
-
-1. Read the plan file to understand what was supposed to be implemented
-2. Explore the repository to see what was actually implemented
-3. Optionally read the implementation log to understand what changes were made
-4. Compare each requirement/step in the plan against the implementation
-5. Note any discrepancies, missing features, or deviations
-6. Produce a structured report with a clear verdict
-
-You may use Bash to run `git status` and `git diff --stat` to see what changed.
-You may use Read/Glob/Grep to inspect the codebase."#,
-        )
-        .input(
-            "workspace-root",
-            &xml_escape(&working_dir.display().to_string()),
-        )
-        .input("plan-path", &xml_escape(&plan_path.display().to_string()))
-        .input("iteration", &iteration.to_string())
-        .tools("Use Read/Glob/Grep/Bash tools to inspect the implementation.")
-        .constraint(&format!(
-            "Use absolute paths for all file references (e.g., {}/src/main.rs:45)",
-            working_dir.display()
-        ))
-        .output_format(&output_format);
-
-    // Add implementation log path if provided
-    if let Some(log_path) = implementation_log_path {
-        builder = builder.input(
-            "implementation-log-path",
-            &xml_escape(&log_path.display().to_string()),
-        );
-    }
-
-    builder.build()
+Paths:
+- Workspace: {workspace}
+- Plan file: {plan}
+- Review output: {review_output}
+{log_section}
+Run the "implementation-review" skill to perform the review."#,
+        iteration = iteration,
+        workspace = working_dir.display(),
+        plan = plan_path.display(),
+        review_output = review_output.display(),
+        log_section = log_section,
+    )
 }
 
 #[cfg(test)]
@@ -330,21 +263,15 @@ mod tests {
         let working_dir = PathBuf::from("/tmp/workspace");
         let prompt = build_implementation_review_prompt(&state, &working_dir, 1, None);
 
-        // Check XML structure
-        assert!(prompt.starts_with("<user-prompt>"));
-        assert!(prompt.ends_with("</user-prompt>"));
-        assert!(prompt.contains("<phase>implementation-review</phase>"));
+        // Check paths are included
+        assert!(prompt.contains("/tmp/workspace"));
+        assert!(prompt.contains("/tmp/test-plan/plan.md"));
 
-        // Check inputs
-        assert!(prompt.contains("<workspace-root>"));
-        assert!(prompt.contains("<plan-path>"));
-        assert!(prompt.contains("<iteration>1</iteration>"));
+        // Check iteration
+        assert!(prompt.contains("IMPLEMENTATION REVIEW #1"));
 
-        // Check output format instructions
-        assert!(prompt.contains("## Verdict"));
-        assert!(prompt.contains("APPROVED"));
-        assert!(prompt.contains("NEEDS REVISION"));
-        assert!(prompt.contains("<implementation-feedback>"));
+        // Check skill instruction is last
+        assert!(prompt.ends_with(r#"Run the "implementation-review" skill to perform the review."#));
     }
 
     #[test]
@@ -356,20 +283,11 @@ mod tests {
             build_implementation_review_prompt(&state, &working_dir, 1, Some(&log_path));
 
         // Should include the implementation log path
-        assert!(prompt.contains("<implementation-log-path>"));
+        assert!(prompt.contains("Implementation log:"));
         assert!(prompt.contains("implementation_1.log"));
-    }
 
-    #[test]
-    fn test_build_implementation_review_prompt_escapes_special_chars() {
-        let mut state = minimal_state();
-        state.plan_file = PathBuf::from("/path/with<special>&chars/plan.md");
-        let working_dir = PathBuf::from("/tmp/workspace");
-        let prompt = build_implementation_review_prompt(&state, &working_dir, 1, None);
-
-        // Special characters should be escaped
-        assert!(prompt.contains("&lt;"));
-        assert!(prompt.contains("&amp;"));
+        // Skill instruction still last
+        assert!(prompt.ends_with(r#"Run the "implementation-review" skill to perform the review."#));
     }
 
     #[test]
