@@ -107,6 +107,7 @@ claude_mode:
           - Is there a clear path for testing and verification of the implemented plan?
           - If any of these aspects are missing, reject the plan with detailed and specific feedback. Mention all missing elements and what you'd expect to see included.
     aggregation: any_rejects
+    sequential: true
 
 workflow:
   planning:
@@ -138,8 +139,8 @@ workflow:
       #    - Code organization and modularity
       #    - Design patterns and best practices
       #    - Performance implications
-    # Use majority voting - 2 of 3 must reject to trigger revision
     aggregation: any_rejects
+    sequential: true
 
   # Note: Revision phase uses the planning agent automatically.
   # This enables session continuity when using Claude with session_persistence enabled.
