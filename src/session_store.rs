@@ -261,6 +261,9 @@ fn update_session_info(snapshot: &SessionSnapshot) -> Result<()> {
 /// If no snapshot file exists, attempts fallback recovery from the daemon registry
 /// and state file. This enables crash recovery when periodic auto-save didn't
 /// complete before the crash.
+///
+/// Note: The `working_dir` parameter is kept for API compatibility but is no longer used.
+/// Recovered snapshots are saved using their own stored working_dir to ensure consistency.
 #[allow(unused_variables)]
 pub fn load_snapshot(working_dir: &Path, session_id: &str) -> Result<SessionSnapshot> {
     // 1. Try new session-centric path first
@@ -279,7 +282,8 @@ pub fn load_snapshot(working_dir: &Path, session_id: &str) -> Result<SessionSnap
     match recover_from_state_file(session_id) {
         Ok(snapshot) => {
             // Save recovered snapshot for future use (in new format)
-            if let Err(e) = save_snapshot(working_dir, &snapshot) {
+            // Use snapshot's own working_dir, not the caller's, to ensure consistency
+            if let Err(e) = save_snapshot(&snapshot.working_dir, &snapshot) {
                 eprintln!("[recovery] Warning: Failed to save recovered snapshot: {}", e);
             }
             Ok(snapshot)

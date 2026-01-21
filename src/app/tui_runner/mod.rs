@@ -356,8 +356,9 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
         ));
         first_session.add_output("[planning] Continuing workflow...".to_string());
 
-        // Store the elapsed time from before resume for cost tracking
+        // Restore elapsed time and cost from previous resume cycles
         first_session.total_cost = snapshot.ui_state.total_cost;
+        first_session.adjust_start_time_for_previous_elapsed(snapshot.total_elapsed_before_resume_ms);
 
         // Save state to ensure state file is in sync with snapshot
         let state_path = snapshot.state_path.clone();

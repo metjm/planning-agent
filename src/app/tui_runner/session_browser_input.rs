@@ -246,6 +246,7 @@ fn resume_session_in_current_process(
                 Some(restored_state.clone()),
             );
             session.id = session_id; // Preserve the new session ID
+            session.adjust_start_time_for_previous_elapsed(snapshot.total_elapsed_before_resume_ms);
 
             // Compute effective_working_dir from worktree_info if present
             let effective_working_dir = compute_effective_working_dir(

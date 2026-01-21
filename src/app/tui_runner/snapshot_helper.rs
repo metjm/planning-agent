@@ -16,13 +16,25 @@ use std::path::{Path, PathBuf};
 /// - A workflow is explicitly stopped by the user
 /// - A workflow completes (success or error)
 ///
+/// The `working_dir` parameter is used as the base working directory for the snapshot.
+/// If the session has a context with a stored state_path, that path is used to ensure
+/// consistency across resume cycles. Otherwise, the state_path is computed from working_dir.
+///
 /// Returns the path to the saved snapshot file on success.
 pub fn create_and_save_snapshot(
     session: &Session,
     state: &State,
     working_dir: &Path,
 ) -> Result<PathBuf> {
-    let state_path = planning_paths::state_path(working_dir, &state.feature_name)?;
+    // Use state_path from session context if available (preserves original path across resumes)
+    // Otherwise compute from working_dir (for new sessions)
+    let state_path = session
+        .context
+        .as_ref()
+        .map(|ctx| ctx.state_path.clone())
+        .map(Ok)
+        .unwrap_or_else(|| planning_paths::state_path(working_dir, &state.feature_name))?;
+
     let ui_state = session.to_ui_state();
     let now = chrono::Utc::now().to_rfc3339();
     let mut state_copy = state.clone();
