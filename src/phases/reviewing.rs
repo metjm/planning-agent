@@ -119,6 +119,9 @@ pub async fn run_multi_agent_review_with_context(
         display_ids.join(", ")
     ));
 
+    // Signal round started for review history UI
+    session_sender.send_review_round_started(iteration);
+
     let phase_name = format!("Reviewing #{}", iteration);
 
     // Check if tags are required from config
@@ -193,23 +196,32 @@ pub async fn run_multi_agent_review_with_context(
             let plan_path_abs = plan_path_abs.clone();
             let objective = objective.clone();
             let session_id = session_id.clone();
+            let iter = iteration;
 
             // System prompt is minimal - skill handles details
             let system_prompt = REVIEW_SYSTEM_PROMPT.to_string();
 
             async move {
+                // Record start time for duration computation
+                let review_started_at = std::time::Instant::now();
+
+                // Signal reviewer started
+                sender.send_reviewer_started(iter, display_id.clone());
+
                 sender.send_output(format!("[review:{}] Starting file-based review...", display_id));
 
                 // Generate stable feedback file path for this agent
-                let feedback_path = match generate_feedback_file_path(&session_id, &display_id, iteration) {
+                let feedback_path = match generate_feedback_file_path(&session_id, &display_id, iter) {
                     Ok(p) => p,
                     Err(e) => {
+                        let duration_ms = review_started_at.elapsed().as_millis() as u64;
                         return (
                             display_id,
                             ReviewExecutionResult::ExecutionError(format!(
                                 "Failed to generate feedback path: {}",
                                 e
                             )),
+                            duration_ms,
                         );
                     }
                 };
@@ -218,12 +230,14 @@ pub async fn run_multi_agent_review_with_context(
                 let session_folder = match planning_paths::session_dir(&session_id) {
                     Ok(p) => p,
                     Err(e) => {
+                        let duration_ms = review_started_at.elapsed().as_millis() as u64;
                         return (
                             display_id,
                             ReviewExecutionResult::ExecutionError(format!(
                                 "Failed to get session folder: {}",
                                 e
                             )),
+                            duration_ms,
                         );
                     }
                 };
@@ -266,9 +280,11 @@ pub async fn run_multi_agent_review_with_context(
                         ended_at: result.ended_at,
                     }),
                     Err(e) => {
+                        let duration_ms = review_started_at.elapsed().as_millis() as u64;
                         return (
                             display_id,
                             ReviewExecutionResult::ExecutionError(e.to_string()),
+                            duration_ms,
                         );
                     }
                 };
@@ -277,7 +293,8 @@ pub async fn run_multi_agent_review_with_context(
                 match try_parse_feedback_file(&feedback_path, require_tags) {
                     Ok(review) => {
                         sender.send_output(format!("[review:{}] Review complete", display_id));
-                        (display_id, ReviewExecutionResult::Success(review))
+                        let duration_ms = review_started_at.elapsed().as_millis() as u64;
+                        (display_id, ReviewExecutionResult::Success(review), duration_ms)
                     }
                     Err(parse_failure) => {
                         // Initial attempt failed - try recovery
@@ -334,7 +351,8 @@ pub async fn run_multi_agent_review_with_context(
                                     "[review:{}] Recovery succeeded!",
                                     display_id
                                 ));
-                                (display_id, ReviewExecutionResult::Success(review))
+                                let duration_ms = review_started_at.elapsed().as_millis() as u64;
+                                (display_id, ReviewExecutionResult::Success(review), duration_ms)
                             }
                             Err(final_failure) => {
                                 // Both attempts failed - prepare for bundle creation
@@ -348,6 +366,7 @@ pub async fn run_multi_agent_review_with_context(
                                     display_id
                                 ));
 
+                                let duration_ms = review_started_at.elapsed().as_millis() as u64;
                                 (
                                     display_id,
                                     ReviewExecutionResult::ParseFailure {
@@ -359,6 +378,7 @@ pub async fn run_multi_agent_review_with_context(
                                         attempt_timestamps: timestamps,
                                         feedback_file_path: feedback_path,
                                     },
+                                    duration_ms,
                                 )
                             }
                         }
@@ -376,7 +396,7 @@ pub async fn run_multi_agent_review_with_context(
     let mut reviews = Vec::new();
     let mut failures = Vec::new();
 
-    for (agent_name, result) in results {
+    for (agent_name, result, duration_ms) in results {
         match result {
             ReviewExecutionResult::Success(review) => {
                 let needs_revision = review.needs_revision();
@@ -399,6 +419,15 @@ pub async fn run_multi_agent_review_with_context(
                 } else {
                     review.summary.clone()
                 };
+
+                // Send reviewer completed event with duration
+                session_sender.send_reviewer_completed(
+                    iteration,
+                    agent_name.clone(),
+                    !needs_revision, // approved = !needs_revision
+                    summary.clone(),
+                    duration_ms,
+                );
 
                 reviews.push(ReviewResult {
                     agent_name,
@@ -450,6 +479,13 @@ pub async fn run_multi_agent_review_with_context(
                 );
                 session_sender.send_output(format!("[review:{}] ERROR: {}", agent_name, full_error));
 
+                // Send reviewer failed event
+                session_sender.send_reviewer_failed(
+                    iteration,
+                    agent_name.clone(),
+                    full_error.clone(),
+                );
+
                 failures.push(ReviewFailure {
                     agent_name,
                     error: full_error.clone(),
@@ -459,6 +495,14 @@ pub async fn run_multi_agent_review_with_context(
             }
             ReviewExecutionResult::ExecutionError(error) => {
                 session_sender.send_output(format!("[error] {} review failed: {}", agent_name, error));
+
+                // Send reviewer failed event
+                session_sender.send_reviewer_failed(
+                    iteration,
+                    agent_name.clone(),
+                    error.clone(),
+                );
+
                 // Classify the error based on its content
                 let kind = classify_execution_error(&error);
                 failures.push(ReviewFailure {

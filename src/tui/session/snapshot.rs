@@ -66,6 +66,9 @@ impl Session {
             current_run_id: self.current_run_id,
             plan_modal_open: self.plan_modal_open,
             plan_modal_scroll: self.plan_modal_scroll,
+            review_history: self.review_history.clone(),
+            review_history_spinner_frame: self.review_history_spinner_frame,
+            review_history_scroll: self.review_history_scroll,
         }
     }
 
@@ -150,6 +153,10 @@ impl Session {
             plan_modal_open: ui_state.plan_modal_open,
             plan_modal_scroll: ui_state.plan_modal_scroll,
             plan_modal_content: String::new(), // Content is re-read from disk when modal opens
+
+            review_history: ui_state.review_history,
+            review_history_spinner_frame: ui_state.review_history_spinner_frame,
+            review_history_scroll: ui_state.review_history_scroll,
 
             context: None, // Context is set by resume/new-session flows, not serialized
 

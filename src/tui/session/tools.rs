@@ -203,6 +203,9 @@ impl Session {
     }
 
     /// Get all completed tools across all agents as a flat list
+    /// Note: Currently unused after replacing draw_tool_calls_panel with
+    /// draw_reviewer_history_panel, but kept for potential future tool tracking features.
+    #[allow(dead_code)]
     pub fn all_completed_tools(&self) -> Vec<(&str, &CompletedTool)> {
         let mut tools = Vec::new();
         for (agent_name, agent_tools) in &self.completed_tools_by_agent {

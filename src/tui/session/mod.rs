@@ -5,6 +5,7 @@ pub mod context;
 mod input;
 pub mod model;
 mod paste;
+mod review_history;
 mod snapshot;
 mod tools;
 
@@ -28,8 +29,9 @@ use super::event::UserApprovalResponse;
 
 pub use model::{
     ApprovalContext, ApprovalMode, FeedbackTarget, FocusedPanel, ImplementationSuccessModal,
-    InputMode, PasteBlock, RunTab, RunTabEntry, SessionStatus, SummaryState, TodoItem, TodoStatus,
-    ToolKind, ToolResultSummary, ToolTimelineEntry,
+    InputMode, PasteBlock, ReviewerEntry, ReviewerStatus, ReviewRound, RunTab, RunTabEntry,
+    SessionStatus, SummaryState, TodoItem, TodoStatus, ToolKind, ToolResultSummary,
+    ToolTimelineEntry,
 };
 
 /// Represents an active tool call with optional ID for correlation
@@ -46,7 +48,10 @@ pub struct ActiveTool {
 }
 
 /// Represents a completed tool call
+/// Note: Fields are currently unused after replacing draw_tool_calls_panel with
+/// draw_reviewer_history_panel, but kept for potential future tool tracking features.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct CompletedTool {
     /// Human-readable display name of the tool
     pub display_name: String,
@@ -152,6 +157,13 @@ pub struct Session {
     pub run_tabs: Vec<RunTab>,
     pub active_run_tab: usize,
     pub chat_follow_mode: bool,
+
+    /// Review history: rounds and their reviewer statuses
+    pub review_history: Vec<ReviewRound>,
+    /// Spinner frame for review history panel
+    pub review_history_spinner_frame: u8,
+    /// Scroll position for review history panel
+    pub review_history_scroll: usize,
 
     pub todos: HashMap<String, Vec<TodoItem>>,
     pub todo_scroll_position: usize,
@@ -265,6 +277,10 @@ impl Session {
             run_tabs: Vec::new(),
             active_run_tab: 0,
             chat_follow_mode: true,
+
+            review_history: Vec::new(),
+            review_history_spinner_frame: 0,
+            review_history_scroll: 0,
 
             todos: HashMap::new(),
             todo_scroll_position: 0,
@@ -802,6 +818,8 @@ impl Session {
     pub fn display_cost(&self) -> f64 {
         self.total_cost
     }
+
+    // Review history methods are implemented in review_history.rs
 
     // Note: `to_ui_state` and `from_ui_state` are implemented in snapshot.rs
 

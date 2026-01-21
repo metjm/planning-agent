@@ -117,6 +117,41 @@ fn compute_plan_modal_visible_height() -> usize {
     visible_height as usize
 }
 
+/// Compute the max scroll for the review history panel.
+/// The panel is shown when terminal width >= 100, taking up 30% of the chat area.
+fn compute_review_history_max_scroll(session: &Session, term_width: u16, term_height: u16) -> usize {
+    // The review history panel is only shown when width >= 100
+    if term_width < 100 {
+        return 0;
+    }
+
+    // Approximate the visible height:
+    // Main layout: top bar (2), footer (3) = 5 overhead
+    // Main content split: 70% left, 30% right (stats)
+    // Chat area in the left 70%: 60% of main content height
+    // Review history panel: 30% of chat area width
+    // The panel has borders, so inner_height = panel_height - 2
+
+    let main_content_height = term_height.saturating_sub(5);
+    let chat_area_height = (main_content_height as f32 * 0.60) as u16;
+    let panel_height = chat_area_height;
+    let visible_height = panel_height.saturating_sub(2) as usize;
+
+    // Count content lines: each round has a header line + reviewer lines + spacing
+    let mut content_lines = 0usize;
+    if session.review_history.is_empty() {
+        content_lines = 1; // "No reviews yet"
+    } else {
+        for round in &session.review_history {
+            content_lines += 1; // Round header
+            content_lines += round.reviewers.len(); // Reviewer entries
+            content_lines += 1; // Spacing
+        }
+    }
+
+    content_lines.saturating_sub(visible_height)
+}
+
 /// Compute the max scroll for the error overlay based on wrapped lines and terminal size.
 fn compute_error_overlay_max_scroll(error: &str) -> usize {
     let (term_width, term_height) = crossterm::terminal::size().unwrap_or((80, 24));
@@ -505,25 +540,40 @@ fn handle_none_mode_input(
         KeyCode::Tab => {
             session.toggle_focus_with_visibility(todos_visible);
         }
-        KeyCode::Char('j') | KeyCode::Down => match session.focused_panel {
-            FocusedPanel::Output => session.scroll_down(),
-            FocusedPanel::Todos => {
-                let max_scroll = compute_todo_panel_max_scroll(session);
-                session.todo_scroll_down(max_scroll);
+        KeyCode::Char('j') | KeyCode::Down => {
+            match session.focused_panel {
+                FocusedPanel::Output => session.scroll_down(),
+                FocusedPanel::Todos => {
+                    let max_scroll = compute_todo_panel_max_scroll(session);
+                    session.todo_scroll_down(max_scroll);
+                }
+                FocusedPanel::Chat => session.chat_scroll_down(),
+                FocusedPanel::ChatInput => {}
+                FocusedPanel::Summary => session.summary_scroll_down(),
+                FocusedPanel::Unknown => {} // Legacy variant - no action
             }
-            FocusedPanel::Chat => session.chat_scroll_down(),
-            FocusedPanel::ChatInput => {}
-            FocusedPanel::Summary => session.summary_scroll_down(),
-            FocusedPanel::Unknown => {} // Legacy variant - no action
-        },
-        KeyCode::Char('k') | KeyCode::Up => match session.focused_panel {
-            FocusedPanel::Output => session.scroll_up(),
-            FocusedPanel::Todos => session.todo_scroll_up(),
-            FocusedPanel::Chat => session.chat_scroll_up(),
-            FocusedPanel::ChatInput => {}
-            FocusedPanel::Summary => session.summary_scroll_up(),
-            FocusedPanel::Unknown => {} // Legacy variant - no action
-        },
+            // Fallback: scroll review history panel if visible
+            let (term_width, term_height) = crossterm::terminal::size().unwrap_or((80, 24));
+            if term_width >= 100 {
+                let max_scroll = compute_review_history_max_scroll(session, term_width, term_height);
+                session.review_history_scroll_down(max_scroll);
+            }
+        }
+        KeyCode::Char('k') | KeyCode::Up => {
+            match session.focused_panel {
+                FocusedPanel::Output => session.scroll_up(),
+                FocusedPanel::Todos => session.todo_scroll_up(),
+                FocusedPanel::Chat => session.chat_scroll_up(),
+                FocusedPanel::ChatInput => {}
+                FocusedPanel::Summary => session.summary_scroll_up(),
+                FocusedPanel::Unknown => {} // Legacy variant - no action
+            }
+            // Fallback: scroll review history panel if visible
+            let (term_width, _) = crossterm::terminal::size().unwrap_or((80, 24));
+            if term_width >= 100 {
+                session.review_history_scroll_up();
+            }
+        }
         KeyCode::Char('g') => match session.focused_panel {
             FocusedPanel::Output => session.scroll_to_top(),
             FocusedPanel::Todos => session.todo_scroll_to_top(),

@@ -1,5 +1,6 @@
 use super::theme::Theme;
 use super::util::{compute_wrapped_line_count, parse_markdown_line, wrap_text_at_width};
+use crate::tui::session::ReviewerStatus;
 use crate::tui::{FocusedPanel, RunTab, RunTabEntry, Session, SummaryState, ToolResultSummary, ToolTimelineEntry};
 use ratatui::{
     layout::Rect,
@@ -455,161 +456,133 @@ fn format_duration_secs(duration_ms: u64) -> String {
     }
 }
 
-pub(super) fn draw_tool_calls_panel(frame: &mut Frame, session: &Session, area: Rect) {
-    let tool_block = Block::default()
-        .borders(Borders::ALL)
-        .title(" Tool Calls ")
-        .border_style(Style::default().fg(Color::Yellow));
+pub(super) fn draw_reviewer_history_panel(frame: &mut Frame, session: &Session, area: Rect) {
+    let theme = Theme::for_session(session);
+    let spinner_chars = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+    let spinner_idx = (session.review_history_spinner_frame as usize) % spinner_chars.len();
 
-    let inner_area = tool_block.inner(area);
-    let visible_height = inner_area.height as usize;
-    let max_preview_len = 40; // Truncate input_preview to ~40 chars
-
-    let has_active = !session.active_tools_by_agent.is_empty();
-    let has_completed = !session.completed_tools_by_agent.is_empty();
-
-    let lines: Vec<Line> = if !has_active && !has_completed {
-        vec![Line::from(Span::styled(
-            "No active tools",
-            Style::default().fg(Color::DarkGray),
-        ))]
+    let title = if session.has_running_reviewer() {
+        format!(" {} Review History ", spinner_chars[spinner_idx])
     } else {
-        let mut tool_lines: Vec<Line> = Vec::new();
-        let mut lines_remaining = visible_height.saturating_sub(1); // Reserve 1 line for "more" indicator
-        let mut total_remaining_tools = 0;
-
-        // Render active tools first (grouped by agent)
-        if has_active {
-            // Sort agent names alphabetically for stable ordering
-            let mut agent_names: Vec<_> = session.active_tools_by_agent.keys().collect();
-            agent_names.sort();
-
-            for agent_name in agent_names {
-                if lines_remaining == 0 {
-                    // Count remaining tools for the "+N more" message
-                    if let Some(tools) = session.active_tools_by_agent.get(agent_name) {
-                        total_remaining_tools += tools.len();
-                    }
-                    continue;
-                }
-
-                if let Some(tools) = session.active_tools_by_agent.get(agent_name) {
-                    if tools.is_empty() {
-                        continue;
-                    }
-
-                    // Add agent header
-                    if lines_remaining > 0 {
-                        tool_lines.push(Line::from(Span::styled(
-                            format!("{}:", agent_name),
-                            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
-                        )));
-                        lines_remaining = lines_remaining.saturating_sub(1);
-                    }
-
-                    // Add active tool entries
-                    for tool in tools {
-                        if lines_remaining == 0 {
-                            total_remaining_tools += 1;
-                            continue;
-                        }
-                        let elapsed_secs = tool.started_at.elapsed().as_secs();
-                        let label =
-                            format_tool_label(&tool.display_name, &tool.input_preview, max_preview_len);
-                        tool_lines.push(Line::from(vec![
-                            Span::styled("  ▶ ", Style::default().fg(Color::Yellow)),
-                            Span::styled(
-                                format!("{} ({}s)", label, elapsed_secs),
-                                Style::default().fg(Color::Yellow),
-                            ),
-                        ]));
-                        lines_remaining = lines_remaining.saturating_sub(1);
-                    }
-                }
-            }
-        }
-
-        // Render completed tools (newest first, grouped view)
-        if has_completed && lines_remaining > 0 {
-            // Get all completed tools sorted by completion time (newest first)
-            let completed_tools = session.all_completed_tools();
-
-            // Group by agent for display
-            let mut by_agent: std::collections::HashMap<&str, Vec<&crate::tui::session::CompletedTool>> =
-                std::collections::HashMap::new();
-            for (agent, tool) in &completed_tools {
-                by_agent.entry(*agent).or_default().push(*tool);
-            }
-
-            let mut agent_names: Vec<_> = by_agent.keys().collect();
-            agent_names.sort();
-
-            for agent_name in agent_names {
-                if lines_remaining == 0 {
-                    if let Some(tools) = by_agent.get(agent_name) {
-                        total_remaining_tools += tools.len();
-                    }
-                    continue;
-                }
-
-                if let Some(tools) = by_agent.get(agent_name) {
-                    if tools.is_empty() {
-                        continue;
-                    }
-
-                    // Check if we already have an active header for this agent
-                    let has_active_header = session.active_tools_by_agent.contains_key(*agent_name);
-
-                    // Add agent header only if we don't have an active one
-                    if !has_active_header && lines_remaining > 0 {
-                        tool_lines.push(Line::from(Span::styled(
-                            format!("{}:", agent_name),
-                            Style::default().fg(Color::DarkGray),
-                        )));
-                        lines_remaining = lines_remaining.saturating_sub(1);
-                    }
-
-                    // Add completed tool entries
-                    for tool in tools {
-                        if lines_remaining == 0 {
-                            total_remaining_tools += 1;
-                            continue;
-                        }
-
-                        let label =
-                            format_tool_label(&tool.display_name, &tool.input_preview, max_preview_len);
-                        let duration_str = format_duration_secs(tool.duration_ms);
-
-                        let (icon, style) = if tool.is_error {
-                            ("  ✗ ", Style::default().fg(Color::Red))
-                        } else {
-                            ("  ✓ ", Style::default().fg(Color::DarkGray))
-                        };
-
-                        tool_lines.push(Line::from(vec![
-                            Span::styled(icon, style),
-                            Span::styled(
-                                format!("{} ({})", label, duration_str),
-                                style,
-                            ),
-                        ]));
-                        lines_remaining = lines_remaining.saturating_sub(1);
-                    }
-                }
-            }
-        }
-
-        // Add "+N more" indicator if needed
-        if total_remaining_tools > 0 {
-            tool_lines.push(Line::from(Span::styled(
-                format!("+{} more", total_remaining_tools),
-                Style::default().fg(Color::DarkGray),
-            )));
-        }
-
-        tool_lines
+        " Review History ".to_string()
     };
 
-    let paragraph = Paragraph::new(lines).block(tool_block).wrap(Wrap { trim: false });
+    let panel_block = Block::default()
+        .borders(Borders::ALL)
+        .title(title)
+        .border_style(Style::default().fg(theme.accent_alt));
+
+    let inner_area = panel_block.inner(area);
+    let visible_height = inner_area.height as usize;
+
+    let mut lines: Vec<Line> = Vec::new();
+
+    if session.review_history.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "No reviews yet",
+            Style::default().fg(theme.muted),
+        )));
+    } else {
+        // Show most recent rounds first
+        for round in session.review_history.iter().rev() {
+            // Determine round icon based on aggregate verdict or running state
+            let has_running = round
+                .reviewers
+                .iter()
+                .any(|r| matches!(r.status, ReviewerStatus::Running));
+
+            let (round_icon, round_color): (String, Color) = match round.aggregate_verdict {
+                Some(true) => ("✓".to_string(), theme.success),
+                Some(false) => ("✗".to_string(), theme.error),
+                None => {
+                    if has_running {
+                        (spinner_chars[spinner_idx].to_string(), theme.warning)
+                    } else {
+                        ("?".to_string(), theme.muted)
+                    }
+                }
+            };
+
+            lines.push(Line::from(vec![
+                Span::styled(format!("{} ", round_icon), Style::default().fg(round_color)),
+                Span::styled(
+                    format!("Round {}", round.round),
+                    Style::default().fg(theme.text).add_modifier(Modifier::BOLD),
+                ),
+            ]));
+
+            // Each reviewer in the round
+            for entry in &round.reviewers {
+                let (icon, color, suffix): (String, Color, String) = match &entry.status {
+                    ReviewerStatus::Running => {
+                        (spinner_chars[spinner_idx].to_string(), theme.warning, String::new())
+                    }
+                    ReviewerStatus::Completed {
+                        approved,
+                        summary,
+                        duration_ms,
+                    } => {
+                        let duration_display = if *duration_ms < 10_000 {
+                            format!("{:.1}s", *duration_ms as f64 / 1000.0)
+                        } else {
+                            format!("{}s", duration_ms / 1000)
+                        };
+                        let (icon, color) = if *approved {
+                            ("✓".to_string(), theme.success)
+                        } else {
+                            ("✗".to_string(), theme.error)
+                        };
+                        let summary_preview = if summary.chars().count() > 30 {
+                            let truncated: String = summary.chars().take(27).collect();
+                            format!("{}...", truncated)
+                        } else {
+                            summary.clone()
+                        };
+                        (icon, color, format!(" ({}) {}", duration_display, summary_preview))
+                    }
+                    ReviewerStatus::Failed { error } => {
+                        let error_preview = if error.chars().count() > 25 {
+                            let truncated: String = error.chars().take(22).collect();
+                            format!("{}...", truncated)
+                        } else {
+                            error.clone()
+                        };
+                        ("!".to_string(), theme.error, format!(" {}", error_preview))
+                    }
+                };
+
+                lines.push(Line::from(vec![
+                    Span::styled("  ", Style::default()),
+                    Span::styled(format!("{} ", icon), Style::default().fg(color)),
+                    Span::styled(&entry.display_id, Style::default().fg(color)),
+                    Span::styled(suffix, Style::default().fg(theme.muted)),
+                ]));
+            }
+
+            lines.push(Line::from("")); // Spacing between rounds
+        }
+    }
+
+    // Calculate max scroll position
+    let content_height = lines.len();
+    let max_scroll = content_height.saturating_sub(visible_height);
+    let scroll_position = session.review_history_scroll.min(max_scroll);
+
+    let paragraph = Paragraph::new(lines.clone())
+        .block(panel_block)
+        .wrap(Wrap { trim: false })
+        .scroll((scroll_position as u16, 0));
     frame.render_widget(paragraph, area);
+
+    // Scrollbar if content exceeds visible height
+    if content_height > visible_height {
+        let mut scrollbar_state = ScrollbarState::new(content_height).position(scroll_position);
+        frame.render_stateful_widget(
+            Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                .begin_symbol(Some("↑"))
+                .end_symbol(Some("↓")),
+            area,
+            &mut scrollbar_state,
+        );
+    }
 }

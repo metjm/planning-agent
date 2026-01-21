@@ -225,6 +225,10 @@ pub async fn run_reviewing_phase(
     let status = aggregate_reviews(&reviews, &config.workflow.reviewing.aggregation);
     context.log_workflow( &format!("Aggregated status: {:?}", status));
 
+    // Signal round completion for review history UI
+    let round_approved = matches!(status, FeedbackStatus::Approved);
+    sender.send_review_round_completed(state.iteration, round_approved);
+
     *last_reviews = reviews;
     state.last_feedback_status = Some(status.clone());
 

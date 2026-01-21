@@ -14,8 +14,8 @@ use crate::cli_usage::AccountUsage;
 use crate::planning_paths;
 use crate::state::State;
 use crate::tui::session::model::{
-    ApprovalContext, ApprovalMode, FeedbackTarget, FocusedPanel, InputMode, PasteBlock, RunTab,
-    SessionStatus, TodoItem,
+    ApprovalContext, ApprovalMode, FeedbackTarget, FocusedPanel, InputMode, PasteBlock, ReviewRound,
+    RunTab, SessionStatus, TodoItem,
 };
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -133,6 +133,14 @@ pub struct SessionUiState {
     pub plan_modal_open: bool,
     #[serde(default)]
     pub plan_modal_scroll: usize,
+
+    // Review history (uses serde(default) for backward compatibility with v4 snapshots)
+    #[serde(default)]
+    pub review_history: Vec<ReviewRound>,
+    #[serde(default)]
+    pub review_history_spinner_frame: u8,
+    #[serde(default)]
+    pub review_history_scroll: usize,
 }
 
 /// Information about a session snapshot for listing purposes.
@@ -622,6 +630,9 @@ impl SessionUiState {
             current_run_id: 0,
             plan_modal_open: false,
             plan_modal_scroll: 0,
+            review_history: Vec::new(),
+            review_history_spinner_frame: 0,
+            review_history_scroll: 0,
         }
     }
 }
@@ -687,6 +698,9 @@ mod tests {
             current_run_id: 1,
             plan_modal_open: false,
             plan_modal_scroll: 0,
+            review_history: Vec::new(),
+            review_history_spinner_frame: 0,
+            review_history_scroll: 0,
         }
     }
 

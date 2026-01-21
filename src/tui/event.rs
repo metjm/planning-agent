@@ -87,6 +87,30 @@ pub enum Event {
     SessionStateUpdate { session_id: usize, state: State },
     SessionApprovalRequest { session_id: usize, summary: String },
     SessionReviewDecisionRequest { session_id: usize, summary: String },
+
+    /// A review round has started
+    SessionReviewRoundStarted { session_id: usize, round: u32 },
+    /// A reviewer has started within a round
+    SessionReviewerStarted { session_id: usize, round: u32, display_id: String },
+    /// A reviewer has completed within a round
+    SessionReviewerCompleted {
+        session_id: usize,
+        round: u32,
+        display_id: String,
+        approved: bool,
+        summary: String,
+        duration_ms: u64,
+    },
+    /// A reviewer has failed within a round
+    SessionReviewerFailed {
+        session_id: usize,
+        round: u32,
+        display_id: String,
+        error: String,
+    },
+    /// A review round has completed with aggregate verdict
+    SessionReviewRoundCompleted { session_id: usize, round: u32, approved: bool },
+
     SessionTokenUsage { session_id: usize, usage: TokenUsage },
     SessionToolStarted {
         session_id: usize,
@@ -557,6 +581,56 @@ impl SessionEventSender {
         let _ = self.inner.send(Event::SessionAllReviewersFailed {
             session_id: self.session_id,
             summary,
+        });
+    }
+
+    pub fn send_review_round_started(&self, round: u32) {
+        let _ = self.inner.send(Event::SessionReviewRoundStarted {
+            session_id: self.session_id,
+            round,
+        });
+    }
+
+    pub fn send_reviewer_started(&self, round: u32, display_id: String) {
+        let _ = self.inner.send(Event::SessionReviewerStarted {
+            session_id: self.session_id,
+            round,
+            display_id,
+        });
+    }
+
+    pub fn send_reviewer_completed(
+        &self,
+        round: u32,
+        display_id: String,
+        approved: bool,
+        summary: String,
+        duration_ms: u64,
+    ) {
+        let _ = self.inner.send(Event::SessionReviewerCompleted {
+            session_id: self.session_id,
+            round,
+            display_id,
+            approved,
+            summary,
+            duration_ms,
+        });
+    }
+
+    pub fn send_reviewer_failed(&self, round: u32, display_id: String, error: String) {
+        let _ = self.inner.send(Event::SessionReviewerFailed {
+            session_id: self.session_id,
+            round,
+            display_id,
+            error,
+        });
+    }
+
+    pub fn send_review_round_completed(&self, round: u32, approved: bool) {
+        let _ = self.inner.send(Event::SessionReviewRoundCompleted {
+            session_id: self.session_id,
+            round,
+            approved,
         });
     }
 

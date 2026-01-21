@@ -2,7 +2,8 @@
 use super::cli_instances::{draw_cli_instances, CLI_INSTANCES_MIN_HEIGHT};
 use super::objective::{compute_objective_height, draw_objective, OBJECTIVE_MAX_FRACTION, OBJECTIVE_MIN_HEIGHT};
 use super::chat::{
-    draw_chat_content, draw_chat_input, draw_run_tabs, draw_summary_panel, draw_tool_calls_panel,
+    draw_chat_content, draw_chat_input, draw_reviewer_history_panel, draw_run_tabs,
+    draw_summary_panel,
 };
 use super::stats::draw_stats;
 use super::theme::Theme;
@@ -341,7 +342,7 @@ pub fn draw_chat(frame: &mut Frame, session: &Session, area: Rect, show_tool_pan
     };
 
     if let Some(tool_area) = tool_area {
-        draw_tool_calls_panel(frame, session, tool_area);
+        draw_reviewer_history_panel(frame, session, tool_area);
     }
 
     // Now render the content in content_area

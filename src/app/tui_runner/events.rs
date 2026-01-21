@@ -190,6 +190,7 @@ fn handle_tick_event(tab_manager: &mut TabManager, output_tx: &mpsc::UnboundedSe
             session.spinner_frame = session.spinner_frame.wrapping_add(1);
         }
         session.advance_summary_spinners();
+        session.advance_review_history_spinner();
     }
     if tab_manager.update_in_progress {
         tab_manager.update_spinner_frame = tab_manager.update_spinner_frame.wrapping_add(1);
@@ -315,6 +316,51 @@ async fn handle_session_event(
         Event::SessionReviewDecisionRequest { session_id, summary } => {
             if let Some(session) = tab_manager.session_by_id_mut(session_id) {
                 session.start_review_decision(summary);
+            }
+        }
+        Event::SessionReviewRoundStarted { session_id, round } => {
+            if let Some(session) = tab_manager.session_by_id_mut(session_id) {
+                session.start_review_round(round);
+            }
+        }
+        Event::SessionReviewerStarted {
+            session_id,
+            round,
+            display_id,
+        } => {
+            if let Some(session) = tab_manager.session_by_id_mut(session_id) {
+                session.reviewer_started(round, display_id);
+            }
+        }
+        Event::SessionReviewerCompleted {
+            session_id,
+            round,
+            display_id,
+            approved,
+            summary,
+            duration_ms,
+        } => {
+            if let Some(session) = tab_manager.session_by_id_mut(session_id) {
+                session.reviewer_completed(round, display_id, approved, summary, duration_ms);
+            }
+        }
+        Event::SessionReviewerFailed {
+            session_id,
+            round,
+            display_id,
+            error,
+        } => {
+            if let Some(session) = tab_manager.session_by_id_mut(session_id) {
+                session.reviewer_failed(round, display_id, error);
+            }
+        }
+        Event::SessionReviewRoundCompleted {
+            session_id,
+            round,
+            approved,
+        } => {
+            if let Some(session) = tab_manager.session_by_id_mut(session_id) {
+                session.set_round_verdict(round, approved);
             }
         }
         Event::SessionTokenUsage { session_id, usage } => {

@@ -116,6 +116,51 @@ impl RunTab {
     }
 }
 
+/// Status of a single reviewer within a round
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum ReviewerStatus {
+    /// Reviewer is currently running
+    Running,
+    /// Reviewer completed successfully
+    Completed {
+        approved: bool,
+        summary: String,
+        duration_ms: u64,
+    },
+    /// Reviewer failed (execution error, not a rejection)
+    Failed { error: String },
+}
+
+/// A single reviewer's state within a round
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ReviewerEntry {
+    /// Display ID of the reviewer (e.g., "claude", "claude-practices")
+    pub display_id: String,
+    /// Current status
+    pub status: ReviewerStatus,
+}
+
+/// A single review round (iteration)
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ReviewRound {
+    /// Round number (1-indexed, matches state.iteration)
+    pub round: u32,
+    /// Reviewers in this round
+    pub reviewers: Vec<ReviewerEntry>,
+    /// Aggregate verdict for this round (set when all reviewers complete)
+    pub aggregate_verdict: Option<bool>,
+}
+
+impl ReviewRound {
+    pub fn new(round: u32) -> Self {
+        Self {
+            round,
+            reviewers: Vec::new(),
+            aggregate_verdict: None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ApprovalMode {
     None,
