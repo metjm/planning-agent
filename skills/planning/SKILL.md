@@ -39,6 +39,7 @@ Plans must be precise and actionable. Vague descriptions lead to implementation 
 ### Code Examples Required
 
 For ANY new functionality, the plan MUST include a code example showing:
+
 - The function/method signature
 - Key implementation logic (not full implementation, but the critical parts)
 - How it integrates with existing code
@@ -53,6 +54,7 @@ For ANY new functionality, the plan MUST include a code example showing:
 ```
 
 **When code examples are required:**
+
 - Adding a new function/method
 - Modifying an existing function's behavior
 - Adding a new data structure or type
@@ -62,6 +64,7 @@ For ANY new functionality, the plan MUST include a code example showing:
 ### Mathematical Formulas Required
 
 For ANY calculation or algorithm, the plan MUST include:
+
 - The mathematical formula in clear notation
 - Variable definitions
 - Example calculation with concrete numbers
@@ -82,6 +85,7 @@ Example:
 ```
 
 **When formulas are required:**
+
 - Any numerical calculation
 - Algorithms with mathematical basis
 - Performance calculations (complexity, throughput, etc.)
@@ -91,6 +95,7 @@ Example:
 ### Library/API Examples Required
 
 For ANY library or API usage, the plan MUST include:
+
 - The exact import/require statement
 - A working code example showing actual usage
 - Expected input/output with concrete values
@@ -112,6 +117,7 @@ const result = specific(input);
 ### Supplementary Files
 
 You may create supplementary files in the session folder for:
+
 - Extended code examples too large for inline inclusion
 - Data schemas or type definitions
 - Configuration file examples
@@ -152,12 +158,14 @@ Use the type system to prevent errors at compile time, not runtime.
 **When implementing new features or refactoring, make a clean cut. Never maintain backwards compatibility.**
 
 This is one of the most important principles. Backwards compatibility code creates:
+
 - Technical debt that accumulates forever
 - Confusion about which code path is "correct"
 - Maintenance burden for deprecated patterns
 - Bugs from edge cases in compatibility layers
 
 **What "clean cut" means:**
+
 - **DO**: Delete old code entirely when replacing it
 - **DO**: Update ALL callers to use the new approach
 - **DO**: Remove old function signatures, not just deprecate them
@@ -165,6 +173,7 @@ This is one of the most important principles. Backwards compatibility code creat
 - **DO**: Migrate all existing data/state to the new format
 
 **What to NEVER do:**
+
 - **NEVER**: Keep old functions "just in case" something still calls them
 - **NEVER**: Add `_deprecated`, `_old`, `_legacy` suffixed functions
 - **NEVER**: Create adapters/shims to make old code work with new code
@@ -175,6 +184,7 @@ This is one of the most important principles. Backwards compatibility code creat
 - **NEVER**: Add feature flags to toggle between old/new behavior
 
 **Example of what NOT to do:**
+
 ```rust
 // BAD - Don't do this!
 pub fn old_function() { new_function() } // Shim
@@ -186,6 +196,7 @@ struct Config {
 ```
 
 **Example of what TO do:**
+
 ```rust
 // GOOD - Clean cut
 // 1. Delete old_function entirely
@@ -201,6 +212,7 @@ If updating all callers seems like too much work, that's exactly when you MUST d
 A common anti-pattern is wrapping new required fields in `Option<T>` "during transition" or "for backwards compatibility". This is forbidden.
 
 **What to NEVER do:**
+
 ```rust
 // BAD - Don't wrap new fields in Option "for now"
 struct Context {
@@ -218,6 +230,7 @@ fn log(&self, msg: &str) {
 ```
 
 **What TO do:**
+
 ```rust
 // GOOD - Make it required from the start
 struct Context {
@@ -231,6 +244,7 @@ fn log(&self, msg: &str) {
 ```
 
 **Why this matters:**
+
 - `Option` wrappers for "transitions" never get removed
 - Fallback code paths rarely get tested
 - You end up maintaining two systems indefinitely
@@ -260,6 +274,7 @@ When a plan addresses an issue that could have been caught by a linter rule, pro
 - **DO NOT**: Skip the linter rule because "it's just this one case"
 
 **Common issues that warrant linter rules:**
+
 - Unused variables, imports, or dead code → `unused_*` rules
 - Missing error handling → `unwrap_used`, `expect_used` in production code
 - Type coercion issues → strict type checking rules
@@ -292,6 +307,7 @@ When a plan addresses an issue that could have been caught by a linter rule, pro
 ### Phase 3: Documentation
 
 Write the plan to the `plan-output-path` provided in the inputs. The plan should include:
+
 - Clear objective and scope
 - Current state analysis with specific file references
 - Proposed solution with architectural decisions
@@ -329,24 +345,28 @@ Write the plan to the `plan-output-path` provided in the inputs. The plan should
 
 Write the plan to the `plan-output-path` provided in the inputs. Use this structure:
 
-```markdown
+````markdown
 # Implementation Plan: [Feature/Task Name]
 
 ## Objective
+
 [Clear, measurable goal]
 
 ## Current State Analysis
 
 ### Relevant Files
+
 - path/to/file.ext (lines X-Y): [Purpose and current implementation]
 - path/to/another.ext (lines A-B): [Dependencies and interfaces]
 
 ### Architecture Overview
+
 [Current patterns, conventions, constraints]
 
 ## Library and API Analysis
 
 ### Dependencies Verification
+
 - **Library**: [name@version]
   - Verified methods: [list actual methods checked in source]
   - API signatures: [confirmed function signatures]
@@ -360,9 +380,11 @@ Write the plan to the `plan-output-path` provided in the inputs. Use this struct
 ## Proposed Solution
 
 ### Approach
+
 [Chosen approach with reasoning]
 
 ### Alternative Approaches Considered
+
 1. [Alternative 1]: [Pros/cons]
 2. [Alternative 2]: [Pros/cons]
 
@@ -371,14 +393,17 @@ Write the plan to the `plan-output-path` provided in the inputs. Use this struct
 [Include concrete code examples for all new functionality - see Precision Requirements section]
 
 ### [Feature/Component Name]
+
 ```[language]
 // File: /absolute/path/to/file.ext
 // Location: After line N / Replace lines X-Y / New file
 
 [10-30 lines of key implementation code]
 ```
+````
 
 ### [Another Feature if applicable]
+
 ...
 
 ## Implementation Steps
@@ -386,12 +411,14 @@ Write the plan to the `plan-output-path` provided in the inputs. Use this struct
 **Note:** Steps define ordering and sequencing only. Do not include time estimates, durations, or scheduling information.
 
 ### For Simple Features (single step):
+
 - [ ] Complete implementation: [Description]
   - Files to modify: path/file.ext (lines X-Y)
   - Key changes: [Comprehensive description]
   - Verified APIs/methods used: [list with confirmation]
 
 ### For Complex Features (multiple steps only when necessary):
+
 - [ ] Step 1: [Foundation/core functionality]
   - Files to modify: path/file.ext (lines X-Y)
   - Key changes: [Brief description]
@@ -426,13 +453,14 @@ Every test must run against real infrastructure. List specific tests:
 
 If this change fixes or prevents an issue that could be caught by static analysis, propose linter rules:
 
-| Rule | Tool | Purpose | Configuration |
-|------|------|---------|---------------|
+| Rule        | Tool                 | Purpose            | Configuration   |
+| ----------- | -------------------- | ------------------ | --------------- |
 | [rule_name] | [clippy/eslint/etc.] | [What it prevents] | [How to enable] |
 
 If no linter rules apply, state "No linter rules required - this issue is not catchable by static analysis."
 
 ## Validation Checklist
+
 - [ ] All existing tests pass
 - [ ] New functionality tested
 - [ ] Performance requirements met
@@ -441,9 +469,11 @@ If no linter rules apply, state "No linter rules required - this issue is not ca
 - [ ] All library/API usage verified
 
 ## Risk Assessment
-| Risk | Impact | Mitigation |
-|------|--------|------------|
+
+| Risk               | Impact            | Mitigation            |
+| ------------------ | ----------------- | --------------------- |
 | [Risk description] | [High/Medium/Low] | [Mitigation strategy] |
+
 ```
 
 ## Thinking Mode
@@ -456,4 +486,5 @@ If no linter rules apply, state "No linter rules required - this issue is not ca
 
 When analyzing a task, systematically work through each phase. Be thorough in research, creative in planning, and precise in documentation. Focus on creating a plan that can be executed completely with clear validation at each step. Verify all library and API usage before including in the plan.
 
-Use sub-agents extensively. You can use up to 20 at a time. Parallelize planning where possible.
+Use sub-agents extensively to assist with deep dives into code, libraries, and patterns. Leverage their capabilities to gather detailed information that informs your planning.
+```
