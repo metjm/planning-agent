@@ -107,20 +107,32 @@ pub async fn run_multi_agent_review_with_context(
     iteration: u32,
     state_path: &Path,
     session_logger: Arc<SessionLogger>,
+    emit_round_started: bool,
 ) -> Result<ReviewBatchResult> {
     if agent_refs.is_empty() {
         anyhow::bail!("No reviewers configured");
     }
 
     let display_ids: Vec<&str> = agent_refs.iter().map(|r| r.display_id()).collect();
-    session_sender.send_output(format!(
-        "[review] Running {} reviewer(s) in parallel: {}",
-        agent_refs.len(),
-        display_ids.join(", ")
-    ));
 
-    // Signal round started for review history UI
-    session_sender.send_review_round_started(iteration);
+    // Conditionally output message based on whether this is sequential or parallel
+    if agent_refs.len() == 1 {
+        session_sender.send_output(format!(
+            "[review] Running reviewer: {}",
+            display_ids[0]
+        ));
+    } else {
+        session_sender.send_output(format!(
+            "[review] Running {} reviewer(s) in parallel: {}",
+            agent_refs.len(),
+            display_ids.join(", ")
+        ));
+    }
+
+    // Only emit round started if caller requests it
+    if emit_round_started {
+        session_sender.send_review_round_started(iteration);
+    }
 
     let phase_name = format!("Reviewing #{}", iteration);
 

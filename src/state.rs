@@ -310,6 +310,106 @@ pub struct InvocationRecord {
     pub resume_strategy: ResumeStrategy,
 }
 
+/// Serializable version of ReviewResult for state persistence.
+/// ReviewResult from phases::reviewing is not Serialize, so we store the essential fields.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SerializableReviewResult {
+    pub agent_name: String,
+    pub needs_revision: bool,
+    pub feedback: String,
+    pub summary: String,
+}
+
+/// Sequential review state: tracks progress through reviewer queue
+/// and ensures all reviewers approve the same plan version.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SequentialReviewState {
+    /// Index of the current reviewer in the configured reviewer list (0-indexed)
+    pub current_reviewer_index: usize,
+    /// Plan version counter - incremented each time the plan is modified (during revision)
+    /// All reviewers must approve the same version for final approval
+    pub plan_version: u32,
+    /// The plan version that each reviewer last approved (reviewer_display_id -> version)
+    /// When a reviewer approves, we record which version they approved
+    pub approvals: HashMap<String, u32>,
+    /// Accumulated approved reviews for summary generation.
+    /// Stores (reviewer_display_id, SerializableReviewResult) pairs.
+    /// Cleared when plan version changes (after revision).
+    #[serde(default)]
+    pub accumulated_reviews: Vec<(String, SerializableReviewResult)>,
+}
+
+impl SequentialReviewState {
+    /// Creates a new sequential review state for a fresh review cycle.
+    pub fn new() -> Self {
+        Self {
+            current_reviewer_index: 0,
+            plan_version: 1,
+            approvals: HashMap::new(),
+            accumulated_reviews: Vec::new(),
+        }
+    }
+
+    /// Called when a reviewer approves - records their approval and stores the review.
+    pub fn record_approval(&mut self, reviewer_id: &str, review: &SerializableReviewResult) {
+        self.approvals.insert(reviewer_id.to_string(), self.plan_version);
+        // Remove any existing review from this reviewer (shouldn't happen but be safe)
+        self.accumulated_reviews.retain(|(id, _)| id != reviewer_id);
+        self.accumulated_reviews.push((reviewer_id.to_string(), review.clone()));
+    }
+
+    /// Called after revision - increments version and clears stale approvals and accumulated reviews.
+    pub fn increment_version(&mut self) {
+        self.plan_version += 1;
+        // Clear all approvals and accumulated reviews - they're now stale since plan changed
+        self.approvals.clear();
+        self.accumulated_reviews.clear();
+    }
+
+    /// Checks if all reviewers have approved the current plan version.
+    /// Takes &[&str] (reviewer display IDs) to avoid circular dependency with config.rs.
+    pub fn all_approved(&self, reviewer_ids: &[&str]) -> bool {
+        reviewer_ids.iter().all(|id| {
+            self.approvals.get(*id) == Some(&self.plan_version)
+        })
+    }
+
+    /// Resets to first reviewer (called after revision).
+    pub fn reset_to_first_reviewer(&mut self) {
+        self.current_reviewer_index = 0;
+    }
+
+    /// Advances to next reviewer.
+    pub fn advance_to_next_reviewer(&mut self) {
+        self.current_reviewer_index += 1;
+    }
+
+    /// Validates current_reviewer_index against actual reviewer count.
+    /// If index is out of bounds (config changed), resets to 0.
+    /// Returns true if reset was needed.
+    pub fn validate_reviewer_index(&mut self, reviewer_count: usize) -> bool {
+        if self.current_reviewer_index >= reviewer_count {
+            self.current_reviewer_index = 0;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Converts accumulated SerializableReviewResults back to ReviewResults for summary generation.
+    pub fn get_accumulated_reviews_for_summary(&self) -> Vec<crate::phases::ReviewResult> {
+        self.accumulated_reviews
+            .iter()
+            .map(|(_, sr)| crate::phases::ReviewResult {
+                agent_name: sr.agent_name.clone(),
+                needs_revision: sr.needs_revision,
+                feedback: sr.feedback.clone(),
+                summary: sr.summary.clone(),
+            })
+            .collect()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct State {
     pub phase: Phase,
@@ -356,6 +456,11 @@ pub struct State {
     /// Only present when implementation workflow is active.
     #[serde(default)]
     pub implementation_state: Option<ImplementationPhaseState>,
+
+    /// Sequential review tracking state.
+    /// Present when sequential review mode is active.
+    #[serde(default)]
+    pub sequential_review: Option<SequentialReviewState>,
 }
 
 /// Persisted worktree state for session resume.
@@ -406,6 +511,7 @@ impl State {
             failure_history: Vec::new(),
             worktree_info: None,
             implementation_state: None,
+            sequential_review: None,
         })
     }
 

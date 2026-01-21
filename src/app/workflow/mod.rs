@@ -53,7 +53,7 @@ use tokio::sync::mpsc;
 
 use completion::handle_completion;
 use planning::run_planning_phase;
-use reviewing::{run_reviewing_phase, WorkflowPhaseContext};
+use reviewing::{run_reviewing_phase, run_sequential_reviewing_phase, WorkflowPhaseContext};
 use revising::run_revising_phase;
 
 
@@ -198,14 +198,26 @@ pub async fn run_workflow_with_config(
             }
 
             Phase::Reviewing => {
-                let result = run_reviewing_phase(
-                    &mut state,
-                    &phase_context,
-                    &mut approval_rx,
-                    &mut control_rx,
-                    &mut last_reviews,
-                )
-                .await;
+                // Choose sequential or parallel review based on config
+                let result = if config.workflow.reviewing.sequential {
+                    run_sequential_reviewing_phase(
+                        &mut state,
+                        &phase_context,
+                        &mut approval_rx,
+                        &mut control_rx,
+                        &mut last_reviews,
+                    )
+                    .await
+                } else {
+                    run_reviewing_phase(
+                        &mut state,
+                        &phase_context,
+                        &mut approval_rx,
+                        &mut control_rx,
+                        &mut last_reviews,
+                    )
+                    .await
+                };
 
                 match result {
                     Ok(Some(workflow_result)) => {

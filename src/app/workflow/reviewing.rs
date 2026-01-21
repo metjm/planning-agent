@@ -12,7 +12,7 @@ use crate::phases::{
     write_feedback_files,
 };
 use crate::session_logger::{LogCategory, LogLevel, SessionLogger};
-use crate::state::{FeedbackStatus, Phase, State};
+use crate::state::{FeedbackStatus, Phase, SequentialReviewState, SerializableReviewResult, State};
 use crate::tui::{CancellationError, SessionEventSender, UserApprovalResponse, WorkflowCommand};
 use anyhow::Result;
 use std::collections::HashMap;
@@ -105,6 +105,7 @@ pub async fn run_reviewing_phase(
             state.iteration,
             state_path,
             context.session_logger.clone(),
+            true, // emit_round_started: parallel mode always emits
         )
         .await;
 
@@ -294,4 +295,312 @@ fn output_failure_bundles(sender: &SessionEventSender, failures: &[phases::Revie
     if has_bundles {
         sender.send_output("[warning] Bundles may contain sensitive information from logs.".to_string());
     }
+}
+
+/// Sequential reviewing phase: runs reviewers one at a time.
+/// If any reviewer rejects, immediately transitions to revision.
+/// After revision, restarts from the first reviewer to ensure
+/// all reviewers approve the same plan version.
+///
+/// Preserves all failure handling from parallel mode:
+/// - Retry logic for transient failures
+/// - User decision prompts for persistent failures
+/// - Diagnostics bundle creation
+///
+/// TUI events: Emits `send_review_round_started` once at start of sequential cycle
+/// (when first reviewer starts), then passes emit_round_started=false to
+/// run_multi_agent_review_with_context to prevent duplicates.
+pub async fn run_sequential_reviewing_phase(
+    state: &mut State,
+    context: &WorkflowPhaseContext<'_>,
+    approval_rx: &mut mpsc::Receiver<UserApprovalResponse>,
+    control_rx: &mut mpsc::Receiver<WorkflowCommand>,
+    last_reviews: &mut Vec<phases::ReviewResult>,
+) -> Result<Option<WorkflowResult>> {
+    let working_dir = context.working_dir;
+    let state_path = context.state_path;
+    let config = context.config;
+    let sender = context.sender;
+    let reviewers = &config.workflow.reviewing.agents;
+
+    // Initialize sequential review state if not present
+    if state.sequential_review.is_none() {
+        state.sequential_review = Some(SequentialReviewState::new());
+    }
+    let seq_state = state.sequential_review.as_mut().unwrap();
+
+    // Validate reviewer index in case config changed between sessions
+    if seq_state.validate_reviewer_index(reviewers.len()) {
+        context.log_workflow("Sequential review: reviewer index was out of bounds, reset to 0");
+        sender.send_output("[sequential] Reviewer configuration changed - restarting from first reviewer".to_string());
+    }
+
+    context.log_workflow(&format!(
+        ">>> ENTERING Sequential Reviewing phase (iteration {}, reviewer {}/{}, plan version {})",
+        state.iteration,
+        seq_state.current_reviewer_index + 1,
+        reviewers.len(),
+        seq_state.plan_version
+    ));
+
+    sender.send_phase_started("Reviewing".to_string());
+    sender.send_output("".to_string());
+    sender.send_output(format!(
+        "=== SEQUENTIAL REVIEW (Iteration {}, Reviewer {}/{}) ===",
+        state.iteration,
+        seq_state.current_reviewer_index + 1,
+        reviewers.len()
+    ));
+
+    // Emit round started ONLY for first reviewer in this sequential cycle
+    // We handle this here because we pass emit_round_started=false to run_multi_agent_review_with_context
+    let is_first_reviewer = seq_state.current_reviewer_index == 0;
+    if is_first_reviewer {
+        sender.send_review_round_started(state.iteration);
+    }
+
+    // Get current reviewer
+    let reviewer = &reviewers[seq_state.current_reviewer_index];
+    let reviewer_id = reviewer.display_id();
+
+    sender.send_output(format!(
+        "Running reviewer: {} (plan version {})",
+        reviewer_id, seq_state.plan_version
+    ));
+
+    // === FAILURE HANDLING LOOP (same pattern as parallel mode) ===
+    let mut retry_attempts = 0usize;
+    let review = loop {
+        // Check for commands before running reviewer
+        if let Ok(cmd) = control_rx.try_recv() {
+            match cmd {
+                WorkflowCommand::Interrupt { feedback } => {
+                    context.log_workflow(&format!(
+                        "Received interrupt during sequential reviewing: {}",
+                        feedback
+                    ));
+                    sender.send_output("[review] Interrupted by user".to_string());
+                    return Ok(Some(WorkflowResult::NeedsRestart { user_feedback: feedback }));
+                }
+                WorkflowCommand::Stop => {
+                    context.log_workflow("Received stop during sequential reviewing");
+                    sender.send_output("[review] Stopping...".to_string());
+                    return Ok(Some(WorkflowResult::Stopped));
+                }
+            }
+        }
+
+        // Run single reviewer using existing infrastructure (single-element slice)
+        // Pass emit_round_started=false to prevent duplicate TUI events
+        let batch = run_multi_agent_review_with_context(
+            state,
+            working_dir,
+            config,
+            std::slice::from_ref(reviewer),
+            sender.clone(),
+            state.iteration,
+            state_path,
+            context.session_logger.clone(),
+            false, // DO NOT emit round_started, we handle it above
+        ).await;
+
+        // Check for cancellation
+        let batch = match batch {
+            Ok(b) => b,
+            Err(e) if e.downcast_ref::<CancellationError>().is_some() => {
+                context.log_workflow("Sequential review phase was cancelled");
+                return Err(e);
+            }
+            Err(e) => return Err(e),
+        };
+
+        // Handle success case
+        if let Some(review) = batch.reviews.into_iter().next() {
+            break review;
+        }
+
+        // Handle failure case - same logic as parallel mode
+        if let Some(failure) = batch.failures.into_iter().next() {
+            let max_retries = config.failure_policy.max_retries as usize;
+            if retry_attempts < max_retries {
+                retry_attempts += 1;
+                sender.send_output(format!(
+                    "[review:{}] Failed; retrying ({}/{})...",
+                    reviewer_id, retry_attempts, max_retries
+                ));
+                continue;
+            }
+
+            // Output bundle path if present
+            if let Some(ref path) = failure.bundle_path {
+                sender.send_output(format!(
+                    "[diagnostics] {}: {}",
+                    failure.agent_name,
+                    path.display()
+                ));
+            }
+
+            // Prompt user for recovery decision
+            sender.send_output(format!(
+                "[review:{}] Failed after retries; awaiting your decision...",
+                reviewer_id
+            ));
+            let summary = build_all_reviewers_failed_summary(
+                std::slice::from_ref(&failure),
+                retry_attempts,
+                max_retries,
+            );
+            sender.send_all_reviewers_failed(summary);
+
+            let decision = wait_for_all_reviewers_failed_decision(
+                working_dir,
+                approval_rx,
+                control_rx,
+            ).await;
+
+            match decision {
+                AllReviewersFailedDecision::Retry => {
+                    context.log_workflow(&format!(
+                        "User chose to retry reviewer {}",
+                        reviewer_id
+                    ));
+                    retry_attempts = 0;
+                    continue;
+                }
+                AllReviewersFailedDecision::Stop => {
+                    context.log_workflow("User chose to stop and save state");
+                    return Ok(Some(WorkflowResult::Stopped));
+                }
+                AllReviewersFailedDecision::Abort => {
+                    context.log_workflow(&format!(
+                        "User chose to abort after reviewer {} failed",
+                        reviewer_id
+                    ));
+                    return Ok(Some(WorkflowResult::Aborted {
+                        reason: format!("Reviewer {} failed - user chose to abort", reviewer_id),
+                    }));
+                }
+                AllReviewersFailedDecision::Stopped => {
+                    context.log_workflow("Workflow stopped during failure decision");
+                    return Ok(Some(WorkflowResult::Stopped));
+                }
+            }
+        }
+
+        // Edge case: both reviews and failures empty (shouldn't happen)
+        anyhow::bail!("Review returned no results and no failures");
+    };
+    // === END FAILURE HANDLING LOOP ===
+
+    // Store current review in last_reviews for potential revision feedback
+    // In sequential mode, last_reviews contains only current reviewer's result
+    // This is intentional: the revising phase only needs the current rejecting reviewer's feedback
+    last_reviews.clear();
+    last_reviews.push(review.clone());
+
+    // Write individual feedback file for this reviewer (uses agent-specific filename)
+    // This is safe to call repeatedly - each reviewer gets their own file
+    let feedback_path = state.feedback_file.clone();
+    let _ = write_feedback_files(std::slice::from_ref(&review), &feedback_path);
+    // DO NOT call merge_feedback here - we'll do it once at the end when all approve
+
+    // Re-borrow seq_state after mutable operations
+    let seq_state = state.sequential_review.as_mut().unwrap();
+
+    if review.needs_revision {
+        // Reviewer rejected - transition to revision
+        context.log_workflow(&format!(
+            "Reviewer {} REJECTED (plan version {}) - transitioning to revision",
+            reviewer_id, seq_state.plan_version
+        ));
+        sender.send_output(format!(
+            "[sequential] {} REJECTED - will revise and restart from first reviewer",
+            reviewer_id
+        ));
+
+        // Signal round completion (rejected)
+        sender.send_review_round_completed(state.iteration, false);
+
+        state.last_feedback_status = Some(FeedbackStatus::NeedsRevision);
+
+        // Check iteration limit
+        if state.iteration >= state.max_iterations {
+            return handle_max_iterations(
+                state,
+                working_dir,
+                state_path,
+                sender,
+                approval_rx,
+                control_rx,
+                last_reviews,
+            ).await;
+        }
+
+        state.transition(Phase::Revising)?;
+    } else {
+        // Reviewer approved - record approval and accumulate review for summary
+        let serializable_review = SerializableReviewResult {
+            agent_name: review.agent_name.clone(),
+            needs_revision: review.needs_revision,
+            feedback: review.feedback.clone(),
+            summary: review.summary.clone(),
+        };
+        seq_state.record_approval(reviewer_id, &serializable_review);
+
+        context.log_workflow(&format!(
+            "Reviewer {} APPROVED (plan version {})",
+            reviewer_id, seq_state.plan_version
+        ));
+        sender.send_output(format!(
+            "[sequential] {} APPROVED (version {})",
+            reviewer_id, seq_state.plan_version
+        ));
+
+        // Extract reviewer IDs for all_approved check (avoids circular dependency)
+        let reviewer_ids: Vec<&str> = reviewers.iter().map(|r| r.display_id()).collect();
+
+        // Check if all reviewers have approved current version
+        if seq_state.all_approved(&reviewer_ids) {
+            // All approved the same version - complete!
+            context.log_workflow("All reviewers approved - plan complete!");
+            sender.send_output("[sequential] All reviewers approved - plan complete!".to_string());
+
+            // Signal round completion (approved)
+            sender.send_review_round_completed(state.iteration, true);
+
+            // NOW write merged feedback with ALL accumulated reviews
+            let all_reviews = seq_state.get_accumulated_reviews_for_summary();
+            let _ = merge_feedback(&all_reviews, &feedback_path);
+
+            // Pass ALL accumulated reviews to summary generation
+            let review_phase_name = format!("Reviewing #{}", state.iteration);
+            phases::spawn_summary_generation(
+                review_phase_name,
+                state,
+                working_dir,
+                config,
+                sender.clone(),
+                Some(&all_reviews),
+                context.session_logger.clone(),
+            );
+
+            state.last_feedback_status = Some(FeedbackStatus::Approved);
+            state.transition(Phase::Complete)?;
+        } else {
+            // More reviewers to go - advance to next
+            seq_state.advance_to_next_reviewer();
+            context.log_workflow(&format!(
+                "Advancing to reviewer {}/{}",
+                seq_state.current_reviewer_index + 1,
+                reviewers.len()
+            ));
+            // Stay in Reviewing phase - next workflow loop iteration will process next reviewer
+        }
+    }
+
+    state.set_updated_at();
+    state.save_atomic(state_path)?;
+    sender.send_state_update(state.clone());
+
+    Ok(None)
 }

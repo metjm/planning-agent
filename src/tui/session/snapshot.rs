@@ -172,7 +172,7 @@ impl Session {
     /// This makes `elapsed()` return the total time across all resume cycles.
     pub fn adjust_start_time_for_previous_elapsed(&mut self, previous_elapsed_ms: u64) {
         if previous_elapsed_ms > 0 {
-            self.start_time = self.start_time - std::time::Duration::from_millis(previous_elapsed_ms);
+            self.start_time -= std::time::Duration::from_millis(previous_elapsed_ms);
         }
     }
 }

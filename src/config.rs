@@ -289,6 +289,11 @@ pub struct MultiAgentPhase {
     /// If false (default), raw output is used when tags are missing.
     #[serde(default)]
     pub require_plan_feedback_tags: bool,
+    /// If true, run reviewers sequentially with immediate revision on rejection.
+    /// When any reviewer rejects, the plan is revised and all reviewers must
+    /// re-review from the beginning. Default: false (parallel execution).
+    #[serde(default)]
+    pub sequential: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default, PartialEq)]

@@ -152,6 +152,25 @@ pub async fn run_revising_phase(
     last_reviews.clear();
     session_logger.log(LogLevel::Info, LogCategory::Workflow, "run_revision_phase_with_context completed");
 
+    // Reset sequential review state: restart from first reviewer
+    // and increment plan version since the plan was modified
+    if let Some(ref mut seq_state) = state.sequential_review {
+        seq_state.increment_version();  // Clears approvals AND accumulated_reviews, increments version
+        seq_state.reset_to_first_reviewer();
+        sender.send_output(format!(
+            "[sequential] Plan revised - restarting from first reviewer (version {})",
+            seq_state.plan_version
+        ));
+        session_logger.log(
+            LogLevel::Info,
+            LogCategory::Workflow,
+            &format!(
+                "Sequential review: reset to first reviewer, plan version {}",
+                seq_state.plan_version
+            ),
+        );
+    }
+
     // Keep old feedback files - don't cleanup
     // let feedback_path = working_dir.join(&state.feedback_file);
     // match cleanup_merged_feedback(&feedback_path) { ... }

@@ -254,6 +254,7 @@ mod tests {
             failure_history: Vec::new(),
             worktree_info: None,
             implementation_state: None,
+            sequential_review: None,
         }
     }
 
