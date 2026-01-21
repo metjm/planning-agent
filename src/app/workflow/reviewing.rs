@@ -329,10 +329,11 @@ pub async fn run_sequential_reviewing_phase(
     }
     let seq_state = state.sequential_review.as_mut().unwrap();
 
-    // Validate reviewer index in case config changed between sessions
-    if seq_state.validate_reviewer_index(reviewers.len()) {
-        context.log_workflow("Sequential review: reviewer index was out of bounds, reset to 0");
-        sender.send_output("[sequential] Reviewer configuration changed - restarting from first reviewer".to_string());
+    // Validate reviewer state in case config changed between sessions
+    let reviewer_ids: Vec<&str> = reviewers.iter().map(|r| r.display_id()).collect();
+    if seq_state.validate_reviewer_state(&reviewer_ids) {
+        context.log_workflow("Sequential review: config changed, reset to start new cycle");
+        sender.send_output("[sequential] Reviewer configuration changed - restarting cycle".to_string());
     }
 
     context.log_workflow(&format!(
@@ -352,6 +353,16 @@ pub async fn run_sequential_reviewing_phase(
         reviewers.len()
     ));
 
+    // Start new cycle if needed (cycle order empty after reset or config change)
+    if seq_state.needs_cycle_start() {
+        seq_state.start_new_cycle(&reviewer_ids);
+        context.log_workflow(&format!(
+            "Sequential review: started new cycle with order {:?} (run counts: {:?})",
+            seq_state.current_cycle_order,
+            reviewer_ids.iter().map(|id| (*id, seq_state.get_run_count(id))).collect::<Vec<_>>()
+        ));
+    }
+
     // Emit round started ONLY for first reviewer in this sequential cycle
     // We handle this here because we pass emit_round_started=false to run_multi_agent_review_with_context
     let is_first_reviewer = seq_state.current_reviewer_index == 0;
@@ -359,13 +370,20 @@ pub async fn run_sequential_reviewing_phase(
         sender.send_review_round_started(state.iteration);
     }
 
-    // Get current reviewer
-    let reviewer = &reviewers[seq_state.current_reviewer_index];
+    // Get current reviewer from stored cycle order
+    let current_id = seq_state.get_current_reviewer()
+        .expect("cycle order must be populated after start_new_cycle");
+    let reviewer = reviewers.iter()
+        .find(|r| r.display_id() == current_id)
+        .expect("reviewer must exist in config after validate_reviewer_state");
     let reviewer_id = reviewer.display_id();
 
+    // Increment run count before execution
+    seq_state.increment_run_count(reviewer_id);
+
     sender.send_output(format!(
-        "Running reviewer: {} (plan version {})",
-        reviewer_id, seq_state.plan_version
+        "Running reviewer: {} (plan version {}, run #{})",
+        reviewer_id, seq_state.plan_version, seq_state.get_run_count(reviewer_id)
     ));
 
     // === FAILURE HANDLING LOOP (same pattern as parallel mode) ===
@@ -587,12 +605,15 @@ pub async fn run_sequential_reviewing_phase(
             state.last_feedback_status = Some(FeedbackStatus::Approved);
             state.transition(Phase::Complete)?;
         } else {
-            // More reviewers to go - advance to next
+            // More reviewers to go - advance to next in stored cycle order
             seq_state.advance_to_next_reviewer();
+            let next_id = seq_state.get_current_reviewer()
+                .unwrap_or("(end of cycle)");
             context.log_workflow(&format!(
-                "Advancing to reviewer {}/{}",
+                "Advancing to reviewer {}/{}: {}",
                 seq_state.current_reviewer_index + 1,
-                reviewers.len()
+                reviewers.len(),
+                next_id
             ));
             // Stay in Reviewing phase - next workflow loop iteration will process next reviewer
         }

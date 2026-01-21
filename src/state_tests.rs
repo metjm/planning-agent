@@ -619,3 +619,229 @@ fn test_implementation_state_serialization() {
     assert_eq!(loaded.last_verdict, Some("NEEDS_REVISION".to_string()));
     assert_eq!(loaded.last_feedback, Some("Fix the bug".to_string()));
 }
+
+// SequentialReviewState round-robin tests
+#[test]
+fn test_increment_run_count() {
+    let mut state = SequentialReviewState::new();
+    assert_eq!(state.get_run_count("A"), 0);
+
+    state.increment_run_count("A");
+    assert_eq!(state.get_run_count("A"), 1);
+
+    state.increment_run_count("A");
+    assert_eq!(state.get_run_count("A"), 2);
+
+    state.increment_run_count("B");
+    assert_eq!(state.get_run_count("B"), 1);
+    assert_eq!(state.get_run_count("A"), 2);
+}
+
+#[test]
+fn test_get_run_count_unknown() {
+    let state = SequentialReviewState::new();
+    assert_eq!(state.get_run_count("unknown"), 0);
+}
+
+#[test]
+fn test_start_new_cycle_sorts_by_count() {
+    let mut state = SequentialReviewState::new();
+    state.reviewer_run_counts.insert("A".to_string(), 5);
+    state.reviewer_run_counts.insert("B".to_string(), 2);
+    state.reviewer_run_counts.insert("C".to_string(), 8);
+
+    state.start_new_cycle(&["A", "B", "C"]);
+
+    // Should be sorted by run count: B(2), A(5), C(8)
+    assert_eq!(state.current_cycle_order, vec!["B", "A", "C"]);
+    assert_eq!(state.current_reviewer_index, 0);
+}
+
+#[test]
+fn test_start_new_cycle_stable_sort() {
+    // When run counts are equal, config order should be preserved (stable sort)
+    let mut state = SequentialReviewState::new();
+    state.reviewer_run_counts.insert("A".to_string(), 2);
+    state.reviewer_run_counts.insert("B".to_string(), 2);
+    state.reviewer_run_counts.insert("C".to_string(), 2);
+
+    state.start_new_cycle(&["A", "B", "C"]);
+
+    // All have same count, so config order is preserved
+    assert_eq!(state.current_cycle_order, vec!["A", "B", "C"]);
+}
+
+#[test]
+fn test_mid_cycle_order_stability() {
+    // This is the critical test: order must remain stable mid-cycle even after counts change
+    let mut state = SequentialReviewState::new();
+    state.reviewer_run_counts.insert("A".to_string(), 2);
+    state.reviewer_run_counts.insert("B".to_string(), 2);
+    state.reviewer_run_counts.insert("C".to_string(), 8);
+
+    // Start cycle: order is [A, B, C] (counts 2, 2, 8)
+    state.start_new_cycle(&["A", "B", "C"]);
+    assert_eq!(state.current_cycle_order, vec!["A", "B", "C"]);
+
+    // Get current reviewer (index 0)
+    assert_eq!(state.get_current_reviewer(), Some("A"));
+
+    // Increment A's count (simulating A running)
+    state.increment_run_count("A");
+    // Now counts are A:3, B:2, C:8
+
+    // Advance to next reviewer
+    state.advance_to_next_reviewer();
+    assert_eq!(state.current_reviewer_index, 1);
+
+    // CRITICAL: get_current_reviewer should return "B", not "A"
+    // If we were re-sorting, "A" would be at index 1 (since B:2 < A:3 < C:8)
+    // But since we use stored order, "B" is at index 1
+    assert_eq!(state.get_current_reviewer(), Some("B"));
+}
+
+#[test]
+fn test_reset_clears_cycle_order() {
+    let mut state = SequentialReviewState::new();
+    state.start_new_cycle(&["A", "B"]);
+    assert!(!state.current_cycle_order.is_empty());
+
+    state.reset_to_first_reviewer();
+
+    assert!(state.current_cycle_order.is_empty());
+    assert_eq!(state.current_reviewer_index, 0);
+}
+
+#[test]
+fn test_validate_reviewer_state_detects_removed_reviewer() {
+    let mut state = SequentialReviewState::new();
+    state.current_cycle_order = vec!["A".to_string(), "B".to_string(), "C".to_string()];
+    state.current_reviewer_index = 1;
+
+    // B was removed from config
+    let reset = state.validate_reviewer_state(&["A", "C"]);
+
+    assert!(reset);
+    assert!(state.current_cycle_order.is_empty());
+    assert_eq!(state.current_reviewer_index, 0);
+}
+
+#[test]
+fn test_validate_reviewer_state_preserves_valid_state() {
+    let mut state = SequentialReviewState::new();
+    state.current_cycle_order = vec!["A".to_string(), "B".to_string()];
+    state.current_reviewer_index = 1;
+
+    // Same config
+    let reset = state.validate_reviewer_state(&["A", "B"]);
+
+    assert!(!reset);
+    assert_eq!(state.current_cycle_order, vec!["A", "B"]);
+    assert_eq!(state.current_reviewer_index, 1);
+}
+
+#[test]
+fn test_validate_reviewer_state_handles_index_out_of_bounds() {
+    let mut state = SequentialReviewState::new();
+    state.current_cycle_order = vec!["A".to_string(), "B".to_string(), "C".to_string()];
+    state.current_reviewer_index = 5; // Out of bounds
+
+    let reset = state.validate_reviewer_state(&["A", "B", "C"]);
+
+    assert!(reset);
+    assert!(state.current_cycle_order.is_empty());
+    assert_eq!(state.current_reviewer_index, 0);
+}
+
+#[test]
+fn test_config_change_adds_new_reviewer() {
+    let mut state = SequentialReviewState::new();
+    state.current_cycle_order = vec!["A".to_string(), "B".to_string()];
+    state.current_reviewer_index = 0;
+    state.reviewer_run_counts.insert("A".to_string(), 5);
+    state.reviewer_run_counts.insert("B".to_string(), 5);
+
+    // C added to config - existing order is still valid (all members exist)
+    let reset = state.validate_reviewer_state(&["A", "B", "C"]);
+
+    assert!(!reset);
+    // Order preserved for current cycle
+    assert_eq!(state.current_cycle_order, vec!["A", "B"]);
+
+    // But on next cycle, C will be included and sorted to front (count 0)
+    state.reset_to_first_reviewer();
+    state.start_new_cycle(&["A", "B", "C"]);
+    // C has count 0, A and B have count 5
+    assert_eq!(state.current_cycle_order, vec!["C", "A", "B"]);
+}
+
+#[test]
+fn test_needs_cycle_start() {
+    let mut state = SequentialReviewState::new();
+    assert!(state.needs_cycle_start()); // Empty order
+
+    state.start_new_cycle(&["A", "B"]);
+    assert!(!state.needs_cycle_start()); // Order populated
+
+    state.reset_to_first_reviewer();
+    assert!(state.needs_cycle_start()); // Cleared after reset
+}
+
+#[test]
+fn test_new_reviewer_starts_with_count_zero() {
+    let mut state = SequentialReviewState::new();
+    state.reviewer_run_counts.insert("A".to_string(), 5);
+
+    state.start_new_cycle(&["A", "new_reviewer"]);
+
+    // new_reviewer has count 0, A has count 5
+    assert_eq!(state.current_cycle_order, vec!["new_reviewer", "A"]);
+}
+
+#[test]
+fn test_session_resume_with_empty_cycle_order() {
+    let mut state = SequentialReviewState::new();
+    state.current_reviewer_index = 1;
+    state.current_cycle_order = vec![]; // Simulates old session resume
+
+    assert!(state.needs_cycle_start());
+}
+
+#[test]
+fn test_serialization_preserves_all_fields() {
+    let mut state = SequentialReviewState::new();
+    state.current_reviewer_index = 2;
+    state.plan_version = 3;
+    state.approvals.insert("A".to_string(), 3);
+    state.reviewer_run_counts.insert("A".to_string(), 5);
+    state.reviewer_run_counts.insert("B".to_string(), 2);
+    state.current_cycle_order = vec!["B".to_string(), "A".to_string()];
+
+    let json = serde_json::to_string(&state).unwrap();
+    let loaded: SequentialReviewState = serde_json::from_str(&json).unwrap();
+
+    assert_eq!(loaded.current_reviewer_index, 2);
+    assert_eq!(loaded.plan_version, 3);
+    assert_eq!(loaded.approvals.get("A"), Some(&3));
+    assert_eq!(loaded.reviewer_run_counts.get("A"), Some(&5));
+    assert_eq!(loaded.reviewer_run_counts.get("B"), Some(&2));
+    assert_eq!(loaded.current_cycle_order, vec!["B", "A"]);
+}
+
+#[test]
+fn test_backward_compatibility_without_run_counts() {
+    // Simulate loading old state without new fields
+    let old_json = r#"{
+        "current_reviewer_index": 1,
+        "plan_version": 2,
+        "approvals": {"A": 2},
+        "accumulated_reviews": []
+    }"#;
+
+    let loaded: SequentialReviewState = serde_json::from_str(old_json).unwrap();
+
+    assert_eq!(loaded.current_reviewer_index, 1);
+    assert_eq!(loaded.plan_version, 2);
+    assert!(loaded.reviewer_run_counts.is_empty()); // Default empty
+    assert!(loaded.current_cycle_order.is_empty()); // Default empty
+}

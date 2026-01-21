@@ -324,7 +324,7 @@ pub struct SerializableReviewResult {
 /// and ensures all reviewers approve the same plan version.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SequentialReviewState {
-    /// Index of the current reviewer in the configured reviewer list (0-indexed)
+    /// Index of the current reviewer in the current cycle order (0-indexed)
     pub current_reviewer_index: usize,
     /// Plan version counter - incremented each time the plan is modified (during revision)
     /// All reviewers must approve the same version for final approval
@@ -337,6 +337,16 @@ pub struct SequentialReviewState {
     /// Cleared when plan version changes (after revision).
     #[serde(default)]
     pub accumulated_reviews: Vec<(String, SerializableReviewResult)>,
+    /// Total number of review runs per reviewer (reviewer_display_id -> count).
+    /// Used for round-robin selection: the reviewer with the lowest count runs first.
+    /// Persists across revisions and session resumes for balanced usage over time.
+    #[serde(default)]
+    pub reviewer_run_counts: HashMap<String, u32>,
+    /// The reviewer order for the current cycle (computed at cycle start).
+    /// Stored as display_ids in execution order. Cleared when cycle completes
+    /// or is reset, so it's recomputed on the next cycle.
+    #[serde(default)]
+    pub current_cycle_order: Vec<String>,
 }
 
 impl SequentialReviewState {
@@ -347,6 +357,8 @@ impl SequentialReviewState {
             plan_version: 1,
             approvals: HashMap::new(),
             accumulated_reviews: Vec::new(),
+            reviewer_run_counts: HashMap::new(),
+            current_cycle_order: Vec::new(),
         }
     }
 
@@ -374,9 +386,11 @@ impl SequentialReviewState {
         })
     }
 
-    /// Resets to first reviewer (called after revision).
+    /// Resets to first reviewer for a new cycle (after revision or config change).
+    /// Also clears the cycle order so it's recomputed on next cycle.
     pub fn reset_to_first_reviewer(&mut self) {
         self.current_reviewer_index = 0;
+        self.current_cycle_order.clear();
     }
 
     /// Advances to next reviewer.
@@ -384,16 +398,71 @@ impl SequentialReviewState {
         self.current_reviewer_index += 1;
     }
 
-    /// Validates current_reviewer_index against actual reviewer count.
-    /// If index is out of bounds (config changed), resets to 0.
-    /// Returns true if reset was needed.
-    pub fn validate_reviewer_index(&mut self, reviewer_count: usize) -> bool {
-        if self.current_reviewer_index >= reviewer_count {
+    /// Validates sequential review state against actual reviewer configuration.
+    /// Checks both:
+    /// 1. Index bounds: current_reviewer_index < number of reviewers (or cycle order length)
+    /// 2. Cycle order validity: all entries in current_cycle_order exist in current config
+    ///
+    /// If either check fails, resets index to 0 and clears cycle order.
+    /// Returns true if reset was needed (indicating config changed).
+    ///
+    /// Takes &[&str] (reviewer display IDs) to avoid circular dependency with config.rs.
+    pub fn validate_reviewer_state(&mut self, reviewer_ids: &[&str]) -> bool {
+        use std::collections::HashSet;
+        let valid_ids: HashSet<&str> = reviewer_ids.iter().copied().collect();
+
+        // Check if any entry in current_cycle_order is no longer in config
+        let cycle_invalid = !self.current_cycle_order.is_empty()
+            && self.current_cycle_order.iter().any(|id| !valid_ids.contains(id.as_str()));
+
+        // Check if index is out of bounds for the cycle order (if populated) or reviewer count
+        let index_invalid = if self.current_cycle_order.is_empty() {
+            self.current_reviewer_index >= reviewer_ids.len()
+        } else {
+            self.current_reviewer_index >= self.current_cycle_order.len()
+        };
+
+        if cycle_invalid || index_invalid {
             self.current_reviewer_index = 0;
+            self.current_cycle_order.clear();
             true
         } else {
             false
         }
+    }
+
+    /// Increments the run count for a reviewer. Called before each review execution.
+    pub fn increment_run_count(&mut self, reviewer_id: &str) {
+        *self.reviewer_run_counts.entry(reviewer_id.to_string()).or_insert(0) += 1;
+    }
+
+    /// Returns the run count for a reviewer (0 if never run).
+    pub fn get_run_count(&self, reviewer_id: &str) -> u32 {
+        self.reviewer_run_counts.get(reviewer_id).copied().unwrap_or(0)
+    }
+
+    /// Starts a new review cycle by computing and storing the sorted reviewer order.
+    /// Reviewers are sorted by run count (ascending). Ties are broken by config order
+    /// (stable sort). Must be called when starting a new cycle.
+    pub fn start_new_cycle(&mut self, reviewer_ids: &[&str]) {
+        let mut sorted: Vec<String> = reviewer_ids.iter().map(|s| (*s).to_string()).collect();
+        sorted.sort_by_key(|id| self.get_run_count(id));
+        self.current_cycle_order = sorted;
+        self.current_reviewer_index = 0;
+    }
+
+    /// Gets the current reviewer's display_id from the stored cycle order.
+    /// Returns None if cycle order is empty (cycle not started).
+    pub fn get_current_reviewer(&self) -> Option<&str> {
+        self.current_cycle_order
+            .get(self.current_reviewer_index)
+            .map(|s| s.as_str())
+    }
+
+    /// Returns true if the cycle order needs to be (re)computed.
+    /// This happens at the start of a new cycle or on session resume with empty order.
+    pub fn needs_cycle_start(&self) -> bool {
+        self.current_cycle_order.is_empty()
     }
 
     /// Converts accumulated SerializableReviewResults back to ReviewResults for summary generation.
