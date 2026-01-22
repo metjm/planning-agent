@@ -139,7 +139,8 @@ pub async fn run_revising_phase(
                 sender.send_workflow_failure(summary);
 
                 let decision =
-                    wait_for_workflow_failure_decision(working_dir, approval_rx, control_rx).await;
+                    wait_for_workflow_failure_decision(&session_logger, approval_rx, control_rx)
+                        .await;
 
                 match decision {
                     WorkflowFailureDecision::Retry => {

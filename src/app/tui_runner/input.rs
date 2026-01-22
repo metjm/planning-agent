@@ -581,7 +581,6 @@ fn handle_none_mode_input(key: crossterm::event::KeyEvent, session: &mut Session
                 FocusedPanel::Chat => session.chat_scroll_down(),
                 FocusedPanel::ChatInput => {}
                 FocusedPanel::Summary => session.summary_scroll_down(),
-                FocusedPanel::Unknown => {} // Legacy variant - no action
             }
             // Fallback: scroll review history panel if visible
             let (term_width, term_height) = crossterm::terminal::size().unwrap_or((80, 24));
@@ -598,7 +597,6 @@ fn handle_none_mode_input(key: crossterm::event::KeyEvent, session: &mut Session
                 FocusedPanel::Chat => session.chat_scroll_up(),
                 FocusedPanel::ChatInput => {}
                 FocusedPanel::Summary => session.summary_scroll_up(),
-                FocusedPanel::Unknown => {} // Legacy variant - no action
             }
             // Fallback: scroll review history panel if visible
             let (term_width, _) = crossterm::terminal::size().unwrap_or((80, 24));
@@ -617,7 +615,6 @@ fn handle_none_mode_input(key: crossterm::event::KeyEvent, session: &mut Session
             }
             FocusedPanel::ChatInput => {}
             FocusedPanel::Summary => session.summary_scroll_to_top(),
-            FocusedPanel::Unknown => {} // Legacy variant - no action
         },
         KeyCode::Char('G') => match session.focused_panel {
             FocusedPanel::Output => session.scroll_to_bottom(),
@@ -635,7 +632,6 @@ fn handle_none_mode_input(key: crossterm::event::KeyEvent, session: &mut Session
                     .unwrap_or(0);
                 session.summary_scroll_to_bottom(max_scroll);
             }
-            FocusedPanel::Unknown => {} // Legacy variant - no action
         },
         KeyCode::Left => {
             if session.focused_panel == FocusedPanel::Chat

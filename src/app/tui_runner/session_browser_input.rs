@@ -236,7 +236,7 @@ fn resume_session_in_current_process(
     }
 
     // Load the snapshot
-    let load_result = crate::session_store::load_snapshot(&entry.working_dir, &entry.session_id);
+    let load_result = crate::session_store::load_snapshot(&entry.session_id);
 
     match load_result {
         Ok(snapshot) => {

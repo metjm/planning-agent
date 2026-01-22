@@ -208,37 +208,6 @@ fn test_record_invocation_without_conversation_id() {
 }
 
 #[test]
-fn test_ensure_workflow_session_id() {
-    let mut state = State::new("test", "test objective", 3).unwrap();
-    state.workflow_session_id = String::new();
-    assert!(state.workflow_session_id.is_empty());
-
-    state.ensure_workflow_session_id();
-    assert!(!state.workflow_session_id.is_empty());
-}
-
-#[test]
-fn test_backward_compatibility_with_existing_state() {
-    let old_state_json = r#"{
-        "phase": "reviewing",
-        "iteration": 2,
-        "max_iterations": 3,
-        "feature_name": "existing-feature",
-        "objective": "Some objective",
-        "plan_file": "docs/plans/existing-feature.md",
-        "feedback_file": "docs/plans/existing-feature_feedback.md",
-        "last_feedback_status": "needs_revision",
-        "approval_overridden": false
-    }"#;
-
-    let state: State = serde_json::from_str(old_state_json).unwrap();
-    assert_eq!(state.feature_name, "existing-feature");
-    assert!(state.workflow_session_id.is_empty());
-    assert!(state.agent_conversations.is_empty());
-    assert!(state.invocations.is_empty());
-}
-
-#[test]
 fn test_state_serialization_with_session_data() {
     let mut state = State::new("test", "test objective", 3).unwrap();
     state.get_or_create_agent_session("claude", ResumeStrategy::ConversationResume);
@@ -297,7 +266,6 @@ fn test_phase_to_label() {
 fn test_new_state_has_updated_at() {
     let state = State::new("test", "test objective", 3).unwrap();
     assert!(!state.updated_at.is_empty());
-    assert!(state.has_updated_at());
 }
 
 #[test]
@@ -311,7 +279,7 @@ fn test_set_updated_at() {
 
     // Timestamp should have changed
     assert_ne!(state.updated_at, original);
-    assert!(state.has_updated_at());
+    assert!(!state.updated_at.is_empty());
 }
 
 #[test]
@@ -320,27 +288,6 @@ fn test_set_updated_at_with() {
     let custom_time = "2025-12-29T15:00:00Z";
     state.set_updated_at_with(custom_time);
     assert_eq!(state.updated_at, custom_time);
-}
-
-#[test]
-fn test_legacy_state_without_updated_at() {
-    // Simulate loading a legacy state file without updated_at field
-    let old_state_json = r#"{
-        "phase": "reviewing",
-        "iteration": 2,
-        "max_iterations": 3,
-        "feature_name": "existing-feature",
-        "objective": "Some objective",
-        "plan_file": "docs/plans/existing-feature.md",
-        "feedback_file": "docs/plans/existing-feature_feedback.md",
-        "last_feedback_status": "needs_revision",
-        "approval_overridden": false
-    }"#;
-
-    let state: State = serde_json::from_str(old_state_json).unwrap();
-    // updated_at should default to empty string
-    assert!(state.updated_at.is_empty());
-    assert!(!state.has_updated_at());
 }
 
 #[test]
@@ -424,32 +371,10 @@ fn test_state_serialization_with_failure() {
     let json = serde_json::to_string(&state).unwrap();
     let loaded: State = serde_json::from_str(&json).unwrap();
 
-    assert!(loaded.has_failure());
+    assert!(loaded.last_failure.is_some());
     assert_eq!(loaded.failure_history.len(), 1);
     let last = loaded.last_failure.as_ref().unwrap();
     assert_eq!(last.kind, FailureKind::AllReviewersFailed);
-}
-
-#[test]
-fn test_backward_compatibility_without_failure_fields() {
-    // Simulate loading a state without failure fields (pre-failure-handling state)
-    let old_state_json = r#"{
-        "phase": "reviewing",
-        "iteration": 2,
-        "max_iterations": 3,
-        "feature_name": "existing-feature",
-        "objective": "Some objective",
-        "plan_file": "docs/plans/existing-feature.md",
-        "feedback_file": "docs/plans/existing-feature_feedback.md",
-        "last_feedback_status": "needs_revision",
-        "approval_overridden": false
-    }"#;
-
-    let state: State = serde_json::from_str(old_state_json).unwrap();
-    // Failure fields should default properly
-    assert!(state.last_failure.is_none());
-    assert!(state.failure_history.is_empty());
-    assert!(!state.has_failure());
 }
 
 // Implementation phase state tests
@@ -746,24 +671,6 @@ fn test_serialization_preserves_all_fields() {
     assert_eq!(loaded.current_cycle_order, vec!["B", "A"]);
 }
 
-#[test]
-fn test_backward_compatibility_without_run_counts() {
-    // Simulate loading old state without new fields
-    let old_json = r#"{
-        "current_reviewer_index": 1,
-        "plan_version": 2,
-        "approvals": {"A": 2},
-        "accumulated_reviews": []
-    }"#;
-
-    let loaded: SequentialReviewState = serde_json::from_str(old_json).unwrap();
-
-    assert_eq!(loaded.current_reviewer_index, 1);
-    assert_eq!(loaded.plan_version, 2);
-    assert!(loaded.reviewer_run_counts.is_empty()); // Default empty
-    assert!(loaded.current_cycle_order.is_empty()); // Default empty
-}
-
 // ============================================================================
 // Round-robin tiebreaker tests
 // ============================================================================
@@ -842,22 +749,4 @@ fn test_serialization_preserves_last_rejecting_reviewer() {
     let loaded: SequentialReviewState = serde_json::from_str(&json).unwrap();
 
     assert_eq!(loaded.last_rejecting_reviewer, Some("A".to_string()));
-}
-
-#[test]
-fn test_backward_compatibility_without_last_rejecting_reviewer() {
-    // Simulate loading old state without the new field
-    let old_json = r#"{
-        "current_reviewer_index": 0,
-        "plan_version": 1,
-        "approvals": {},
-        "accumulated_reviews": [],
-        "reviewer_run_counts": {"A": 1, "B": 1},
-        "current_cycle_order": ["A", "B"]
-    }"#;
-
-    let loaded: SequentialReviewState = serde_json::from_str(old_json).unwrap();
-
-    // Should default to None
-    assert!(loaded.last_rejecting_reviewer.is_none());
 }

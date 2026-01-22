@@ -219,7 +219,7 @@ fn format_relative_time(timestamp: &str) -> String {
 }
 
 /// Lists available sessions (live from daemon + disk snapshots)
-async fn list_sessions(working_dir: &Path) -> Result<()> {
+async fn list_sessions(_working_dir: &Path) -> Result<()> {
     let mut entries: Vec<SessionDisplayEntry> = Vec::new();
     let mut seen_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
 
@@ -247,7 +247,7 @@ async fn list_sessions(working_dir: &Path) -> Result<()> {
     }
 
     // Load disk snapshots and merge (add ones not already in live list)
-    if let Ok(snapshots) = session_store::list_snapshots(working_dir) {
+    if let Ok(snapshots) = session_store::list_snapshots() {
         for snapshot in snapshots {
             if !seen_ids.contains(&snapshot.workflow_session_id) {
                 seen_ids.insert(snapshot.workflow_session_id.clone());
@@ -314,9 +314,9 @@ async fn list_sessions(working_dir: &Path) -> Result<()> {
 }
 
 /// Cleans up old session snapshots
-fn cleanup_sessions(working_dir: &Path, older_than: Option<u32>) -> Result<()> {
+fn cleanup_sessions(_working_dir: &Path, older_than: Option<u32>) -> Result<()> {
     let days = older_than.unwrap_or(30);
-    let deleted = session_store::cleanup_old_snapshots(working_dir, days)?;
+    let deleted = session_store::cleanup_old_snapshots(days)?;
 
     if deleted.is_empty() {
         println!("No sessions older than {} days found.", days);

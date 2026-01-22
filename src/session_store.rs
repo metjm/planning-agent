@@ -202,23 +202,14 @@ pub fn get_snapshot_path(session_id: &str) -> Result<PathBuf> {
     planning_paths::session_snapshot_path(session_id)
 }
 
-/// Returns the legacy snapshot file path: `~/.planning-agent/sessions/<session-id>.json`
-pub fn get_legacy_snapshot_path(session_id: &str) -> Result<PathBuf> {
-    planning_paths::snapshot_path(session_id)
-}
-
 /// Saves a session snapshot atomically to home storage (`~/.planning-agent/sessions/`).
 ///
-/// Uses the new session-centric path: `~/.planning-agent/sessions/<session-id>/session.json`
+/// Uses the session-centric path: `~/.planning-agent/sessions/<session-id>/session.json`
 ///
 /// Also creates/updates `session_info.json` for fast session listing.
 ///
-/// The `working_dir` parameter is no longer used for storage location but is kept
-/// for API compatibility.
-///
 /// The snapshot is first written to a temporary file, then renamed to the final path.
-#[allow(unused_variables)]
-pub fn save_snapshot(working_dir: &Path, snapshot: &SessionSnapshot) -> Result<PathBuf> {
+pub fn save_snapshot(snapshot: &SessionSnapshot) -> Result<PathBuf> {
     let snapshot_path = get_snapshot_path(&snapshot.workflow_session_id)?;
     let temp_path = snapshot_path.with_extension("json.tmp");
 
@@ -258,36 +249,22 @@ fn update_session_info(snapshot: &SessionSnapshot) -> Result<()> {
 
 /// Loads a session snapshot by session ID from `~/.planning-agent/sessions/`.
 ///
-/// Checks both new session-centric path and legacy path:
-/// 1. New: `~/.planning-agent/sessions/<session-id>/session.json`
-/// 2. Legacy: `~/.planning-agent/sessions/<session-id>.json`
+/// Loads from: `~/.planning-agent/sessions/<session-id>/session.json`
 ///
 /// If no snapshot file exists, attempts fallback recovery from the daemon registry
 /// and state file. This enables crash recovery when periodic auto-save didn't
 /// complete before the crash.
-///
-/// Note: The `working_dir` parameter is kept for API compatibility but is no longer used.
-/// Recovered snapshots are saved using their own stored working_dir to ensure consistency.
-#[allow(unused_variables)]
-pub fn load_snapshot(working_dir: &Path, session_id: &str) -> Result<SessionSnapshot> {
-    // 1. Try new session-centric path first
-    let new_path = get_snapshot_path(session_id)?;
-    if new_path.exists() {
-        return load_snapshot_from_path(&new_path);
+pub fn load_snapshot(session_id: &str) -> Result<SessionSnapshot> {
+    let snapshot_path = get_snapshot_path(session_id)?;
+
+    if snapshot_path.exists() {
+        return load_snapshot_from_path(&snapshot_path);
     }
 
-    // 2. Try legacy path
-    let legacy_path = get_legacy_snapshot_path(session_id)?;
-    if legacy_path.exists() {
-        return load_snapshot_from_path(&legacy_path);
-    }
-
-    // 3. Try fallback recovery from state file + daemon registry
+    // Try fallback recovery from state file + daemon registry
     match recover_from_state_file(session_id) {
         Ok(snapshot) => {
-            // Save recovered snapshot for future use (in new format)
-            // Use snapshot's own working_dir, not the caller's, to ensure consistency
-            if let Err(e) = save_snapshot(&snapshot.working_dir, &snapshot) {
+            if let Err(e) = save_snapshot(&snapshot) {
                 eprintln!(
                     "[recovery] Warning: Failed to save recovered snapshot: {}",
                     e
@@ -337,11 +314,8 @@ fn load_snapshot_from_path(snapshot_path: &Path) -> Result<SessionSnapshot> {
 
 /// Lists all available session snapshots from `~/.planning-agent/sessions/`.
 ///
-/// Scans both new session-centric structure and legacy structure:
-/// 1. New: `~/.planning-agent/sessions/<session-id>/session.json`
-/// 2. Legacy: `~/.planning-agent/sessions/<session-id>.json`
-#[allow(unused_variables)]
-pub fn list_snapshots(working_dir: &Path) -> Result<Vec<SessionSnapshotInfo>> {
+/// Scans session directories: `~/.planning-agent/sessions/<session-id>/session.json`
+pub fn list_snapshots() -> Result<Vec<SessionSnapshotInfo>> {
     let sessions_dir = get_sessions_dir()?;
 
     if !sessions_dir.exists() {
@@ -349,7 +323,6 @@ pub fn list_snapshots(working_dir: &Path) -> Result<Vec<SessionSnapshotInfo>> {
     }
 
     let mut snapshots = Vec::new();
-    let mut seen_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     for entry in fs::read_dir(&sessions_dir).with_context(|| {
         format!(
@@ -361,24 +334,10 @@ pub fn list_snapshots(working_dir: &Path) -> Result<Vec<SessionSnapshotInfo>> {
         let path = entry.path();
 
         if path.is_dir() {
-            // New session-centric structure: directory with session.json inside
             let session_json_path = path.join("session.json");
             if session_json_path.exists() {
                 if let Ok(content) = fs::read_to_string(&session_json_path) {
                     if let Ok(snapshot) = serde_json::from_str::<SessionSnapshot>(&content) {
-                        if !seen_ids.contains(&snapshot.workflow_session_id) {
-                            seen_ids.insert(snapshot.workflow_session_id.clone());
-                            snapshots.push(snapshot.info());
-                        }
-                    }
-                }
-            }
-        } else if path.extension().is_some_and(|ext| ext == "json") {
-            // Legacy structure: <session-id>.json file
-            if let Ok(content) = fs::read_to_string(&path) {
-                if let Ok(snapshot) = serde_json::from_str::<SessionSnapshot>(&content) {
-                    if !seen_ids.contains(&snapshot.workflow_session_id) {
-                        seen_ids.insert(snapshot.workflow_session_id.clone());
                         snapshots.push(snapshot.info());
                     }
                 }
@@ -394,23 +353,14 @@ pub fn list_snapshots(working_dir: &Path) -> Result<Vec<SessionSnapshotInfo>> {
 
 /// Deletes a session snapshot from `~/.planning-agent/sessions/`.
 ///
-/// Handles both new and legacy paths. For new session directories,
-/// only the session.json file is deleted, not the entire directory
+/// Only the session.json file is deleted, not the entire session directory
 /// (which may contain other files like logs and state).
-#[allow(unused_variables)]
-pub fn delete_snapshot(working_dir: &Path, session_id: &str) -> Result<()> {
-    // Try new path first
-    let new_path = get_snapshot_path(session_id)?;
-    if new_path.exists() {
-        fs::remove_file(&new_path)
-            .with_context(|| format!("Failed to delete snapshot: {}", new_path.display()))?;
-    }
-
-    // Also try legacy path
-    let legacy_path = get_legacy_snapshot_path(session_id)?;
-    if legacy_path.exists() {
-        fs::remove_file(&legacy_path)
-            .with_context(|| format!("Failed to delete snapshot: {}", legacy_path.display()))?;
+#[allow(dead_code)]
+pub fn delete_snapshot(session_id: &str) -> Result<()> {
+    let snapshot_path = get_snapshot_path(session_id)?;
+    if snapshot_path.exists() {
+        fs::remove_file(&snapshot_path)
+            .with_context(|| format!("Failed to delete snapshot: {}", snapshot_path.display()))?;
     }
 
     Ok(())
@@ -418,11 +368,10 @@ pub fn delete_snapshot(working_dir: &Path, session_id: &str) -> Result<()> {
 
 /// Cleans up session snapshots older than the specified number of days.
 ///
-/// For new session directories, the entire session directory is deleted.
-/// For legacy snapshot files, only the .json file is deleted.
+/// The entire session directory is deleted.
 /// If the session has a git worktree, it is properly removed first.
-pub fn cleanup_old_snapshots(working_dir: &Path, older_than_days: u32) -> Result<Vec<String>> {
-    let snapshots = list_snapshots(working_dir)?;
+pub fn cleanup_old_snapshots(older_than_days: u32) -> Result<Vec<String>> {
+    let snapshots = list_snapshots()?;
     let cutoff = chrono::Utc::now() - chrono::Duration::days(older_than_days as i64);
     let cutoff_str = cutoff.to_rfc3339();
 
@@ -433,7 +382,7 @@ pub fn cleanup_old_snapshots(working_dir: &Path, older_than_days: u32) -> Result
             let session_id = &snapshot.workflow_session_id;
 
             // Load the full snapshot to get worktree info
-            if let Ok(full_snapshot) = load_snapshot(working_dir, session_id) {
+            if let Ok(full_snapshot) = load_snapshot(session_id) {
                 // Clean up git worktree if present
                 if let Some(ref wt_state) = full_snapshot.workflow_state.worktree_info {
                     if wt_state.worktree_path.exists() {
@@ -449,29 +398,20 @@ pub fn cleanup_old_snapshots(working_dir: &Path, older_than_days: u32) -> Result
                 }
             }
 
-            // Check if this is a new-style session directory
+            // Delete the entire session directory
             if let Ok(session_dir) = planning_paths::session_dir(session_id) {
                 if session_dir.exists() && session_dir.is_dir() {
-                    // Check if session.json exists inside (confirms new structure)
-                    if session_dir.join("session.json").exists() {
-                        // Delete the entire session directory
-                        if let Err(e) = fs::remove_dir_all(&session_dir) {
-                            eprintln!(
-                                "[cleanup] Failed to delete session directory {}: {}",
-                                session_dir.display(),
-                                e
-                            );
-                        } else {
-                            deleted.push(session_id.clone());
-                            continue;
-                        }
+                    if let Err(e) = fs::remove_dir_all(&session_dir) {
+                        eprintln!(
+                            "[cleanup] Failed to delete session directory {}: {}",
+                            session_dir.display(),
+                            e
+                        );
+                    } else {
+                        deleted.push(session_id.clone());
                     }
                 }
             }
-
-            // Fall back to deleting just the snapshot file (legacy)
-            delete_snapshot(working_dir, session_id)?;
-            deleted.push(session_id.clone());
         }
     }
 
@@ -481,13 +421,8 @@ pub fn cleanup_old_snapshots(working_dir: &Path, older_than_days: u32) -> Result
 /// Checks for potential conflict between snapshot and state file.
 ///
 /// Returns `Some(state_updated_at)` if there's a conflict (state file is newer than snapshot).
-/// Returns `None` if there's no conflict or conflict detection should be skipped.
+/// Returns `None` if there's no conflict.
 pub fn check_conflict(snapshot: &SessionSnapshot, current_state: &State) -> Option<String> {
-    // Skip conflict detection for legacy state files without updated_at
-    if !current_state.has_updated_at() {
-        return None;
-    }
-
     // Compare snapshot.saved_at with state.updated_at
     if current_state.updated_at > snapshot.saved_at {
         Some(current_state.updated_at.clone())

@@ -435,7 +435,7 @@ pub async fn run_workflow_with_config(
     if state.phase == Phase::Complete {
         let result = handle_completion(
             &state,
-            &working_dir,
+            &session_logger,
             &sender,
             &mut approval_rx,
             &mut control_rx,

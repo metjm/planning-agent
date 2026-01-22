@@ -197,9 +197,6 @@ pub enum FocusedPanel {
     Chat,
     ChatInput,
     Summary,
-    /// Legacy variant for old snapshots - mapped to Output on restore
-    #[serde(other)]
-    Unknown,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
@@ -207,9 +204,6 @@ pub enum InputMode {
     #[default]
     Normal,
     NamingTab,
-    /// Legacy variant for old snapshots - mapped to Normal on restore
-    #[serde(other)]
-    Unknown,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]

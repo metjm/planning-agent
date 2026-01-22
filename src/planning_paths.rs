@@ -37,16 +37,6 @@ pub fn planning_agent_home_dir() -> Result<PathBuf> {
     Ok(planning_dir)
 }
 
-/// Returns the plans directory: `~/.planning-agent/plans/`
-///
-/// Creates the directory if it doesn't exist.
-pub fn plans_dir() -> Result<PathBuf> {
-    let dir = planning_agent_home_dir()?.join("plans");
-    fs::create_dir_all(&dir)
-        .with_context(|| format!("Failed to create plans directory: {}", dir.display()))?;
-    Ok(dir)
-}
-
 /// Returns the sessions directory: `~/.planning-agent/sessions/`
 ///
 /// Creates the directory if it doesn't exist.
@@ -171,27 +161,6 @@ pub fn working_dir_hash(path: &Path) -> String {
 /// Encodes bytes as lowercase hex string.
 pub fn hex_encode(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{:02x}", b)).collect()
-}
-
-/// Returns the workflow log path: `~/.planning-agent/logs/<wd-hash>/workflow-<run>.log`
-pub fn workflow_log_path(working_dir: &Path, run_id: &str) -> Result<PathBuf> {
-    Ok(logs_dir(working_dir)?.join(format!("workflow-{}.log", run_id)))
-}
-
-/// Returns the agent stream log path: `~/.planning-agent/logs/<wd-hash>/agent-stream-<run>.log`
-///
-/// **DEPRECATED**: Legacy path, no longer used. Agent logs now go to session directory.
-#[allow(dead_code)]
-pub fn agent_stream_log_path(working_dir: &Path, run_id: &str) -> Result<PathBuf> {
-    Ok(logs_dir(working_dir)?.join(format!("agent-stream-{}.log", run_id)))
-}
-
-/// Returns the snapshot file path for a session: `~/.planning-agent/sessions/<session-id>.json`
-///
-/// **DEPRECATED**: Use `session_snapshot_path()` for new code.
-/// This function remains for backward compatibility with existing sessions.
-pub fn snapshot_path(session_id: &str) -> Result<PathBuf> {
-    Ok(sessions_dir()?.join(format!("{}.json", session_id)))
 }
 
 // ============================================================================
@@ -460,52 +429,14 @@ impl SessionInfo {
     }
 }
 
-/// Lists all plan folders in the plans directory and session directories.
+/// Lists all plan folders in session directories.
 ///
 /// Returns a vector of PlanInfo, sorted by timestamp descending (most recent first).
-/// Scans both legacy `~/.planning-agent/plans/` and new `~/.planning-agent/sessions/` directories.
+/// Scans `~/.planning-agent/sessions/` directories.
 pub fn list_plans() -> Result<Vec<PlanInfo>> {
     let mut plans = Vec::new();
 
-    // 1. Scan legacy plans directory: ~/.planning-agent/plans/
-    let plans_directory = plans_dir()?;
-    if plans_directory.exists() {
-        for entry in fs::read_dir(&plans_directory)? {
-            let entry = entry?;
-            let path = entry.path();
-
-            if !path.is_dir() {
-                continue;
-            }
-
-            // Check if plan.md exists in this folder
-            let plan_file = path.join("plan.md");
-            if !plan_file.exists() {
-                continue;
-            }
-
-            let folder_name = entry.file_name().to_string_lossy().to_string();
-
-            // Parse folder name format: YYYYMMDD-HHMMSS-shortid_feature-name
-            // Example: 20251230-123632-a3529aa2_plan-verification-phase
-            if let Some((timestamp_part, feature_part)) = folder_name.split_once('_') {
-                // Extract just the timestamp (first 15 chars: YYYYMMDD-HHMMSS)
-                let timestamp = timestamp_part
-                    .get(..15)
-                    .unwrap_or(timestamp_part)
-                    .to_string();
-
-                plans.push(PlanInfo {
-                    path,
-                    feature_name: feature_part.to_string(),
-                    timestamp,
-                    folder_name,
-                });
-            }
-        }
-    }
-
-    // 2. Scan new session directories: ~/.planning-agent/sessions/<session-id>/plan.md
+    // Scan session directories: ~/.planning-agent/sessions/<session-id>/plan.md
     let sessions_directory = sessions_dir()?;
     if sessions_directory.exists() {
         for entry in fs::read_dir(&sessions_directory)? {
@@ -523,11 +454,6 @@ pub fn list_plans() -> Result<Vec<PlanInfo>> {
             }
 
             let session_id = entry.file_name().to_string_lossy().to_string();
-
-            // Skip if this doesn't look like a UUID-based session ID
-            if session_id.ends_with(".json") {
-                continue; // Skip legacy snapshot files
-            }
 
             // Try to read session_info.json for metadata
             let info_path = path.join("session_info.json");

@@ -183,26 +183,6 @@ fn test_conflict_detection_with_conflict() {
 }
 
 #[test]
-fn test_conflict_detection_skipped_for_legacy_state() {
-    let mut state = create_test_state();
-    state.updated_at = String::new();
-
-    let ui_state = create_test_ui_state();
-    let snapshot = SessionSnapshot::new_with_timestamp(
-        PathBuf::from("/tmp/test"),
-        "test-session-id".to_string(),
-        PathBuf::from("/tmp/test/.planning-agent/test-feature.json"),
-        state.clone(),
-        ui_state,
-        0,
-        chrono::Utc::now().to_rfc3339(),
-    );
-
-    let conflict = check_conflict(&snapshot, &state);
-    assert!(conflict.is_none());
-}
-
-#[test]
 fn test_session_centric_snapshot_path() {
     if std::env::var("HOME").is_err() {
         return;
@@ -214,20 +194,6 @@ fn test_session_centric_snapshot_path() {
     assert!(path.to_string_lossy().contains(".planning-agent/sessions/"));
     assert!(path.to_string_lossy().contains(&session_id));
     assert!(path.to_string_lossy().ends_with("/session.json"));
-}
-
-#[test]
-fn test_legacy_snapshot_path() {
-    if std::env::var("HOME").is_err() {
-        return;
-    }
-
-    let session_id = format!("test-session-{}", uuid::Uuid::new_v4());
-    let path = get_legacy_snapshot_path(&session_id).unwrap();
-
-    assert!(path.to_string_lossy().contains(".planning-agent/sessions/"));
-    assert!(path.to_string_lossy().ends_with(".json"));
-    assert!(!path.to_string_lossy().contains("/session.json"));
 }
 
 #[test]
@@ -251,19 +217,19 @@ fn test_save_and_load_session_centric_snapshot() {
         saved_at,
     );
 
-    let save_result = save_snapshot(Path::new("/tmp"), &snapshot);
+    let save_result = save_snapshot(&snapshot);
     assert!(save_result.is_ok());
     let saved_path = save_result.unwrap();
 
     assert!(saved_path.to_string_lossy().contains(&session_id));
     assert!(saved_path.to_string_lossy().ends_with("/session.json"));
 
-    let load_result = load_snapshot(Path::new("/tmp"), &session_id);
+    let load_result = load_snapshot(&session_id);
     assert!(load_result.is_ok());
     let loaded = load_result.unwrap();
 
     assert_eq!(loaded.workflow_session_id, session_id);
     assert_eq!(loaded.workflow_state.feature_name, "test-feature");
 
-    let _ = delete_snapshot(Path::new("/tmp"), &session_id);
+    let _ = delete_snapshot(&session_id);
 }

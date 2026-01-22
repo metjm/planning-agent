@@ -414,7 +414,7 @@ pub async fn handle_session_event(
             tab_manager.daemon_connected = true;
         }
         Event::UpdateInstallFinished(result) => {
-            handle_update_install_finished(result, tab_manager, terminal, working_dir).await?;
+            handle_update_install_finished(result, tab_manager, terminal).await?;
         }
         Event::SessionCliInstanceStarted {
             session_id,
@@ -488,13 +488,12 @@ async fn handle_update_install_finished(
     result: update::UpdateResult,
     tab_manager: &mut TabManager,
     terminal: &mut ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io::Stdout>>,
-    working_dir: &Path,
 ) -> Result<()> {
     tab_manager.update_in_progress = false;
 
     match result {
         update::UpdateResult::Success(binary_path) => {
-            let _ = update::write_update_marker(working_dir);
+            let _ = update::write_update_marker();
 
             // Shutdown the session daemon before exec'ing new binary
             let client = session_daemon::client::SessionDaemonClient::new(false);

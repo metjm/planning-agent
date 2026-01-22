@@ -50,18 +50,6 @@ fn test_planning_agent_home_dir() {
 }
 
 #[test]
-fn test_plans_dir() {
-    if env::var("HOME").is_err() {
-        return;
-    }
-
-    let result = plans_dir();
-    assert!(result.is_ok());
-    let path = result.unwrap();
-    assert!(path.ends_with("plans"));
-}
-
-#[test]
 fn test_sessions_dir() {
     if env::var("HOME").is_err() {
         return;

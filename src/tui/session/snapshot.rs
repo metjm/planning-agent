@@ -3,7 +3,7 @@
 //! This module provides conversion between Session and SessionUiState for
 //! snapshot persistence.
 
-use super::{FocusedPanel, InputMode, Session};
+use super::Session;
 use crate::session_store::SessionUiState;
 use crate::state::State;
 use crate::tui::mention::MentionState;
@@ -85,12 +85,7 @@ impl Session {
             streaming_lines: ui_state.streaming_lines,
             streaming_scroll_position: ui_state.streaming_scroll_position,
             streaming_follow_mode: ui_state.streaming_follow_mode,
-            // Map Unknown variant (from old snapshots) to Output
-            focused_panel: if ui_state.focused_panel == FocusedPanel::Unknown {
-                FocusedPanel::Output
-            } else {
-                ui_state.focused_panel
-            },
+            focused_panel: ui_state.focused_panel,
             workflow_state,
             state_snapshot: None,       // Will be populated when workflow spawns
             snapshot_rx: None,          // Will be populated when workflow spawns
@@ -107,12 +102,7 @@ impl Session {
             user_feedback: ui_state.user_feedback,
             cursor_position: ui_state.cursor_position,
             feedback_scroll: ui_state.feedback_scroll,
-            // Map Unknown variant (from old snapshots) to Normal
-            input_mode: if ui_state.input_mode == InputMode::Unknown {
-                InputMode::Normal
-            } else {
-                ui_state.input_mode
-            },
+            input_mode: ui_state.input_mode,
             tab_input: ui_state.tab_input,
             tab_input_cursor: ui_state.tab_input_cursor,
             tab_input_scroll: ui_state.tab_input_scroll,

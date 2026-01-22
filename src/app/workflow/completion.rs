@@ -1,22 +1,31 @@
 //! Workflow completion handling.
 
 use super::WorkflowResult;
-use crate::app::util::{build_approval_summary, log_workflow};
+use crate::app::util::build_approval_summary;
 use crate::git_worktree;
+use crate::session_logger::{LogCategory, LogLevel, SessionLogger};
 use crate::state::State;
 use crate::tui::{SessionEventSender, UserApprovalResponse, WorkflowCommand};
 use anyhow::Result;
-use std::path::Path;
+use std::sync::Arc;
 use tokio::sync::mpsc;
+
+/// Helper to log completion messages.
+fn log_completion(logger: &SessionLogger, message: &str) {
+    logger.log(LogLevel::Info, LogCategory::Workflow, message);
+}
 
 pub async fn handle_completion(
     state: &State,
-    working_dir: &Path,
+    session_logger: &Arc<SessionLogger>,
     sender: &SessionEventSender,
     approval_rx: &mut mpsc::Receiver<UserApprovalResponse>,
     control_rx: &mut mpsc::Receiver<WorkflowCommand>,
 ) -> Result<WorkflowResult> {
-    log_workflow(working_dir, ">>> Plan complete - requesting user approval");
+    log_completion(
+        session_logger,
+        ">>> Plan complete - requesting user approval",
+    );
 
     sender.send_output("".to_string());
 
@@ -54,18 +63,18 @@ pub async fn handle_completion(
         sender.send_approval_request(summary);
     };
 
-    log_workflow(working_dir, "Waiting for user approval response...");
+    log_completion(session_logger, "Waiting for user approval response...");
     loop {
         tokio::select! {
             Some(cmd) = control_rx.recv() => {
                 match cmd {
                     WorkflowCommand::Stop => {
-                        log_workflow(working_dir, "Stop command received during approval wait");
+                        log_completion(session_logger, "Stop command received during approval wait");
                         sender.send_output("[workflow] Stopping during approval...".to_string());
                         return Ok(WorkflowResult::Stopped);
                     }
                     WorkflowCommand::Interrupt { feedback } => {
-                        log_workflow(working_dir, &format!("Interrupt received during approval: {}", feedback));
+                        log_completion(session_logger, &format!("Interrupt received during approval: {}", feedback));
                         sender.send_output("[workflow] Interrupted during approval".to_string());
                         return Ok(WorkflowResult::NeedsRestart { user_feedback: feedback });
                     }
@@ -74,18 +83,18 @@ pub async fn handle_completion(
             response = approval_rx.recv() => {
                 match response {
                     Some(UserApprovalResponse::Accept) => {
-                        log_workflow(working_dir, "User ACCEPTED the plan");
+                        log_completion(session_logger, "User ACCEPTED the plan");
                         sender.send_output("[planning] User accepted the plan!".to_string());
                         return Ok(WorkflowResult::Accepted);
                     }
                     Some(UserApprovalResponse::Implement) => {
-                        log_workflow(working_dir, "User requested IMPLEMENTATION");
+                        log_completion(session_logger, "User requested IMPLEMENTATION");
                         sender.send_output("[planning] Starting implementation workflow...".to_string());
                         return Ok(WorkflowResult::ImplementationRequested);
                     }
                     Some(UserApprovalResponse::Decline(feedback)) => {
-                        log_workflow(
-                            working_dir,
+                        log_completion(
+                            session_logger,
                             &format!("User DECLINED with feedback: {}", feedback),
                         );
                         sender.send_output(format!("[planning] User requested changes: {}", feedback));
@@ -95,43 +104,43 @@ pub async fn handle_completion(
                     }
                     Some(UserApprovalResponse::ReviewRetry)
                     | Some(UserApprovalResponse::ReviewContinue) => {
-                        log_workflow(
-                            working_dir,
+                        log_completion(
+                            session_logger,
                             "Received review decision while awaiting plan approval, ignoring",
                         );
                         continue;
                     }
                     Some(UserApprovalResponse::PlanGenerationRetry) => {
-                        log_workflow(
-                            working_dir,
+                        log_completion(
+                            session_logger,
                             "Received PlanGenerationRetry while awaiting plan approval, ignoring",
                         );
                         continue;
                     }
                     Some(UserApprovalResponse::PlanGenerationContinue) => {
-                        log_workflow(
-                            working_dir,
+                        log_completion(
+                            session_logger,
                             "Received PlanGenerationContinue while awaiting plan approval, ignoring",
                         );
                         continue;
                     }
                     Some(UserApprovalResponse::AbortWorkflow) => {
-                        log_workflow(
-                            working_dir,
+                        log_completion(
+                            session_logger,
                             "Received AbortWorkflow while awaiting plan approval, ignoring",
                         );
                         continue;
                     }
                     Some(UserApprovalResponse::ProceedWithoutApproval) => {
-                        log_workflow(
-                            working_dir,
+                        log_completion(
+                            session_logger,
                             "Received ProceedWithoutApproval while awaiting plan approval, ignoring",
                         );
                         continue;
                     }
                     Some(UserApprovalResponse::ContinueReviewing) => {
-                        log_workflow(
-                            working_dir,
+                        log_completion(
+                            session_logger,
                             "Received ContinueReviewing while awaiting plan approval, ignoring",
                         );
                         continue;
@@ -139,14 +148,14 @@ pub async fn handle_completion(
                     Some(UserApprovalResponse::WorkflowFailureRetry)
                     | Some(UserApprovalResponse::WorkflowFailureStop)
                     | Some(UserApprovalResponse::WorkflowFailureAbort) => {
-                        log_workflow(
-                            working_dir,
+                        log_completion(
+                            session_logger,
                             "Received workflow failure response while awaiting plan approval, ignoring",
                         );
                         continue;
                     }
                     None => {
-                        log_workflow(working_dir, "Approval channel closed - treating as accept");
+                        log_completion(session_logger, "Approval channel closed - treating as accept");
                         return Ok(WorkflowResult::Accepted);
                     }
                 }

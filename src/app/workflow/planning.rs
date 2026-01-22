@@ -111,7 +111,7 @@ pub async fn run_planning_phase(
                     sender.send_plan_generation_failed(summary);
 
                     match wait_for_plan_failure_decision(
-                        working_dir,
+                        &session_logger,
                         approval_rx,
                         control_rx,
                         false,
@@ -181,7 +181,7 @@ pub async fn run_planning_phase(
                 sender.send_plan_generation_failed(summary);
 
                 match wait_for_plan_failure_decision(
-                    working_dir,
+                    &session_logger,
                     approval_rx,
                     control_rx,
                     plan_has_content,

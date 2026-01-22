@@ -1,7 +1,6 @@
 use crate::phases;
 use crate::planning_paths;
 use crate::session_logger::{LogCategory, LogLevel, SessionLogger};
-use crate::state::State;
 use crate::tui::TabManager;
 use std::collections::HashMap;
 use std::fs::OpenOptions;
@@ -28,22 +27,6 @@ pub fn log_workflow_with_session(logger: &SessionLogger, message: &str) {
 #[allow(dead_code)]
 pub fn log_workflow_with_level(logger: &SessionLogger, level: LogLevel, message: &str) {
     logger.log(level, LogCategory::Workflow, message);
-}
-
-/// Logs a workflow message using legacy file-based logging.
-///
-/// **DEPRECATED**: Use `log_workflow_with_session()` for new code.
-pub fn log_workflow(working_dir: &Path, message: &str) {
-    let run_id = get_run_id();
-    // Use home-based log path
-    let log_path = match planning_paths::workflow_log_path(working_dir, &run_id) {
-        Ok(p) => p,
-        Err(_) => return, // Skip logging if we can't determine the path
-    };
-    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(&log_path) {
-        let timestamp = chrono::Local::now().format("%H:%M:%S");
-        let _ = writeln!(f, "[{}] {}", timestamp, message);
-    }
 }
 
 pub fn debug_log(start: std::time::Instant, msg: &str) {
@@ -213,130 +196,6 @@ pub fn build_workflow_failure_summary(
     summary.push_str("- **[r] Retry**: Retry the failed operation\n");
     summary.push_str("- **[s] Stop**: Save state and resume later\n");
     summary.push_str("- **[a] Abort**: Abort the workflow\n");
-
-    summary
-}
-
-pub fn build_max_iterations_summary(
-    state: &State,
-    working_dir: &Path,
-    last_reviews: &[phases::ReviewResult],
-) -> String {
-    let plan_path = working_dir.join(&state.plan_file);
-
-    let mut summary = format!(
-        "The plan has been reviewed {} times but has not been approved by AI.\n\nPlan file: {}\n\n",
-        state.iteration,
-        plan_path.display()
-    );
-
-    if let Some(ref status) = state.last_feedback_status {
-        summary.push_str(&format!("Last review verdict: {:?}\n\n", status));
-    }
-
-    if !last_reviews.is_empty() {
-        // New top section: Review Summary with verdict grouping
-        summary.push_str("---\n\n## Review Summary\n\n");
-
-        // Count verdicts
-        let needs_revision_count = last_reviews.iter().filter(|r| r.needs_revision).count();
-        let approved_count = last_reviews.len() - needs_revision_count;
-
-        summary.push_str(&format!(
-            "**{} reviewer(s):** {} needs revision, {} approved\n\n",
-            last_reviews.len(),
-            needs_revision_count,
-            approved_count
-        ));
-
-        // Group reviewers by verdict
-        let needs_revision: Vec<_> = last_reviews.iter().filter(|r| r.needs_revision).collect();
-        let approved: Vec<_> = last_reviews.iter().filter(|r| !r.needs_revision).collect();
-
-        if !needs_revision.is_empty() {
-            let names: Vec<_> = needs_revision
-                .iter()
-                .map(|r| r.agent_name.to_uppercase())
-                .collect();
-            summary.push_str(&format!("**Needs Revision:** {}\n\n", names.join(", ")));
-        }
-
-        if !approved.is_empty() {
-            let names: Vec<_> = approved
-                .iter()
-                .map(|r| r.agent_name.to_uppercase())
-                .collect();
-            summary.push_str(&format!("**Approved:** {}\n\n", names.join(", ")));
-        }
-
-        // Per-agent summary bullets
-        for review in last_reviews {
-            let verdict = if review.needs_revision {
-                "NEEDS REVISION"
-            } else {
-                "APPROVED"
-            };
-            let truncated_summary = truncate_for_summary(&review.summary, 120);
-            summary.push_str(&format!(
-                "- **{}** - **{}**: {}\n",
-                review.agent_name.to_uppercase(),
-                verdict,
-                truncated_summary
-            ));
-        }
-        summary.push('\n');
-
-        // Preview section: concise cut-off view
-        summary.push_str("---\n\n## Latest Review Feedback (Preview)\n\n");
-        summary.push_str("_Scroll down for full feedback_\n\n");
-        for review in last_reviews {
-            let verdict = if review.needs_revision {
-                "NEEDS REVISION"
-            } else {
-                "APPROVED"
-            };
-            summary.push_str(&format!(
-                "### {} ({})\n\n",
-                review.agent_name.to_uppercase(),
-                verdict
-            ));
-            let preview: String = review
-                .feedback
-                .lines()
-                .take(5)
-                .collect::<Vec<_>>()
-                .join("\n");
-            summary.push_str(&format!("{}\n\n", truncate_for_summary(&preview, 300)));
-        }
-
-        // Full feedback section: complete review content
-        summary.push_str("---\n\n## Full Review Feedback\n\n");
-        for review in last_reviews {
-            let verdict = if review.needs_revision {
-                "NEEDS REVISION"
-            } else {
-                "APPROVED"
-            };
-            summary.push_str(&format!(
-                "### {} ({})\n\n",
-                review.agent_name.to_uppercase(),
-                verdict
-            ));
-            summary.push_str(&format!("{}\n\n", review.feedback));
-        }
-    } else {
-        summary.push_str("---\n\n_No review feedback available._\n\n");
-    }
-
-    summary.push_str("---\n\n");
-    summary.push_str("Choose an action:\n");
-    summary.push_str("- **[p] Proceed**: Accept the current plan and continue to implementation\n");
-    summary.push_str(
-        "- **[c] Continue Review**: Run another review cycle (adds 1 to max iterations)\n",
-    );
-    summary.push_str(
-        "- **[d] Restart with Feedback**: Provide feedback to restart the entire workflow\n",
-    );
 
     summary
 }

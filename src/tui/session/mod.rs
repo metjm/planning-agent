@@ -8,7 +8,6 @@ mod paste;
 mod plan_modal;
 mod review_history;
 mod snapshot;
-mod state_helpers;
 mod tools;
 
 pub use cli_instances::{CliInstance, CliInstanceId};
@@ -333,6 +332,19 @@ impl Session {
         self.error_scroll = 0;
     }
 
+    /// Returns the feature name from state snapshot, workflow state, or session name.
+    pub fn feature_name(&self) -> &str {
+        self.state_snapshot
+            .as_ref()
+            .map(|s| s.feature_name.as_str())
+            .or_else(|| {
+                self.workflow_state
+                    .as_ref()
+                    .map(|s| s.feature_name.as_str())
+            })
+            .unwrap_or(&self.name)
+    }
+
     pub fn error_scroll_up(&mut self) {
         self.error_scroll = self.error_scroll.saturating_sub(1);
     }
@@ -468,7 +480,6 @@ impl Session {
                 }
             }
             FocusedPanel::Summary => FocusedPanel::Output,
-            FocusedPanel::Unknown => FocusedPanel::Output,
         };
     }
 

@@ -173,7 +173,7 @@ fn create_bundle_internal(config: BundleConfig<'_>) -> Result<PathBuf> {
 
     // Add session snapshot (optional)
     if let Some(session_id) = config.workflow_session_id {
-        if let Ok(snapshot_path) = planning_paths::snapshot_path(session_id) {
+        if let Ok(snapshot_path) = planning_paths::session_snapshot_path(session_id) {
             match add_file_to_zip(&mut zip, &snapshot_path, "session_snapshot.json", options) {
                 Ok(info) => included_files.push(info),
                 Err(_) => missing_files.push("session_snapshot.json".to_string()),

@@ -599,12 +599,6 @@ impl State {
         });
     }
 
-    pub fn ensure_workflow_session_id(&mut self) {
-        if self.workflow_session_id.is_empty() {
-            self.workflow_session_id = Uuid::new_v4().to_string();
-        }
-    }
-
     /// Sets the updated_at timestamp to the current time.
     /// Call this before saving to ensure the timestamp reflects the save time.
     pub fn set_updated_at(&mut self) {
@@ -617,18 +611,11 @@ impl State {
         self.updated_at = timestamp.to_string();
     }
 
-    /// Returns true if this state has an updated_at timestamp.
-    /// Legacy state files without updated_at will return false.
-    pub fn has_updated_at(&self) -> bool {
-        !self.updated_at.is_empty()
-    }
-
     pub fn load(path: &Path) -> Result<Self> {
         let content = fs::read_to_string(path)
             .with_context(|| format!("Failed to read state file: {}", path.display()))?;
-        let mut state: State =
+        let state: State =
             serde_json::from_str(&content).with_context(|| "Failed to parse state file as JSON")?;
-        state.ensure_workflow_session_id();
         Ok(state)
     }
 

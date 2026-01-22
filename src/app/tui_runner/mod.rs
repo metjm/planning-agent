@@ -298,7 +298,7 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
     // Canonicalize working_dir for absolute paths in prompts (matching headless behavior)
     let working_dir = std::fs::canonicalize(&working_dir).unwrap_or(working_dir);
 
-    if update::consume_update_marker(&working_dir) {
+    if update::consume_update_marker() {
         tab_manager.update_notice = Some("Update installed successfully!".to_string());
         debug_log(start, "update-installed marker consumed");
     }
@@ -321,7 +321,7 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
         debug_log(start, &format!("resuming session: {}", session_id));
 
         // Load the snapshot
-        let snapshot = match crate::session_store::load_snapshot(&working_dir, session_id) {
+        let snapshot = match crate::session_store::load_snapshot(session_id) {
             Ok(s) => s,
             Err(e) => {
                 restore_terminal(&mut terminal)?;

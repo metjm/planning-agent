@@ -218,7 +218,7 @@ impl SessionBrowserState {
             .unwrap_or_else(|_| current_working_dir.to_path_buf());
 
         // Load snapshots from disk
-        match list_snapshots(current_working_dir) {
+        match list_snapshots() {
             Ok(snapshots) => {
                 self.entries = snapshots
                     .iter()
@@ -257,7 +257,7 @@ impl SessionBrowserState {
             .unwrap_or_else(|_| current_working_dir.to_path_buf());
 
         // First, load snapshot IDs to know which sessions have snapshots
-        let snapshot_ids: HashSet<String> = match list_snapshots(current_working_dir) {
+        let snapshot_ids: HashSet<String> = match list_snapshots() {
             Ok(snapshots) => snapshots
                 .iter()
                 .map(|s| s.workflow_session_id.clone())
@@ -289,7 +289,7 @@ impl SessionBrowserState {
         }
 
         // Load disk snapshots and merge (add ones not already in live list)
-        match list_snapshots(current_working_dir) {
+        match list_snapshots() {
             Ok(snapshots) => {
                 for snapshot in snapshots {
                     if !seen_ids.contains(&snapshot.workflow_session_id) {

@@ -51,5 +51,5 @@ pub fn create_and_save_snapshot(
         now,
     );
 
-    save_snapshot(working_dir, &snapshot)
+    save_snapshot(&snapshot)
 }

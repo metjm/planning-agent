@@ -175,8 +175,12 @@ pub async fn run_reviewing_phase(
                 build_all_reviewers_failed_summary(&batch.failures, retry_attempts, max_retries);
             sender.send_all_reviewers_failed(summary);
 
-            let decision =
-                wait_for_all_reviewers_failed_decision(working_dir, approval_rx, control_rx).await;
+            let decision = wait_for_all_reviewers_failed_decision(
+                &context.session_logger,
+                approval_rx,
+                control_rx,
+            )
+            .await;
 
             match decision {
                 AllReviewersFailedDecision::Retry => {
@@ -206,7 +210,8 @@ pub async fn run_reviewing_phase(
         let summary = build_review_failure_summary(&reviews_by_agent, &batch.failures);
         sender.send_review_decision_request(summary);
 
-        let decision = wait_for_review_decision(working_dir, approval_rx, control_rx).await;
+        let decision =
+            wait_for_review_decision(&context.session_logger, approval_rx, control_rx).await;
 
         match decision {
             ReviewDecision::Retry => {
@@ -263,7 +268,7 @@ pub async fn run_reviewing_phase(
             if state.iteration >= state.max_iterations {
                 let result = handle_max_iterations(
                     state,
-                    working_dir,
+                    &context.session_logger,
                     state_path,
                     sender,
                     approval_rx,
@@ -499,8 +504,12 @@ pub async fn run_sequential_reviewing_phase(
             );
             sender.send_all_reviewers_failed(summary);
 
-            let decision =
-                wait_for_all_reviewers_failed_decision(working_dir, approval_rx, control_rx).await;
+            let decision = wait_for_all_reviewers_failed_decision(
+                &context.session_logger,
+                approval_rx,
+                control_rx,
+            )
+            .await;
 
             match decision {
                 AllReviewersFailedDecision::Retry => {
@@ -570,7 +579,7 @@ pub async fn run_sequential_reviewing_phase(
         if state.iteration >= state.max_iterations {
             return handle_max_iterations(
                 state,
-                working_dir,
+                &context.session_logger,
                 state_path,
                 sender,
                 approval_rx,

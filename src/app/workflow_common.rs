@@ -89,18 +89,6 @@ pub fn should_retry_review(
     !failures.is_empty() && successful_reviews.is_empty() && attempt < max_retries
 }
 
-/// Deprecated: No longer called since we now keep old feedback files.
-/// Kept for backward compatibility with tests but not used in production.
-#[allow(dead_code)]
-pub fn cleanup_merged_feedback(feedback_path: &Path) -> Result<bool, std::io::Error> {
-    if feedback_path.exists() {
-        std::fs::remove_file(feedback_path)?;
-        Ok(true)
-    } else {
-        Ok(false)
-    }
-}
-
 /// Classifies a failure from stderr content and exit code.
 ///
 /// Priority order:
@@ -218,28 +206,6 @@ mod tests {
         let failures: Vec<ReviewFailure> = vec![];
         let reviews: Vec<ReviewResult> = vec![];
         assert!(!should_retry_review(0, &failures, &reviews, 2));
-    }
-
-    #[test]
-    fn test_cleanup_merged_feedback_removes_existing_file() {
-        let dir = tempdir().unwrap();
-        let feedback_path = dir.path().join("feedback.md");
-        fs::write(&feedback_path, "test content").unwrap();
-
-        let result = cleanup_merged_feedback(&feedback_path);
-        assert!(result.is_ok());
-        assert!(result.unwrap());
-        assert!(!feedback_path.exists());
-    }
-
-    #[test]
-    fn test_cleanup_merged_feedback_handles_missing_file() {
-        let dir = tempdir().unwrap();
-        let feedback_path = dir.path().join("nonexistent.md");
-
-        let result = cleanup_merged_feedback(&feedback_path);
-        assert!(result.is_ok());
-        assert!(!result.unwrap());
     }
 
     #[test]

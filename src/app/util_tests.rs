@@ -1,8 +1,6 @@
 #[cfg(test)]
 mod tests {
     use crate::app::util::*;
-    use crate::phases;
-    use crate::state::State;
     use std::fs;
     use std::path::Path;
     use tempfile::tempdir;
@@ -70,119 +68,6 @@ mod tests {
         assert!(summary.contains("Could not read plan file:"));
         assert!(summary.contains("[i] Implement"));
         assert!(summary.contains("[d] Decline"));
-    }
-
-    #[test]
-    fn test_build_max_iterations_summary_with_preview_and_full_feedback() {
-        let dir = tempdir().unwrap();
-        let working_dir = dir.path();
-
-        let mut state = State::new("test-feature", "Test objective", 3).unwrap();
-        state.iteration = 3;
-
-        let long_feedback = "Line 1: First issue found\n\
-                             Line 2: Second issue found\n\
-                             Line 3: Third issue found\n\
-                             Line 4: Fourth issue found\n\
-                             Line 5: Fifth issue found\n\
-                             Line 6: Sixth issue found\n\
-                             Line 7: Seventh issue found\n\
-                             Line 8: Additional detailed feedback here";
-
-        let reviews = vec![phases::ReviewResult {
-            agent_name: "test-reviewer".to_string(),
-            needs_revision: true,
-            feedback: long_feedback.to_string(),
-            summary: "Multiple issues found in the plan".to_string(),
-        }];
-
-        let summary = build_max_iterations_summary(&state, working_dir, &reviews);
-
-        assert!(summary.contains("## Review Summary"));
-        assert!(summary.contains("**1 reviewer(s):** 1 needs revision, 0 approved"));
-        assert!(summary.contains("**Needs Revision:** TEST-REVIEWER"));
-        assert!(summary.contains(
-            "- **TEST-REVIEWER** - **NEEDS REVISION**: Multiple issues found in the plan"
-        ));
-
-        assert!(summary.contains("## Latest Review Feedback (Preview)"));
-        assert!(summary.contains("Scroll down for full feedback"));
-        assert!(summary.contains("TEST-REVIEWER (NEEDS REVISION)"));
-
-        assert!(summary.contains("## Full Review Feedback"));
-        assert!(summary.contains("Line 6: Sixth issue found"));
-        assert!(summary.contains("Line 7: Seventh issue found"));
-        assert!(summary.contains("Line 8: Additional detailed feedback here"));
-
-        assert!(summary.contains("[p] Proceed"));
-        assert!(summary.contains("[c] Continue Review"));
-        assert!(summary.contains("[d] Restart with Feedback"));
-    }
-
-    #[test]
-    fn test_build_max_iterations_summary_empty_reviews() {
-        let dir = tempdir().unwrap();
-        let working_dir = dir.path();
-
-        let mut state = State::new("test-feature", "Test objective", 3).unwrap();
-        state.iteration = 3;
-
-        let reviews: Vec<phases::ReviewResult> = vec![];
-
-        let summary = build_max_iterations_summary(&state, working_dir, &reviews);
-
-        assert!(summary.contains("No review feedback available"));
-
-        assert!(!summary.contains("## Review Summary"));
-        assert!(!summary.contains("## Latest Review Feedback (Preview)"));
-        assert!(!summary.contains("## Full Review Feedback"));
-
-        assert!(summary.contains("[p] Proceed"));
-        assert!(summary.contains("[c] Continue Review"));
-        assert!(summary.contains("[d] Restart with Feedback"));
-    }
-
-    #[test]
-    fn test_build_max_iterations_summary_multiple_reviewers() {
-        let dir = tempdir().unwrap();
-        let working_dir = dir.path();
-
-        let mut state = State::new("test-feature", "Test objective", 3).unwrap();
-        state.iteration = 2;
-
-        let reviews = vec![
-            phases::ReviewResult {
-                agent_name: "reviewer-1".to_string(),
-                needs_revision: true,
-                feedback: "Issue A\nIssue B\nIssue C".to_string(),
-                summary: "Several issues need addressing".to_string(),
-            },
-            phases::ReviewResult {
-                agent_name: "reviewer-2".to_string(),
-                needs_revision: false,
-                feedback: "Looks good to me".to_string(),
-                summary: "Plan is well structured".to_string(),
-            },
-        ];
-
-        let summary = build_max_iterations_summary(&state, working_dir, &reviews);
-
-        assert!(summary.contains("## Review Summary"));
-        assert!(summary.contains("**2 reviewer(s):** 1 needs revision, 1 approved"));
-        assert!(summary.contains("**Needs Revision:** REVIEWER-1"));
-        assert!(summary.contains("**Approved:** REVIEWER-2"));
-
-        assert!(summary
-            .contains("- **REVIEWER-1** - **NEEDS REVISION**: Several issues need addressing"));
-        assert!(summary.contains("- **REVIEWER-2** - **APPROVED**: Plan is well structured"));
-
-        assert!(summary.contains("REVIEWER-1 (NEEDS REVISION)"));
-        assert!(summary.contains("REVIEWER-2 (APPROVED)"));
-
-        assert!(summary.contains("Issue A"));
-        assert!(summary.contains("Issue B"));
-        assert!(summary.contains("Issue C"));
-        assert!(summary.contains("Looks good to me"));
     }
 
     #[test]
