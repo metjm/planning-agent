@@ -272,7 +272,7 @@ impl SessionDaemonClient {
             Ok(()) => {
                 // We have the lock - spawn daemon
                 Self::spawn_daemon_and_wait(&socket_path)?;
-                lock_file.unlock()?;
+                FileExt::unlock(&lock_file)?;
             }
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                 // Another process is spawning - wait for daemon
@@ -512,7 +512,7 @@ impl SessionDaemonClient {
             Ok(()) => {
                 // We have the lock - spawn daemon
                 Self::spawn_daemon_windows()?;
-                lock_file.unlock()?;
+                FileExt::unlock(&lock_file)?;
             }
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                 // Another process is spawning - wait for daemon
