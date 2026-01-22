@@ -118,6 +118,22 @@ pub struct Theme {
     // === Objective panel colors ===
     /// Objective panel border color
     pub objective_border: Color,
+
+    // === Phase header background colors ===
+    /// Background color for Planning phase header
+    pub phase_bg_planning: Color,
+    /// Background color for Reviewing phase header
+    pub phase_bg_reviewing: Color,
+    /// Background color for Revising phase header
+    pub phase_bg_revising: Color,
+    /// Background color for Complete phase header
+    pub phase_bg_complete: Color,
+    /// Background color for Waiting/Input phase header
+    pub phase_bg_waiting: Color,
+    /// Background color for Stopped/Paused phase header
+    pub phase_bg_stopped: Color,
+    /// Background color for Error phase header
+    pub phase_bg_error: Color,
 }
 
 impl Theme {
@@ -189,6 +205,15 @@ impl Theme {
 
             // Objective panel colors
             objective_border: Color::Cyan,
+
+            // Phase header backgrounds - bold, distinct colors
+            phase_bg_planning: Color::Rgb(0, 100, 150), // Deep blue
+            phase_bg_reviewing: Color::Rgb(100, 80, 140), // Purple
+            phase_bg_revising: Color::Rgb(140, 100, 0), // Amber/orange
+            phase_bg_complete: Color::Rgb(0, 100, 50),  // Deep green
+            phase_bg_waiting: Color::Rgb(80, 80, 80),   // Dark gray
+            phase_bg_stopped: Color::Rgb(60, 60, 90),   // Muted blue-gray (distinct from waiting)
+            phase_bg_error: Color::Rgb(140, 30, 30),    // Dark red
         }
     }
 
@@ -261,6 +286,15 @@ impl Theme {
 
             // Objective panel colors - warm
             objective_border: Color::Rgb(255, 165, 0), // Orange
+
+            // Phase header backgrounds - warm tones matching implementation palette
+            phase_bg_planning: Color::Rgb(140, 70, 0), // Burnt orange
+            phase_bg_reviewing: Color::Rgb(120, 60, 100), // Warm purple
+            phase_bg_revising: Color::Rgb(160, 80, 0), // Bright orange
+            phase_bg_complete: Color::Rgb(0, 100, 50), // Deep green (same)
+            phase_bg_waiting: Color::Rgb(80, 80, 80),  // Dark gray (same)
+            phase_bg_stopped: Color::Rgb(60, 60, 90),  // Muted blue-gray (same)
+            phase_bg_error: Color::Rgb(140, 30, 30),   // Dark red (same)
         }
     }
 

@@ -1,5 +1,6 @@
 use super::theme::Theme;
 use super::util::{format_bytes, format_duration, format_tokens};
+use super::SPINNER_CHARS;
 use crate::tui::{Session, SessionStatus};
 use ratatui::{
     layout::Rect,
@@ -85,8 +86,7 @@ pub fn draw_stats(frame: &mut Frame, session: &Session, area: Rect, show_live_to
                 .add_modifier(Modifier::BOLD),
         )]));
 
-        let spinner_chars = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-        let spinner_char = spinner_chars[(session.spinner_frame as usize) % spinner_chars.len()];
+        let spinner_char = SPINNER_CHARS[(session.spinner_frame as usize) % SPINNER_CHARS.len()];
 
         stats_text.push(Line::from(vec![
             Span::styled(

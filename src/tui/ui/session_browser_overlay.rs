@@ -1,9 +1,7 @@
 //! Session browser overlay for viewing and resuming workflow sessions.
 
+use super::SPINNER_CHARS;
 use crate::session_daemon::LivenessState;
-
-/// Spinner characters for animated running session indicators.
-const SPINNER_CHARS: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 use crate::tui::session_browser::ConfirmationState;
 use crate::tui::TabManager;
 use ratatui::{

@@ -1,6 +1,7 @@
 use super::dropdowns::{draw_mention_dropdown, draw_slash_dropdown};
 use super::theme::Theme;
 use super::util::{compute_wrapped_line_count, parse_markdown_line, wrap_text_at_width};
+use super::SPINNER_CHARS;
 use crate::state::{ImplementationPhase, Phase, UiMode};
 use crate::tui::{ApprovalMode, FocusedPanel, Session, TabManager};
 use crate::update::UpdateStatus;
@@ -383,7 +384,6 @@ pub fn draw_tab_input_overlay(frame: &mut Frame, session: &Session, tab_manager:
 
 fn render_update_line(tab_manager: &TabManager) -> Line<'static> {
     if tab_manager.update_in_progress {
-        const SPINNER_CHARS: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
         let spinner =
             SPINNER_CHARS[tab_manager.update_spinner_frame as usize % SPINNER_CHARS.len()];
         Line::from(vec![
@@ -536,8 +536,6 @@ pub fn draw_plan_modal(frame: &mut Frame, session: &Session) {
 
 /// Render slash command status/result line(s).
 fn render_command_line(tab_manager: &TabManager) -> ratatui::text::Text<'static> {
-    const SPINNER_CHARS: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-
     if tab_manager.command_in_progress {
         let spinner =
             SPINNER_CHARS[tab_manager.update_spinner_frame as usize % SPINNER_CHARS.len()];

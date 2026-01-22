@@ -1,5 +1,6 @@
 use super::theme::Theme;
 use super::util::{compute_wrapped_line_count, parse_markdown_line, wrap_text_at_width};
+use super::SPINNER_CHARS;
 use crate::tui::session::ReviewerStatus;
 use crate::tui::{
     FocusedPanel, RunTab, RunTabEntry, Session, SummaryState, ToolResultSummary, ToolTimelineEntry,
@@ -304,9 +305,8 @@ pub(super) fn draw_summary_panel(
                 ))],
             ),
             SummaryState::Generating => {
-                let spinner_chars = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
                 let spinner =
-                    spinner_chars[(tab.summary_spinner_frame as usize) % spinner_chars.len()];
+                    SPINNER_CHARS[(tab.summary_spinner_frame as usize) % SPINNER_CHARS.len()];
                 let title = if is_focused {
                     format!(" {} Summary [*] ", spinner)
                 } else {
@@ -500,11 +500,10 @@ fn format_duration_secs(duration_ms: u64) -> String {
 
 pub(super) fn draw_reviewer_history_panel(frame: &mut Frame, session: &Session, area: Rect) {
     let theme = Theme::for_session(session);
-    let spinner_chars = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-    let spinner_idx = (session.review_history_spinner_frame as usize) % spinner_chars.len();
+    let spinner_idx = (session.review_history_spinner_frame as usize) % SPINNER_CHARS.len();
 
     let title = if session.has_running_reviewer() {
-        format!(" {} Review History ", spinner_chars[spinner_idx])
+        format!(" {} Review History ", SPINNER_CHARS[spinner_idx])
     } else {
         " Review History ".to_string()
     };
@@ -538,7 +537,7 @@ pub(super) fn draw_reviewer_history_panel(frame: &mut Frame, session: &Session, 
                 Some(false) => ("✗".to_string(), theme.error),
                 None => {
                     if has_running {
-                        (spinner_chars[spinner_idx].to_string(), theme.warning)
+                        (SPINNER_CHARS[spinner_idx].to_string(), theme.warning)
                     } else {
                         ("?".to_string(), theme.muted)
                     }
@@ -557,7 +556,7 @@ pub(super) fn draw_reviewer_history_panel(frame: &mut Frame, session: &Session, 
             for entry in &round.reviewers {
                 let (icon, color, suffix): (String, Color, String) = match &entry.status {
                     ReviewerStatus::Running => (
-                        spinner_chars[spinner_idx].to_string(),
+                        SPINNER_CHARS[spinner_idx].to_string(),
                         theme.warning,
                         String::new(),
                     ),
