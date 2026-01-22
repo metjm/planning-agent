@@ -1,4 +1,3 @@
-
 use super::*;
 use crate::config::WorkflowConfig;
 use crate::phases::implementing_conversation_key;
@@ -107,66 +106,66 @@ fn test_insert_newline() {
 fn test_cursor_up_movement() {
     let mut session = Session::new(0);
     session.tab_input = "line1\nline2\nline3".to_string();
-    session.tab_input_cursor = 14; 
+    session.tab_input_cursor = 14;
 
     session.move_tab_input_cursor_up();
-    assert_eq!(session.tab_input_cursor, 8); 
+    assert_eq!(session.tab_input_cursor, 8);
 
     session.move_tab_input_cursor_up();
-    assert_eq!(session.tab_input_cursor, 2); 
+    assert_eq!(session.tab_input_cursor, 2);
 }
 
 #[test]
 fn test_cursor_down_movement() {
     let mut session = Session::new(0);
     session.tab_input = "line1\nline2\nline3".to_string();
-    session.tab_input_cursor = 2; 
+    session.tab_input_cursor = 2;
 
     session.move_tab_input_cursor_down();
-    assert_eq!(session.tab_input_cursor, 8); 
+    assert_eq!(session.tab_input_cursor, 8);
 
     session.move_tab_input_cursor_down();
-    assert_eq!(session.tab_input_cursor, 14); 
+    assert_eq!(session.tab_input_cursor, 14);
 }
 
 #[test]
 fn test_cursor_up_at_first_line() {
     let mut session = Session::new(0);
     session.tab_input = "line1\nline2".to_string();
-    session.tab_input_cursor = 2; 
+    session.tab_input_cursor = 2;
 
     session.move_tab_input_cursor_up();
-    assert_eq!(session.tab_input_cursor, 2); 
+    assert_eq!(session.tab_input_cursor, 2);
 }
 
 #[test]
 fn test_cursor_down_at_last_line() {
     let mut session = Session::new(0);
     session.tab_input = "line1\nline2".to_string();
-    session.tab_input_cursor = 8; 
+    session.tab_input_cursor = 8;
 
     session.move_tab_input_cursor_down();
-    assert_eq!(session.tab_input_cursor, 8); 
+    assert_eq!(session.tab_input_cursor, 8);
 }
 
 #[test]
 fn test_cursor_up_clamps_to_shorter_line() {
     let mut session = Session::new(0);
     session.tab_input = "hi\nworld".to_string();
-    session.tab_input_cursor = 7; 
+    session.tab_input_cursor = 7;
 
     session.move_tab_input_cursor_up();
-    assert_eq!(session.tab_input_cursor, 2); 
+    assert_eq!(session.tab_input_cursor, 2);
 }
 
 #[test]
 fn test_cursor_down_clamps_to_shorter_line() {
     let mut session = Session::new(0);
     session.tab_input = "world\nhi".to_string();
-    session.tab_input_cursor = 4; 
+    session.tab_input_cursor = 4;
 
     session.move_tab_input_cursor_down();
-    assert_eq!(session.tab_input_cursor, 8); 
+    assert_eq!(session.tab_input_cursor, 8);
 }
 
 #[test]
@@ -180,10 +179,10 @@ fn test_get_tab_input_cursor_position() {
     session.tab_input_cursor = 3;
     assert_eq!(session.get_tab_input_cursor_position(), (0, 3));
 
-    session.tab_input_cursor = 6; 
+    session.tab_input_cursor = 6;
     assert_eq!(session.get_tab_input_cursor_position(), (1, 0));
 
-    session.tab_input_cursor = 14; 
+    session.tab_input_cursor = 14;
     assert_eq!(session.get_tab_input_cursor_position(), (2, 2));
 }
 
@@ -243,7 +242,7 @@ fn test_feedback_cursor_position_basic() {
 fn test_feedback_cursor_position_with_wrap() {
     let mut session = Session::new(0);
     session.user_feedback = "hello world".to_string();
-    session.cursor_position = 11; 
+    session.cursor_position = 11;
 
     let (row, col) = session.get_feedback_cursor_position(5);
 
@@ -266,7 +265,7 @@ fn test_feedback_cursor_position_empty() {
 fn test_feedback_cursor_with_newline() {
     let mut session = Session::new(0);
     session.user_feedback = "hello\nworld".to_string();
-    session.cursor_position = 8; 
+    session.cursor_position = 8;
 
     let (row, col) = session.get_feedback_cursor_position(20);
     assert_eq!(row, 1);
@@ -281,7 +280,7 @@ fn test_feedback_insert_char_utf8() {
 
     session.insert_char('你');
     assert_eq!(session.user_feedback, "你");
-    assert_eq!(session.cursor_position, 3); 
+    assert_eq!(session.cursor_position, 3);
 
     session.insert_char('好');
     assert_eq!(session.user_feedback, "你好");
@@ -292,7 +291,7 @@ fn test_feedback_insert_char_utf8() {
 fn test_feedback_delete_char_utf8() {
     let mut session = Session::new(0);
     session.user_feedback = "你好".to_string();
-    session.cursor_position = 6; 
+    session.cursor_position = 6;
 
     session.delete_char();
     assert_eq!(session.user_feedback, "你");
@@ -311,10 +310,10 @@ fn test_add_output_syncs_scroll() {
 
     session.add_output("line1".to_string());
     assert!(session.output_follow_mode);
-    assert_eq!(session.scroll_position, 0); 
+    assert_eq!(session.scroll_position, 0);
 
     session.add_output("line2".to_string());
-    assert_eq!(session.scroll_position, 1); 
+    assert_eq!(session.scroll_position, 1);
 }
 
 #[test]
@@ -326,7 +325,7 @@ fn test_scroll_to_bottom_syncs_position() {
 
     session.scroll_to_bottom();
     assert!(session.output_follow_mode);
-    assert_eq!(session.scroll_position, 2); 
+    assert_eq!(session.scroll_position, 2);
 }
 
 #[test]
@@ -479,7 +478,11 @@ fn test_chat_message_with_summary_suffix_routes_to_existing_tab() {
     assert_eq!(session.run_tabs[0].phase, "Planning");
 
     // Add a message with " Summary" suffix - should route to existing Planning tab
-    session.add_chat_message("summarizer", "Planning Summary", "Summary content".to_string());
+    session.add_chat_message(
+        "summarizer",
+        "Planning Summary",
+        "Summary content".to_string(),
+    );
 
     // Should still have only one tab
     assert_eq!(session.run_tabs.len(), 1);
@@ -532,7 +535,7 @@ fn test_add_run_tab() {
 
     session.add_run_tab("Reviewing".to_string());
     assert_eq!(session.run_tabs.len(), 2);
-    assert_eq!(session.active_run_tab, 1); 
+    assert_eq!(session.active_run_tab, 1);
 }
 
 #[test]
@@ -585,7 +588,7 @@ fn test_run_tab_navigation() {
     session.prev_run_tab();
     assert_eq!(session.active_run_tab, 0);
 
-    session.prev_run_tab(); 
+    session.prev_run_tab();
     assert_eq!(session.active_run_tab, 0);
 
     session.next_run_tab();
@@ -594,7 +597,7 @@ fn test_run_tab_navigation() {
     session.next_run_tab();
     assert_eq!(session.active_run_tab, 2);
 
-    session.next_run_tab(); 
+    session.next_run_tab();
     assert_eq!(session.active_run_tab, 2);
 }
 
@@ -789,9 +792,13 @@ fn test_todo_scroll_to_bottom() {
 #[test]
 fn test_clear_todos_resets_scroll() {
     let mut session = Session::new(0);
-    session.update_todos("agent".to_string(), vec![
-        TodoItem { status: TodoStatus::Pending, active_form: "Task 1".to_string() },
-    ]);
+    session.update_todos(
+        "agent".to_string(),
+        vec![TodoItem {
+            status: TodoStatus::Pending,
+            active_form: "Task 1".to_string(),
+        }],
+    );
     session.todo_scroll_position = 5;
 
     session.clear_todos();

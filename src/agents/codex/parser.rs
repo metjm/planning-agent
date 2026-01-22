@@ -50,12 +50,18 @@ impl CodexParser {
                         let item_type = item.get("type").and_then(|v| v.as_str());
                         if item_type == Some("command_execution") {
                             // Extract command for display name
-                            let command = item.get("command").and_then(|c| c.as_str()).unwrap_or("command");
+                            let command = item
+                                .get("command")
+                                .and_then(|c| c.as_str())
+                                .unwrap_or("command");
                             let display_name = Self::truncate_command(command, 50);
                             let input_preview = Self::truncate_command(command, 100);
 
                             // Extract item.id for tool correlation
-                            let tool_use_id = item.get("id").and_then(|id| id.as_str()).map(|s| s.to_string());
+                            let tool_use_id = item
+                                .get("id")
+                                .and_then(|id| id.as_str())
+                                .map(|s| s.to_string());
 
                             events.push(AgentEvent::ToolStarted {
                                 name: "command_execution".to_string(),
@@ -72,7 +78,11 @@ impl CodexParser {
 
                         // Handle command_execution completion events
                         if item_type == Some("command_execution") {
-                            let tool_use_id = item.get("id").and_then(|id| id.as_str()).unwrap_or("").to_string();
+                            let tool_use_id = item
+                                .get("id")
+                                .and_then(|id| id.as_str())
+                                .unwrap_or("")
+                                .to_string();
 
                             // Check for error: exit_code != 0 or status == "failed"
                             let exit_code = item.get("exit_code").and_then(|c| c.as_i64());
@@ -81,13 +91,16 @@ impl CodexParser {
                                 || status == Some("failed");
 
                             // Extract output content
-                            let content_lines = if let Some(output) = item.get("aggregated_output").and_then(|o| o.as_str()) {
+                            let content_lines = if let Some(output) =
+                                item.get("aggregated_output").and_then(|o| o.as_str())
+                            {
                                 output.lines().take(5).map(|l| l.to_string()).collect()
                             } else {
                                 vec![]
                             };
 
-                            let has_more = item.get("aggregated_output")
+                            let has_more = item
+                                .get("aggregated_output")
                                 .and_then(|o| o.as_str())
                                 .map(|s| s.lines().count() > 5)
                                 .unwrap_or(false);
@@ -171,17 +184,16 @@ impl CodexParser {
                         .unwrap_or(false);
 
                     // Extract result content
-                    let content_lines = if let Some(content) =
-                        json.get("output").or_else(|| json.get("result"))
-                    {
-                        if let Some(s) = content.as_str() {
-                            s.lines().take(5).map(|l| l.to_string()).collect()
+                    let content_lines =
+                        if let Some(content) = json.get("output").or_else(|| json.get("result")) {
+                            if let Some(s) = content.as_str() {
+                                s.lines().take(5).map(|l| l.to_string()).collect()
+                            } else {
+                                vec![content.to_string()]
+                            }
                         } else {
-                            vec![content.to_string()]
-                        }
-                    } else {
-                        vec![]
-                    };
+                            vec![]
+                        };
 
                     let has_more = json
                         .get("output")
@@ -264,7 +276,10 @@ impl CodexParser {
             .trim_matches('"');
 
         if core_command.len() > max_len {
-            format!("{}...", core_command.get(..max_len.saturating_sub(3)).unwrap_or(""))
+            format!(
+                "{}...",
+                core_command.get(..max_len.saturating_sub(3)).unwrap_or("")
+            )
         } else {
             core_command.to_string()
         }
@@ -338,7 +353,9 @@ mod tests {
         let events = parser.parse_line_multi(line).unwrap();
         assert_eq!(events.len(), 1);
         match &events[0] {
-            AgentEvent::ToolStarted { name, display_name, .. } => {
+            AgentEvent::ToolStarted {
+                name, display_name, ..
+            } => {
                 assert_eq!(name, "read_file");
                 assert_eq!(display_name, "read_file");
             }
@@ -353,7 +370,12 @@ mod tests {
         let events = parser.parse_line_multi(line).unwrap();
         assert_eq!(events.len(), 1);
         match &events[0] {
-            AgentEvent::ToolResult { tool_use_id, is_error, content_lines, .. } => {
+            AgentEvent::ToolResult {
+                tool_use_id,
+                is_error,
+                content_lines,
+                ..
+            } => {
                 assert_eq!(tool_use_id, "call_123");
                 assert!(!is_error);
                 assert_eq!(content_lines, &["file contents"]);
@@ -369,7 +391,11 @@ mod tests {
         let events = parser.parse_line_multi(line).unwrap();
         assert_eq!(events.len(), 1);
         match &events[0] {
-            AgentEvent::Result { output, cost, is_error } => {
+            AgentEvent::Result {
+                output,
+                cost,
+                is_error,
+            } => {
                 assert_eq!(output, &Some("Task completed".to_string()));
                 assert!(cost.is_none());
                 assert!(!is_error);
@@ -437,7 +463,12 @@ mod tests {
         let events = parser.parse_line_multi(line).unwrap();
         assert_eq!(events.len(), 1);
         match &events[0] {
-            AgentEvent::ToolStarted { name, display_name, input_preview, tool_use_id } => {
+            AgentEvent::ToolStarted {
+                name,
+                display_name,
+                input_preview,
+                tool_use_id,
+            } => {
                 assert_eq!(name, "command_execution");
                 assert_eq!(display_name, "ls");
                 assert_eq!(input_preview, "ls");
@@ -454,7 +485,12 @@ mod tests {
         let events = parser.parse_line_multi(line).unwrap();
         assert_eq!(events.len(), 1);
         match &events[0] {
-            AgentEvent::ToolResult { tool_use_id, is_error, content_lines, has_more } => {
+            AgentEvent::ToolResult {
+                tool_use_id,
+                is_error,
+                content_lines,
+                has_more,
+            } => {
                 assert_eq!(tool_use_id, "item_1");
                 assert!(!is_error);
                 assert_eq!(content_lines, &["file1.txt", "file2.txt"]);
@@ -471,10 +507,18 @@ mod tests {
         let events = parser.parse_line_multi(line).unwrap();
         assert_eq!(events.len(), 1);
         match &events[0] {
-            AgentEvent::ToolResult { tool_use_id, is_error, content_lines, .. } => {
+            AgentEvent::ToolResult {
+                tool_use_id,
+                is_error,
+                content_lines,
+                ..
+            } => {
                 assert_eq!(tool_use_id, "item_2");
                 assert!(is_error); // exit_code != 0
-                assert_eq!(content_lines, &["cat: nonexistent: No such file or directory"]);
+                assert_eq!(
+                    content_lines,
+                    &["cat: nonexistent: No such file or directory"]
+                );
             }
             _ => panic!("Expected ToolResult event"),
         }
@@ -484,8 +528,14 @@ mod tests {
     fn test_truncate_command() {
         // Test bash wrapper stripping
         assert_eq!(CodexParser::truncate_command("/bin/bash -lc ls", 50), "ls");
-        assert_eq!(CodexParser::truncate_command("/bin/bash -c 'echo hello'", 50), "echo hello");
-        assert_eq!(CodexParser::truncate_command("bash -lc 'rg pattern'", 50), "rg pattern");
+        assert_eq!(
+            CodexParser::truncate_command("/bin/bash -c 'echo hello'", 50),
+            "echo hello"
+        );
+        assert_eq!(
+            CodexParser::truncate_command("bash -lc 'rg pattern'", 50),
+            "rg pattern"
+        );
 
         // Test truncation
         let long_cmd = "rg --type rust 'very_long_pattern_that_exceeds_the_limit'";
@@ -500,7 +550,8 @@ mod tests {
     #[test]
     fn test_parse_thread_started_captures_conversation_id() {
         let mut parser = CodexParser::new();
-        let line = r#"{"type":"thread.started","thread_id":"019bc838-8e90-7052-b458-3615bee3647a"}"#;
+        let line =
+            r#"{"type":"thread.started","thread_id":"019bc838-8e90-7052-b458-3615bee3647a"}"#;
         let events = parser.parse_line_multi(line).unwrap();
         assert_eq!(events.len(), 1);
         match &events[0] {

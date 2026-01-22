@@ -32,13 +32,15 @@ pub struct WorkflowPhaseContext<'a> {
 impl<'a> WorkflowPhaseContext<'a> {
     /// Logs a workflow message to the session logger.
     pub fn log_workflow(&self, message: &str) {
-        self.session_logger.log(LogLevel::Info, LogCategory::Workflow, message);
+        self.session_logger
+            .log(LogLevel::Info, LogCategory::Workflow, message);
     }
 
     /// Logs a workflow message at a specific level.
     #[allow(dead_code)]
     pub fn log_workflow_level(&self, level: LogLevel, message: &str) {
-        self.session_logger.log(level, LogCategory::Workflow, message);
+        self.session_logger
+            .log(level, LogCategory::Workflow, message);
     }
 }
 
@@ -81,12 +83,17 @@ pub async fn run_reviewing_phase(
         if let Ok(cmd) = control_rx.try_recv() {
             match cmd {
                 WorkflowCommand::Interrupt { feedback } => {
-                    context.log_workflow( &format!("Received interrupt during reviewing: {}", feedback));
+                    context.log_workflow(&format!(
+                        "Received interrupt during reviewing: {}",
+                        feedback
+                    ));
                     sender.send_output("[review] Interrupted by user".to_string());
-                    return Ok(Some(WorkflowResult::NeedsRestart { user_feedback: feedback }));
+                    return Ok(Some(WorkflowResult::NeedsRestart {
+                        user_feedback: feedback,
+                    }));
                 }
                 WorkflowCommand::Stop => {
-                    context.log_workflow( "Received stop during reviewing");
+                    context.log_workflow("Received stop during reviewing");
                     sender.send_output("[review] Stopping...".to_string());
                     return Ok(Some(WorkflowResult::Stopped));
                 }
@@ -113,7 +120,7 @@ pub async fn run_reviewing_phase(
         let batch = match batch {
             Ok(b) => b,
             Err(e) if e.downcast_ref::<CancellationError>().is_some() => {
-                context.log_workflow( "Review phase was cancelled");
+                context.log_workflow("Review phase was cancelled");
                 return Err(e);
             }
             Err(e) => return Err(e),
@@ -160,35 +167,36 @@ pub async fn run_reviewing_phase(
             output_failure_bundles(sender, &batch.failures);
 
             // Prompt user for recovery decision instead of hard-bailing
-            sender.send_output("[review] All reviewers failed after retries; awaiting your decision...".to_string());
-            let summary = build_all_reviewers_failed_summary(
-                &batch.failures,
-                retry_attempts,
-                max_retries,
+            sender.send_output(
+                "[review] All reviewers failed after retries; awaiting your decision..."
+                    .to_string(),
             );
+            let summary =
+                build_all_reviewers_failed_summary(&batch.failures, retry_attempts, max_retries);
             sender.send_all_reviewers_failed(summary);
 
-            let decision = wait_for_all_reviewers_failed_decision(working_dir, approval_rx, control_rx).await;
+            let decision =
+                wait_for_all_reviewers_failed_decision(working_dir, approval_rx, control_rx).await;
 
             match decision {
                 AllReviewersFailedDecision::Retry => {
-                    context.log_workflow( "User chose to retry all reviewers");
+                    context.log_workflow("User chose to retry all reviewers");
                     retry_attempts = 0; // Reset retry counter for fresh attempt
                     pending_reviewers = failed_agent_refs.clone();
                     continue;
                 }
                 AllReviewersFailedDecision::Stop => {
-                    context.log_workflow( "User chose to stop and save state");
+                    context.log_workflow("User chose to stop and save state");
                     return Ok(Some(WorkflowResult::Stopped));
                 }
                 AllReviewersFailedDecision::Abort => {
-                    context.log_workflow( "User chose to abort after all reviewers failed");
+                    context.log_workflow("User chose to abort after all reviewers failed");
                     return Ok(Some(WorkflowResult::Aborted {
                         reason: "All reviewers failed - user chose to abort".to_string(),
                     }));
                 }
                 AllReviewersFailedDecision::Stopped => {
-                    context.log_workflow( "Workflow stopped during all reviewers failed decision");
+                    context.log_workflow("Workflow stopped during all reviewers failed decision");
                     return Ok(Some(WorkflowResult::Stopped));
                 }
             }
@@ -209,7 +217,7 @@ pub async fn run_reviewing_phase(
                 break;
             }
             ReviewDecision::Stopped => {
-                context.log_workflow( "Workflow stopped during review decision");
+                context.log_workflow("Workflow stopped during review decision");
                 return Ok(Some(WorkflowResult::Stopped));
             }
         }
@@ -224,7 +232,7 @@ pub async fn run_reviewing_phase(
     let _ = merge_feedback(&reviews, &feedback_path);
 
     let status = aggregate_reviews(&reviews, &config.workflow.reviewing.aggregation);
-    context.log_workflow( &format!("Aggregated status: {:?}", status));
+    context.log_workflow(&format!("Aggregated status: {:?}", status));
 
     // Signal round completion for review history UI
     let round_approved = matches!(status, FeedbackStatus::Approved);
@@ -246,7 +254,7 @@ pub async fn run_reviewing_phase(
 
     match status {
         FeedbackStatus::Approved => {
-            context.log_workflow( "Plan APPROVED! Transitioning to Complete");
+            context.log_workflow("Plan APPROVED! Transitioning to Complete");
             sender.send_output("[planning] Plan APPROVED!".to_string());
             state.transition(Phase::Complete)?;
         }
@@ -267,7 +275,7 @@ pub async fn run_reviewing_phase(
                     return Ok(Some(workflow_result));
                 }
             } else {
-                context.log_workflow( "Transitioning: Reviewing -> Revising");
+                context.log_workflow("Transitioning: Reviewing -> Revising");
                 state.transition(Phase::Revising)?;
             }
         }
@@ -293,7 +301,9 @@ fn output_failure_bundles(sender: &SessionEventSender, failures: &[phases::Revie
         }
     }
     if has_bundles {
-        sender.send_output("[warning] Bundles may contain sensitive information from logs.".to_string());
+        sender.send_output(
+            "[warning] Bundles may contain sensitive information from logs.".to_string(),
+        );
     }
 }
 
@@ -333,7 +343,9 @@ pub async fn run_sequential_reviewing_phase(
     let reviewer_ids: Vec<&str> = reviewers.iter().map(|r| r.display_id()).collect();
     if seq_state.validate_reviewer_state(&reviewer_ids) {
         context.log_workflow("Sequential review: config changed, reset to start new cycle");
-        sender.send_output("[sequential] Reviewer configuration changed - restarting cycle".to_string());
+        sender.send_output(
+            "[sequential] Reviewer configuration changed - restarting cycle".to_string(),
+        );
     }
 
     context.log_workflow(&format!(
@@ -359,10 +371,16 @@ pub async fn run_sequential_reviewing_phase(
         let mut log_msg = format!(
             "Sequential review: started new cycle with order {:?} (run counts: {:?})",
             seq_state.current_cycle_order,
-            reviewer_ids.iter().map(|id| (*id, seq_state.get_run_count(id))).collect::<Vec<_>>()
+            reviewer_ids
+                .iter()
+                .map(|id| (*id, seq_state.get_run_count(id)))
+                .collect::<Vec<_>>()
         );
         if let Some(rejector) = tiebreaker {
-            log_msg.push_str(&format!(" [tiebreaker: prioritized previous rejector '{}']", rejector));
+            log_msg.push_str(&format!(
+                " [tiebreaker: prioritized previous rejector '{}']",
+                rejector
+            ));
         }
         context.log_workflow(&log_msg);
     }
@@ -375,9 +393,11 @@ pub async fn run_sequential_reviewing_phase(
     }
 
     // Get current reviewer from stored cycle order
-    let current_id = seq_state.get_current_reviewer()
+    let current_id = seq_state
+        .get_current_reviewer()
         .expect("cycle order must be populated after start_new_cycle");
-    let reviewer = reviewers.iter()
+    let reviewer = reviewers
+        .iter()
         .find(|r| r.display_id() == current_id)
         .expect("reviewer must exist in config after validate_reviewer_state");
     let reviewer_id = reviewer.display_id();
@@ -387,7 +407,9 @@ pub async fn run_sequential_reviewing_phase(
 
     sender.send_output(format!(
         "Running reviewer: {} (plan version {}, run #{})",
-        reviewer_id, seq_state.plan_version, seq_state.get_run_count(reviewer_id)
+        reviewer_id,
+        seq_state.plan_version,
+        seq_state.get_run_count(reviewer_id)
     ));
 
     // === FAILURE HANDLING LOOP (same pattern as parallel mode) ===
@@ -402,7 +424,9 @@ pub async fn run_sequential_reviewing_phase(
                         feedback
                     ));
                     sender.send_output("[review] Interrupted by user".to_string());
-                    return Ok(Some(WorkflowResult::NeedsRestart { user_feedback: feedback }));
+                    return Ok(Some(WorkflowResult::NeedsRestart {
+                        user_feedback: feedback,
+                    }));
                 }
                 WorkflowCommand::Stop => {
                     context.log_workflow("Received stop during sequential reviewing");
@@ -424,7 +448,8 @@ pub async fn run_sequential_reviewing_phase(
             state_path,
             context.session_logger.clone(),
             false, // DO NOT emit round_started, we handle it above
-        ).await;
+        )
+        .await;
 
         // Check for cancellation
         let batch = match batch {
@@ -474,18 +499,12 @@ pub async fn run_sequential_reviewing_phase(
             );
             sender.send_all_reviewers_failed(summary);
 
-            let decision = wait_for_all_reviewers_failed_decision(
-                working_dir,
-                approval_rx,
-                control_rx,
-            ).await;
+            let decision =
+                wait_for_all_reviewers_failed_decision(working_dir, approval_rx, control_rx).await;
 
             match decision {
                 AllReviewersFailedDecision::Retry => {
-                    context.log_workflow(&format!(
-                        "User chose to retry reviewer {}",
-                        reviewer_id
-                    ));
+                    context.log_workflow(&format!("User chose to retry reviewer {}", reviewer_id));
                     retry_attempts = 0;
                     continue;
                 }
@@ -557,7 +576,8 @@ pub async fn run_sequential_reviewing_phase(
                 approval_rx,
                 control_rx,
                 last_reviews,
-            ).await;
+            )
+            .await;
         }
 
         state.transition(Phase::Revising)?;
@@ -613,8 +633,7 @@ pub async fn run_sequential_reviewing_phase(
         } else {
             // More reviewers to go - advance to next in stored cycle order
             seq_state.advance_to_next_reviewer();
-            let next_id = seq_state.get_current_reviewer()
-                .unwrap_or("(end of cycle)");
+            let next_id = seq_state.get_current_reviewer().unwrap_or("(end of cycle)");
             context.log_workflow(&format!(
                 "Advancing to reviewer {}/{}: {}",
                 seq_state.current_reviewer_index + 1,

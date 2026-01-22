@@ -117,10 +117,7 @@ pub async fn run_multi_agent_review_with_context(
 
     // Conditionally output message based on whether this is sequential or parallel
     if agent_refs.len() == 1 {
-        session_sender.send_output(format!(
-            "[review] Running reviewer: {}",
-            display_ids[0]
-        ));
+        session_sender.send_output(format!("[review] Running reviewer: {}", display_ids[0]));
     } else {
         session_sender.send_output(format!(
             "[review] Running {} reviewer(s) in parallel: {}",
@@ -151,7 +148,8 @@ pub async fn run_multi_agent_review_with_context(
         let resume_strategy = ResumeStrategy::Stateless;
         // Use namespaced session key to avoid collisions with planning sessions
         let conversation_id_name = reviewing_conversation_key(&display_id);
-        let agent_session = state.get_or_create_agent_session(&conversation_id_name, resume_strategy.clone());
+        let agent_session =
+            state.get_or_create_agent_session(&conversation_id_name, resume_strategy.clone());
         agent_contexts.push((
             display_id.clone(),
             agent_session.conversation_id.clone(),
@@ -165,26 +163,31 @@ pub async fn run_multi_agent_review_with_context(
 
     // Build agents: (display_id, AgentType, conversation_id, resume_strategy, custom_prompt)
     #[allow(clippy::type_complexity)]
-    let agents: Vec<(String, AgentType, Option<String>, ResumeStrategy, Option<String>)> =
-        agent_refs
-            .iter()
-            .zip(agent_contexts.into_iter())
-            .map(
-                |(agent_ref, (display_id, conversation_id, resume_strategy, custom_prompt))| {
-                    let agent_name = agent_ref.agent_name();
-                    let agent_config = config.get_agent(agent_name).ok_or_else(|| {
-                        anyhow::anyhow!("Review agent '{}' not found in config", agent_name)
-                    })?;
-                    Ok((
-                        display_id,
-                        AgentType::from_config(agent_name, agent_config, working_dir.to_path_buf())?,
-                        conversation_id,
-                        resume_strategy,
-                        custom_prompt,
-                    ))
-                },
-            )
-            .collect::<Result<Vec<_>>>()?;
+    let agents: Vec<(
+        String,
+        AgentType,
+        Option<String>,
+        ResumeStrategy,
+        Option<String>,
+    )> = agent_refs
+        .iter()
+        .zip(agent_contexts.into_iter())
+        .map(
+            |(agent_ref, (display_id, conversation_id, resume_strategy, custom_prompt))| {
+                let agent_name = agent_ref.agent_name();
+                let agent_config = config.get_agent(agent_name).ok_or_else(|| {
+                    anyhow::anyhow!("Review agent '{}' not found in config", agent_name)
+                })?;
+                Ok((
+                    display_id,
+                    AgentType::from_config(agent_name, agent_config, working_dir.to_path_buf())?,
+                    conversation_id,
+                    resume_strategy,
+                    custom_prompt,
+                ))
+            },
+        )
+        .collect::<Result<Vec<_>>>()?;
 
     // Get plan path (absolute)
     let plan_path = state.plan_file.clone();
@@ -420,10 +423,8 @@ pub async fn run_multi_agent_review_with_context(
                     "APPROVED"
                 };
 
-                session_sender.send_output(format!(
-                    "[review:{}] Verdict: {}",
-                    agent_name, verdict_str
-                ));
+                session_sender
+                    .send_output(format!("[review:{}] Verdict: {}", agent_name, verdict_str));
 
                 // Use summary, with fallback to default if empty
                 let summary = if review.summary.trim().is_empty() {
@@ -485,11 +486,9 @@ pub async fn run_multi_agent_review_with_context(
                     ));
                 }
 
-                let full_error = format!(
-                    "Failed to parse review verdict after retry. {}",
-                    error
-                );
-                session_sender.send_output(format!("[review:{}] ERROR: {}", agent_name, full_error));
+                let full_error = format!("Failed to parse review verdict after retry. {}", error);
+                session_sender
+                    .send_output(format!("[review:{}] ERROR: {}", agent_name, full_error));
 
                 // Send reviewer failed event
                 session_sender.send_reviewer_failed(
@@ -506,14 +505,11 @@ pub async fn run_multi_agent_review_with_context(
                 });
             }
             ReviewExecutionResult::ExecutionError(error) => {
-                session_sender.send_output(format!("[error] {} review failed: {}", agent_name, error));
+                session_sender
+                    .send_output(format!("[error] {} review failed: {}", agent_name, error));
 
                 // Send reviewer failed event
-                session_sender.send_reviewer_failed(
-                    iteration,
-                    agent_name.clone(),
-                    error.clone(),
-                );
+                session_sender.send_reviewer_failed(iteration, agent_name.clone(), error.clone());
 
                 // Classify the error based on its content
                 let kind = classify_execution_error(&error);
@@ -716,8 +712,14 @@ fn write_atomic(path: &Path, content: &str) -> Result<()> {
     let temp_path = path.with_extension("tmp");
     fs::write(&temp_path, content)
         .map_err(|e| anyhow::anyhow!("Failed to write temp file {}: {}", temp_path.display(), e))?;
-    fs::rename(&temp_path, path)
-        .map_err(|e| anyhow::anyhow!("Failed to rename {} to {}: {}", temp_path.display(), path.display(), e))?;
+    fs::rename(&temp_path, path).map_err(|e| {
+        anyhow::anyhow!(
+            "Failed to rename {} to {}: {}",
+            temp_path.display(),
+            path.display(),
+            e
+        )
+    })?;
     Ok(())
 }
 

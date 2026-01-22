@@ -7,8 +7,8 @@ use crate::change_fingerprint::compute_change_fingerprint;
 use crate::config::WorkflowConfig;
 use crate::phases::implementation::run_implementation_phase;
 use crate::phases::implementation_review::run_implementation_review_phase;
-use crate::phases::verdict::VerificationVerdictResult;
 use crate::phases::implementing_conversation_key;
+use crate::phases::verdict::VerificationVerdictResult;
 use crate::session_logger::SessionLogger;
 use crate::state::{ImplementationPhase, ImplementationPhaseState, State};
 use crate::tui::SessionEventSender;
@@ -28,13 +28,9 @@ pub enum ImplementationWorkflowResult {
         last_feedback: Option<String>,
     },
     /// Implementation was cancelled by user
-    Cancelled {
-        iterations_used: u32,
-    },
+    Cancelled { iterations_used: u32 },
     /// No changes were detected between iterations (circuit breaker)
-    NoChanges {
-        iterations_used: u32,
-    },
+    NoChanges { iterations_used: u32 },
 }
 
 /// Runs the implementation workflow loop.
@@ -92,7 +88,10 @@ pub async fn run_implementation_workflow(
 
     // Use initial feedback if provided
     let mut current_feedback = initial_feedback.or_else(|| {
-        state.implementation_state.as_ref().and_then(|s| s.last_feedback.clone())
+        state
+            .implementation_state
+            .as_ref()
+            .and_then(|s| s.last_feedback.clone())
     });
 
     // Track last fingerprint for circuit breaker
@@ -150,7 +149,10 @@ pub async fn run_implementation_workflow(
         if impl_result.is_error {
             session_sender.send_output(format!(
                 "[implementation] Implementation error: {}",
-                impl_result.stop_reason.as_deref().unwrap_or("unknown error")
+                impl_result
+                    .stop_reason
+                    .as_deref()
+                    .unwrap_or("unknown error")
             ));
             // Continue to review - let the review agent assess the state
         }
@@ -203,14 +205,13 @@ pub async fn run_implementation_workflow(
                 // Emit state update so TUI reverts to planning palette
                 session_sender.send_state_update(state.clone());
                 session_sender.send_phase_started("Implementation Complete".to_string());
-                session_sender.send_output(
-                    "[implementation] Implementation approved!".to_string()
-                );
+                session_sender.send_output("[implementation] Implementation approved!".to_string());
                 // Emit success event to trigger the success modal in TUI
                 session_sender.send_implementation_success(iteration);
                 return Ok(ImplementationWorkflowResult::Approved);
             }
-            VerificationVerdictResult::NeedsRevision | VerificationVerdictResult::ParseFailure { .. } => {
+            VerificationVerdictResult::NeedsRevision
+            | VerificationVerdictResult::ParseFailure { .. } => {
                 // Store feedback for next iteration
                 {
                     let impl_state = state.implementation_state.as_mut().unwrap();
@@ -219,13 +220,13 @@ pub async fn run_implementation_workflow(
                 current_feedback = review_result.feedback;
 
                 // Circuit breaker: check if anything changed
-                let current_fingerprint = compute_change_fingerprint(working_dir)
-                    .unwrap_or(0);
+                let current_fingerprint = compute_change_fingerprint(working_dir).unwrap_or(0);
 
                 if let Some(prev_fp) = last_fingerprint {
                     if prev_fp == current_fingerprint {
                         session_sender.send_output(
-                            "[implementation] No changes detected between iterations, stopping".to_string()
+                            "[implementation] No changes detected between iterations, stopping"
+                                .to_string(),
                         );
                         let impl_state = state.implementation_state.as_mut().unwrap();
                         impl_state.phase = ImplementationPhase::Complete;
@@ -268,7 +269,11 @@ pub async fn run_implementation_workflow(
     }
 
     // Should not reach here, but handle gracefully
-    let iteration = state.implementation_state.as_ref().map(|s| s.iteration).unwrap_or(0);
+    let iteration = state
+        .implementation_state
+        .as_ref()
+        .map(|s| s.iteration)
+        .unwrap_or(0);
     Ok(ImplementationWorkflowResult::Failed {
         iterations_used: iteration,
         last_feedback: current_feedback,
@@ -287,11 +292,7 @@ mod tests {
             iterations_used: 3,
             last_feedback: Some("Fix bugs".to_string()),
         };
-        let _cancelled = ImplementationWorkflowResult::Cancelled {
-            iterations_used: 1,
-        };
-        let _no_changes = ImplementationWorkflowResult::NoChanges {
-            iterations_used: 2,
-        };
+        let _cancelled = ImplementationWorkflowResult::Cancelled { iterations_used: 1 };
+        let _no_changes = ImplementationWorkflowResult::NoChanges { iterations_used: 2 };
     }
 }

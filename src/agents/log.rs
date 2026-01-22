@@ -18,6 +18,7 @@ impl AgentLogger {
 
     /// Logs a line of agent output.
     pub fn log_line(&self, kind: &str, line: &str) {
-        self.session_logger.log_agent_stream(&self.agent_name, kind, line);
+        self.session_logger
+            .log_agent_stream(&self.agent_name, kind, line);
     }
 }

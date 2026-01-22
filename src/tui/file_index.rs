@@ -196,7 +196,11 @@ impl FileIndex {
             matched = true;
         }
         // Check path segment prefix match (e.g., "src/" matches "src/main.rs")
-        else if entry.path_lower.split('/').any(|seg| seg.starts_with(query_lower)) {
+        else if entry
+            .path_lower
+            .split('/')
+            .any(|seg| seg.starts_with(query_lower))
+        {
             score += 20;
             matched = true;
         }
@@ -267,10 +271,7 @@ pub fn build_file_index(working_dir: &std::path::Path) -> FileIndex {
                 let stdout = String::from_utf8_lossy(&output.stdout);
 
                 // Collect all file entries
-                let file_paths: Vec<&str> = stdout
-                    .split('\0')
-                    .filter(|s| !s.is_empty())
-                    .collect();
+                let file_paths: Vec<&str> = stdout.split('\0').filter(|s| !s.is_empty()).collect();
 
                 // Extract unique folder paths from file paths
                 let mut folder_set: HashSet<String> = HashSet::new();
@@ -287,9 +288,8 @@ pub fn build_file_index(working_dir: &std::path::Path) -> FileIndex {
                 }
 
                 // Build entries: folders first, then files
-                let mut entries: Vec<FileEntry> = Vec::with_capacity(
-                    folder_set.len() + file_paths.len()
-                );
+                let mut entries: Vec<FileEntry> =
+                    Vec::with_capacity(folder_set.len() + file_paths.len());
 
                 // Add folders (sorted for consistent ordering)
                 let mut folders: Vec<String> = folder_set.into_iter().collect();
@@ -373,14 +373,14 @@ mod tests {
         let matches = index.find_matches("components", 10);
         assert_eq!(matches.len(), 3);
         // All should match
-        assert!(matches.iter().any(|m| m.display_path.ends_with("components/")));
+        assert!(matches
+            .iter()
+            .any(|m| m.display_path.ends_with("components/")));
     }
 
     #[test]
     fn test_empty_query_returns_no_matches() {
-        let index = FileIndex::with_entries(vec![
-            FileEntry::new("src/main.rs".to_string()),
-        ]);
+        let index = FileIndex::with_entries(vec![FileEntry::new("src/main.rs".to_string())]);
         let matches = index.find_matches("", 10);
         assert!(matches.is_empty());
     }
@@ -414,9 +414,7 @@ mod tests {
 
     #[test]
     fn test_case_insensitive_matching() {
-        let index = FileIndex::with_entries(vec![
-            FileEntry::new("src/MainFile.rs".to_string()),
-        ]);
+        let index = FileIndex::with_entries(vec![FileEntry::new("src/MainFile.rs".to_string())]);
         let matches = index.find_matches("mainfile", 10);
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].display_path, "src/MainFile.rs");

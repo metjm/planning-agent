@@ -246,8 +246,7 @@ mod tests {
         ctx.retry_count = 2;
         assert!(!ctx.can_retry());
 
-        let ctx2 =
-            FailureContext::new(FailureKind::ProcessExit(1), Phase::Planning, None, 2);
+        let ctx2 = FailureContext::new(FailureKind::ProcessExit(1), Phase::Planning, None, 2);
         assert!(!ctx2.can_retry()); // ProcessExit is not retryable
     }
 
@@ -297,7 +296,10 @@ on_all_reviewers_failed: save_state
 "#;
         let policy: FailurePolicy = serde_yaml::from_str(yaml).unwrap();
         assert_eq!(policy.max_retries, 3);
-        assert_eq!(policy.on_all_reviewers_failed, OnAllReviewersFailed::SaveState);
+        assert_eq!(
+            policy.on_all_reviewers_failed,
+            OnAllReviewersFailed::SaveState
+        );
     }
 
     #[test]

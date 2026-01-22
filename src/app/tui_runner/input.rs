@@ -1,14 +1,15 @@
 use crate::app::cli::Cli;
 use crate::config::WorkflowConfig;
-use crate::phases::implementation::{run_implementation_interaction, IMPLEMENTATION_FOLLOWUP_PHASE};
+use crate::phases::implementation::{
+    run_implementation_interaction, IMPLEMENTATION_FOLLOWUP_PHASE,
+};
 use crate::tui::file_index::FileIndex;
 use crate::tui::ui::util::{
-    compute_summary_panel_inner_size, compute_wrapped_line_count,
-    compute_wrapped_line_count_text,
+    compute_summary_panel_inner_size, compute_wrapped_line_count, compute_wrapped_line_count_text,
 };
 use crate::tui::{
-    ApprovalMode, Event, FeedbackTarget, FocusedPanel, InputMode, Session,
-    SessionEventSender, TabManager, WorkflowCommand,
+    ApprovalMode, Event, FeedbackTarget, FocusedPanel, InputMode, Session, SessionEventSender,
+    TabManager, WorkflowCommand,
 };
 use anyhow::Result;
 
@@ -119,7 +120,11 @@ fn compute_plan_modal_visible_height() -> usize {
 
 /// Compute the max scroll for the review history panel.
 /// The panel is shown when terminal width >= 100, taking up 30% of the chat area.
-fn compute_review_history_max_scroll(session: &Session, term_width: u16, term_height: u16) -> usize {
+fn compute_review_history_max_scroll(
+    session: &Session,
+    term_width: u16,
+    term_height: u16,
+) -> usize {
     // The review history panel is only shown when width >= 100
     if term_width < 100 {
         return 0;
@@ -201,8 +206,13 @@ pub async fn handle_key_event(
     // Handle session browser overlay input when it's open
     if tab_manager.session_browser.open {
         should_quit = super::session_browser_input::handle_session_browser_input(
-            key, tab_manager, working_dir, workflow_config, output_tx
-        ).await?;
+            key,
+            tab_manager,
+            working_dir,
+            workflow_config,
+            output_tx,
+        )
+        .await?;
         return Ok(should_quit);
     }
 
@@ -307,7 +317,16 @@ pub async fn handle_key_event(
     // Clone file_index for mention handling
     let file_index = tab_manager.file_index.clone();
     let session = tab_manager.active_mut();
-    should_quit = handle_approval_mode_input(key, session, terminal, working_dir, output_tx, workflow_config, &file_index).await?;
+    should_quit = handle_approval_mode_input(
+        key,
+        session,
+        terminal,
+        working_dir,
+        output_tx,
+        workflow_config,
+        &file_index,
+    )
+    .await?;
 
     Ok(should_quit)
 }
@@ -320,7 +339,8 @@ async fn handle_implementation_chat_input(
 ) -> Result<bool> {
     if !session.can_interact_with_implementation() {
         session.add_output(
-            "[implementation] Follow-up unavailable: no conversation ID or configuration".to_string(),
+            "[implementation] Follow-up unavailable: no conversation ID or configuration"
+                .to_string(),
         );
         session.focused_panel = FocusedPanel::Chat;
         return Ok(false);
@@ -495,17 +515,24 @@ async fn handle_approval_mode_input(
 
     match session.approval_mode {
         ApprovalMode::AwaitingChoice => {
-            handle_awaiting_choice_input(key, session, terminal, working_dir, output_tx, workflow_config).await
+            handle_awaiting_choice_input(
+                key,
+                session,
+                terminal,
+                working_dir,
+                output_tx,
+                workflow_config,
+            )
+            .await
         }
-        ApprovalMode::EnteringFeedback => handle_entering_feedback_input(key, session, file_index).await,
+        ApprovalMode::EnteringFeedback => {
+            handle_entering_feedback_input(key, session, file_index).await
+        }
         ApprovalMode::None => handle_none_mode_input(key, session),
     }
 }
 
-fn handle_none_mode_input(
-    key: crossterm::event::KeyEvent,
-    session: &mut Session,
-) -> Result<bool> {
+fn handle_none_mode_input(key: crossterm::event::KeyEvent, session: &mut Session) -> Result<bool> {
     // Check visibility of Todos panel for focus handling
     let todos_visible = is_todo_panel_visible(session);
 
@@ -534,7 +561,11 @@ fn handle_none_mode_input(
         KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             if session.running && session.workflow_control_tx.is_some() {
                 session.add_output("[planning] Stopping workflow...".to_string());
-                let _ = session.workflow_control_tx.as_ref().unwrap().try_send(WorkflowCommand::Stop);
+                let _ = session
+                    .workflow_control_tx
+                    .as_ref()
+                    .unwrap()
+                    .try_send(WorkflowCommand::Stop);
             }
         }
         KeyCode::Tab => {
@@ -555,7 +586,8 @@ fn handle_none_mode_input(
             // Fallback: scroll review history panel if visible
             let (term_width, term_height) = crossterm::terminal::size().unwrap_or((80, 24));
             if term_width >= 100 {
-                let max_scroll = compute_review_history_max_scroll(session, term_width, term_height);
+                let max_scroll =
+                    compute_review_history_max_scroll(session, term_width, term_height);
                 session.review_history_scroll_down(max_scroll);
             }
         }

@@ -299,8 +299,7 @@ mod tests {
     #[test]
     fn test_usage_window_with_percent_reset_and_span() {
         let ts = ResetTimestamp::from_epoch_seconds(1700000000);
-        let window =
-            UsageWindow::with_percent_reset_and_span(50, ts, UsageWindowSpan::Hours(5));
+        let window = UsageWindow::with_percent_reset_and_span(50, ts, UsageWindowSpan::Hours(5));
         assert_eq!(window.used_percent, Some(50));
         assert_eq!(window.reset_at, Some(ts));
         assert_eq!(window.window_span, UsageWindowSpan::Hours(5));
@@ -403,8 +402,7 @@ mod tests {
     fn test_time_status_ahead() {
         // 5h window, 2.5h remaining (50% elapsed), but 70% used -> ahead
         let ts = ResetTimestamp::from_duration_from_now(Duration::from_secs(2 * 3600 + 1800));
-        let window =
-            UsageWindow::with_percent_reset_and_span(70, ts, UsageWindowSpan::Hours(5));
+        let window = UsageWindow::with_percent_reset_and_span(70, ts, UsageWindowSpan::Hours(5));
         assert_eq!(window.time_status(), UsageTimeStatus::Ahead);
     }
 
@@ -412,8 +410,7 @@ mod tests {
     fn test_time_status_behind() {
         // 5h window, 2.5h remaining (50% elapsed), but only 30% used -> behind
         let ts = ResetTimestamp::from_duration_from_now(Duration::from_secs(2 * 3600 + 1800));
-        let window =
-            UsageWindow::with_percent_reset_and_span(30, ts, UsageWindowSpan::Hours(5));
+        let window = UsageWindow::with_percent_reset_and_span(30, ts, UsageWindowSpan::Hours(5));
         assert_eq!(window.time_status(), UsageTimeStatus::Behind);
     }
 
@@ -421,17 +418,14 @@ mod tests {
     fn test_time_status_on_track() {
         // 5h window, 2.5h remaining (50% elapsed), 50% used -> on track
         let ts = ResetTimestamp::from_duration_from_now(Duration::from_secs(2 * 3600 + 1800));
-        let window =
-            UsageWindow::with_percent_reset_and_span(50, ts, UsageWindowSpan::Hours(5));
+        let window = UsageWindow::with_percent_reset_and_span(50, ts, UsageWindowSpan::Hours(5));
         assert_eq!(window.time_status(), UsageTimeStatus::OnTrack);
 
         // Also on track at threshold boundaries (+/- 10%)
-        let window =
-            UsageWindow::with_percent_reset_and_span(59, ts, UsageWindowSpan::Hours(5));
+        let window = UsageWindow::with_percent_reset_and_span(59, ts, UsageWindowSpan::Hours(5));
         assert_eq!(window.time_status(), UsageTimeStatus::OnTrack);
 
-        let window =
-            UsageWindow::with_percent_reset_and_span(41, ts, UsageWindowSpan::Hours(5));
+        let window = UsageWindow::with_percent_reset_and_span(41, ts, UsageWindowSpan::Hours(5));
         assert_eq!(window.time_status(), UsageTimeStatus::OnTrack);
     }
 
@@ -460,7 +454,10 @@ mod tests {
         // Hours with zero-padded minutes
         assert_eq!(format_countdown(Some(Duration::from_secs(3600))), "1h 00m");
         assert_eq!(format_countdown(Some(Duration::from_secs(3660))), "1h 01m");
-        assert_eq!(format_countdown(Some(Duration::from_secs(4 * 3600 + 5 * 60))), "4h 05m");
+        assert_eq!(
+            format_countdown(Some(Duration::from_secs(4 * 3600 + 5 * 60))),
+            "4h 05m"
+        );
         assert_eq!(
             format_countdown(Some(Duration::from_secs(23 * 3600 + 18 * 60))),
             "23h 18m"
@@ -471,7 +468,10 @@ mod tests {
     fn test_format_countdown_days_hours_minutes() {
         // Days with hours only when minutes are 0
         assert_eq!(format_countdown(Some(Duration::from_secs(86400))), "1d");
-        assert_eq!(format_countdown(Some(Duration::from_secs(86400 + 3600))), "1d 1h");
+        assert_eq!(
+            format_countdown(Some(Duration::from_secs(86400 + 3600))),
+            "1d 1h"
+        );
         // Days with hours and zero-padded minutes
         assert_eq!(
             format_countdown(Some(Duration::from_secs(86400 + 3600 + 60))),
@@ -491,8 +491,7 @@ mod tests {
     #[test]
     fn test_usage_window_serialization_roundtrip() {
         let ts = ResetTimestamp::from_epoch_seconds(1700000000);
-        let window =
-            UsageWindow::with_percent_reset_and_span(75, ts, UsageWindowSpan::Hours(5));
+        let window = UsageWindow::with_percent_reset_and_span(75, ts, UsageWindowSpan::Hours(5));
 
         let json = serde_json::to_string(&window).unwrap();
         let parsed: UsageWindow = serde_json::from_str(&json).unwrap();

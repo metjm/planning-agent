@@ -113,22 +113,26 @@ pub async fn handle_init_completion(
                 // Check if state has a failure that needs recovery (from stopped sessions)
                 if let Some(ref failure) = state.last_failure {
                     let summary = crate::app::util::build_resume_failure_summary(failure);
-                    if matches!(failure.kind, crate::app::failure::FailureKind::AllReviewersFailed) {
+                    if matches!(
+                        failure.kind,
+                        crate::app::failure::FailureKind::AllReviewersFailed
+                    ) {
                         session.start_all_reviewers_failed(summary);
                     } else {
                         session.start_workflow_failure(summary);
                     }
-                    session.add_output("[planning] Session has unresolved failure - awaiting recovery decision".to_string());
+                    session.add_output(
+                        "[planning] Session has unresolved failure - awaiting recovery decision"
+                            .to_string(),
+                    );
                     return;
                 }
 
-                let (new_approval_tx, new_approval_rx) =
-                    mpsc::channel::<UserApprovalResponse>(1);
+                let (new_approval_tx, new_approval_rx) = mpsc::channel::<UserApprovalResponse>(1);
                 session.approval_tx = Some(new_approval_tx);
 
                 // Create control channel for workflow interrupts
-                let (new_control_tx, new_control_rx) =
-                    mpsc::channel::<WorkflowCommand>(1);
+                let (new_control_tx, new_control_rx) = mpsc::channel::<WorkflowCommand>(1);
                 session.workflow_control_tx = Some(new_control_tx);
 
                 // Increment run_id for this new workflow
@@ -204,7 +208,13 @@ pub async fn check_workflow_completions(
                         session.workflow_control_tx = None;
                     }
                     Ok(Ok(WorkflowResult::NeedsRestart { user_feedback })) => {
-                        handle_workflow_restart(session, &user_feedback, working_dir, workflow_config, output_tx);
+                        handle_workflow_restart(
+                            session,
+                            &user_feedback,
+                            working_dir,
+                            workflow_config,
+                            output_tx,
+                        );
                     }
                     Ok(Ok(WorkflowResult::Stopped)) => {
                         if let Some(resumable) = handle_workflow_stopped(session, working_dir) {
@@ -267,10 +277,8 @@ fn handle_workflow_restart(
             )
         } else if let Some(ref state) = session.workflow_state {
             // No context but have state - compute effective_working_dir from worktree_info
-            let effective = compute_effective_working_dir(
-                global_working_dir,
-                state.worktree_info.as_ref(),
-            );
+            let effective =
+                compute_effective_working_dir(global_working_dir, state.worktree_info.as_ref());
             (
                 global_working_dir.to_path_buf(),
                 effective,
@@ -305,8 +313,7 @@ fn handle_workflow_restart(
         state.approval_overridden = false;
         state.objective = format!(
             "{}\n\nUSER FEEDBACK: The previous plan was reviewed and needs changes:\n{}",
-            state.objective,
-            user_feedback
+            state.objective, user_feedback
         );
 
         // Use base_working_dir for state_path computation (consistent with how sessions are stored)
@@ -327,12 +334,10 @@ fn handle_workflow_restart(
         state.set_updated_at();
         let _ = state.save(&state_path);
 
-        let (new_approval_tx, new_approval_rx) =
-            mpsc::channel::<UserApprovalResponse>(1);
+        let (new_approval_tx, new_approval_rx) = mpsc::channel::<UserApprovalResponse>(1);
         session.approval_tx = Some(new_approval_tx);
 
-        let (new_control_tx, new_control_rx) =
-            mpsc::channel::<WorkflowCommand>(1);
+        let (new_control_tx, new_control_rx) = mpsc::channel::<WorkflowCommand>(1);
         session.workflow_control_tx = Some(new_control_tx);
 
         session.current_run_id += 1;

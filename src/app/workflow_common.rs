@@ -61,7 +61,10 @@ pub fn pre_create_session_folder_with_working_dir(
     );
     if let Err(e) = session_info.save(&state.workflow_session_id) {
         // Log warning but don't fail - session_info is optional metadata
-        eprintln!("[planning] Warning: Failed to save session_info.json: {}", e);
+        eprintln!(
+            "[planning] Warning: Failed to save session_info.json: {}",
+            e
+        );
     }
 
     Ok(())
@@ -268,22 +271,38 @@ mod tests {
         let state = State::new("test-feature", "Test objective", 3).unwrap();
 
         // The paths should be absolute (starting with home dir)
-        assert!(state.plan_file.is_absolute() || state.plan_file.to_string_lossy().starts_with("/"));
+        assert!(
+            state.plan_file.is_absolute() || state.plan_file.to_string_lossy().starts_with("/")
+        );
 
         let result = pre_create_session_folder(&state);
-        assert!(result.is_ok(), "pre_create_session_folder should succeed: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "pre_create_session_folder should succeed: {:?}",
+            result
+        );
 
         // Verify session folder exists
         let session_folder = state.plan_file.parent().unwrap();
-        assert!(session_folder.exists(), "Session folder should exist at {}", session_folder.display());
+        assert!(
+            session_folder.exists(),
+            "Session folder should exist at {}",
+            session_folder.display()
+        );
 
         // Plan file should NOT be pre-created (AI creates it with content)
-        assert!(!state.plan_file.exists(), "Plan file should NOT be pre-created");
+        assert!(
+            !state.plan_file.exists(),
+            "Plan file should NOT be pre-created"
+        );
 
         // Verify session_info.json was created
         let session_info_path = planning_paths::session_info_path(&state.workflow_session_id);
         assert!(session_info_path.is_ok());
-        assert!(session_info_path.unwrap().exists(), "session_info.json should exist");
+        assert!(
+            session_info_path.unwrap().exists(),
+            "session_info.json should exist"
+        );
 
         // Cleanup
         if let Some(parent) = state.plan_file.parent() {
@@ -306,7 +325,10 @@ mod tests {
         assert!(result.is_ok());
 
         // Original content should be preserved (not touched)
-        assert_eq!(fs::read_to_string(&state.plan_file).unwrap(), "existing plan content");
+        assert_eq!(
+            fs::read_to_string(&state.plan_file).unwrap(),
+            "existing plan content"
+        );
 
         // Cleanup
         if let Some(parent) = state.plan_file.parent() {
@@ -321,7 +343,11 @@ mod tests {
         let working_dir = temp_dir.path();
 
         let result = pre_create_session_folder_with_working_dir(&state, Some(working_dir));
-        assert!(result.is_ok(), "pre_create_session_folder_with_working_dir should succeed: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "pre_create_session_folder_with_working_dir should succeed: {:?}",
+            result
+        );
 
         // Verify session_info.json was created with correct working_dir
         let info = SessionInfo::load(&state.workflow_session_id);
@@ -393,7 +419,7 @@ mod tests {
     #[test]
     fn test_calculate_backoff() {
         // Base: 5 seconds
-        assert_eq!(calculate_backoff(0, 5), Duration::from_secs(5));  // 5 * 2^0 = 5
+        assert_eq!(calculate_backoff(0, 5), Duration::from_secs(5)); // 5 * 2^0 = 5
         assert_eq!(calculate_backoff(1, 5), Duration::from_secs(10)); // 5 * 2^1 = 10
         assert_eq!(calculate_backoff(2, 5), Duration::from_secs(20)); // 5 * 2^2 = 20
         assert_eq!(calculate_backoff(3, 5), Duration::from_secs(40)); // 5 * 2^3 = 40

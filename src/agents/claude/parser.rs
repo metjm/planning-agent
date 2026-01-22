@@ -198,7 +198,10 @@ impl ClaudeParser {
                             .unwrap_or_default();
 
                         // Extract tool_use_id from the content block if available
-                        let tool_use_id = item.get("id").and_then(|id| id.as_str()).map(|s| s.to_string());
+                        let tool_use_id = item
+                            .get("id")
+                            .and_then(|id| id.as_str())
+                            .map(|s| s.to_string());
 
                         events.push(AgentEvent::ToolStarted {
                             name: name.to_string(),
@@ -292,7 +295,8 @@ mod tests {
     #[test]
     fn test_parse_result() {
         let mut parser = ClaudeParser::new();
-        let line = r#"{"type": "result", "result": "Done!", "total_cost_usd": 0.05, "is_error": false}"#;
+        let line =
+            r#"{"type": "result", "result": "Done!", "total_cost_usd": 0.05, "is_error": false}"#;
         let events = parser.parse_line_multi(line).unwrap();
         assert_eq!(events.len(), 1);
         match &events[0] {

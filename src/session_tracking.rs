@@ -68,9 +68,8 @@ impl SessionTracker {
         let heartbeat_sessions = active_sessions.clone();
 
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(
-                tokio::time::Duration::from_secs(HEARTBEAT_INTERVAL_SECS)
-            );
+            let mut interval =
+                tokio::time::interval(tokio::time::Duration::from_secs(HEARTBEAT_INTERVAL_SECS));
 
             // State for tracking failures and reconnection
             let mut consecutive_failures: u32 = 0;
@@ -385,7 +384,10 @@ mod integration_tests {
 
         while tokio::time::Instant::now() < deadline {
             if let Ok(sessions) = tracker.list().await {
-                if let Some(session) = sessions.iter().find(|s| s.workflow_session_id == session_id) {
+                if let Some(session) = sessions
+                    .iter()
+                    .find(|s| s.workflow_session_id == session_id)
+                {
                     if session.liveness == expected {
                         return Ok(());
                     }
@@ -396,7 +398,10 @@ mod integration_tests {
 
         // Get final state for error message
         if let Ok(sessions) = tracker.list().await {
-            if let Some(session) = sessions.iter().find(|s| s.workflow_session_id == session_id) {
+            if let Some(session) = sessions
+                .iter()
+                .find(|s| s.workflow_session_id == session_id)
+            {
                 return Err(format!(
                     "Session {} liveness is {:?}, expected {:?}",
                     session_id, session.liveness, expected
@@ -471,13 +476,19 @@ mod integration_tests {
 
         // Update phase
         let result = tracker
-            .update(&session_id, "Reviewing".to_string(), 2, "Reviewing".to_string())
+            .update(
+                &session_id,
+                "Reviewing".to_string(),
+                2,
+                "Reviewing".to_string(),
+            )
             .await;
         assert!(result.is_ok(), "Update failed: {:?}", result.err());
 
         // Verify via list
         let sessions = tracker.list().await.expect("List failed");
-        let session = sessions.iter()
+        let session = sessions
+            .iter()
             .find(|s| s.workflow_session_id == session_id)
             .expect("Session not found");
 
@@ -518,9 +529,14 @@ mod integration_tests {
         assert!(result.is_ok(), "Mark stopped failed: {:?}", result.err());
 
         // Wait for session to be marked as Stopped (handles race conditions)
-        wait_for_liveness(&tracker, &session_id, LivenessState::Stopped, Duration::from_secs(2))
-            .await
-            .expect("Session should be marked as Stopped");
+        wait_for_liveness(
+            &tracker,
+            &session_id,
+            LivenessState::Stopped,
+            Duration::from_secs(2),
+        )
+        .await
+        .expect("Session should be marked as Stopped");
         // Already stopped, no additional cleanup needed
     }
 
@@ -555,9 +571,14 @@ mod integration_tests {
         assert!(result.is_ok(), "Force stop failed: {:?}", result.err());
 
         // Wait for session to be Stopped (handles race conditions)
-        wait_for_liveness(&tracker, &session_id, LivenessState::Stopped, Duration::from_secs(2))
-            .await
-            .expect("Session should be Stopped");
+        wait_for_liveness(
+            &tracker,
+            &session_id,
+            LivenessState::Stopped,
+            Duration::from_secs(2),
+        )
+        .await
+        .expect("Session should be Stopped");
         // Already stopped, no additional cleanup needed
     }
 
@@ -590,7 +611,8 @@ mod integration_tests {
 
         // Verify initial state
         let sessions = tracker.list().await.expect("List failed");
-        let session = sessions.iter()
+        let session = sessions
+            .iter()
             .find(|s| s.workflow_session_id == session_id)
             .expect("Session not found after register");
         assert_eq!(session.phase, "Planning");
@@ -598,24 +620,36 @@ mod integration_tests {
 
         // 2. Update: Planning -> Reviewing
         tracker
-            .update(&session_id, "Reviewing".to_string(), 1, "Reviewing".to_string())
+            .update(
+                &session_id,
+                "Reviewing".to_string(),
+                1,
+                "Reviewing".to_string(),
+            )
             .await
             .expect("Update to Reviewing failed");
 
         let sessions = tracker.list().await.expect("List failed");
-        let session = sessions.iter()
+        let session = sessions
+            .iter()
             .find(|s| s.workflow_session_id == session_id)
             .expect("Session not found");
         assert_eq!(session.phase, "Reviewing");
 
         // 3. Update: Reviewing -> Revising
         tracker
-            .update(&session_id, "Revising".to_string(), 2, "Revising".to_string())
+            .update(
+                &session_id,
+                "Revising".to_string(),
+                2,
+                "Revising".to_string(),
+            )
             .await
             .expect("Update to Revising failed");
 
         let sessions = tracker.list().await.expect("List failed");
-        let session = sessions.iter()
+        let session = sessions
+            .iter()
             .find(|s| s.workflow_session_id == session_id)
             .expect("Session not found");
         assert_eq!(session.phase, "Revising");
@@ -623,7 +657,12 @@ mod integration_tests {
 
         // 4. Update: Revising -> Complete
         tracker
-            .update(&session_id, "Complete".to_string(), 2, "Complete".to_string())
+            .update(
+                &session_id,
+                "Complete".to_string(),
+                2,
+                "Complete".to_string(),
+            )
             .await
             .expect("Update to Complete failed");
 
@@ -634,13 +673,19 @@ mod integration_tests {
             .expect("Mark stopped failed");
 
         // Wait for final state (handles race conditions)
-        wait_for_liveness(&tracker, &session_id, LivenessState::Stopped, Duration::from_secs(2))
-            .await
-            .expect("Session should be Stopped");
+        wait_for_liveness(
+            &tracker,
+            &session_id,
+            LivenessState::Stopped,
+            Duration::from_secs(2),
+        )
+        .await
+        .expect("Session should be Stopped");
 
         // Verify final phase
         let sessions = tracker.list().await.expect("List failed");
-        let session = sessions.iter()
+        let session = sessions
+            .iter()
             .find(|s| s.workflow_session_id == session_id)
             .expect("Session not found");
         assert_eq!(session.phase, "Complete");

@@ -98,7 +98,9 @@ pub fn build_review_failure_summary(
     }
 
     if has_bundles {
-        summary.push_str("\n**Note:** Diagnostics bundles may contain sensitive information from logs.\n");
+        summary.push_str(
+            "\n**Note:** Diagnostics bundles may contain sensitive information from logs.\n",
+        );
     }
 
     summary.push_str(
@@ -129,7 +131,10 @@ pub fn build_all_reviewers_failed_summary(
     for failure in failures {
         let error = truncate_for_summary(&failure.error, 200);
         let failure_type = failure.kind.display_name();
-        summary.push_str(&format!("- **{}** ({}): {}\n", failure.agent_name, failure_type, error));
+        summary.push_str(&format!(
+            "- **{}** ({}): {}\n",
+            failure.agent_name, failure_type, error
+        ));
         if let Some(ref path) = failure.bundle_path {
             summary.push_str(&format!("  Diagnostics bundle: {}\n", path.display()));
             has_bundles = true;
@@ -137,7 +142,9 @@ pub fn build_all_reviewers_failed_summary(
     }
 
     if has_bundles {
-        summary.push_str("\n**Note:** Diagnostics bundles may contain sensitive information from logs.\n");
+        summary.push_str(
+            "\n**Note:** Diagnostics bundles may contain sensitive information from logs.\n",
+        );
     }
 
     summary.push_str("\n## Recovery Options\n\n");
@@ -158,7 +165,10 @@ pub fn build_resume_failure_summary(failure: &crate::app::failure::FailureContex
     if let Some(ref agent) = failure.agent_name {
         s.push_str(&format!("**Agent**: {}\n", agent));
     }
-    s.push_str(&format!("**Retries**: {}/{}\n", failure.retry_count, failure.max_retries));
+    s.push_str(&format!(
+        "**Retries**: {}/{}\n",
+        failure.retry_count, failure.max_retries
+    ));
     s.push_str(&format!("**Failed at**: {}\n\n", failure.failed_at));
     s.push_str("This session was stopped with an unresolved failure.\n\n");
     s.push_str("## Recovery Options\n\n");
@@ -194,7 +204,9 @@ pub fn build_workflow_failure_summary(
 
     if let Some(path) = bundle_path {
         summary.push_str(&format!("**Diagnostics bundle**: {}\n\n", path.display()));
-        summary.push_str("_Note: Diagnostics bundles may contain sensitive information from logs._\n\n");
+        summary.push_str(
+            "_Note: Diagnostics bundles may contain sensitive information from logs._\n\n",
+        );
     }
 
     summary.push_str("## Recovery Options\n\n");
@@ -238,14 +250,8 @@ pub fn build_max_iterations_summary(
         ));
 
         // Group reviewers by verdict
-        let needs_revision: Vec<_> = last_reviews
-            .iter()
-            .filter(|r| r.needs_revision)
-            .collect();
-        let approved: Vec<_> = last_reviews
-            .iter()
-            .filter(|r| !r.needs_revision)
-            .collect();
+        let needs_revision: Vec<_> = last_reviews.iter().filter(|r| r.needs_revision).collect();
+        let approved: Vec<_> = last_reviews.iter().filter(|r| !r.needs_revision).collect();
 
         if !needs_revision.is_empty() {
             let names: Vec<_> = needs_revision
@@ -294,7 +300,12 @@ pub fn build_max_iterations_summary(
                 review.agent_name.to_uppercase(),
                 verdict
             ));
-            let preview: String = review.feedback.lines().take(5).collect::<Vec<_>>().join("\n");
+            let preview: String = review
+                .feedback
+                .lines()
+                .take(5)
+                .collect::<Vec<_>>()
+                .join("\n");
             summary.push_str(&format!("{}\n\n", truncate_for_summary(&preview, 300)));
         }
 
@@ -320,21 +331,23 @@ pub fn build_max_iterations_summary(
     summary.push_str("---\n\n");
     summary.push_str("Choose an action:\n");
     summary.push_str("- **[p] Proceed**: Accept the current plan and continue to implementation\n");
-    summary.push_str("- **[c] Continue Review**: Run another review cycle (adds 1 to max iterations)\n");
-    summary
-        .push_str("- **[d] Restart with Feedback**: Provide feedback to restart the entire workflow\n");
+    summary.push_str(
+        "- **[c] Continue Review**: Run another review cycle (adds 1 to max iterations)\n",
+    );
+    summary.push_str(
+        "- **[d] Restart with Feedback**: Provide feedback to restart the entire workflow\n",
+    );
 
     summary
 }
 
-pub fn build_plan_failure_summary(
-    error: &str,
-    plan_path: &Path,
-    plan_exists: bool,
-) -> String {
+pub fn build_plan_failure_summary(error: &str, plan_path: &Path, plan_exists: bool) -> String {
     let mut summary = String::new();
     summary.push_str("# Plan Generation Failed\n\n");
-    summary.push_str(&format!("**Error:** {}\n\n", truncate_for_summary(error, 300)));
+    summary.push_str(&format!(
+        "**Error:** {}\n\n",
+        truncate_for_summary(error, 300)
+    ));
     summary.push_str(&format!("**Plan file:** {}\n\n", plan_path.display()));
 
     if plan_exists {
@@ -350,7 +363,9 @@ pub fn build_plan_failure_summary(
         summary.push_str("Choose an action:\n");
         summary.push_str("- **[r] Retry**: Re-run plan generation\n");
         summary.push_str("- **[a] Abort**: End the workflow\n");
-        summary.push_str("\n_Note: [c] Continue is only available when an existing plan file exists._\n");
+        summary.push_str(
+            "\n_Note: [c] Continue is only available when an existing plan file exists._\n",
+        );
     }
 
     summary
@@ -376,7 +391,11 @@ pub fn shorten_model_name(full_name: &str) -> String {
 ///
 /// This summary is shown in the approval dialog when the AI has approved a plan.
 /// It includes the plan path and the full plan content for user review.
-pub fn build_approval_summary(plan_path: &Path, approval_overridden: bool, iteration: u32) -> String {
+pub fn build_approval_summary(
+    plan_path: &Path,
+    approval_overridden: bool,
+    iteration: u32,
+) -> String {
     let mut summary = if approval_overridden {
         format!(
             "You chose to proceed without AI approval after {} review iterations.\n\n\
@@ -591,7 +610,9 @@ mod tests {
 
         let summary = build_approval_summary(&plan_path, true, 3);
 
-        assert!(summary.contains("You chose to proceed without AI approval after 3 review iterations."));
+        assert!(
+            summary.contains("You chose to proceed without AI approval after 3 review iterations.")
+        );
         assert!(summary.contains(&format!("Plan file: {}", plan_path.display())));
         assert!(summary.contains("## Plan Contents"));
         assert!(summary.contains("# My Plan"));
@@ -621,7 +642,9 @@ mod tests {
 
         let summary = build_approval_summary(&plan_path, true, 5);
 
-        assert!(summary.contains("You chose to proceed without AI approval after 5 review iterations."));
+        assert!(
+            summary.contains("You chose to proceed without AI approval after 5 review iterations.")
+        );
         assert!(summary.contains("Could not read plan file:"));
         // Should still contain override actions even if file is missing
         assert!(summary.contains("[i] Implement"));
@@ -659,7 +682,9 @@ mod tests {
         assert!(summary.contains("## Review Summary"));
         assert!(summary.contains("**1 reviewer(s):** 1 needs revision, 0 approved"));
         assert!(summary.contains("**Needs Revision:** TEST-REVIEWER"));
-        assert!(summary.contains("- **TEST-REVIEWER** - **NEEDS REVISION**: Multiple issues found in the plan"));
+        assert!(summary.contains(
+            "- **TEST-REVIEWER** - **NEEDS REVISION**: Multiple issues found in the plan"
+        ));
 
         // Verify preview section exists with truncated content
         assert!(summary.contains("## Latest Review Feedback (Preview)"));
@@ -736,7 +761,8 @@ mod tests {
         assert!(summary.contains("**Approved:** REVIEWER-2"));
 
         // Verify per-agent summary bullets with verdicts
-        assert!(summary.contains("- **REVIEWER-1** - **NEEDS REVISION**: Several issues need addressing"));
+        assert!(summary
+            .contains("- **REVIEWER-1** - **NEEDS REVISION**: Several issues need addressing"));
         assert!(summary.contains("- **REVIEWER-2** - **APPROVED**: Plan is well structured"));
 
         // Verify both reviewers appear in preview

@@ -55,8 +55,7 @@ pub(crate) async fn handle_naming_tab_input(
                 return Ok(false);
             }
             KeyCode::Tab | KeyCode::Enter
-                if key.code == KeyCode::Tab
-                    || !key.modifiers.contains(KeyModifiers::SHIFT) =>
+                if key.code == KeyCode::Tab || !key.modifiers.contains(KeyModifiers::SHIFT) =>
             {
                 session.accept_tab_mention();
                 update_mention_state(
@@ -99,8 +98,7 @@ pub(crate) async fn handle_naming_tab_input(
                 return Ok(false);
             }
             KeyCode::Tab | KeyCode::Enter
-                if key.code == KeyCode::Tab
-                    || !key.modifiers.contains(KeyModifiers::SHIFT) =>
+                if key.code == KeyCode::Tab || !key.modifiers.contains(KeyModifiers::SHIFT) =>
             {
                 // If Enter is pressed and the input is already a valid slash command,
                 // skip autocomplete acceptance and let it fall through to submit.
@@ -159,20 +157,23 @@ pub(crate) async fn handle_naming_tab_input(
 
                     match cmd {
                         SlashCommand::Update => {
-                            if let update::UpdateStatus::UpdateAvailable(_) = &tab_manager.update_status {
+                            if let update::UpdateStatus::UpdateAvailable(_) =
+                                &tab_manager.update_status
+                            {
                                 tab_manager.update_error = None;
                                 tab_manager.update_in_progress = true;
                                 tab_manager.update_spinner_frame = 0;
 
                                 let update_tx = output_tx.clone();
                                 tokio::spawn(async move {
-                                    let result = tokio::task::spawn_blocking(update::perform_update)
-                                        .await
-                                        .unwrap_or_else(|_| {
-                                            update::UpdateResult::InstallFailed(
-                                                "Update task panicked".to_string(),
-                                            )
-                                        });
+                                    let result =
+                                        tokio::task::spawn_blocking(update::perform_update)
+                                            .await
+                                            .unwrap_or_else(|_| {
+                                                update::UpdateResult::InstallFailed(
+                                                    "Update task panicked".to_string(),
+                                                )
+                                            });
                                     let _ = update_tx.send(Event::UpdateInstallFinished(result));
                                 });
                             } else {
@@ -274,16 +275,25 @@ pub(crate) async fn handle_naming_tab_input(
                         wd.clone()
                     } else {
                         // Get session directory for worktree
-                        let session_dir = match crate::planning_paths::session_dir(&state.workflow_session_id) {
-                            Ok(dir) => dir,
-                            Err(e) => {
-                                let _ = tx.send(Event::SessionOutput {
-                                    session_id,
-                                    line: format!("[planning] Warning: Could not get session directory: {}", e),
-                                });
-                                return Ok::<_, anyhow::Error>((state, state_path, feature_name, wd.clone()));
-                            }
-                        };
+                        let session_dir =
+                            match crate::planning_paths::session_dir(&state.workflow_session_id) {
+                                Ok(dir) => dir,
+                                Err(e) => {
+                                    let _ = tx.send(Event::SessionOutput {
+                                        session_id,
+                                        line: format!(
+                                        "[planning] Warning: Could not get session directory: {}",
+                                        e
+                                    ),
+                                    });
+                                    return Ok::<_, anyhow::Error>((
+                                        state,
+                                        state_path,
+                                        feature_name,
+                                        wd.clone(),
+                                    ));
+                                }
+                            };
 
                         let worktree_base = custom_worktree_dir
                             .as_ref()
@@ -300,11 +310,17 @@ pub(crate) async fn handle_naming_tab_input(
                             crate::git_worktree::WorktreeSetupResult::Created(info) => {
                                 let _ = tx.send(Event::SessionOutput {
                                     session_id,
-                                    line: format!("[planning] Created git worktree at: {}", info.worktree_path.display()),
+                                    line: format!(
+                                        "[planning] Created git worktree at: {}",
+                                        info.worktree_path.display()
+                                    ),
                                 });
                                 let _ = tx.send(Event::SessionOutput {
                                     session_id,
-                                    line: format!("[planning] Working on branch: {}", info.branch_name),
+                                    line: format!(
+                                        "[planning] Working on branch: {}",
+                                        info.branch_name
+                                    ),
                                 });
                                 if let Some(ref source) = info.source_branch {
                                     let _ = tx.send(Event::SessionOutput {
@@ -315,7 +331,8 @@ pub(crate) async fn handle_naming_tab_input(
                                 if info.has_submodules {
                                     let _ = tx.send(Event::SessionOutput {
                                         session_id,
-                                        line: "[planning] Warning: Repository has submodules".to_string(),
+                                        line: "[planning] Warning: Repository has submodules"
+                                            .to_string(),
                                     });
                                 }
                                 let wt_state = crate::state::WorktreeState {
@@ -330,14 +347,19 @@ pub(crate) async fn handle_naming_tab_input(
                             crate::git_worktree::WorktreeSetupResult::NotAGitRepo => {
                                 let _ = tx.send(Event::SessionOutput {
                                     session_id,
-                                    line: "[planning] Not a git repository, using original directory".to_string(),
+                                    line:
+                                        "[planning] Not a git repository, using original directory"
+                                            .to_string(),
                                 });
                                 wd.clone()
                             }
                             crate::git_worktree::WorktreeSetupResult::Failed(err) => {
                                 let _ = tx.send(Event::SessionOutput {
                                     session_id,
-                                    line: format!("[planning] Warning: Git worktree setup failed: {}", err),
+                                    line: format!(
+                                        "[planning] Warning: Git worktree setup failed: {}",
+                                        err
+                                    ),
                                 });
                                 wd.clone()
                             }
@@ -345,8 +367,11 @@ pub(crate) async fn handle_naming_tab_input(
                     };
 
                     // Pre-create plan folder and files (in ~/.planning-agent/sessions/)
-                    pre_create_session_folder_with_working_dir(&state, Some(&effective_working_dir))
-                        .context("Failed to pre-create plan files")?;
+                    pre_create_session_folder_with_working_dir(
+                        &state,
+                        Some(&effective_working_dir),
+                    )
+                    .context("Failed to pre-create plan files")?;
 
                     state.set_updated_at();
                     state.save(&state_path)?;

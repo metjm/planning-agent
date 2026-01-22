@@ -6,7 +6,9 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap},
+    widgets::{
+        Block, Borders, Clear, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap,
+    },
     Frame,
 };
 
@@ -40,8 +42,8 @@ pub fn draw_error_overlay(frame: &mut Frame, session: &Session) {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Min(0),     // Error content (scrollable)
-                Constraint::Length(1),  // Instructions
+                Constraint::Min(0),    // Error content (scrollable)
+                Constraint::Length(1), // Instructions
             ])
             .split(popup_area);
 

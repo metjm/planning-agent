@@ -28,7 +28,8 @@ impl VerificationVerdictResult {
     pub fn needs_revision(&self) -> bool {
         matches!(
             self,
-            VerificationVerdictResult::NeedsRevision | VerificationVerdictResult::ParseFailure { .. }
+            VerificationVerdictResult::NeedsRevision
+                | VerificationVerdictResult::ParseFailure { .. }
         )
     }
 
@@ -49,8 +50,8 @@ impl VerificationVerdictResult {
 /// Looks for "Verdict: APPROVED" or "Verdict: NEEDS REVISION" patterns.
 /// Supports various formatting styles including markdown headers, colons, and bold markers.
 pub fn parse_verification_verdict(report: &str) -> VerificationVerdictResult {
-    let re = Regex::new(r"(?i)(?:##\s*)?Verdict[:\*\s]*\**\s*(APPROVED|NEEDS\s*_?\s*REVISION)")
-        .unwrap();
+    let re =
+        Regex::new(r"(?i)(?:##\s*)?Verdict[:\*\s]*\**\s*(APPROVED|NEEDS\s*_?\s*REVISION)").unwrap();
 
     if let Some(captures) = re.captures(report) {
         if let Some(verdict_match) = captures.get(1) {

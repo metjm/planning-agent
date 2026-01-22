@@ -4,7 +4,9 @@
 //! including navigation, resume, force-stop, and confirmation dialogs.
 
 use crate::config::WorkflowConfig;
-use crate::tui::session::context::{compute_effective_working_dir, validate_working_dir, SessionContext};
+use crate::tui::session::context::{
+    compute_effective_working_dir, validate_working_dir, SessionContext,
+};
 use crate::tui::{Event, InputMode, TabManager};
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyModifiers};
@@ -21,8 +23,14 @@ pub async fn handle_session_browser_input(
 ) -> Result<bool> {
     // Handle confirmation dialog input first
     if tab_manager.session_browser.confirmation_pending.is_some() {
-        return handle_confirmation_input(key, tab_manager, working_dir, workflow_config, output_tx)
-            .await;
+        return handle_confirmation_input(
+            key,
+            tab_manager,
+            working_dir,
+            workflow_config,
+            output_tx,
+        )
+        .await;
     }
 
     match key.code {
@@ -264,10 +272,7 @@ fn resume_session_in_current_process(
             session.context = Some(context);
 
             // Log resume information
-            session.add_output(format!(
-                "[planning] Resumed session: {}",
-                entry.session_id
-            ));
+            session.add_output(format!("[planning] Resumed session: {}", entry.session_id));
             session.add_output(format!(
                 "[planning] Feature: {}, Phase: {:?}, Iteration: {}",
                 restored_state.feature_name, restored_state.phase, restored_state.iteration

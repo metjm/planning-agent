@@ -1,9 +1,10 @@
-
-use super::cli_instances::{draw_cli_instances, CLI_INSTANCES_MIN_HEIGHT};
-use super::objective::{compute_objective_height, draw_objective, OBJECTIVE_MAX_FRACTION, OBJECTIVE_MIN_HEIGHT};
 use super::chat::{
     draw_chat_content, draw_chat_input, draw_reviewer_history_panel, draw_run_tabs,
     draw_summary_panel,
+};
+use super::cli_instances::{draw_cli_instances, CLI_INSTANCES_MIN_HEIGHT};
+use super::objective::{
+    compute_objective_height, draw_objective, OBJECTIVE_MAX_FRACTION, OBJECTIVE_MIN_HEIGHT,
 };
 use super::stats::draw_stats;
 use super::theme::Theme;
@@ -45,13 +46,16 @@ pub fn draw_main(frame: &mut Frame, session: &Session, area: Rect) {
 
     // Compute objective height based on content and available space
     let max_objective_height = ((right_area.height as f32) * OBJECTIVE_MAX_FRACTION) as u16;
-    let objective_height = compute_objective_height(objective_text, right_area.width, max_objective_height)
-        .max(OBJECTIVE_MIN_HEIGHT);
+    let objective_height =
+        compute_objective_height(objective_text, right_area.width, max_objective_height)
+            .max(OBJECTIVE_MIN_HEIGHT);
 
     // Compute CLI instances panel height: minimum height always, grows with instance count
     let instance_count = session.cli_instances.len();
     // Each instance takes 1 line, plus 2 for borders/title
-    let desired_cli_height = (instance_count as u16).saturating_add(2).max(CLI_INSTANCES_MIN_HEIGHT);
+    let desired_cli_height = (instance_count as u16)
+        .saturating_add(2)
+        .max(CLI_INSTANCES_MIN_HEIGHT);
     // Allow CLI panel to expand within available right-column space after Objective
     // Stats will take the remaining space (Constraint::Min(0))
     let available_for_cli = right_area.height.saturating_sub(objective_height);
@@ -103,7 +107,11 @@ fn draw_output_panel(frame: &mut Frame, session: &Session, area: Rect) {
         " Output [SCROLLED] "
     };
 
-    let border_color = if is_focused { theme.border_focused } else { theme.border };
+    let border_color = if is_focused {
+        theme.border_focused
+    } else {
+        theme.border
+    };
 
     let output_block = Block::default()
         .borders(Borders::ALL)
@@ -134,11 +142,20 @@ fn draw_output_panel(frame: &mut Frame, session: &Session, area: Rect) {
             .iter()
             .map(|line| {
                 if line.starts_with("[planning]") {
-                    Line::from(Span::styled(line.clone(), Style::default().fg(theme.tag_planning)))
+                    Line::from(Span::styled(
+                        line.clone(),
+                        Style::default().fg(theme.tag_planning),
+                    ))
                 } else if line.starts_with("[implementation]") {
-                    Line::from(Span::styled(line.clone(), Style::default().fg(theme.tag_implementation)))
+                    Line::from(Span::styled(
+                        line.clone(),
+                        Style::default().fg(theme.tag_implementation),
+                    ))
                 } else if line.starts_with("[claude]") || line.starts_with("[planning-agent]") {
-                    Line::from(Span::styled(line.clone(), Style::default().fg(theme.tag_agent)))
+                    Line::from(Span::styled(
+                        line.clone(),
+                        Style::default().fg(theme.tag_agent),
+                    ))
                 } else if line.contains("error") || line.contains("Error") {
                     Line::from(Span::styled(line.clone(), Style::default().fg(theme.error)))
                 } else {
@@ -168,7 +185,11 @@ fn draw_output_panel(frame: &mut Frame, session: &Session, area: Rect) {
 fn draw_todos(frame: &mut Frame, session: &Session, area: Rect) {
     let theme = Theme::for_session(session);
     let is_focused = session.focused_panel == FocusedPanel::Todos;
-    let border_color = if is_focused { theme.border_focused } else { theme.accent_alt };
+    let border_color = if is_focused {
+        theme.border_focused
+    } else {
+        theme.accent_alt
+    };
 
     let title = if is_focused { " Todos [*] " } else { " Todos " };
 
@@ -189,7 +210,9 @@ fn draw_todos(frame: &mut Frame, session: &Session, area: Rect) {
             if line.ends_with(':') && !line.starts_with(' ') {
                 Line::from(Span::styled(
                     line.clone(),
-                    Style::default().fg(theme.todo_header).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(theme.todo_header)
+                        .add_modifier(Modifier::BOLD),
                 ))
             } else if line.contains("[~]") {
                 Line::from(vec![
@@ -197,7 +220,10 @@ fn draw_todos(frame: &mut Frame, session: &Session, area: Rect) {
                     Span::styled("~", Style::default().fg(theme.todo_in_progress)),
                     Span::styled("] ", Style::default().fg(theme.muted)),
                     Span::styled(
-                        line.trim_start().strip_prefix("[~] ").unwrap_or(line).to_string(),
+                        line.trim_start()
+                            .strip_prefix("[~] ")
+                            .unwrap_or(line)
+                            .to_string(),
                         Style::default().fg(theme.todo_in_progress),
                     ),
                 ])
@@ -207,15 +233,23 @@ fn draw_todos(frame: &mut Frame, session: &Session, area: Rect) {
                     Span::styled("x", Style::default().fg(theme.todo_complete)),
                     Span::styled("] ", Style::default().fg(theme.muted)),
                     Span::styled(
-                        line.trim_start().strip_prefix("[x] ").unwrap_or(line).to_string(),
-                        Style::default().fg(theme.todo_complete).add_modifier(Modifier::DIM),
+                        line.trim_start()
+                            .strip_prefix("[x] ")
+                            .unwrap_or(line)
+                            .to_string(),
+                        Style::default()
+                            .fg(theme.todo_complete)
+                            .add_modifier(Modifier::DIM),
                     ),
                 ])
             } else if line.contains("[ ]") {
                 Line::from(vec![
                     Span::styled("  [ ] ", Style::default().fg(theme.muted)),
                     Span::styled(
-                        line.trim_start().strip_prefix("[ ] ").unwrap_or(line).to_string(),
+                        line.trim_start()
+                            .strip_prefix("[ ] ")
+                            .unwrap_or(line)
+                            .to_string(),
                         Style::default().fg(theme.todo_pending),
                     ),
                 ])
@@ -266,7 +300,11 @@ pub fn draw_streaming(frame: &mut Frame, session: &Session, area: Rect) {
         " Agent Output [SCROLLED] "
     };
 
-    let border_color = if is_focused { theme.border_focused } else { theme.success };
+    let border_color = if is_focused {
+        theme.border_focused
+    } else {
+        theme.success
+    };
 
     let streaming_block = Block::default()
         .borders(Borders::ALL)
@@ -288,7 +326,10 @@ pub fn draw_streaming(frame: &mut Frame, session: &Session, area: Rect) {
             .iter()
             .map(|line| {
                 if line.starts_with("[stderr]") {
-                    Line::from(Span::styled(line.clone(), Style::default().fg(theme.accent_alt)))
+                    Line::from(Span::styled(
+                        line.clone(),
+                        Style::default().fg(theme.accent_alt),
+                    ))
                 } else if line.contains("error") || line.contains("Error") {
                     Line::from(Span::styled(line.clone(), Style::default().fg(theme.error)))
                 } else {

@@ -27,7 +27,12 @@ pub struct CliInstance {
 
 impl CliInstance {
     /// Creates a new CLI instance.
-    pub fn new(id: CliInstanceId, agent_name: String, pid: Option<u32>, started_at: Instant) -> Self {
+    pub fn new(
+        id: CliInstanceId,
+        agent_name: String,
+        pid: Option<u32>,
+        started_at: Instant,
+    ) -> Self {
         Self {
             id,
             agent_name,

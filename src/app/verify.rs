@@ -94,9 +94,14 @@ pub async fn run_verification_workflow(
                 session_sender.send_verification_started(verification_state.iteration);
 
                 // Run verification phase
-                let report = run_verification_phase(&mut verification_state, config, session_sender.clone(), session_logger.clone())
-                    .await
-                    .context("Verification phase failed")?;
+                let report = run_verification_phase(
+                    &mut verification_state,
+                    config,
+                    session_sender.clone(),
+                    session_logger.clone(),
+                )
+                .await
+                .context("Verification phase failed")?;
 
                 // Parse verdict and transition
                 let verdict = parse_verification_verdict(&report);
@@ -126,14 +131,16 @@ pub async fn run_verification_workflow(
                             ));
                             verification_state.phase = VerificationPhase::Complete;
                             verification_state.save()?;
-                            session_sender.send_verification_result(false, verification_state.iteration);
+                            session_sender
+                                .send_verification_result(false, verification_state.iteration);
                             return Ok(VerificationResult::Failed {
                                 iterations_used: verification_state.iteration,
                             });
                         }
 
                         session_sender.send_output(
-                            "[verification] Issues found, transitioning to fixing phase...".to_string(),
+                            "[verification] Issues found, transitioning to fixing phase..."
+                                .to_string(),
                         );
                         verification_state.transition(VerificationPhase::Fixing)?;
                         verification_state.save()?;
@@ -149,13 +156,23 @@ pub async fn run_verification_workflow(
 
                 // Load the latest verification report
                 let report_path = verification_state.verification_report_path();
-                let report = std::fs::read_to_string(&report_path)
-                    .with_context(|| format!("Failed to read verification report: {}", report_path.display()))?;
+                let report = std::fs::read_to_string(&report_path).with_context(|| {
+                    format!(
+                        "Failed to read verification report: {}",
+                        report_path.display()
+                    )
+                })?;
 
                 // Run fixing phase
-                run_fixing_phase(&mut verification_state, config, &report, session_sender.clone(), session_logger.clone())
-                    .await
-                    .context("Fixing phase failed")?;
+                run_fixing_phase(
+                    &mut verification_state,
+                    config,
+                    &report,
+                    session_sender.clone(),
+                    session_logger.clone(),
+                )
+                .await
+                .context("Fixing phase failed")?;
 
                 session_sender.send_fixing_completed();
 
@@ -220,31 +237,57 @@ pub async fn run_headless_verification(
                     println!("{}", line);
                 }
                 Event::SessionVerificationStarted { iteration, .. } => {
-                    println!("\n┌─────────────────────────────────────────────────────────────────┐");
-                    println!("│ Verification Round {}                                             │", iteration);
+                    println!(
+                        "\n┌─────────────────────────────────────────────────────────────────┐"
+                    );
+                    println!(
+                        "│ Verification Round {}                                             │",
+                        iteration
+                    );
                     println!("└─────────────────────────────────────────────────────────────────┘");
                 }
                 Event::SessionVerificationCompleted { verdict, .. } => {
                     println!("\n→ Verdict: {}", verdict);
                 }
                 Event::SessionFixingStarted { iteration, .. } => {
-                    println!("\n┌─────────────────────────────────────────────────────────────────┐");
-                    println!("│ Fix Round {}                                                      │", iteration);
+                    println!(
+                        "\n┌─────────────────────────────────────────────────────────────────┐"
+                    );
+                    println!(
+                        "│ Fix Round {}                                                      │",
+                        iteration
+                    );
                     println!("└─────────────────────────────────────────────────────────────────┘");
                 }
                 Event::SessionFixingCompleted { .. } => {
                     println!("\n→ Fix round complete");
                 }
-                Event::SessionVerificationResult { approved, iterations_used, .. } => {
+                Event::SessionVerificationResult {
+                    approved,
+                    iterations_used,
+                    ..
+                } => {
                     println!();
                     if approved {
-                        println!("╔════════════════════════════════════════════════════════════════╗");
-                        println!("║                    ✓ VERIFICATION PASSED                        ║");
-                        println!("╚════════════════════════════════════════════════════════════════╝");
+                        println!(
+                            "╔════════════════════════════════════════════════════════════════╗"
+                        );
+                        println!(
+                            "║                    ✓ VERIFICATION PASSED                        ║"
+                        );
+                        println!(
+                            "╚════════════════════════════════════════════════════════════════╝"
+                        );
                     } else {
-                        println!("╔════════════════════════════════════════════════════════════════╗");
-                        println!("║                    ✗ VERIFICATION FAILED                        ║");
-                        println!("╚════════════════════════════════════════════════════════════════╝");
+                        println!(
+                            "╔════════════════════════════════════════════════════════════════╗"
+                        );
+                        println!(
+                            "║                    ✗ VERIFICATION FAILED                        ║"
+                        );
+                        println!(
+                            "╚════════════════════════════════════════════════════════════════╝"
+                        );
                     }
                     println!("Iterations used: {}", iterations_used);
                 }
@@ -254,17 +297,25 @@ pub async fn run_headless_verification(
     });
 
     // Run verification
-    let result = run_verification_workflow(&plan_path, &working_dir, &config, session_sender, session_logger).await;
+    let result = run_verification_workflow(
+        &plan_path,
+        &working_dir,
+        &config,
+        session_sender,
+        session_logger,
+    )
+    .await;
 
     // Wait for print task to finish
     drop(print_handle);
 
     match result {
-        Ok(VerificationResult::Approved) => {
-            Ok(())
-        }
+        Ok(VerificationResult::Approved) => Ok(()),
         Ok(VerificationResult::Failed { iterations_used }) => {
-            eprintln!("\nVerification failed after {} iterations.", iterations_used);
+            eprintln!(
+                "\nVerification failed after {} iterations.",
+                iterations_used
+            );
             std::process::exit(1);
         }
         Err(e) => {

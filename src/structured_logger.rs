@@ -282,7 +282,10 @@ mod tests {
         let mut prev_seq = 0u64;
         for line in content.lines() {
             let entry: LogEntry = serde_json::from_str(line).expect("Failed to parse log entry");
-            assert!(entry.seq > prev_seq, "Sequence numbers should be monotonically increasing");
+            assert!(
+                entry.seq > prev_seq,
+                "Sequence numbers should be monotonically increasing"
+            );
             prev_seq = entry.seq;
         }
     }

@@ -58,15 +58,16 @@ impl DaemonState {
     fn load_from_disk(&mut self) -> Result<()> {
         let registry_path = planning_paths::sessiond_registry_path()?;
         if registry_path.exists() {
-            let content = std::fs::read_to_string(&registry_path)
-                .context("Failed to read registry file")?;
-            let records: Vec<SessionRecord> = serde_json::from_str(&content)
-                .context("Failed to parse registry file")?;
+            let content =
+                std::fs::read_to_string(&registry_path).context("Failed to read registry file")?;
+            let records: Vec<SessionRecord> =
+                serde_json::from_str(&content).context("Failed to parse registry file")?;
 
             // Load records but mark them as stopped (they're from a previous daemon instance)
             for mut record in records {
                 record.liveness = LivenessState::Stopped;
-                self.sessions.insert(record.workflow_session_id.clone(), record);
+                self.sessions
+                    .insert(record.workflow_session_id.clone(), record);
             }
         }
         Ok(())
@@ -76,10 +77,9 @@ impl DaemonState {
     fn persist_to_disk(&self) -> Result<()> {
         let registry_path = planning_paths::sessiond_registry_path()?;
         let records: Vec<&SessionRecord> = self.sessions.values().collect();
-        let content = serde_json::to_string_pretty(&records)
-            .context("Failed to serialize registry")?;
-        std::fs::write(&registry_path, content)
-            .context("Failed to write registry file")?;
+        let content =
+            serde_json::to_string_pretty(&records).context("Failed to serialize registry")?;
+        std::fs::write(&registry_path, content).context("Failed to write registry file")?;
         Ok(())
     }
 
@@ -109,11 +109,11 @@ impl DaemonState {
             }
 
             // Parse last heartbeat timestamp
-            let last_heartbeat = match chrono::DateTime::parse_from_rfc3339(&record.last_heartbeat_at)
-            {
-                Ok(dt) => dt.with_timezone(&chrono::Utc),
-                Err(_) => continue,
-            };
+            let last_heartbeat =
+                match chrono::DateTime::parse_from_rfc3339(&record.last_heartbeat_at) {
+                    Ok(dt) => dt.with_timezone(&chrono::Utc),
+                    Err(_) => continue,
+                };
 
             let elapsed_secs = (now - last_heartbeat).num_seconds() as u64;
             let old_liveness = record.liveness;
@@ -138,13 +138,11 @@ pub async fn run_daemon() -> Result<()> {
     // Write PID file
     let pid = std::process::id();
     let pid_path = planning_paths::sessiond_pid_path()?;
-    std::fs::write(&pid_path, pid.to_string())
-        .context("Failed to write PID file")?;
+    std::fs::write(&pid_path, pid.to_string()).context("Failed to write PID file")?;
 
     // Write build SHA file
     let sha_path = planning_paths::sessiond_build_sha_path()?;
-    std::fs::write(&sha_path, BUILD_SHA)
-        .context("Failed to write build SHA file")?;
+    std::fs::write(&sha_path, BUILD_SHA).context("Failed to write build SHA file")?;
 
     // Initialize state and load persisted registry
     let state = Arc::new(Mutex::new(DaemonState::new()));
@@ -200,21 +198,19 @@ async fn run_unix_server(
             anyhow::bail!("Another session daemon is already running");
         }
         // Stale socket, remove it
-        std::fs::remove_file(&socket_path)
-            .context("Failed to remove stale socket")?;
+        std::fs::remove_file(&socket_path).context("Failed to remove stale socket")?;
     }
 
-    let listener = UnixListener::bind(&socket_path)
-        .context("Failed to bind Unix socket")?;
+    let listener = UnixListener::bind(&socket_path).context("Failed to bind Unix socket")?;
 
     eprintln!("[sessiond] Listening on {}", socket_path.display());
 
     // Spawn registry persistence task
     let persist_state = state.clone();
     tokio::spawn(async move {
-        let mut interval = tokio::time::interval(
-            tokio::time::Duration::from_secs(REGISTRY_PERSIST_INTERVAL_SECS)
-        );
+        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(
+            REGISTRY_PERSIST_INTERVAL_SECS,
+        ));
         loop {
             interval.tick().await;
             let state_guard = persist_state.lock().await;
@@ -418,7 +414,8 @@ async fn run_windows_server(
     use tokio::net::TcpListener;
 
     // Bind to localhost only (not 0.0.0.0)
-    let listener = TcpListener::bind("127.0.0.1:0").await
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
         .context("Failed to bind TCP socket")?;
 
     let local_addr = listener.local_addr()?;
@@ -431,10 +428,12 @@ async fn run_windows_server(
 
     // Write port file with token
     let port_path = planning_paths::sessiond_port_path()?;
-    let port_content = PortFileContent { port, token: token.clone() };
+    let port_content = PortFileContent {
+        port,
+        token: token.clone(),
+    };
     let port_json = serde_json::to_string(&port_content)?;
-    std::fs::write(&port_path, &port_json)
-        .context("Failed to write port file")?;
+    std::fs::write(&port_path, &port_json).context("Failed to write port file")?;
 
     // Security: Port file contains auth token. Current mitigations:
     // - File is in user's home directory (~/.planning-agent/)
@@ -447,9 +446,9 @@ async fn run_windows_server(
     // Spawn registry persistence task
     let persist_state = state.clone();
     tokio::spawn(async move {
-        let mut interval = tokio::time::interval(
-            tokio::time::Duration::from_secs(REGISTRY_PERSIST_INTERVAL_SECS)
-        );
+        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(
+            REGISTRY_PERSIST_INTERVAL_SECS,
+        ));
         loop {
             interval.tick().await;
             let state_guard = persist_state.lock().await;
@@ -640,7 +639,10 @@ pub(crate) async fn handle_message_with_broadcast(
     let message: ClientMessage = match serde_json::from_str(line.trim()) {
         Ok(msg) => msg,
         Err(e) => {
-            return (Some(DaemonMessage::Error(format!("Invalid message: {}", e))), false);
+            return (
+                Some(DaemonMessage::Error(format!("Invalid message: {}", e))),
+                false,
+            );
         }
     };
 
@@ -664,9 +666,12 @@ pub(crate) async fn handle_message_with_broadcast(
             state_guard.sessions.insert(session_id, record.clone());
             // Broadcast to subscribers
             let _ = events_tx.send(record);
-            (Some(DaemonMessage::Ack {
-                build_sha: BUILD_SHA.to_string(),
-            }), false)
+            (
+                Some(DaemonMessage::Ack {
+                    build_sha: BUILD_SHA.to_string(),
+                }),
+                false,
+            )
         }
 
         ClientMessage::Update(record) => {
@@ -688,9 +693,12 @@ pub(crate) async fn handle_message_with_broadcast(
             };
             // Broadcast to subscribers
             let _ = events_tx.send(updated_record);
-            (Some(DaemonMessage::Ack {
-                build_sha: BUILD_SHA.to_string(),
-            }), false)
+            (
+                Some(DaemonMessage::Ack {
+                    build_sha: BUILD_SHA.to_string(),
+                }),
+                false,
+            )
         }
 
         ClientMessage::Heartbeat { session_id } => {
@@ -699,9 +707,12 @@ pub(crate) async fn handle_message_with_broadcast(
                 // Broadcast to subscribers
                 let _ = events_tx.send(record.clone());
             }
-            (Some(DaemonMessage::Ack {
-                build_sha: BUILD_SHA.to_string(),
-            }), false)
+            (
+                Some(DaemonMessage::Ack {
+                    build_sha: BUILD_SHA.to_string(),
+                }),
+                false,
+            )
         }
 
         ClientMessage::List => {
@@ -715,9 +726,12 @@ pub(crate) async fn handle_message_with_broadcast(
             state_guard.shutting_down = true;
             // Persist before shutdown
             let _ = state_guard.persist_to_disk();
-            (Some(DaemonMessage::Ack {
-                build_sha: BUILD_SHA.to_string(),
-            }), false)
+            (
+                Some(DaemonMessage::Ack {
+                    build_sha: BUILD_SHA.to_string(),
+                }),
+                false,
+            )
         }
 
         ClientMessage::ForceStop { session_id } => {
@@ -725,20 +739,25 @@ pub(crate) async fn handle_message_with_broadcast(
                 record.liveness = LivenessState::Stopped;
                 // Broadcast to subscribers
                 let _ = events_tx.send(record.clone());
-                (Some(DaemonMessage::Ack {
-                    build_sha: BUILD_SHA.to_string(),
-                }), false)
+                (
+                    Some(DaemonMessage::Ack {
+                        build_sha: BUILD_SHA.to_string(),
+                    }),
+                    false,
+                )
             } else {
-                (Some(DaemonMessage::Error(format!("Session not found: {}", session_id))), false)
+                (
+                    Some(DaemonMessage::Error(format!(
+                        "Session not found: {}",
+                        session_id
+                    ))),
+                    false,
+                )
             }
         }
 
-        ClientMessage::Subscribe => {
-            (Some(DaemonMessage::Subscribed), true)
-        }
+        ClientMessage::Subscribe => (Some(DaemonMessage::Subscribed), true),
 
-        ClientMessage::Unsubscribe => {
-            (Some(DaemonMessage::Unsubscribed), false)
-        }
+        ClientMessage::Unsubscribe => (Some(DaemonMessage::Unsubscribed), false),
     }
 }

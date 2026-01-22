@@ -1,7 +1,10 @@
 use crate::app::util::shorten_model_name;
 use crate::config::WorkflowConfig;
 use crate::session_daemon;
-use crate::tui::{ApprovalMode, Event, FocusedPanel, SessionStatus, TabManager, ToolKind, ToolResultSummary, ToolTimelineEntry};
+use crate::tui::{
+    ApprovalMode, Event, FocusedPanel, SessionStatus, TabManager, ToolKind, ToolResultSummary,
+    ToolTimelineEntry,
+};
 use crate::update;
 use anyhow::Result;
 use std::path::Path;
@@ -84,7 +87,10 @@ pub async fn process_event(
                 );
             }
         }
-        Event::ToolFinished { tool_id, agent_name } => {
+        Event::ToolFinished {
+            tool_id,
+            agent_name,
+        } => {
             if let Some(session) = tab_manager.session_by_id_mut(first_session_id) {
                 session.tool_finished_for_agent(tool_id.as_deref(), &agent_name);
             }
@@ -184,7 +190,11 @@ pub async fn process_event(
     Ok(should_quit)
 }
 
-fn handle_tick_event(tab_manager: &mut TabManager, output_tx: &mpsc::UnboundedSender<Event>, working_dir: &Path) {
+fn handle_tick_event(
+    tab_manager: &mut TabManager,
+    output_tx: &mpsc::UnboundedSender<Event>,
+    working_dir: &Path,
+) {
     for session in tab_manager.sessions_mut() {
         if session.status == SessionStatus::GeneratingSummary {
             session.spinner_frame = session.spinner_frame.wrapping_add(1);
@@ -308,12 +318,18 @@ async fn handle_session_event(
                 session.workflow_state = Some(state);
             }
         }
-        Event::SessionApprovalRequest { session_id, summary } => {
+        Event::SessionApprovalRequest {
+            session_id,
+            summary,
+        } => {
             if let Some(session) = tab_manager.session_by_id_mut(session_id) {
                 session.start_approval(summary);
             }
         }
-        Event::SessionReviewDecisionRequest { session_id, summary } => {
+        Event::SessionReviewDecisionRequest {
+            session_id,
+            summary,
+        } => {
             if let Some(session) = tab_manager.session_by_id_mut(session_id) {
                 session.start_review_decision(summary);
             }
@@ -395,7 +411,11 @@ async fn handle_session_event(
                 );
             }
         }
-        Event::SessionToolFinished { session_id, tool_id, agent_name } => {
+        Event::SessionToolFinished {
+            session_id,
+            tool_id,
+            agent_name,
+        } => {
             if let Some(session) = tab_manager.session_by_id_mut(session_id) {
                 session.tool_finished_for_agent(tool_id.as_deref(), &agent_name);
             }
@@ -442,7 +462,11 @@ async fn handle_session_event(
             summary,
         } => {
             if let Some(session) = tab_manager.session_by_id_mut(session_id) {
-                let info = session.tool_result_received_for_agent(tool_id.as_deref(), is_error, &agent_name);
+                let info = session.tool_result_received_for_agent(
+                    tool_id.as_deref(),
+                    is_error,
+                    &agent_name,
+                );
                 if info.is_error {
                     session.tool_error_count += 1;
                 }
@@ -505,22 +529,34 @@ async fn handle_session_event(
                 session.start_plan_generation_failed(error);
             }
         }
-        Event::SessionMaxIterationsReached { session_id, summary } => {
+        Event::SessionMaxIterationsReached {
+            session_id,
+            summary,
+        } => {
             if let Some(session) = tab_manager.session_by_id_mut(session_id) {
                 session.start_max_iterations_prompt(summary);
             }
         }
-        Event::SessionUserOverrideApproval { session_id, summary } => {
+        Event::SessionUserOverrideApproval {
+            session_id,
+            summary,
+        } => {
             if let Some(session) = tab_manager.session_by_id_mut(session_id) {
                 session.start_user_override_approval(summary);
             }
         }
-        Event::SessionAllReviewersFailed { session_id, summary } => {
+        Event::SessionAllReviewersFailed {
+            session_id,
+            summary,
+        } => {
             if let Some(session) = tab_manager.session_by_id_mut(session_id) {
                 session.start_all_reviewers_failed(summary);
             }
         }
-        Event::SessionWorkflowFailure { session_id, summary } => {
+        Event::SessionWorkflowFailure {
+            session_id,
+            summary,
+        } => {
             if let Some(session) = tab_manager.session_by_id_mut(session_id) {
                 session.start_workflow_failure(summary);
             }
@@ -544,7 +580,11 @@ async fn handle_session_event(
                 session.update_todos(agent_name, todos);
             }
         }
-        Event::SessionRunTabSummaryGenerating { session_id, phase, run_id } => {
+        Event::SessionRunTabSummaryGenerating {
+            session_id,
+            phase,
+            run_id,
+        } => {
             if let Some(session) = tab_manager.session_by_id_mut(session_id) {
                 // Only process if run_id matches current run
                 if session.current_run_id == run_id {
@@ -611,17 +651,27 @@ async fn handle_session_event(
             }
         }
         // Handle verification workflow events
-        Event::SessionVerificationStarted { session_id, iteration } => {
+        Event::SessionVerificationStarted {
+            session_id,
+            iteration,
+        } => {
             if let Some(session) = tab_manager.session_by_id_mut(session_id) {
                 session.start_verification(iteration);
             }
         }
-        Event::SessionVerificationCompleted { session_id, verdict, report } => {
+        Event::SessionVerificationCompleted {
+            session_id,
+            verdict,
+            report,
+        } => {
             if let Some(session) = tab_manager.session_by_id_mut(session_id) {
                 session.handle_verification_completed(&verdict, &report);
             }
         }
-        Event::SessionFixingStarted { session_id, iteration } => {
+        Event::SessionFixingStarted {
+            session_id,
+            iteration,
+        } => {
             if let Some(session) = tab_manager.session_by_id_mut(session_id) {
                 session.start_fixing(iteration);
             }
@@ -631,7 +681,11 @@ async fn handle_session_event(
                 session.handle_fixing_completed();
             }
         }
-        Event::SessionVerificationResult { session_id, approved, iterations_used } => {
+        Event::SessionVerificationResult {
+            session_id,
+            approved,
+            iterations_used,
+        } => {
             if let Some(session) = tab_manager.session_by_id_mut(session_id) {
                 session.handle_verification_result(approved, iterations_used);
             }
@@ -742,7 +796,10 @@ async fn handle_session_event(
                 session.cli_instance_finished(id);
             }
         }
-        Event::SessionImplementationSuccess { session_id, iterations_used } => {
+        Event::SessionImplementationSuccess {
+            session_id,
+            iterations_used,
+        } => {
             if let Some(session) = tab_manager.session_by_id_mut(session_id) {
                 session.open_implementation_success(iterations_used);
             }

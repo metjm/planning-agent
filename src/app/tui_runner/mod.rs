@@ -1,4 +1,3 @@
-
 mod approval_input;
 mod events;
 mod input;
@@ -9,7 +8,9 @@ pub mod snapshot_helper;
 mod workflow_lifecycle;
 
 use crate::app::cli::Cli;
-use crate::app::util::{build_resume_command, debug_log, extract_feature_name, format_window_title};
+use crate::app::util::{
+    build_resume_command, debug_log, extract_feature_name, format_window_title,
+};
 use crate::app::workflow::run_workflow_with_config;
 use crate::app::workflow_common::pre_create_session_folder_with_working_dir;
 use crate::cli_usage;
@@ -35,7 +36,6 @@ pub type InitHandle = Option<(
     usize,
     tokio::task::JoinHandle<Result<(State, PathBuf, String, PathBuf)>>,
 )>;
-
 
 /// Information about a session that was successfully stopped and can be resumed.
 #[derive(Clone)]
@@ -109,14 +109,12 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
 
     // Set up signal handlers for graceful shutdown
     #[cfg(unix)]
-    let mut sigterm = tokio::signal::unix::signal(
-        tokio::signal::unix::SignalKind::terminate()
-    ).expect("Failed to create SIGTERM handler");
+    let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+        .expect("Failed to create SIGTERM handler");
 
     #[cfg(unix)]
-    let mut sigint = tokio::signal::unix::signal(
-        tokio::signal::unix::SignalKind::interrupt()
-    ).expect("Failed to create SIGINT handler");
+    let mut sigint = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
+        .expect("Failed to create SIGINT handler");
 
     debug_log(start, "signal handlers created");
 
@@ -139,9 +137,7 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
         tokio::spawn(async move {
             let status = tokio::task::spawn_blocking(update::check_for_update)
                 .await
-                .unwrap_or_else(|_| {
-                    update::UpdateStatus::CheckFailed("Task panicked".to_string())
-                });
+                .unwrap_or_else(|_| update::UpdateStatus::CheckFailed("Task panicked".to_string()));
             let _ = update_tx.send(Event::UpdateStatusReceived(status));
         });
         debug_log(start, "update check task spawned");
@@ -151,9 +147,10 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
     {
         let version_tx = event_handler.sender();
         tokio::spawn(async move {
-            let version_info = tokio::task::spawn_blocking(update::get_cached_or_fetch_version_info)
-                .await
-                .unwrap_or(None);
+            let version_info =
+                tokio::task::spawn_blocking(update::get_cached_or_fetch_version_info)
+                    .await
+                    .unwrap_or(None);
             let _ = version_tx.send(Event::VersionInfoReceived(version_info));
         });
         debug_log(start, "version info task spawned");
@@ -240,7 +237,9 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                                 daemon_log("forwarding SessionChanged event");
                                 let _ = daemon_tx.send(Event::DaemonSessionChanged(record));
                             }
-                            crate::session_daemon::protocol::DaemonMessage::Restarting { .. } => {
+                            crate::session_daemon::protocol::DaemonMessage::Restarting {
+                                ..
+                            } => {
                                 daemon_log("daemon is restarting, breaking recv loop");
                                 break;
                             }
@@ -336,7 +335,10 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                 if let Some(conflict_msg) = crate::session_store::check_conflict(&snapshot, cs) {
                     let first_session = tab_manager.active_mut();
                     first_session.add_output(format!("[warning] {}", conflict_msg));
-                    first_session.add_output("[warning] Using snapshot state. State file will be overwritten.".to_string());
+                    first_session.add_output(
+                        "[warning] Using snapshot state. State file will be overwritten."
+                            .to_string(),
+                    );
                 }
             }
         }
@@ -358,7 +360,8 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
 
         // Restore elapsed time and cost from previous resume cycles
         first_session.total_cost = snapshot.ui_state.total_cost;
-        first_session.adjust_start_time_for_previous_elapsed(snapshot.total_elapsed_before_resume_ms);
+        first_session
+            .adjust_start_time_for_previous_elapsed(snapshot.total_elapsed_before_resume_ms);
 
         // Save state to ensure state file is in sync with snapshot
         let state_path = snapshot.state_path.clone();
@@ -389,13 +392,11 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
         );
         debug_log(start, "resume workflow started via start_resumed_workflow");
     } else if objective.is_empty() {
-
         let first_session = tab_manager.active_mut();
         first_session.input_mode = InputMode::NamingTab;
         first_session.status = SessionStatus::InputPending;
         debug_log(start, "interactive mode - waiting for user input");
     } else {
-
         let first_session = tab_manager.active_mut();
         first_session.input_mode = InputMode::Normal;
         first_session.status = SessionStatus::Planning;
@@ -461,7 +462,7 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                 } else {
                     // Worktree is gone or invalid - clear it and fall back
                     let _ = init_tx.send(Event::Output(
-                        "[planning] Warning: Previous worktree no longer valid".to_string()
+                        "[planning] Warning: Previous worktree no longer valid".to_string(),
                     ));
                     let _ = init_tx.send(Event::Output(format!(
                         "[planning] Falling back to: {}",
@@ -477,19 +478,25 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
             } else {
                 // No existing worktree, create a new one
                 // Get session directory for worktree (graceful fallback if it fails)
-                let session_dir = match crate::planning_paths::session_dir(&state.workflow_session_id) {
-                    Ok(dir) => dir,
-                    Err(e) => {
-                        let _ = init_tx.send(Event::Output(format!(
-                            "[planning] Warning: Could not get session directory: {}",
-                            e
-                        )));
-                        let _ = init_tx.send(Event::Output(
-                            "[planning] Continuing with original directory".to_string()
-                        ));
-                        return Ok::<_, anyhow::Error>((state, state_path, feature_name, init_working_dir.clone()));
-                    }
-                };
+                let session_dir =
+                    match crate::planning_paths::session_dir(&state.workflow_session_id) {
+                        Ok(dir) => dir,
+                        Err(e) => {
+                            let _ = init_tx.send(Event::Output(format!(
+                                "[planning] Warning: Could not get session directory: {}",
+                                e
+                            )));
+                            let _ = init_tx.send(Event::Output(
+                                "[planning] Continuing with original directory".to_string(),
+                            ));
+                            return Ok::<_, anyhow::Error>((
+                                state,
+                                state_path,
+                                feature_name,
+                                init_working_dir.clone(),
+                            ));
+                        }
+                    };
 
                 // Use custom worktree dir if provided, otherwise use session_dir
                 let worktree_base = custom_worktree_dir
@@ -523,10 +530,11 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                         // Warn about submodules if present
                         if info.has_submodules {
                             let _ = init_tx.send(Event::Output(
-                                "[planning] Warning: Repository has submodules".to_string()
+                                "[planning] Warning: Repository has submodules".to_string(),
                             ));
                             let _ = init_tx.send(Event::Output(
-                                "[planning] Submodules may not be initialized in the worktree.".to_string()
+                                "[planning] Submodules may not be initialized in the worktree."
+                                    .to_string(),
                             ));
                             let _ = init_tx.send(Event::Output(
                                 "[planning] Run 'git submodule update --init' in the worktree if needed.".to_string()
@@ -544,7 +552,7 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                     }
                     crate::git_worktree::WorktreeSetupResult::NotAGitRepo => {
                         let _ = init_tx.send(Event::Output(
-                            "[planning] Not a git repository, using original directory".to_string()
+                            "[planning] Not a git repository, using original directory".to_string(),
                         ));
                         init_working_dir.clone()
                     }
@@ -554,7 +562,7 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                             err
                         )));
                         let _ = init_tx.send(Event::Output(
-                            "[planning] Continuing with original directory".to_string()
+                            "[planning] Continuing with original directory".to_string(),
                         ));
                         init_working_dir.clone()
                     }
@@ -618,8 +626,8 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
         // Check for signals
         #[cfg(unix)]
         {
-            use std::task::Poll;
             use std::pin::Pin;
+            use std::task::Poll;
 
             let signal_received = std::future::poll_fn(|cx| {
                 if Pin::new(&mut sigterm).poll_recv(cx).is_ready() {
@@ -629,7 +637,8 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                     return Poll::Ready(true);
                 }
                 Poll::Ready(false)
-            }).await;
+            })
+            .await;
 
             if signal_received {
                 debug_log(start, "Signal received");
@@ -643,14 +652,21 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
             for session in tab_manager.sessions_mut() {
                 // Save snapshot if we have state
                 if let Some(ref state) = session.workflow_state {
-                    debug_log(start, &format!("Saving snapshot for session {}", state.workflow_session_id));
+                    debug_log(
+                        start,
+                        &format!("Saving snapshot for session {}", state.workflow_session_id),
+                    );
                     // Use session context's base_working_dir if available (preserves original session directory)
                     let session_working_dir = session
                         .context
                         .as_ref()
                         .map(|ctx| ctx.base_working_dir.clone())
                         .unwrap_or_else(|| working_dir.clone());
-                    if let Err(e) = snapshot_helper::create_and_save_snapshot(session, state, &session_working_dir) {
+                    if let Err(e) = snapshot_helper::create_and_save_snapshot(
+                        session,
+                        state,
+                        &session_working_dir,
+                    ) {
                         debug_log(start, &format!("Failed to save snapshot: {}", e));
                     } else {
                         debug_log(start, "Snapshot saved successfully");
@@ -765,7 +781,10 @@ fn load_workflow_config(
             }
             Err(e) => {
                 eprintln!("[planning-agent] Warning: Failed to load config: {}", e);
-                debug_log(start, "Falling back to built-in multi-agent workflow config");
+                debug_log(
+                    start,
+                    "Falling back to built-in multi-agent workflow config",
+                );
             }
         }
     } else {
@@ -777,8 +796,14 @@ fn load_workflow_config(
                     return cfg;
                 }
                 Err(e) => {
-                    eprintln!("[planning-agent] Warning: Failed to load workflow.yaml: {}", e);
-                    debug_log(start, "Falling back to built-in multi-agent workflow config");
+                    eprintln!(
+                        "[planning-agent] Warning: Failed to load workflow.yaml: {}",
+                        e
+                    );
+                    debug_log(
+                        start,
+                        "Falling back to built-in multi-agent workflow config",
+                    );
                 }
             }
         } else {

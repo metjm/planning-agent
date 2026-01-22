@@ -45,7 +45,16 @@ pub fn spawn_summary_generation(
     sender.send_run_tab_summary_generating(phase.clone());
 
     tokio::spawn(async move {
-        match run_summary_generation(&phase_clone, &summary_input, &working_dir, &config, sender.clone(), session_logger).await {
+        match run_summary_generation(
+            &phase_clone,
+            &summary_input,
+            &working_dir,
+            &config,
+            sender.clone(),
+            session_logger,
+        )
+        .await
+        {
             Ok(summary) => {
                 sender.send_run_tab_summary_ready(phase_clone, summary);
             }
@@ -64,18 +73,24 @@ fn build_plan_summary_input(plan_content: &str, phase: &str) -> String {
             .rev()
             .find(|&i| plan_content.is_char_boundary(i))
             .unwrap_or(0);
-        format!("{}...\n\n[Content truncated, {} characters total]",
-                plan_content.get(..truncate_at).unwrap_or(""), plan_content.len())
+        format!(
+            "{}...\n\n[Content truncated, {} characters total]",
+            plan_content.get(..truncate_at).unwrap_or(""),
+            plan_content.len()
+        )
     } else {
         plan_content.to_string()
     };
 
     PromptBuilder::new()
         .phase("summary")
-        .instructions(&format!(r#"Summarize this {} plan. Highlight:
+        .instructions(&format!(
+            r#"Summarize this {} plan. Highlight:
 - Key components/features being implemented
 - Major files to be modified (use absolute paths)
-- Any risks or considerations mentioned"#, phase))
+- Any risks or considerations mentioned"#,
+            phase
+        ))
         .context(&format!("# Plan Content\n\n{}", content))
         .build()
 }
@@ -84,17 +99,23 @@ fn build_review_summary_input(reviews: &[ReviewResult]) -> String {
     let mut review_content = String::new();
     for review in reviews {
         review_content.push_str(&format!("\n## Reviewer: {}\n", review.agent_name));
-        let verdict = if review.needs_revision { "Needs Revision" } else { "Approved" };
+        let verdict = if review.needs_revision {
+            "Needs Revision"
+        } else {
+            "Approved"
+        };
         review_content.push_str(&format!("Verdict: {}\n", verdict));
         review_content.push_str(&format!("Feedback:\n{}\n", review.feedback));
     }
 
     PromptBuilder::new()
         .phase("summary")
-        .instructions(r#"Summarize these code review results. Highlight:
+        .instructions(
+            r#"Summarize these code review results. Highlight:
 - Overall verdict (approved/rejected)
 - Key issues found
-- Main recommendations"#)
+- Main recommendations"#,
+        )
         .context(&format!("# Review Results\n{}", review_content))
         .build()
 }

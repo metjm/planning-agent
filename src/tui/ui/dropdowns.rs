@@ -204,7 +204,12 @@ pub fn draw_slash_dropdown(
 
             // Truncate description if needed
             let desc: String = if m.description.len() > desc_space {
-                format!("{}...", m.description.get(..desc_space.saturating_sub(3)).unwrap_or(""))
+                format!(
+                    "{}...",
+                    m.description
+                        .get(..desc_space.saturating_sub(3))
+                        .unwrap_or("")
+                )
             } else {
                 m.description.clone()
             };
@@ -219,9 +224,7 @@ pub fn draw_slash_dropdown(
             };
 
             let desc_style = if is_selected {
-                Style::default()
-                    .fg(Color::Black)
-                    .bg(Color::Yellow)
+                Style::default().fg(Color::Black).bg(Color::Yellow)
             } else {
                 Style::default().fg(Color::DarkGray)
             };

@@ -107,7 +107,8 @@ impl DebugLogger {
     fn log(&mut self, message: &str) {
         if self.enabled {
             let elapsed_ms = self.start.elapsed().as_millis();
-            self.entries.push(format!("[+{:06}ms] {}", elapsed_ms, message));
+            self.entries
+                .push(format!("[+{:06}ms] {}", elapsed_ms, message));
         }
     }
 
@@ -116,11 +117,7 @@ impl DebugLogger {
             return;
         }
         if let Ok(log_path) = planning_paths::gemini_usage_log_path() {
-            if let Ok(mut file) = OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&log_path)
-            {
+            if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&log_path) {
                 let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
                 let _ = writeln!(file, "\n=== Gemini Usage Fetch {} ===", timestamp);
                 for entry in &self.entries {
@@ -172,9 +169,15 @@ pub fn fetch_gemini_usage_sync() -> GeminiUsage {
             let daily = match (daily_used, reset_duration) {
                 (Some(pct), Some(dur)) => {
                     let reset_ts = ResetTimestamp::from_duration_from_now(dur);
-                    UsageWindow::with_percent_reset_and_span(pct, reset_ts, UsageWindowSpan::Days(1))
+                    UsageWindow::with_percent_reset_and_span(
+                        pct,
+                        reset_ts,
+                        UsageWindowSpan::Days(1),
+                    )
                 }
-                (Some(pct), None) => UsageWindow::with_percent_and_span(pct, UsageWindowSpan::Days(1)),
+                (Some(pct), None) => {
+                    UsageWindow::with_percent_and_span(pct, UsageWindowSpan::Days(1))
+                }
                 _ => UsageWindow::default(),
             };
 
@@ -563,7 +566,7 @@ mod tests {
 "#;
         let (usage, duration) = parse_gemini_usage_with_reset(output);
         assert_eq!(usage, Some(26)); // Lowest is 25.5% -> rounds to 26%
-        // The duration should be from the 25.5% line (6h)
+                                     // The duration should be from the 25.5% line (6h)
         assert_eq!(duration, Some(Duration::from_secs(6 * 3600)));
     }
 

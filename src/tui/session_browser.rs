@@ -22,9 +22,7 @@ pub enum ConfirmationState {
         target_dir: PathBuf,
     },
     /// Confirm force-stopping a running/unresponsive session
-    ForceStop {
-        session_id: String,
-    },
+    ForceStop { session_id: String },
 }
 
 /// A session entry in the browser list, merging live and snapshot data.
@@ -117,9 +115,9 @@ fn format_relative_time(timestamp: &str) -> String {
             chrono::NaiveDateTime::parse_from_str(timestamp, "%Y-%m-%dT%H:%M:%S")
                 .ok()
                 .or_else(|| {
-                    timestamp
-                        .get(..19)
-                        .and_then(|s| chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S").ok())
+                    timestamp.get(..19).and_then(|s| {
+                        chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S").ok()
+                    })
                 })
                 .map(|dt| dt.and_utc())
         });
@@ -225,9 +223,8 @@ impl SessionBrowserState {
                 self.entries = snapshots
                     .iter()
                     .map(|snapshot| {
-                        let snapshot_dir_canonical =
-                            std::fs::canonicalize(&snapshot.working_dir)
-                                .unwrap_or_else(|_| snapshot.working_dir.clone());
+                        let snapshot_dir_canonical = std::fs::canonicalize(&snapshot.working_dir)
+                            .unwrap_or_else(|_| snapshot.working_dir.clone());
                         let is_current_dir = snapshot_dir_canonical == current_dir_canonical;
                         SessionEntry::from_snapshot(snapshot, is_current_dir)
                     })
@@ -276,14 +273,17 @@ impl SessionBrowserState {
                 for record in live_sessions {
                     let has_snapshot = snapshot_ids.contains(&record.workflow_session_id);
                     let is_current_dir = {
-                        let record_dir_canonical =
-                            std::fs::canonicalize(&record.working_dir)
-                                .unwrap_or_else(|_| record.working_dir.clone());
+                        let record_dir_canonical = std::fs::canonicalize(&record.working_dir)
+                            .unwrap_or_else(|_| record.working_dir.clone());
                         record_dir_canonical == current_dir_canonical
                     };
 
                     seen_ids.insert(record.workflow_session_id.clone());
-                    entries.push(SessionEntry::from_live(&record, is_current_dir, has_snapshot));
+                    entries.push(SessionEntry::from_live(
+                        &record,
+                        is_current_dir,
+                        has_snapshot,
+                    ));
                 }
             }
         }
@@ -293,9 +293,8 @@ impl SessionBrowserState {
             Ok(snapshots) => {
                 for snapshot in snapshots {
                     if !seen_ids.contains(&snapshot.workflow_session_id) {
-                        let snapshot_dir_canonical =
-                            std::fs::canonicalize(&snapshot.working_dir)
-                                .unwrap_or_else(|_| snapshot.working_dir.clone());
+                        let snapshot_dir_canonical = std::fs::canonicalize(&snapshot.working_dir)
+                            .unwrap_or_else(|_| snapshot.working_dir.clone());
                         let is_current_dir = snapshot_dir_canonical == current_dir_canonical;
                         entries.push(SessionEntry::from_snapshot(&snapshot, is_current_dir));
                     }
@@ -332,7 +331,12 @@ impl SessionBrowserState {
     }
 
     /// Apply async refresh results.
-    pub fn apply_refresh(&mut self, entries: Vec<SessionEntry>, daemon_connected: bool, error: Option<String>) {
+    pub fn apply_refresh(
+        &mut self,
+        entries: Vec<SessionEntry>,
+        daemon_connected: bool,
+        error: Option<String>,
+    ) {
         self.entries = entries;
         self.daemon_connected = daemon_connected;
         self.error = error;
@@ -694,7 +698,9 @@ mod tests {
         state.current_working_dir = PathBuf::from("/tmp/test");
 
         // Add initial entry
-        state.entries.push(create_test_entry("existing-session", "Planning", 1));
+        state
+            .entries
+            .push(create_test_entry("existing-session", "Planning", 1));
         assert_eq!(state.entries.len(), 1);
 
         // Apply update - should update existing entry
@@ -733,7 +739,9 @@ mod tests {
         state.current_working_dir = PathBuf::from("/tmp/test");
 
         // Add running entry
-        state.entries.push(create_test_entry("live-session", "Planning", 1));
+        state
+            .entries
+            .push(create_test_entry("live-session", "Planning", 1));
 
         // Create stopped record
         let mut record = create_test_record("live-session", "Planning", 1);
@@ -770,16 +778,28 @@ mod tests {
         state.current_working_dir = PathBuf::from("/tmp/test");
 
         // Add two entries
-        state.entries.push(create_test_entry("session-a", "Planning", 1));
-        state.entries.push(create_test_entry("session-b", "Planning", 1));
+        state
+            .entries
+            .push(create_test_entry("session-a", "Planning", 1));
+        state
+            .entries
+            .push(create_test_entry("session-b", "Planning", 1));
 
         // Update only session-b
         let record = create_test_record("session-b", "Reviewing", 2);
         state.apply_session_update(record);
 
         // session-a unchanged, session-b updated
-        let session_a = state.entries.iter().find(|e| e.session_id == "session-a").unwrap();
-        let session_b = state.entries.iter().find(|e| e.session_id == "session-b").unwrap();
+        let session_a = state
+            .entries
+            .iter()
+            .find(|e| e.session_id == "session-a")
+            .unwrap();
+        let session_b = state
+            .entries
+            .iter()
+            .find(|e| e.session_id == "session-b")
+            .unwrap();
 
         assert_eq!(session_a.phase, "Planning");
         assert_eq!(session_a.iteration, 1);

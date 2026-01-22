@@ -1,6 +1,6 @@
 //! Approval-related input handling for the TUI.
 
-use crate::app::workflow::{WorkflowRunConfig, run_workflow_with_config};
+use crate::app::workflow::{run_workflow_with_config, WorkflowRunConfig};
 use crate::config::WorkflowConfig;
 use crate::planning_paths;
 use crate::tui::file_index::FileIndex;
@@ -23,8 +23,7 @@ pub fn compute_plan_summary_max_scroll(plan_summary: &str) -> usize {
     use crate::tui::ui::util::parse_markdown_line;
     use ratatui::text::Line;
     let summary_lines: Vec<Line> = plan_summary.lines().map(parse_markdown_line).collect();
-    let total_lines =
-        crate::tui::ui::util::compute_wrapped_line_count(&summary_lines, inner_width);
+    let total_lines = crate::tui::ui::util::compute_wrapped_line_count(&summary_lines, inner_width);
 
     total_lines.saturating_sub(visible_height as usize)
 }
@@ -50,10 +49,12 @@ pub async fn handle_awaiting_choice_input(
             handle_user_override_input(key, session, terminal, working_dir, output_tx).await
         }
         ApprovalContext::AllReviewersFailed => {
-            handle_all_reviewers_failed_input(key, session, working_dir, output_tx, workflow_config).await
+            handle_all_reviewers_failed_input(key, session, working_dir, output_tx, workflow_config)
+                .await
         }
         ApprovalContext::WorkflowFailure => {
-            handle_workflow_failure_input(key, session, working_dir, output_tx, workflow_config).await
+            handle_workflow_failure_input(key, session, working_dir, output_tx, workflow_config)
+                .await
         }
     }
 }
@@ -199,13 +200,14 @@ pub async fn handle_all_reviewers_failed_input(
                     state.clear_failure();
 
                     // Compute state_path from working_dir and feature_name
-                    let state_path = match planning_paths::state_path(working_dir, &state.feature_name) {
-                        Ok(p) => p,
-                        Err(e) => {
-                            session.handle_error(&format!("Failed to get state path: {}", e));
-                            return Ok(false);
-                        }
-                    };
+                    let state_path =
+                        match planning_paths::state_path(working_dir, &state.feature_name) {
+                            Ok(p) => p,
+                            Err(e) => {
+                                session.handle_error(&format!("Failed to get state path: {}", e));
+                                return Ok(false);
+                            }
+                        };
 
                     // Save state with cleared failure
                     state.set_updated_at();
@@ -215,7 +217,8 @@ pub async fn handle_all_reviewers_failed_input(
                     }
 
                     // Set up channels
-                    let (new_approval_tx, new_approval_rx) = mpsc::channel::<UserApprovalResponse>(1);
+                    let (new_approval_tx, new_approval_rx) =
+                        mpsc::channel::<UserApprovalResponse>(1);
                     session.approval_tx = Some(new_approval_tx);
 
                     let (new_control_tx, new_control_rx) = mpsc::channel::<WorkflowCommand>(1);
@@ -253,7 +256,8 @@ pub async fn handle_all_reviewers_failed_input(
                     });
 
                     session.workflow_handle = Some(workflow_handle);
-                    session.add_output("[planning] Retrying workflow after recovery...".to_string());
+                    session
+                        .add_output("[planning] Retrying workflow after recovery...".to_string());
                 }
             } else {
                 // Normal mode: send via approval channel
@@ -331,13 +335,14 @@ pub async fn handle_workflow_failure_input(
                     state.clear_failure();
 
                     // Compute state_path from working_dir and feature_name
-                    let state_path = match planning_paths::state_path(working_dir, &state.feature_name) {
-                        Ok(p) => p,
-                        Err(e) => {
-                            session.handle_error(&format!("Failed to get state path: {}", e));
-                            return Ok(false);
-                        }
-                    };
+                    let state_path =
+                        match planning_paths::state_path(working_dir, &state.feature_name) {
+                            Ok(p) => p,
+                            Err(e) => {
+                                session.handle_error(&format!("Failed to get state path: {}", e));
+                                return Ok(false);
+                            }
+                        };
 
                     // Save state with cleared failure
                     state.set_updated_at();
@@ -347,7 +352,8 @@ pub async fn handle_workflow_failure_input(
                     }
 
                     // Set up channels
-                    let (new_approval_tx, new_approval_rx) = mpsc::channel::<UserApprovalResponse>(1);
+                    let (new_approval_tx, new_approval_rx) =
+                        mpsc::channel::<UserApprovalResponse>(1);
                     session.approval_tx = Some(new_approval_tx);
 
                     let (new_control_tx, new_control_rx) = mpsc::channel::<WorkflowCommand>(1);
@@ -385,7 +391,8 @@ pub async fn handle_workflow_failure_input(
                     });
 
                     session.workflow_handle = Some(workflow_handle);
-                    session.add_output("[planning] Retrying workflow after recovery...".to_string());
+                    session
+                        .add_output("[planning] Retrying workflow after recovery...".to_string());
                 }
             } else {
                 // Normal mode: send via approval channel
@@ -547,8 +554,7 @@ pub async fn handle_entering_feedback_input(
                 return Ok(false);
             }
             KeyCode::Tab | KeyCode::Enter
-                if key.code == KeyCode::Tab
-                    || !key.modifiers.contains(KeyModifiers::SHIFT) =>
+                if key.code == KeyCode::Tab || !key.modifiers.contains(KeyModifiers::SHIFT) =>
             {
                 session.accept_feedback_mention();
                 update_mention_state(

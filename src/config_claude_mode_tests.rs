@@ -34,7 +34,12 @@ implementation:
     // Planning agent should be substituted
     assert_eq!(config.workflow.planning.agent, "claude");
     // Claude agent should have updated allowed_tools from claude_mode
-    assert!(config.agents.get("claude").unwrap().allowed_tools.contains(&"Write".to_string()));
+    assert!(config
+        .agents
+        .get("claude")
+        .unwrap()
+        .allowed_tools
+        .contains(&"Write".to_string()));
 }
 
 #[test]
@@ -111,7 +116,10 @@ implementation:
 
     // Reviewing phase should be completely replaced, not merged
     assert_eq!(config.workflow.reviewing.agents.len(), 2);
-    assert_eq!(config.workflow.reviewing.aggregation, AggregationMode::AllReject);
+    assert_eq!(
+        config.workflow.reviewing.aggregation,
+        AggregationMode::AllReject
+    );
     match &config.workflow.reviewing.agents[1] {
         AgentRef::Extended(inst) => {
             assert_eq!(inst.id, Some("custom-reviewer".to_string()));
@@ -185,9 +193,16 @@ fn test_claude_practices_reviewer_preserved() {
         matches!(r, AgentRef::Extended(inst) if inst.id == Some("claude-practices".to_string()))
     });
 
-    assert!(practices_reviewer.is_some(), "claude-practices reviewer should be present");
+    assert!(
+        practices_reviewer.is_some(),
+        "claude-practices reviewer should be present"
+    );
     if let Some(AgentRef::Extended(inst)) = practices_reviewer {
-        assert!(inst.prompt.as_ref().unwrap().contains("repository practices"));
+        assert!(inst
+            .prompt
+            .as_ref()
+            .unwrap()
+            .contains("repository practices"));
     }
 }
 
@@ -225,6 +240,12 @@ implementation:
 
     // Both implementing and reviewing would map to claude after substitution
     // But since claude-reviewer exists, reviewing should use it instead
-    assert_eq!(config.implementation.implementing.as_ref().unwrap().agent, "claude");
-    assert_eq!(config.implementation.reviewing.as_ref().unwrap().agent, "claude-reviewer");
+    assert_eq!(
+        config.implementation.implementing.as_ref().unwrap().agent,
+        "claude"
+    );
+    assert_eq!(
+        config.implementation.reviewing.as_ref().unwrap().agent,
+        "claude-reviewer"
+    );
 }

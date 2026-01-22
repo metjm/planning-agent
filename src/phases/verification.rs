@@ -168,18 +168,23 @@ If there are issues, wrap detailed fix instructions in <verification-feedback> t
 
     PromptBuilder::new()
         .phase("verification")
-        .instructions(r#"Verify the implementation against the approved plan.
+        .instructions(
+            r#"Verify the implementation against the approved plan.
 
 1. Read the plan file to understand what was supposed to be implemented
 2. Explore the repository to see what was actually implemented
 3. Compare each requirement/step in the plan against the implementation
-4. Note any discrepancies, missing features, or deviations"#)
+4. Note any discrepancies, missing features, or deviations"#,
+        )
         .input("workspace-root", &state.working_dir.display().to_string())
         .input("plan-path", &plan_path.display().to_string())
         .input("repository-path", &state.working_dir.display().to_string())
         .input("report-output-path", &report_path.display().to_string())
         .input("iteration", &state.iteration.to_string())
-        .constraint(&format!("Use absolute paths for all file references in your report (e.g., {}/src/main.rs:45)", state.working_dir.display()))
+        .constraint(&format!(
+            "Use absolute paths for all file references in your report (e.g., {}/src/main.rs:45)",
+            state.working_dir.display()
+        ))
         .output_format(&output_format)
         .build()
 }

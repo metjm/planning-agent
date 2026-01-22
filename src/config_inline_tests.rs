@@ -39,11 +39,22 @@ fn test_claude_only_config() {
     // Reviewing phase should use the claude_mode.reviewing override
     // with claude, claude-practices, and claude-completeness reviewers
     assert_eq!(config.workflow.reviewing.agents.len(), 3);
-    assert_eq!(config.workflow.reviewing.agents[0], AgentRef::Simple("claude".to_string()));
+    assert_eq!(
+        config.workflow.reviewing.agents[0],
+        AgentRef::Simple("claude".to_string())
+    );
     // Verify extended reviewers have unique IDs
-    let ids: Vec<_> = config.workflow.reviewing.agents.iter()
-        .map(|a| a.display_id()).collect();
-    assert_eq!(ids, vec!["claude", "claude-practices", "claude-completeness"]);
+    let ids: Vec<_> = config
+        .workflow
+        .reviewing
+        .agents
+        .iter()
+        .map(|a| a.display_id())
+        .collect();
+    assert_eq!(
+        ids,
+        vec!["claude", "claude-practices", "claude-completeness"]
+    );
 
     // Implementation should be enabled with distinct reviewer
     assert!(config.implementation.enabled);
@@ -383,10 +394,16 @@ workflow:
     agent: claude
 "#;
     let result: Result<WorkflowConfig, _> = serde_yaml::from_str(yaml);
-    assert!(result.is_err(), "Config with revising field should fail to parse");
+    assert!(
+        result.is_err(),
+        "Config with revising field should fail to parse"
+    );
     let err = result.unwrap_err().to_string();
-    assert!(err.contains("revising") || err.contains("unknown field"),
-        "Error should mention 'revising' or 'unknown field': {}", err);
+    assert!(
+        err.contains("revising") || err.contains("unknown field"),
+        "Error should mention 'revising' or 'unknown field': {}",
+        err
+    );
 }
 
 #[test]
@@ -414,12 +431,21 @@ implementation:
 "#;
     let config: WorkflowConfig = serde_yaml::from_str(yaml).unwrap();
     let result = config.validate();
-    assert!(result.is_err(), "Config with duplicate reviewer IDs should fail validation");
+    assert!(
+        result.is_err(),
+        "Config with duplicate reviewer IDs should fail validation"
+    );
     let err = result.unwrap_err().to_string();
-    assert!(err.contains("Duplicate reviewer display ID 'custom-reviewer'"),
-        "Error should mention the duplicate ID: {}", err);
-    assert!(err.contains("feedback files are named"),
-        "Error should explain why duplicates are problematic: {}", err);
+    assert!(
+        err.contains("Duplicate reviewer display ID 'custom-reviewer'"),
+        "Error should mention the duplicate ID: {}",
+        err
+    );
+    assert!(
+        err.contains("feedback files are named"),
+        "Error should explain why duplicates are problematic: {}",
+        err
+    );
 }
 
 #[test]
@@ -438,10 +464,16 @@ workflow:
 "#;
     let config: WorkflowConfig = serde_yaml::from_str(yaml).unwrap();
     let result = config.validate();
-    assert!(result.is_err(), "Config with empty agent command should fail validation");
+    assert!(
+        result.is_err(),
+        "Config with empty agent command should fail validation"
+    );
     let err = result.unwrap_err().to_string();
-    assert!(err.contains("empty command"),
-        "Error should mention empty command: {}", err);
+    assert!(
+        err.contains("empty command"),
+        "Error should mention empty command: {}",
+        err
+    );
 }
 
 #[test]
@@ -460,7 +492,10 @@ workflow:
 "#;
     let config: WorkflowConfig = serde_yaml::from_str(yaml).unwrap();
     let result = config.validate();
-    assert!(result.is_err(), "Config with whitespace-only command should fail validation");
+    assert!(
+        result.is_err(),
+        "Config with whitespace-only command should fail validation"
+    );
 }
 
 #[test]
@@ -479,8 +514,14 @@ workflow:
 "#;
     let config: WorkflowConfig = serde_yaml::from_str(yaml).unwrap();
     let result = config.validate();
-    assert!(result.is_err(), "Config with zero max_turns should fail validation");
+    assert!(
+        result.is_err(),
+        "Config with zero max_turns should fail validation"
+    );
     let err = result.unwrap_err().to_string();
-    assert!(err.contains("max_turns=0"),
-        "Error should mention max_turns=0: {}", err);
+    assert!(
+        err.contains("max_turns=0"),
+        "Error should mention max_turns=0: {}",
+        err
+    );
 }

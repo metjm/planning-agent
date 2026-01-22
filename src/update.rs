@@ -62,7 +62,6 @@ pub fn check_for_update() -> UpdateStatus {
 }
 
 fn fetch_latest_commit() -> Result<UpdateInfo> {
-
     let config = ureq::Agent::config_builder()
         .timeout_global(Some(Duration::from_secs(10)))
         .build();
@@ -70,8 +69,12 @@ fn fetch_latest_commit() -> Result<UpdateInfo> {
 
     let url = "https://api.github.com/repos/metjm/planning-agent/commits?per_page=1";
 
-    let mut request = agent.get(url)
-        .header("User-Agent", format!("planning-agent/{}", env!("CARGO_PKG_VERSION")))
+    let mut request = agent
+        .get(url)
+        .header(
+            "User-Agent",
+            format!("planning-agent/{}", env!("CARGO_PKG_VERSION")),
+        )
         .header("Accept", "application/vnd.github+json");
 
     if let Ok(token) = std::env::var("GITHUB_TOKEN") {
@@ -85,16 +88,14 @@ fn fetch_latest_commit() -> Result<UpdateInfo> {
         .read_to_string()
         .context("Failed to read response body")?;
 
-    let response: serde_json::Value = serde_json::from_str(&body)
-        .context("Failed to parse GitHub response")?;
+    let response: serde_json::Value =
+        serde_json::from_str(&body).context("Failed to parse GitHub response")?;
 
     let commits = response
         .as_array()
         .context("Expected array response from GitHub")?;
 
-    let commit = commits
-        .first()
-        .context("No commits found")?;
+    let commit = commits.first().context("No commits found")?;
 
     let sha = commit["sha"]
         .as_str()
@@ -179,10 +180,7 @@ fn read_version_cache() -> Option<VersionInfo> {
     }
 
     // Check if cache is still fresh
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .ok()?
-        .as_secs();
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_secs();
     if now.saturating_sub(info.fetched_at_epoch) > VERSION_CACHE_TTL_SECS {
         return None;
     }
@@ -206,10 +204,17 @@ fn fetch_commit_info(sha: &str) -> Result<VersionInfo> {
         .build();
     let agent: ureq::Agent = config.into();
 
-    let url = format!("https://api.github.com/repos/metjm/planning-agent/commits/{}", sha);
+    let url = format!(
+        "https://api.github.com/repos/metjm/planning-agent/commits/{}",
+        sha
+    );
 
-    let mut request = agent.get(&url)
-        .header("User-Agent", format!("planning-agent/{}", env!("CARGO_PKG_VERSION")))
+    let mut request = agent
+        .get(&url)
+        .header(
+            "User-Agent",
+            format!("planning-agent/{}", env!("CARGO_PKG_VERSION")),
+        )
         .header("Accept", "application/vnd.github+json");
 
     if let Ok(token) = std::env::var("GITHUB_TOKEN") {
@@ -223,8 +228,8 @@ fn fetch_commit_info(sha: &str) -> Result<VersionInfo> {
         .read_to_string()
         .context("Failed to read response body")?;
 
-    let response: serde_json::Value = serde_json::from_str(&body)
-        .context("Failed to parse GitHub response")?;
+    let response: serde_json::Value =
+        serde_json::from_str(&body).context("Failed to parse GitHub response")?;
 
     let full_sha = response["sha"]
         .as_str()
@@ -299,8 +304,8 @@ pub enum UpdateResult {
 /// The `working_dir` parameter is no longer used but kept for API compatibility.
 #[allow(unused_variables)]
 pub fn write_update_marker(working_dir: &std::path::Path) -> std::io::Result<()> {
-    let marker_path = planning_paths::update_marker_path()
-        .map_err(|e| std::io::Error::other(e.to_string()))?;
+    let marker_path =
+        planning_paths::update_marker_path().map_err(|e| std::io::Error::other(e.to_string()))?;
     std::fs::write(&marker_path, "")
 }
 
@@ -322,7 +327,6 @@ pub fn consume_update_marker(working_dir: &std::path::Path) -> bool {
 }
 
 pub fn perform_update() -> UpdateResult {
-
     if which::which("git").is_err() {
         return UpdateResult::GitNotFound;
     }
@@ -343,11 +347,9 @@ pub fn perform_update() -> UpdateResult {
     match output {
         Ok(result) => {
             if result.status.success() {
-
                 match which::which("planning") {
                     Ok(path) => UpdateResult::Success(path),
                     Err(_) => {
-
                         if let Some(home) = dirs::home_dir() {
                             let fallback = home.join(".cargo/bin/planning");
                             if fallback.exists() {
@@ -394,7 +396,6 @@ mod tests {
 
     #[test]
     fn test_build_sha_is_set() {
-
         assert!(!BUILD_SHA.is_empty());
     }
 
@@ -417,10 +418,8 @@ mod tests {
             return;
         }
 
-        let temp_dir = std::env::temp_dir().join(format!(
-            "planning-agent-test-{}",
-            std::process::id()
-        ));
+        let temp_dir =
+            std::env::temp_dir().join(format!("planning-agent-test-{}", std::process::id()));
 
         // First consume to ensure we start clean
         let _ = consume_update_marker(&temp_dir);

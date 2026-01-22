@@ -1,9 +1,7 @@
-
 use super::model::PasteBlock;
 use super::Session;
 
 impl Session {
-
     pub fn insert_paste_tab_input(&mut self, text: String) {
         if text.is_empty() {
             return;
@@ -19,7 +17,8 @@ impl Session {
         };
 
         let placeholder = Self::format_paste_placeholder(line_count);
-        self.tab_input.insert_str(self.tab_input_cursor, &placeholder);
+        self.tab_input
+            .insert_str(self.tab_input_cursor, &placeholder);
         self.tab_input_cursor += placeholder.len();
 
         for paste in &mut self.tab_input_pastes {
@@ -46,7 +45,8 @@ impl Session {
         };
 
         let placeholder = Self::format_paste_placeholder(line_count);
-        self.user_feedback.insert_str(self.cursor_position, &placeholder);
+        self.user_feedback
+            .insert_str(self.cursor_position, &placeholder);
         self.cursor_position += placeholder.len();
 
         for paste in &mut self.feedback_pastes {
@@ -67,7 +67,6 @@ impl Session {
     }
 
     pub fn delete_paste_at_cursor_tab(&mut self) -> bool {
-
         if let Some(idx) = self.find_paste_at_cursor_tab() {
             let paste = self.tab_input_pastes.remove(idx);
             let placeholder = Self::format_paste_placeholder(paste.line_count);
@@ -99,9 +98,7 @@ impl Session {
             let placeholder = Self::format_paste_placeholder(paste.line_count);
             let placeholder_end = paste.start_pos + placeholder.len();
 
-            if self.tab_input_cursor > paste.start_pos
-                && self.tab_input_cursor <= placeholder_end
-            {
+            if self.tab_input_cursor > paste.start_pos && self.tab_input_cursor <= placeholder_end {
                 return Some(idx);
             }
         }
@@ -109,12 +106,10 @@ impl Session {
     }
 
     pub fn get_display_text_tab(&self) -> String {
-
         self.tab_input.clone()
     }
 
     pub fn get_display_text_feedback(&self) -> String {
-
         self.user_feedback.clone()
     }
 

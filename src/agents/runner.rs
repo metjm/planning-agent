@@ -110,7 +110,12 @@ pub trait EventEmitter: Send + Sync {
     fn send_model_detected(&self, model: String);
     fn send_stop_reason(&self, reason: String);
     fn send_token_usage(&self, usage: TokenUsage);
-    fn send_tool_started(&self, tool_id: Option<String>, display_name: String, input_preview: String);
+    fn send_tool_started(
+        &self,
+        tool_id: Option<String>,
+        display_name: String,
+        input_preview: String,
+    );
     fn send_tool_finished(&self, tool_id: Option<String>);
     fn send_tool_result_received(
         &self,
@@ -125,7 +130,12 @@ pub trait EventEmitter: Send + Sync {
     /// Allocate a new unique CLI instance ID.
     fn next_cli_instance_id(&self) -> CliInstanceId;
     /// Send a CLI instance started event.
-    fn send_cli_instance_started(&self, id: CliInstanceId, pid: Option<u32>, started_at: std::time::Instant);
+    fn send_cli_instance_started(
+        &self,
+        id: CliInstanceId,
+        pid: Option<u32>,
+        started_at: std::time::Instant,
+    );
     /// Send a CLI instance activity event.
     fn send_cli_instance_activity(&self, id: CliInstanceId, activity_at: std::time::Instant);
     /// Send a CLI instance finished event.
@@ -169,7 +179,12 @@ impl EventEmitter for ContextEmitter {
     fn send_token_usage(&self, usage: TokenUsage) {
         self.context.session_sender.send_token_usage(usage);
     }
-    fn send_tool_started(&self, tool_id: Option<String>, display_name: String, input_preview: String) {
+    fn send_tool_started(
+        &self,
+        tool_id: Option<String>,
+        display_name: String,
+        input_preview: String,
+    ) {
         self.context.session_sender.send_tool_started(
             self.context.phase.clone(),
             tool_id,
@@ -189,15 +204,13 @@ impl EventEmitter for ContextEmitter {
         is_error: bool,
         summary: ToolResultSummary,
     ) {
-        self.context
-            .session_sender
-            .send_tool_result_received(
-                self.context.phase.clone(),
-                tool_id,
-                is_error,
-                summary,
-                self.agent_name.clone(),
-            );
+        self.context.session_sender.send_tool_result_received(
+            self.context.phase.clone(),
+            tool_id,
+            is_error,
+            summary,
+            self.agent_name.clone(),
+        );
     }
     fn send_agent_message(&self, msg: String) {
         self.context.session_sender.send_agent_message(
@@ -214,7 +227,12 @@ impl EventEmitter for ContextEmitter {
     fn next_cli_instance_id(&self) -> CliInstanceId {
         self.context.session_sender.next_cli_instance_id()
     }
-    fn send_cli_instance_started(&self, id: CliInstanceId, pid: Option<u32>, started_at: std::time::Instant) {
+    fn send_cli_instance_started(
+        &self,
+        id: CliInstanceId,
+        pid: Option<u32>,
+        started_at: std::time::Instant,
+    ) {
         self.context.session_sender.send_cli_instance_started(
             id,
             self.agent_name.clone(),
@@ -223,7 +241,9 @@ impl EventEmitter for ContextEmitter {
         );
     }
     fn send_cli_instance_activity(&self, id: CliInstanceId, activity_at: std::time::Instant) {
-        self.context.session_sender.send_cli_instance_activity(id, activity_at);
+        self.context
+            .session_sender
+            .send_cli_instance_activity(id, activity_at);
     }
     fn send_cli_instance_finished(&self, id: CliInstanceId) {
         self.context.session_sender.send_cli_instance_finished(id);
@@ -239,7 +259,11 @@ struct CliInstanceGuard<'a> {
 
 impl<'a> CliInstanceGuard<'a> {
     fn new(id: CliInstanceId, emitter: &'a dyn EventEmitter) -> Self {
-        Self { id, emitter, finished: false }
+        Self {
+            id,
+            emitter,
+            finished: false,
+        }
     }
 
     /// Mark as finished (prevents double-emit on drop).
@@ -330,7 +354,10 @@ pub async fn run_agent_process<P: AgentStreamParser>(
     parser: &mut P,
     emitter: &dyn EventEmitter,
 ) -> Result<AgentOutput> {
-    let logger = config.session_logger.as_ref().map(|sl| AgentLogger::new(&config.agent_name, sl.clone()));
+    let logger = config
+        .session_logger
+        .as_ref()
+        .map(|sl| AgentLogger::new(&config.agent_name, sl.clone()));
 
     command.current_dir(&config.working_dir);
     command.stdout(Stdio::piped()).stderr(Stdio::piped());

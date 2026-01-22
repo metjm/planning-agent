@@ -120,9 +120,36 @@ pub fn detect_mention_at_cursor(input: &str, cursor: usize) -> Option<(usize, St
 fn is_punctuation(c: char) -> bool {
     matches!(
         c,
-        '(' | ')' | '[' | ']' | '{' | '}' | ',' | ';' | ':' | '"' | '\'' | '`' | '<' | '>' | '/'
-            | '\\' | '|' | '!' | '?' | '.' | '-' | '_' | '=' | '+' | '*' | '&' | '^' | '%' | '$'
-            | '#' | '~'
+        '(' | ')'
+            | '['
+            | ']'
+            | '{'
+            | '}'
+            | ','
+            | ';'
+            | ':'
+            | '"'
+            | '\''
+            | '`'
+            | '<'
+            | '>'
+            | '/'
+            | '\\'
+            | '|'
+            | '!'
+            | '?'
+            | '.'
+            | '-'
+            | '_'
+            | '='
+            | '+'
+            | '*'
+            | '&'
+            | '^'
+            | '%'
+            | '$'
+            | '#'
+            | '~'
     )
 }
 
@@ -223,9 +250,21 @@ mod tests {
             query: "test".to_string(),
             start_byte: 0,
             matches: vec![
-                MentionMatch { display_path: "a".to_string(), absolute_path: PathBuf::from("a"), score: 10 },
-                MentionMatch { display_path: "b".to_string(), absolute_path: PathBuf::from("b"), score: 9 },
-                MentionMatch { display_path: "c".to_string(), absolute_path: PathBuf::from("c"), score: 8 },
+                MentionMatch {
+                    display_path: "a".to_string(),
+                    absolute_path: PathBuf::from("a"),
+                    score: 10,
+                },
+                MentionMatch {
+                    display_path: "b".to_string(),
+                    absolute_path: PathBuf::from("b"),
+                    score: 9,
+                },
+                MentionMatch {
+                    display_path: "c".to_string(),
+                    absolute_path: PathBuf::from("c"),
+                    score: 8,
+                },
             ],
             selected_idx: 0,
         };
@@ -245,8 +284,16 @@ mod tests {
             query: "test".to_string(),
             start_byte: 0,
             matches: vec![
-                MentionMatch { display_path: "a".to_string(), absolute_path: PathBuf::from("a"), score: 10 },
-                MentionMatch { display_path: "b".to_string(), absolute_path: PathBuf::from("b"), score: 9 },
+                MentionMatch {
+                    display_path: "a".to_string(),
+                    absolute_path: PathBuf::from("a"),
+                    score: 10,
+                },
+                MentionMatch {
+                    display_path: "b".to_string(),
+                    absolute_path: PathBuf::from("b"),
+                    score: 9,
+                },
             ],
             selected_idx: 0,
         };
@@ -265,7 +312,11 @@ mod tests {
             active: true,
             query: "test".to_string(),
             start_byte: 5,
-            matches: vec![MentionMatch { display_path: "a".to_string(), absolute_path: PathBuf::from("a"), score: 10 }],
+            matches: vec![MentionMatch {
+                display_path: "a".to_string(),
+                absolute_path: PathBuf::from("a"),
+                score: 10,
+            }],
             selected_idx: 0,
         };
 
@@ -285,8 +336,16 @@ mod tests {
             query: "test".to_string(),
             start_byte: 0,
             matches: vec![
-                MentionMatch { display_path: "a".to_string(), absolute_path: PathBuf::from("a"), score: 10 },
-                MentionMatch { display_path: "b".to_string(), absolute_path: PathBuf::from("b"), score: 9 },
+                MentionMatch {
+                    display_path: "a".to_string(),
+                    absolute_path: PathBuf::from("a"),
+                    score: 10,
+                },
+                MentionMatch {
+                    display_path: "b".to_string(),
+                    absolute_path: PathBuf::from("b"),
+                    score: 9,
+                },
             ],
             selected_idx: 1,
         };

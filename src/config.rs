@@ -120,10 +120,17 @@ impl ImplementationConfig {
 
         // Default reviewing to first workflow.reviewing agent that differs from implementing
         if self.reviewing.is_none() {
-            let implementing_agent = self.implementing.as_ref().map(|p| p.agent.as_str()).unwrap_or("");
+            let implementing_agent = self
+                .implementing
+                .as_ref()
+                .map(|p| p.agent.as_str())
+                .unwrap_or("");
 
             // Find first reviewer that differs from the implementing agent
-            let reviewer = workflow.reviewing.agents.iter()
+            let reviewer = workflow
+                .reviewing
+                .agents
+                .iter()
                 .map(|r| r.agent_name())
                 .find(|name| *name != implementing_agent);
 
@@ -133,7 +140,8 @@ impl ImplementationConfig {
                     max_turns: None, // Use agent default
                 });
             } else if workflow.reviewing.agents.len() == 1
-                && workflow.reviewing.agents[0].agent_name() != implementing_agent {
+                && workflow.reviewing.agents[0].agent_name() != implementing_agent
+            {
                 // Single reviewer that is different from implementing agent
                 self.reviewing = Some(SingleAgentPhase {
                     agent: workflow.reviewing.agents[0].agent_name().to_string(),
@@ -300,13 +308,12 @@ pub struct MultiAgentPhase {
 #[serde(rename_all = "snake_case")]
 pub enum AggregationMode {
     #[default]
-    AnyRejects, 
-    AllReject,  
-    Majority,   
+    AnyRejects,
+    AllReject,
+    Majority,
 }
 
 impl WorkflowConfig {
-
     pub fn load(path: &Path) -> Result<Self> {
         let content = std::fs::read_to_string(path)
             .with_context(|| format!("Failed to read config file: {}", path.display()))?;
@@ -321,10 +328,13 @@ impl WorkflowConfig {
     pub fn default_config() -> Self {
         const DEFAULT_WORKFLOW_YAML: &str = include_str!("../workflow.yaml");
 
-        let mut config: Self = serde_yaml::from_str(DEFAULT_WORKFLOW_YAML)
-            .expect("Failed to parse embedded workflow.yaml - this is a bug in the workflow.yaml file");
+        let mut config: Self = serde_yaml::from_str(DEFAULT_WORKFLOW_YAML).expect(
+            "Failed to parse embedded workflow.yaml - this is a bug in the workflow.yaml file",
+        );
         // Normalize implementation config defaults
-        config.implementation.normalize(&config.workflow)
+        config
+            .implementation
+            .normalize(&config.workflow)
             .expect("Failed to normalize implementation config - this is a bug");
         config
     }
@@ -333,13 +343,16 @@ impl WorkflowConfig {
     /// Transforms the default config by applying claude_mode substitutions.
     pub fn claude_only_config() -> Self {
         let mut config = Self::default_config();
-        config.transform_to_claude_only()
+        config
+            .transform_to_claude_only()
             .expect("Failed to transform config to Claude-only mode - this is a bug");
         // Re-normalize after transformation to update implementation defaults
-        config.implementation.normalize(&config.workflow)
-            .expect("Failed to normalize implementation config after transformation - this is a bug");
+        config.implementation.normalize(&config.workflow).expect(
+            "Failed to normalize implementation config after transformation - this is a bug",
+        );
         // Validate the transformed config to catch any configuration errors
-        config.validate()
+        config
+            .validate()
             .expect("Transformed Claude-only config failed validation - this is a bug");
         config
     }
@@ -361,14 +374,17 @@ impl WorkflowConfig {
 
         // Validate substitution targets exist before proceeding
         for (from, to) in &substitutions {
-            let target_exists = self.claude_mode.agents.contains_key(to)
-                || self.agents.contains_key(to);
+            let target_exists =
+                self.claude_mode.agents.contains_key(to) || self.agents.contains_key(to);
             if !target_exists {
                 anyhow::bail!(
                     "Claude-mode substitution target '{}' not found. \
                      Substitution '{}' -> '{}' is invalid. \
                      Ensure claude_mode.agents defines '{}' or it exists in the base agents.",
-                    to, from, to, to
+                    to,
+                    from,
+                    to,
+                    to
                 );
             }
         }
@@ -401,10 +417,14 @@ impl WorkflowConfig {
         }
         if let Some(ref mut review_phase) = self.implementation.reviewing {
             let original = &review_phase.agent;
-            let substituted = substitutions.get(original).cloned()
+            let substituted = substitutions
+                .get(original)
+                .cloned()
                 .unwrap_or_else(|| original.clone());
 
-            let impl_agent = self.implementation.implementing
+            let impl_agent = self
+                .implementation
+                .implementing
                 .as_ref()
                 .map(|p| p.agent.as_str())
                 .unwrap_or("");

@@ -21,7 +21,10 @@ fn test_parse_usage_used_percent_100() {
  Current session
  ████████████████████████████████████████████████████100% used
 "#;
-    assert_eq!(parse_usage_used_percent(output, "current session"), Some(100));
+    assert_eq!(
+        parse_usage_used_percent(output, "current session"),
+        Some(100)
+    );
 }
 
 #[test]
@@ -45,7 +48,10 @@ fn test_parse_plan_type_claude_pro() {
 #[test]
 fn test_parse_plan_type_fallback() {
     assert_eq!(parse_plan_type("Plan: Max"), Some("Max".to_string()));
-    assert_eq!(parse_plan_type("Your plan: Pro tier"), Some("Pro".to_string()));
+    assert_eq!(
+        parse_plan_type("Your plan: Pro tier"),
+        Some("Pro".to_string())
+    );
 }
 
 #[test]
@@ -68,9 +74,15 @@ fn test_claude_usage_is_stale() {
 #[test]
 fn test_strip_ansi_codes() {
     assert_eq!(strip_ansi_codes("\x1b[32mHello\x1b[0m"), "Hello");
-    assert_eq!(strip_ansi_codes("\x1b[1;31mBold Red\x1b[0m Text"), "Bold Red Text");
+    assert_eq!(
+        strip_ansi_codes("\x1b[1;31mBold Red\x1b[0m Text"),
+        "Bold Red Text"
+    );
     assert_eq!(strip_ansi_codes("Plain text"), "Plain text");
-    assert_eq!(strip_ansi_codes("\x1b[33mYellow\x1b[0m \x1b[34mBlue\x1b[0m"), "Yellow Blue");
+    assert_eq!(
+        strip_ansi_codes("\x1b[33mYellow\x1b[0m \x1b[34mBlue\x1b[0m"),
+        "Yellow Blue"
+    );
     assert_eq!(strip_ansi_codes("\x1b[2K\x1b[1GLine"), "Line");
 }
 
@@ -78,7 +90,10 @@ fn test_strip_ansi_codes() {
 fn test_parse_usage_with_ansi_codes() {
     let raw = "\x1b[32mCurrent session\x1b[0m\n██ 80% used";
     let stripped = strip_ansi_codes(raw);
-    assert_eq!(parse_usage_used_percent(&stripped, "current session"), Some(80));
+    assert_eq!(
+        parse_usage_used_percent(&stripped, "current session"),
+        Some(80)
+    );
 }
 
 #[test]
@@ -92,33 +107,51 @@ fn test_parse_plan_with_ansi_codes() {
 fn test_no_expect_in_error_messages() {
     let error_usage = ClaudeUsage::with_error("Some error".to_string());
     if let Some(msg) = &error_usage.error_message {
-        assert!(!msg.to_lowercase().contains("expect"), "Error message should not mention expect");
+        assert!(
+            !msg.to_lowercase().contains("expect"),
+            "Error message should not mention expect"
+        );
     }
 
     let claude_not_found = ClaudeUsage::claude_not_available();
     if let Some(msg) = &claude_not_found.error_message {
-        assert!(!msg.to_lowercase().contains("expect"), "Error message should not mention expect");
+        assert!(
+            !msg.to_lowercase().contains("expect"),
+            "Error message should not mention expect"
+        );
     }
 }
 
 #[test]
 fn test_claude_usage_with_error_sets_fetched_at() {
     let usage = ClaudeUsage::with_error("Test error".to_string());
-    assert!(usage.fetched_at.is_some(), "with_error should set fetched_at");
+    assert!(
+        usage.fetched_at.is_some(),
+        "with_error should set fetched_at"
+    );
     assert_eq!(usage.error_message, Some("Test error".to_string()));
 }
 
 #[test]
 fn test_claude_usage_not_available_sets_fetched_at() {
     let usage = ClaudeUsage::claude_not_available();
-    assert!(usage.fetched_at.is_some(), "claude_not_available should set fetched_at");
-    assert_eq!(usage.error_message, Some("Claude CLI not found".to_string()));
+    assert!(
+        usage.fetched_at.is_some(),
+        "claude_not_available should set fetched_at"
+    );
+    assert_eq!(
+        usage.error_message,
+        Some("Claude CLI not found".to_string())
+    );
 }
 
 #[test]
 fn test_detect_cli_state_ready() {
     // Legacy prompt format with '>'
-    assert_eq!(detect_cli_state("Opus 4.5 · Claude Max · user@example.com >"), CliState::Ready);
+    assert_eq!(
+        detect_cli_state("Opus 4.5 · Claude Max · user@example.com >"),
+        CliState::Ready
+    );
     assert_eq!(detect_cli_state("Sonnet · Claude Pro > "), CliState::Ready);
     assert_eq!(detect_cli_state("Loading...\n>"), CliState::Ready);
 
@@ -128,46 +161,103 @@ fn test_detect_cli_state_ready() {
 
     // "Welcome back" in welcome box indicates logged-in ready state
     assert_eq!(detect_cli_state("Welcome back Gabe!"), CliState::Ready);
-    assert_eq!(detect_cli_state("│                 Welcome back User!                 │"), CliState::Ready);
+    assert_eq!(
+        detect_cli_state("│                 Welcome back User!                 │"),
+        CliState::Ready
+    );
 }
 
 #[test]
 fn test_detect_cli_state_requires_auth() {
-    assert_eq!(detect_cli_state("Please log in to continue"), CliState::RequiresAuth);
-    assert_eq!(detect_cli_state("You are not logged in"), CliState::RequiresAuth);
-    assert_eq!(detect_cli_state("Please authenticate first"), CliState::RequiresAuth);
+    assert_eq!(
+        detect_cli_state("Please log in to continue"),
+        CliState::RequiresAuth
+    );
+    assert_eq!(
+        detect_cli_state("You are not logged in"),
+        CliState::RequiresAuth
+    );
+    assert_eq!(
+        detect_cli_state("Please authenticate first"),
+        CliState::RequiresAuth
+    );
     assert_eq!(detect_cli_state("API key required"), CliState::RequiresAuth);
 }
 
 #[test]
 fn test_detect_cli_state_first_run() {
     // Existing reliable patterns
-    assert_eq!(detect_cli_state("Welcome to Claude Code! Let's get started."), CliState::FirstRun);
-    assert_eq!(detect_cli_state("First time setup required"), CliState::FirstRun);
+    assert_eq!(
+        detect_cli_state("Welcome to Claude Code! Let's get started."),
+        CliState::FirstRun
+    );
+    assert_eq!(
+        detect_cli_state("First time setup required"),
+        CliState::FirstRun
+    );
     // New specific setup patterns
-    assert_eq!(detect_cli_state("Please complete setup to continue"), CliState::FirstRun);
-    assert_eq!(detect_cli_state("You need to finish setup first"), CliState::FirstRun);
-    assert_eq!(detect_cli_state("Initial setup required"), CliState::FirstRun);
-    assert_eq!(detect_cli_state("Setup is required to continue"), CliState::FirstRun);
+    assert_eq!(
+        detect_cli_state("Please complete setup to continue"),
+        CliState::FirstRun
+    );
+    assert_eq!(
+        detect_cli_state("You need to finish setup first"),
+        CliState::FirstRun
+    );
+    assert_eq!(
+        detect_cli_state("Initial setup required"),
+        CliState::FirstRun
+    );
+    assert_eq!(
+        detect_cli_state("Setup is required to continue"),
+        CliState::FirstRun
+    );
     // New specific configure patterns
-    assert_eq!(detect_cli_state("Configure Claude Code settings"), CliState::FirstRun);
-    assert_eq!(detect_cli_state("Configuration required before use"), CliState::FirstRun);
+    assert_eq!(
+        detect_cli_state("Configure Claude Code settings"),
+        CliState::FirstRun
+    );
+    assert_eq!(
+        detect_cli_state("Configuration required before use"),
+        CliState::FirstRun
+    );
 }
 
 #[test]
 fn test_detect_cli_state_false_positive_prevention() {
     // These generic phrases should NOT trigger FirstRun detection
     // Generic "setup" in conversation context
-    assert!(matches!(detect_cli_state("Let me help you setup your project"), CliState::Unknown(_)));
-    assert!(matches!(detect_cli_state("Run npm run setup"), CliState::Unknown(_)));
-    assert!(matches!(detect_cli_state("Here's how to setup your database"), CliState::Unknown(_)));
+    assert!(matches!(
+        detect_cli_state("Let me help you setup your project"),
+        CliState::Unknown(_)
+    ));
+    assert!(matches!(
+        detect_cli_state("Run npm run setup"),
+        CliState::Unknown(_)
+    ));
+    assert!(matches!(
+        detect_cli_state("Here's how to setup your database"),
+        CliState::Unknown(_)
+    ));
     // Generic "configure" in conversation context
-    assert!(matches!(detect_cli_state("I'll configure the database for you"), CliState::Unknown(_)));
-    assert!(matches!(detect_cli_state("Here's how to configure eslint"), CliState::Unknown(_)));
-    assert!(matches!(detect_cli_state("You can configure the settings in config.json"), CliState::Unknown(_)));
+    assert!(matches!(
+        detect_cli_state("I'll configure the database for you"),
+        CliState::Unknown(_)
+    ));
+    assert!(matches!(
+        detect_cli_state("Here's how to configure eslint"),
+        CliState::Unknown(_)
+    ));
+    assert!(matches!(
+        detect_cli_state("You can configure the settings in config.json"),
+        CliState::Unknown(_)
+    ));
     // Claude CLI welcome screen sidebar text should NOT trigger FirstRun
     // The sidebar always shows "Tips for getting started" even for configured users
-    assert!(matches!(detect_cli_state("Tips for getting started"), CliState::Unknown(_)));
+    assert!(matches!(
+        detect_cli_state("Tips for getting started"),
+        CliState::Unknown(_)
+    ));
     // Note: "Welcome back" IS a ready indicator since it appears in the CLI welcome box for logged-in users
 }
 
@@ -176,8 +266,14 @@ fn test_detect_cli_state_unknown_has_sanitized_excerpt() {
     let ansi_output = "\x1b[32mLoading spinner\x1b[0m with colors";
     let state = detect_cli_state(ansi_output);
     if let CliState::Unknown(excerpt) = state {
-        assert!(!excerpt.contains("\x1b"), "Excerpt should not contain ANSI escape sequences");
-        assert!(excerpt.contains("Loading spinner"), "Excerpt should contain the text content");
+        assert!(
+            !excerpt.contains("\x1b"),
+            "Excerpt should not contain ANSI escape sequences"
+        );
+        assert!(
+            excerpt.contains("Loading spinner"),
+            "Excerpt should contain the text content"
+        );
     } else {
         panic!("Expected CliState::Unknown");
     }
@@ -185,7 +281,10 @@ fn test_detect_cli_state_unknown_has_sanitized_excerpt() {
 
 #[test]
 fn test_detect_cli_state_unknown() {
-    assert!(matches!(detect_cli_state("Loading spinner..."), CliState::Unknown(_)));
+    assert!(matches!(
+        detect_cli_state("Loading spinner..."),
+        CliState::Unknown(_)
+    ));
     assert!(matches!(detect_cli_state(""), CliState::Unknown(_)));
 }
 
@@ -194,7 +293,10 @@ fn test_detect_cli_state_unknown_truncates_unicode_safely() {
     let output = "─".repeat(120);
     let state = detect_cli_state(&output);
     if let CliState::Unknown(excerpt) = state {
-        assert!(excerpt.ends_with("..."), "Excerpt should be truncated with ellipsis");
+        assert!(
+            excerpt.ends_with("..."),
+            "Excerpt should be truncated with ellipsis"
+        );
         assert_eq!(excerpt.chars().count(), 103);
     } else {
         panic!("Expected CliState::Unknown");
@@ -261,7 +363,11 @@ fn test_fetch_claude_usage_real() {
         let has_data = usage.session.used_percent.is_some()
             || usage.weekly.used_percent.is_some()
             || usage.plan_type.is_some();
-        assert!(has_data, "Should have at least some usage data: {:?}", usage);
+        assert!(
+            has_data,
+            "Should have at least some usage data: {:?}",
+            usage
+        );
 
         if let Some(session) = usage.session.used_percent {
             eprintln!("Session used: {}%", session);

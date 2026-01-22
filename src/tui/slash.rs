@@ -214,13 +214,16 @@ pub fn find_slash_matches(context: &SlashContext, limit: usize) -> Vec<SlashMatc
         SlashContext::Command { query, .. } => {
             let query_lower = query.to_lowercase();
             // Normalize query: treat hyphens and spaces equivalently
-            let query_normalized: String = query_lower.chars().filter(|c| !c.is_whitespace()).collect();
+            let query_normalized: String =
+                query_lower.chars().filter(|c| !c.is_whitespace()).collect();
 
             for cmd in SLASH_COMMANDS {
                 let cmd_lower = cmd.command.to_lowercase();
                 let cmd_normalized: String = cmd_lower.chars().filter(|c| *c != '-').collect();
 
-                if let Some(score) = compute_command_score(&query_normalized, &cmd_normalized, &cmd_lower) {
+                if let Some(score) =
+                    compute_command_score(&query_normalized, &cmd_normalized, &cmd_lower)
+                {
                     matches.push(SlashMatch {
                         display: cmd.command.to_string(),
                         insert: cmd.command.to_string(),
@@ -270,7 +273,11 @@ pub fn find_slash_matches(context: &SlashContext, limit: usize) -> Vec<SlashMatc
 }
 
 /// Compute a score for how well a query matches a command.
-fn compute_command_score(query_normalized: &str, cmd_normalized: &str, cmd_lower: &str) -> Option<i32> {
+fn compute_command_score(
+    query_normalized: &str,
+    cmd_normalized: &str,
+    cmd_lower: &str,
+) -> Option<i32> {
     // Must start with /
     if !query_normalized.starts_with('/') {
         return None;
@@ -295,16 +302,20 @@ fn compute_command_score(query_normalized: &str, cmd_normalized: &str, cmd_lower
 }
 
 /// Update the slash state based on current input and cursor position.
-pub fn update_slash_state(
-    slash_state: &mut SlashState,
-    input: &str,
-    cursor: usize,
-) {
+pub fn update_slash_state(slash_state: &mut SlashState, input: &str, cursor: usize) {
     match detect_slash_at_cursor(input, cursor) {
         Some(context) => {
             let (start, end) = match &context {
-                SlashContext::Command { start_byte, end_byte, .. } => (*start_byte, *end_byte),
-                SlashContext::ConfigArg { command_start, end_byte, .. } => (*command_start, *end_byte),
+                SlashContext::Command {
+                    start_byte,
+                    end_byte,
+                    ..
+                } => (*start_byte, *end_byte),
+                SlashContext::ConfigArg {
+                    command_start,
+                    end_byte,
+                    ..
+                } => (*command_start, *end_byte),
             };
 
             let matches = find_slash_matches(&context, MAX_MATCHES);

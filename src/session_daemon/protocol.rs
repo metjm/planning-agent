@@ -115,17 +115,13 @@ pub enum ClientMessage {
     /// Update an existing session's state
     Update(SessionRecord),
     /// Send a heartbeat for a session
-    Heartbeat {
-        session_id: String,
-    },
+    Heartbeat { session_id: String },
     /// Request list of all sessions
     List,
     /// Request daemon shutdown (for updates)
     Shutdown,
     /// Force-stop a session (mark as stopped immediately)
-    ForceStop {
-        session_id: String,
-    },
+    ForceStop { session_id: String },
     /// Subscribe to push notifications for session changes
     Subscribe,
     /// Unsubscribe from push notifications
@@ -137,15 +133,11 @@ pub enum ClientMessage {
 #[serde(tag = "type", content = "data")]
 pub enum DaemonMessage {
     /// Acknowledgement with daemon's build SHA
-    Ack {
-        build_sha: String,
-    },
+    Ack { build_sha: String },
     /// List of all sessions
     Sessions(Vec<SessionRecord>),
     /// Daemon is restarting (sent before shutdown)
-    Restarting {
-        new_sha: String,
-    },
+    Restarting { new_sha: String },
     /// Error response
     Error(String),
     /// Subscription confirmed

@@ -90,7 +90,7 @@ fn find_session_files_sorted() -> Vec<PathBuf> {
         return Vec::new();
     }
     let mut all_files: Vec<PathBuf> = Vec::new();
-fn collect_jsonl_files(dir: &Path, files: &mut Vec<PathBuf>) {
+    fn collect_jsonl_files(dir: &Path, files: &mut Vec<PathBuf>) {
         if let Ok(entries) = fs::read_dir(dir) {
             for entry in entries.flatten() {
                 let path = entry.path();

@@ -90,10 +90,7 @@ impl WorkflowStateMachine {
 
             CompletePlanning { plan_path } => {
                 if self.state.phase != Phase::Planning {
-                    bail!(
-                        "Cannot complete planning from phase {:?}",
-                        self.state.phase
-                    );
+                    bail!("Cannot complete planning from phase {:?}", self.state.phase);
                 }
                 let from = self.state.phase.clone();
                 self.state.plan_file = plan_path;
@@ -106,10 +103,7 @@ impl WorkflowStateMachine {
 
             StartReviewing { reviewer_id } => {
                 if self.state.phase != Phase::Reviewing {
-                    bail!(
-                        "Cannot start reviewing from phase {:?}",
-                        self.state.phase
-                    );
+                    bail!("Cannot start reviewing from phase {:?}", self.state.phase);
                 }
                 Ok(vec![ReviewerStatusChanged {
                     reviewer_id,
@@ -149,7 +143,9 @@ impl WorkflowStateMachine {
                 }])
             }
 
-            StartRevising { feedback_content: _ } => {
+            StartRevising {
+                feedback_content: _,
+            } => {
                 if self.state.phase != Phase::Revising {
                     bail!("Cannot start revising from phase {:?}", self.state.phase);
                 }
@@ -159,14 +155,12 @@ impl WorkflowStateMachine {
 
             CompleteRevising => {
                 if self.state.phase != Phase::Revising {
-                    bail!(
-                        "Cannot complete revising from phase {:?}",
-                        self.state.phase
-                    );
+                    bail!("Cannot complete revising from phase {:?}", self.state.phase);
                 }
                 let from = self.state.phase.clone();
                 self.state.iteration += 1;
-                self.state.update_feedback_for_iteration(self.state.iteration);
+                self.state
+                    .update_feedback_for_iteration(self.state.iteration);
                 self.state.transition(Phase::Reviewing)?;
                 Ok(vec![
                     IterationIncremented {
@@ -249,7 +243,8 @@ impl WorkflowStateMachine {
 
             IncrementIteration => {
                 self.state.iteration += 1;
-                self.state.update_feedback_for_iteration(self.state.iteration);
+                self.state
+                    .update_feedback_for_iteration(self.state.iteration);
                 Ok(vec![IterationIncremented {
                     new_value: self.state.iteration,
                 }])

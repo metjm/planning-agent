@@ -88,12 +88,7 @@ async fn async_main() -> Result<()> {
     // Handle verification mode
     if let Some(ref plan_spec) = cli.verify {
         let plan_path = resolve_plan_path(plan_spec)?;
-        return run_headless_verification(
-            plan_path,
-            working_dir,
-            cli.config.clone(),
-        )
-        .await;
+        return run_headless_verification(plan_path, working_dir, cli.config.clone()).await;
     }
 
     // Run TUI workflow
@@ -114,7 +109,9 @@ fn resolve_plan_path(spec: &str) -> Result<PathBuf> {
     if spec.eq_ignore_ascii_case("latest") {
         return planning_paths::latest_plan()?
             .map(|p| p.path)
-            .ok_or_else(|| anyhow::anyhow!("No plans found. Create a plan first with 'planning <objective>'"));
+            .ok_or_else(|| {
+                anyhow::anyhow!("No plans found. Create a plan first with 'planning <objective>'")
+            });
     }
 
     // Try to find by pattern
@@ -139,10 +136,7 @@ fn list_plans() -> Result<()> {
     }
 
     println!("Available plans:\n");
-    println!(
-        "{:<20} {:<40} Folder",
-        "Created", "Feature Name"
-    );
+    println!("{:<20} {:<40} Folder", "Created", "Feature Name");
     println!("{}", "-".repeat(100));
 
     for plan in plans {

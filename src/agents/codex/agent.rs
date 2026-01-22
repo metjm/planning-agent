@@ -46,7 +46,8 @@ impl CodexAgent {
         context: AgentContext,
     ) -> Result<AgentResult> {
         let emitter = ContextEmitter::new(context.clone(), self.name.clone());
-        self.execute_streaming_internal(prepared, &emitter, Some(&context)).await
+        self.execute_streaming_internal(prepared, &emitter, Some(&context))
+            .await
     }
 
     async fn execute_streaming_internal(
@@ -74,11 +75,7 @@ impl CodexAgent {
         Ok(output.into())
     }
 
-    fn build_command(
-        &self,
-        prompt: &str,
-        context: Option<&AgentContext>,
-    ) -> Command {
+    fn build_command(&self, prompt: &str, context: Option<&AgentContext>) -> Command {
         let mut cmd = Command::new(&self.config.command);
 
         // Check if we should resume an existing conversation
@@ -118,7 +115,10 @@ impl CodexAgent {
                 format!(" {}", self.config.args.join(" "))
             };
             let context_suffix = if has_context { " (with context)" } else { "" };
-            logger.log_line("start", &format!("command: {}{}{}", self.config.command, args, context_suffix));
+            logger.log_line(
+                "start",
+                &format!("command: {}{}{}", self.config.command, args, context_suffix),
+            );
             logger.log_line("prompt", &prompt.chars().take(200).collect::<String>());
         }
     }

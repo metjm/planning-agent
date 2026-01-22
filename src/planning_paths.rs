@@ -26,11 +26,14 @@ const PLANNING_AGENT_DIR: &str = ".planning-agent";
 /// - Home directory cannot be determined
 /// - Directory creation fails
 pub fn planning_agent_home_dir() -> Result<PathBuf> {
-    let home = dirs::home_dir()
-        .context("Could not determine home directory for plan storage")?;
+    let home = dirs::home_dir().context("Could not determine home directory for plan storage")?;
     let planning_dir = home.join(PLANNING_AGENT_DIR);
-    fs::create_dir_all(&planning_dir)
-        .with_context(|| format!("Failed to create planning directory: {}", planning_dir.display()))?;
+    fs::create_dir_all(&planning_dir).with_context(|| {
+        format!(
+            "Failed to create planning directory: {}",
+            planning_dir.display()
+        )
+    })?;
     Ok(planning_dir)
 }
 
@@ -288,8 +291,12 @@ pub fn session_implementation_fingerprint_path(session_id: &str) -> Result<PathB
 #[allow(dead_code)]
 pub fn session_diagnostics_dir(session_id: &str) -> Result<PathBuf> {
     let dir = session_dir(session_id)?.join("diagnostics");
-    fs::create_dir_all(&dir)
-        .with_context(|| format!("Failed to create session diagnostics directory: {}", dir.display()))?;
+    fs::create_dir_all(&dir).with_context(|| {
+        format!(
+            "Failed to create session diagnostics directory: {}",
+            dir.display()
+        )
+    })?;
     Ok(dir)
 }
 
@@ -449,8 +456,7 @@ impl SessionInfo {
         let path = session_info_path(session_id)?;
         let content = fs::read_to_string(&path)
             .with_context(|| format!("Failed to read session info: {}", path.display()))?;
-        serde_json::from_str(&content)
-            .with_context(|| "Failed to parse session info")
+        serde_json::from_str(&content).with_context(|| "Failed to parse session info")
     }
 }
 
@@ -631,7 +637,10 @@ mod tests {
         let hash1 = working_dir_hash(dir1.path());
         let hash2 = working_dir_hash(dir2.path());
 
-        assert_ne!(hash1, hash2, "Different paths should produce different hashes");
+        assert_ne!(
+            hash1, hash2,
+            "Different paths should produce different hashes"
+        );
     }
 
     #[test]

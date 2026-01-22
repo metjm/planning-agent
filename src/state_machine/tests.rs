@@ -5,13 +5,18 @@ use crate::state::State;
 use tempfile::TempDir;
 
 /// Creates a test state machine with a logger in a temp directory.
-fn create_test_machine() -> (WorkflowStateMachine, watch::Receiver<StateSnapshot>, TempDir) {
+fn create_test_machine() -> (
+    WorkflowStateMachine,
+    watch::Receiver<StateSnapshot>,
+    TempDir,
+) {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let logs_dir = temp_dir.path().join("logs");
     std::fs::create_dir_all(&logs_dir).expect("Failed to create logs dir");
 
-    let logger =
-        Arc::new(StructuredLogger::new("test-session", &logs_dir).expect("Failed to create logger"));
+    let logger = Arc::new(
+        StructuredLogger::new("test-session", &logs_dir).expect("Failed to create logger"),
+    );
 
     let state = State::new("test-feature", "Test objective", 3).expect("Failed to create state");
 

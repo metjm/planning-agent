@@ -11,7 +11,8 @@ use std::path::Path;
 use std::sync::Arc;
 
 /// System prompt for planning phase - simple instruction to use the planning skill.
-pub const PLANNING_SYSTEM_PROMPT: &str = r#"Use the "planning" skill to create the plan. Write your plan to the plan-output-path file."#;
+pub const PLANNING_SYSTEM_PROMPT: &str =
+    r#"Use the "planning" skill to create the plan. Write your plan to the plan-output-path file."#;
 
 pub async fn run_planning_phase_with_context(
     state: &mut State,
@@ -40,7 +41,8 @@ pub async fn run_planning_phase_with_context(
     let configured_strategy = ResumeStrategy::ConversationResume;
     // Use namespaced session key to avoid collisions with reviewer sessions
     let conversation_id_name = planning_conversation_key(agent_name);
-    let agent_session = state.get_or_create_agent_session(&conversation_id_name, configured_strategy);
+    let agent_session =
+        state.get_or_create_agent_session(&conversation_id_name, configured_strategy);
     let conversation_id = agent_session.conversation_id.clone();
     let resume_strategy = agent_session.resume_strategy.clone();
 
@@ -118,7 +120,10 @@ fn build_planning_prompt(state: &State, working_dir: &Path) -> String {
     // Add worktree context if applicable
     if let Some(ref wt_state) = state.worktree_info {
         builder = builder
-            .input("worktree-path", &wt_state.worktree_path.display().to_string())
+            .input(
+                "worktree-path",
+                &wt_state.worktree_path.display().to_string(),
+            )
             .input("worktree-branch", &wt_state.branch_name)
             .input("original-dir", &wt_state.original_dir.display().to_string());
         if let Some(ref source) = wt_state.source_branch {

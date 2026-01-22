@@ -17,7 +17,8 @@ use std::sync::Arc;
 use tokio::sync::watch;
 
 /// Minimal system prompt - the skill handles the details.
-const IMPLEMENTATION_SYSTEM_PROMPT: &str = "You are an implementation agent that executes approved plans.";
+const IMPLEMENTATION_SYSTEM_PROMPT: &str =
+    "You are an implementation agent that executes approved plans.";
 
 pub const IMPLEMENTATION_FOLLOWUP_PHASE: &str = "Implementation Follow-up";
 
@@ -74,9 +75,9 @@ pub async fn run_implementation_phase(
     let agent_name = &implementing_config.agent;
     let max_turns = implementing_config.max_turns;
 
-    let agent_config = config
-        .get_agent(agent_name)
-        .ok_or_else(|| anyhow::anyhow!("Implementing agent '{}' not found in config", agent_name))?;
+    let agent_config = config.get_agent(agent_name).ok_or_else(|| {
+        anyhow::anyhow!("Implementing agent '{}' not found in config", agent_name)
+    })?;
 
     session_sender.send_output(format!(
         "[implementation] Starting implementation round {} using agent: {}",
@@ -90,10 +91,8 @@ pub async fn run_implementation_phase(
     let prompt = build_implementation_prompt(state, working_dir, iteration, feedback);
 
     // Get log path
-    let log_path = planning_paths::session_implementation_log_path(
-        &state.workflow_session_id,
-        iteration,
-    )?;
+    let log_path =
+        planning_paths::session_implementation_log_path(&state.workflow_session_id, iteration)?;
 
     // Prepare conversation key for resume
     let conversation_key = implementing_conversation_key(agent_name);
@@ -174,10 +173,7 @@ pub async fn run_implementation_interaction(
     .await;
 
     if let Err(err) = &result {
-        session_sender.send_output(format!(
-            "[implementation] Follow-up failed: {}",
-            err
-        ));
+        session_sender.send_output(format!("[implementation] Follow-up failed: {}", err));
     }
 
     session_sender.send_implementation_interaction_finished();
@@ -202,9 +198,9 @@ async fn run_implementation_interaction_inner(
         .implementing_agent()
         .ok_or_else(|| anyhow::anyhow!("No implementing agent configured"))?;
 
-    let agent_config = config
-        .get_agent(agent_name)
-        .ok_or_else(|| anyhow::anyhow!("Implementing agent '{}' not found in config", agent_name))?;
+    let agent_config = config.get_agent(agent_name).ok_or_else(|| {
+        anyhow::anyhow!("Implementing agent '{}' not found in config", agent_name)
+    })?;
 
     let agent = AgentType::from_config(agent_name, agent_config, working_dir.to_path_buf())?;
 

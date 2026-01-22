@@ -14,8 +14,8 @@ use crate::cli_usage::AccountUsage;
 use crate::planning_paths;
 use crate::state::State;
 use crate::tui::session::model::{
-    ApprovalContext, ApprovalMode, FeedbackTarget, FocusedPanel, InputMode, PasteBlock, ReviewRound,
-    RunTab, SessionStatus, TodoItem,
+    ApprovalContext, ApprovalMode, FeedbackTarget, FocusedPanel, InputMode, PasteBlock,
+    ReviewRound, RunTab, SessionStatus, TodoItem,
 };
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -222,11 +222,15 @@ pub fn save_snapshot(working_dir: &Path, snapshot: &SessionSnapshot) -> Result<P
     let snapshot_path = get_snapshot_path(&snapshot.workflow_session_id)?;
     let temp_path = snapshot_path.with_extension("json.tmp");
 
-    let content = serde_json::to_string_pretty(snapshot)
-        .context("Failed to serialize session snapshot")?;
+    let content =
+        serde_json::to_string_pretty(snapshot).context("Failed to serialize session snapshot")?;
 
-    fs::write(&temp_path, &content)
-        .with_context(|| format!("Failed to write temp snapshot file: {}", temp_path.display()))?;
+    fs::write(&temp_path, &content).with_context(|| {
+        format!(
+            "Failed to write temp snapshot file: {}",
+            temp_path.display()
+        )
+    })?;
 
     fs::rename(&temp_path, &snapshot_path)
         .with_context(|| format!("Failed to rename temp file to: {}", snapshot_path.display()))?;
@@ -284,7 +288,10 @@ pub fn load_snapshot(working_dir: &Path, session_id: &str) -> Result<SessionSnap
             // Save recovered snapshot for future use (in new format)
             // Use snapshot's own working_dir, not the caller's, to ensure consistency
             if let Err(e) = save_snapshot(&snapshot.working_dir, &snapshot) {
-                eprintln!("[recovery] Warning: Failed to save recovered snapshot: {}", e);
+                eprintln!(
+                    "[recovery] Warning: Failed to save recovered snapshot: {}",
+                    e
+                );
             }
             Ok(snapshot)
         }
@@ -303,8 +310,8 @@ fn load_snapshot_from_path(snapshot_path: &Path) -> Result<SessionSnapshot> {
         .with_context(|| format!("Failed to read snapshot file: {}", snapshot_path.display()))?;
 
     // First, try to parse just the version to determine format
-    let version_check: serde_json::Value = serde_json::from_str(&content)
-        .with_context(|| "Failed to parse snapshot file as JSON")?;
+    let version_check: serde_json::Value =
+        serde_json::from_str(&content).with_context(|| "Failed to parse snapshot file as JSON")?;
 
     let version = version_check
         .get("version")
@@ -322,8 +329,8 @@ fn load_snapshot_from_path(snapshot_path: &Path) -> Result<SessionSnapshot> {
     }
 
     // Parse as current version
-    let snapshot: SessionSnapshot = serde_json::from_str(&content)
-        .with_context(|| "Failed to parse snapshot file as JSON")?;
+    let snapshot: SessionSnapshot =
+        serde_json::from_str(&content).with_context(|| "Failed to parse snapshot file as JSON")?;
 
     Ok(snapshot)
 }
@@ -344,9 +351,12 @@ pub fn list_snapshots(working_dir: &Path) -> Result<Vec<SessionSnapshotInfo>> {
     let mut snapshots = Vec::new();
     let mut seen_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
 
-    for entry in fs::read_dir(&sessions_dir)
-        .with_context(|| format!("Failed to read sessions directory: {}", sessions_dir.display()))?
-    {
+    for entry in fs::read_dir(&sessions_dir).with_context(|| {
+        format!(
+            "Failed to read sessions directory: {}",
+            sessions_dir.display()
+        )
+    })? {
         let entry = entry?;
         let path = entry.path();
 
@@ -446,7 +456,11 @@ pub fn cleanup_old_snapshots(working_dir: &Path, older_than_days: u32) -> Result
                     if session_dir.join("session.json").exists() {
                         // Delete the entire session directory
                         if let Err(e) = fs::remove_dir_all(&session_dir) {
-                            eprintln!("[cleanup] Failed to delete session directory {}: {}", session_dir.display(), e);
+                            eprintln!(
+                                "[cleanup] Failed to delete session directory {}: {}",
+                                session_dir.display(),
+                                e
+                            );
                         } else {
                             deleted.push(session_id.clone());
                             continue;
@@ -495,16 +509,19 @@ pub fn recover_from_state_file(session_id: &str) -> Result<SessionSnapshot> {
     // 1. Try new session-centric state path first
     if let Ok(session_state_path) = planning_paths::session_state_path(session_id) {
         if session_state_path.exists() {
-            let state = State::load(&session_state_path)
-                .with_context(|| format!(
+            let state = State::load(&session_state_path).with_context(|| {
+                format!(
                     "Failed to load state file at {}. The file may be corrupted.",
                     session_state_path.display()
-                ))?;
+                )
+            })?;
 
             let ui_state = SessionUiState::minimal_from_state(&state);
 
             // Get working_dir from state's plan_file parent or use current dir
-            let working_dir = state.plan_file.parent()
+            let working_dir = state
+                .plan_file
+                .parent()
                 .map(|p| p.to_path_buf())
                 .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
 
@@ -526,15 +543,14 @@ pub fn recover_from_state_file(session_id: &str) -> Result<SessionSnapshot> {
         anyhow::bail!("No daemon registry found for recovery");
     }
 
-    let content = fs::read_to_string(&registry_path)
-        .context("Failed to read daemon registry")?;
+    let content = fs::read_to_string(&registry_path).context("Failed to read daemon registry")?;
 
     // NOTE: Registry format is Vec<SessionRecord> (JSON array), verified in server.rs
     let records: Vec<crate::session_daemon::protocol::SessionRecord> =
-        serde_json::from_str(&content)
-            .context("Failed to parse daemon registry")?;
+        serde_json::from_str(&content).context("Failed to parse daemon registry")?;
 
-    let record = records.iter()
+    let record = records
+        .iter()
         .find(|r| r.workflow_session_id == session_id)
         .ok_or_else(|| anyhow::anyhow!("Session {} not found in daemon registry", session_id))?;
 
@@ -547,11 +563,12 @@ pub fn recover_from_state_file(session_id: &str) -> Result<SessionSnapshot> {
     }
 
     // 4. Load state from state_path
-    let state = State::load(&record.state_path)
-        .with_context(|| format!(
+    let state = State::load(&record.state_path).with_context(|| {
+        format!(
             "Failed to load state file at {}. The file may be corrupted.",
             record.state_path.display()
-        ))?;
+        )
+    })?;
 
     // 4. Create minimal UI state with defaults
     let ui_state = SessionUiState::minimal_from_state(&state);
@@ -584,7 +601,10 @@ impl SessionUiState {
             },
             output_lines: vec![
                 "[recovery] Session recovered from state file".to_string(),
-                format!("[recovery] Phase: {:?}, Iteration: {}", state.phase, state.iteration),
+                format!(
+                    "[recovery] Phase: {:?}, Iteration: {}",
+                    state.phase, state.iteration
+                ),
                 "[recovery] UI state reset to defaults. Workflow state preserved.".to_string(),
             ],
             scroll_position: 0,
@@ -752,7 +772,10 @@ mod tests {
         assert_eq!(loaded.version, snapshot.version);
         assert_eq!(loaded.saved_at, snapshot.saved_at);
         assert_eq!(loaded.workflow_session_id, snapshot.workflow_session_id);
-        assert_eq!(loaded.workflow_state.feature_name, snapshot.workflow_state.feature_name);
+        assert_eq!(
+            loaded.workflow_state.feature_name,
+            snapshot.workflow_state.feature_name
+        );
         assert_eq!(loaded.ui_state.name, snapshot.ui_state.name);
         assert_eq!(loaded.total_elapsed_before_resume_ms, 5000);
     }

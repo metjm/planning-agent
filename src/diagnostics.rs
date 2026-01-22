@@ -122,8 +122,7 @@ fn create_bundle_internal(config: BundleConfig<'_>) -> Result<PathBuf> {
 
     let file = File::create(&bundle_path)?;
     let mut zip = ZipWriter::new(file);
-    let options = SimpleFileOptions::default()
-        .compression_method(zip::CompressionMethod::Deflated);
+    let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
 
     let mut included_files = Vec::new();
     let mut missing_files = Vec::new();
@@ -300,7 +299,9 @@ pub fn truncate_for_recovery_prompt(output: &str) -> String {
     if output.len() <= MAX_RECOVERY_PROMPT_OUTPUT_SIZE {
         output.to_string()
     } else {
-        let truncated = output.get(..MAX_RECOVERY_PROMPT_OUTPUT_SIZE).unwrap_or(output);
+        let truncated = output
+            .get(..MAX_RECOVERY_PROMPT_OUTPUT_SIZE)
+            .unwrap_or(output);
         format!(
             "{}\n\n--- OUTPUT TRUNCATED (showing first {} of {} bytes) ---",
             truncated,
@@ -463,16 +464,14 @@ mod tests {
     #[test]
     fn test_bundle_path_format() {
         let dir = tempdir().unwrap();
-        let result = planning_paths::review_bundle_path(
-            dir.path(),
-            "claude",
-            "20260112-120000",
-            "abcd1234",
-        );
+        let result =
+            planning_paths::review_bundle_path(dir.path(), "claude", "20260112-120000", "abcd1234");
 
         assert!(result.is_ok());
         let path = result.unwrap();
         assert!(path.to_string_lossy().contains("diagnostics"));
-        assert!(path.to_string_lossy().contains("review-claude-20260112-120000-abcd1234.zip"));
+        assert!(path
+            .to_string_lossy()
+            .contains("review-claude-20260112-120000-abcd1234.zip"));
     }
 }

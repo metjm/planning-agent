@@ -142,11 +142,7 @@ fn compute_filesystem_fingerprint(working_dir: &Path) -> Result<u64> {
 }
 
 /// Recursively collects file paths, excluding certain directories.
-fn collect_files(
-    base: &Path,
-    dir: &Path,
-    entries: &mut BTreeSet<String>,
-) -> Result<()> {
+fn collect_files(base: &Path, dir: &Path, entries: &mut BTreeSet<String>) -> Result<()> {
     if !dir.is_dir() {
         return Ok(());
     }

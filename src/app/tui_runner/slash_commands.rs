@@ -89,7 +89,10 @@ impl ConfigDangerousResult {
                 ConfigStatus::AlreadySet => "○",
                 ConfigStatus::Error => "✗",
             };
-            lines.push(format!("  {} {}: {}", status_icon, result.agent_name, result.details));
+            lines.push(format!(
+                "  {} {}: {}",
+                status_icon, result.agent_name, result.details
+            ));
         }
 
         // Add note about Gemini YOLO limitation
@@ -238,7 +241,9 @@ fn update_claude_settings(path: &std::path::Path) -> Result<bool, String> {
     let permissions = obj
         .entry("permissions")
         .or_insert_with(|| Value::Object(serde_json::Map::new()));
-    let permissions_obj = permissions.as_object_mut().ok_or("Invalid permissions structure")?;
+    let permissions_obj = permissions
+        .as_object_mut()
+        .ok_or("Invalid permissions structure")?;
     permissions_obj.insert(
         "defaultMode".to_string(),
         Value::String("bypassPermissions".to_string()),
@@ -359,7 +364,9 @@ fn update_codex_toml(path: &std::path::Path) -> Result<bool, String> {
     }
 
     // Check if already configured
-    let current_approval = top_level.get("approval_policy").map(|s| s.trim_matches('"'));
+    let current_approval = top_level
+        .get("approval_policy")
+        .map(|s| s.trim_matches('"'));
     let current_sandbox = top_level.get("sandbox_mode").map(|s| s.trim_matches('"'));
 
     if current_approval == Some("never") && current_sandbox == Some("danger-full-access") {
@@ -494,7 +501,9 @@ fn update_gemini_settings(path: &std::path::Path) -> Result<bool, String> {
             let security = obj
                 .entry("security")
                 .or_insert_with(|| Value::Object(serde_json::Map::new()));
-            let security_obj = security.as_object_mut().ok_or("Invalid security structure")?;
+            let security_obj = security
+                .as_object_mut()
+                .ok_or("Invalid security structure")?;
             security_obj.insert("disableYoloMode".to_string(), Value::Bool(false));
             updated = true;
         }
@@ -512,7 +521,9 @@ fn update_gemini_settings(path: &std::path::Path) -> Result<bool, String> {
             let security = obj
                 .entry("security")
                 .or_insert_with(|| Value::Object(serde_json::Map::new()));
-            let security_obj = security.as_object_mut().ok_or("Invalid security structure")?;
+            let security_obj = security
+                .as_object_mut()
+                .ok_or("Invalid security structure")?;
             security_obj.insert("enablePermanentToolApproval".to_string(), Value::Bool(true));
             updated = true;
         }

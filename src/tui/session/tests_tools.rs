@@ -81,8 +81,18 @@ fn test_tool_result_fifo_fallback_when_no_ids() {
     let mut session = Session::new(0);
 
     // Start tools without IDs
-    session.tool_started(None, "Read".to_string(), "first.rs".to_string(), "gemini".to_string());
-    session.tool_started(None, "Write".to_string(), "second.rs".to_string(), "gemini".to_string());
+    session.tool_started(
+        None,
+        "Read".to_string(),
+        "first.rs".to_string(),
+        "gemini".to_string(),
+    );
+    session.tool_started(
+        None,
+        "Write".to_string(),
+        "second.rs".to_string(),
+        "gemini".to_string(),
+    );
 
     // Result without ID should complete the FIRST tool (FIFO)
     let info = session.tool_result_received_for_agent(None, false, "gemini");
@@ -102,7 +112,12 @@ fn test_tool_result_fifo_fallback_when_id_not_matched() {
     let mut session = Session::new(0);
 
     // Start tool with None ID (like Gemini does)
-    session.tool_started(None, "search_file".to_string(), "query".to_string(), "gemini".to_string());
+    session.tool_started(
+        None,
+        "search_file".to_string(),
+        "query".to_string(),
+        "gemini".to_string(),
+    );
 
     // Result with an ID that doesn't match any active tool (like Gemini provides function name)
     let info = session.tool_result_received_for_agent(Some("search_file"), false, "gemini");
@@ -119,14 +134,22 @@ fn test_tool_result_fifo_fallback_when_id_not_matched() {
 fn test_tool_result_empty_string_id_treated_as_none() {
     let mut session = Session::new(0);
 
-    session.tool_started(None, "Tool".to_string(), "preview".to_string(), "agent".to_string());
+    session.tool_started(
+        None,
+        "Tool".to_string(),
+        "preview".to_string(),
+        "agent".to_string(),
+    );
 
     // Empty string ID should be treated as None and use FIFO
     let info = session.tool_result_received_for_agent(Some(""), false, "agent");
     assert_eq!(info.display_name, "Tool");
 
     assert!(session.active_tools_by_agent.is_empty());
-    assert_eq!(session.completed_tools_by_agent.get("agent").unwrap().len(), 1);
+    assert_eq!(
+        session.completed_tools_by_agent.get("agent").unwrap().len(),
+        1
+    );
 }
 
 #[test]
@@ -143,13 +166,27 @@ fn test_tool_finished_no_double_removal() {
     // ToolResult completes the tool first
     session.tool_result_received_for_agent(Some("tool_1"), false, "claude");
     assert!(session.active_tools_by_agent.is_empty());
-    assert_eq!(session.completed_tools_by_agent.get("claude").unwrap().len(), 1);
+    assert_eq!(
+        session
+            .completed_tools_by_agent
+            .get("claude")
+            .unwrap()
+            .len(),
+        1
+    );
 
     // ToolFinished should be a no-op (no second tool to remove)
     session.tool_finished_for_agent(Some("tool_1"), "claude");
 
     // Still should have only 1 completed tool
-    assert_eq!(session.completed_tools_by_agent.get("claude").unwrap().len(), 1);
+    assert_eq!(
+        session
+            .completed_tools_by_agent
+            .get("claude")
+            .unwrap()
+            .len(),
+        1
+    );
 }
 
 #[test]
@@ -173,13 +210,28 @@ fn test_tool_result_with_error_flag() {
 fn test_completed_tools_ordered_newest_first() {
     let mut session = Session::new(0);
 
-    session.tool_started(None, "First".to_string(), "".to_string(), "agent".to_string());
+    session.tool_started(
+        None,
+        "First".to_string(),
+        "".to_string(),
+        "agent".to_string(),
+    );
     session.tool_result_received_for_agent(None, false, "agent");
 
-    session.tool_started(None, "Second".to_string(), "".to_string(), "agent".to_string());
+    session.tool_started(
+        None,
+        "Second".to_string(),
+        "".to_string(),
+        "agent".to_string(),
+    );
     session.tool_result_received_for_agent(None, false, "agent");
 
-    session.tool_started(None, "Third".to_string(), "".to_string(), "agent".to_string());
+    session.tool_started(
+        None,
+        "Third".to_string(),
+        "".to_string(),
+        "agent".to_string(),
+    );
     session.tool_result_received_for_agent(None, false, "agent");
 
     let completed = session.all_completed_tools();
@@ -222,7 +274,11 @@ fn test_completed_tools_retention_cap() {
     }
 
     // Total completed should be capped at 100
-    let total: usize = session.completed_tools_by_agent.values().map(|v| v.len()).sum();
+    let total: usize = session
+        .completed_tools_by_agent
+        .values()
+        .map(|v| v.len())
+        .sum();
     assert!(total <= 100);
 
     // Newest tools should be retained
@@ -235,7 +291,12 @@ fn test_content_block_start_flow() {
     let mut session = Session::new(0);
 
     // ContentBlockStart has None for tool_id and empty input_preview
-    session.tool_started(None, "function_name".to_string(), "".to_string(), "claude".to_string());
+    session.tool_started(
+        None,
+        "function_name".to_string(),
+        "".to_string(),
+        "claude".to_string(),
+    );
 
     let tools = session.active_tools_by_agent.get("claude").unwrap();
     assert_eq!(tools[0].tool_id, None);

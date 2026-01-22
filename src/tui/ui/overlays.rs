@@ -1,4 +1,3 @@
-
 use super::dropdowns::{draw_mention_dropdown, draw_slash_dropdown};
 use super::theme::Theme;
 use super::util::{compute_wrapped_line_count, parse_markdown_line, wrap_text_at_width};
@@ -9,7 +8,9 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap},
+    widgets::{
+        Block, Borders, Clear, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap,
+    },
     Frame,
 };
 use unicode_width::UnicodeWidthStr;
@@ -17,37 +18,67 @@ use unicode_width::UnicodeWidthStr;
 fn build_phase_spans(session: &Session, theme: &Theme) -> Vec<Span<'static>> {
     let ui_mode = session.ui_mode();
     let phase = session.workflow_state.as_ref().map(|s| &s.phase);
-    let impl_state = session.workflow_state.as_ref().and_then(|s| s.implementation_state.as_ref());
+    let impl_state = session
+        .workflow_state
+        .as_ref()
+        .and_then(|s| s.implementation_state.as_ref());
     let mut spans = Vec::new();
 
     if ui_mode == UiMode::Implementation {
-        let impl_phases = [("Implementing", ImplementationPhase::Implementing),
+        let impl_phases = [
+            ("Implementing", ImplementationPhase::Implementing),
             ("Reviewing", ImplementationPhase::ImplementationReview),
-            ("Complete", ImplementationPhase::Complete)];
+            ("Complete", ImplementationPhase::Complete),
+        ];
         let current = impl_state.map(|s| &s.phase);
         for (i, (name, p)) in impl_phases.iter().enumerate() {
             let is_cur = current == Some(p);
-            let is_done = matches!((current, p),
-                (Some(ImplementationPhase::Complete), _) |
-                (Some(ImplementationPhase::ImplementationReview), ImplementationPhase::Implementing));
-            let style = if is_cur { Style::default().fg(theme.phase_current).bold() }
-                else if is_done { Style::default().fg(theme.phase_complete) }
-                else { Style::default().fg(theme.phase_pending) };
+            let is_done = matches!(
+                (current, p),
+                (Some(ImplementationPhase::Complete), _)
+                    | (
+                        Some(ImplementationPhase::ImplementationReview),
+                        ImplementationPhase::Implementing
+                    )
+            );
+            let style = if is_cur {
+                Style::default().fg(theme.phase_current).bold()
+            } else if is_done {
+                Style::default().fg(theme.phase_complete)
+            } else {
+                Style::default().fg(theme.phase_pending)
+            };
             spans.push(Span::styled(*name, style));
-            if i < impl_phases.len() - 1 { spans.push(Span::styled(" → ", Style::default().fg(theme.muted))); }
+            if i < impl_phases.len() - 1 {
+                spans.push(Span::styled(" → ", Style::default().fg(theme.muted)));
+            }
         }
     } else {
-        let phases = [("Planning", Phase::Planning), ("Reviewing", Phase::Reviewing),
-            ("Revising", Phase::Revising), ("Complete", Phase::Complete)];
+        let phases = [
+            ("Planning", Phase::Planning),
+            ("Reviewing", Phase::Reviewing),
+            ("Revising", Phase::Revising),
+            ("Complete", Phase::Complete),
+        ];
         for (i, (name, p)) in phases.iter().enumerate() {
             let is_cur = phase == Some(p);
-            let is_done = matches!((phase, p),
-                (Some(Phase::Complete), _) | (Some(Phase::Revising), Phase::Planning) | (Some(Phase::Reviewing), Phase::Planning));
-            let style = if is_cur { Style::default().fg(theme.phase_current).bold() }
-                else if is_done { Style::default().fg(theme.phase_complete) }
-                else { Style::default().fg(theme.phase_pending) };
+            let is_done = matches!(
+                (phase, p),
+                (Some(Phase::Complete), _)
+                    | (Some(Phase::Revising), Phase::Planning)
+                    | (Some(Phase::Reviewing), Phase::Planning)
+            );
+            let style = if is_cur {
+                Style::default().fg(theme.phase_current).bold()
+            } else if is_done {
+                Style::default().fg(theme.phase_complete)
+            } else {
+                Style::default().fg(theme.phase_pending)
+            };
             spans.push(Span::styled(*name, style));
-            if i < phases.len() - 1 { spans.push(Span::styled(" → ", Style::default().fg(theme.muted))); }
+            if i < phases.len() - 1 {
+                spans.push(Span::styled(" → ", Style::default().fg(theme.muted)));
+            }
         }
     }
     spans
@@ -56,29 +87,62 @@ fn build_phase_spans(session: &Session, theme: &Theme) -> Vec<Span<'static>> {
 pub fn draw_footer(frame: &mut Frame, session: &Session, tab_manager: &TabManager, area: Rect) {
     let theme = Theme::for_session(session);
     let mut spans: Vec<Span> = Vec::new();
-    spans.push(Span::styled(format!(" Tab {}/{} ", tab_manager.active_tab + 1, tab_manager.len()), Style::default().fg(theme.accent)));
+    spans.push(Span::styled(
+        format!(" Tab {}/{} ", tab_manager.active_tab + 1, tab_manager.len()),
+        Style::default().fg(theme.accent),
+    ));
     spans.push(Span::styled("│ ", Style::default().fg(theme.muted)));
     spans.extend(build_phase_spans(session, &theme));
     spans.push(Span::styled(" │ ", Style::default().fg(theme.muted)));
 
     if session.approval_mode != ApprovalMode::None {
-        spans.push(Span::styled("[↑/↓] Scroll  [Enter] Select  [Esc] Cancel", Style::default().fg(theme.muted)));
+        spans.push(Span::styled(
+            "[↑/↓] Scroll  [Enter] Select  [Esc] Cancel",
+            Style::default().fg(theme.muted),
+        ));
     } else if session.implementation_interaction.running {
-        spans.push(Span::styled("[Esc] Cancel Follow-up  ", Style::default().fg(theme.warning)));
-        spans.push(Span::styled("[Ctrl+PgUp/Dn] Switch Tabs", Style::default().fg(theme.muted)));
+        spans.push(Span::styled(
+            "[Esc] Cancel Follow-up  ",
+            Style::default().fg(theme.warning),
+        ));
+        spans.push(Span::styled(
+            "[Ctrl+PgUp/Dn] Switch Tabs",
+            Style::default().fg(theme.muted),
+        ));
     } else if session.can_interact_with_implementation() {
         if session.focused_panel == FocusedPanel::ChatInput {
-            spans.push(Span::styled("[Enter] Send  [Shift+Enter] Newline  [Esc] Cancel", Style::default().fg(theme.muted)));
+            spans.push(Span::styled(
+                "[Enter] Send  [Shift+Enter] Newline  [Esc] Cancel",
+                Style::default().fg(theme.muted),
+            ));
         } else {
-            spans.push(Span::styled("[Tab] Focus Follow-up  ", Style::default().fg(theme.accent_alt)));
-            spans.push(Span::styled("[Ctrl+PgUp/Dn] Switch Tabs", Style::default().fg(theme.muted)));
+            spans.push(Span::styled(
+                "[Tab] Focus Follow-up  ",
+                Style::default().fg(theme.accent_alt),
+            ));
+            spans.push(Span::styled(
+                "[Ctrl+PgUp/Dn] Switch Tabs",
+                Style::default().fg(theme.muted),
+            ));
         }
     } else if session.running && session.workflow_control_tx.is_some() {
-        spans.push(Span::styled("[Esc] Interrupt  ", Style::default().fg(theme.accent_alt)));
-        spans.push(Span::styled("[Ctrl+S] Stop  ", Style::default().fg(theme.warning)));
-        spans.push(Span::styled("[Ctrl+PgUp/Dn] Switch Tabs", Style::default().fg(theme.muted)));
+        spans.push(Span::styled(
+            "[Esc] Interrupt  ",
+            Style::default().fg(theme.accent_alt),
+        ));
+        spans.push(Span::styled(
+            "[Ctrl+S] Stop  ",
+            Style::default().fg(theme.warning),
+        ));
+        spans.push(Span::styled(
+            "[Ctrl+PgUp/Dn] Switch Tabs",
+            Style::default().fg(theme.muted),
+        ));
     } else {
-        spans.push(Span::styled("Tabs: [Ctrl+PgUp/Dn] Switch  [Ctrl+W] Close", Style::default().fg(theme.muted)));
+        spans.push(Span::styled(
+            "Tabs: [Ctrl+PgUp/Dn] Switch  [Ctrl+W] Close",
+            Style::default().fg(theme.muted),
+        ));
     }
 
     if session.workflow_state.is_some() {
@@ -86,22 +150,36 @@ pub fn draw_footer(frame: &mut Frame, session: &Session, tab_manager: &TabManage
         spans.push(Span::styled("[p] Plan", Style::default().fg(theme.border)));
     }
 
-    let daemon_indicator = if tab_manager.daemon_connected { Span::styled("● ", Style::default().fg(theme.success)) }
-        else { Span::styled("○ ", Style::default().fg(theme.muted)) };
+    let daemon_indicator = if tab_manager.daemon_connected {
+        Span::styled("● ", Style::default().fg(theme.success))
+    } else {
+        Span::styled("○ ", Style::default().fg(theme.muted))
+    };
     let version_line: Line = if let Some(info) = tab_manager.version_info.as_ref() {
-        Line::from(vec![daemon_indicator, Span::styled(&info.short_sha, Style::default().fg(theme.muted)),
-            Span::styled(" ", Style::default()), Span::styled(&info.commit_date, Style::default().fg(theme.muted)), Span::styled(" ", Style::default())])
-    } else { Line::from(vec![daemon_indicator]) };
+        Line::from(vec![
+            daemon_indicator,
+            Span::styled(&info.short_sha, Style::default().fg(theme.muted)),
+            Span::styled(" ", Style::default()),
+            Span::styled(&info.commit_date, Style::default().fg(theme.muted)),
+            Span::styled(" ", Style::default()),
+        ])
+    } else {
+        Line::from(vec![daemon_indicator])
+    };
 
-    let block = Block::default().borders(Borders::ALL).border_style(Style::default().fg(theme.muted));
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.muted));
     let inner = block.inner(area);
     let left_line = Line::from(spans.clone());
     let (left_width, version_width) = (left_line.width() as u16, version_line.width() as u16);
     frame.render_widget(block, area);
 
     if inner.width >= left_width.saturating_add(1).saturating_add(version_width) {
-        let chunks = Layout::default().direction(Direction::Horizontal)
-            .constraints([Constraint::Min(0), Constraint::Length(version_width)]).split(inner);
+        let chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Min(0), Constraint::Length(version_width)])
+            .split(inner);
         frame.render_widget(Paragraph::new(left_line), chunks[0]);
         frame.render_widget(Paragraph::new(version_line), chunks[1]);
     } else {
@@ -118,8 +196,8 @@ pub fn draw_tab_input_overlay(frame: &mut Frame, session: &Session, tab_manager:
         &tab_manager.update_status,
         UpdateStatus::UpdateAvailable(_) | UpdateStatus::CheckFailed(_)
     ) || tab_manager.update_error.is_some()
-      || tab_manager.update_in_progress
-      || tab_manager.update_notice.is_some();
+        || tab_manager.update_in_progress
+        || tab_manager.update_notice.is_some();
 
     // Check for command notices/errors (from /config-dangerous, etc.)
     let has_command_line = tab_manager.command_notice.is_some()
@@ -259,7 +337,10 @@ pub fn draw_tab_input_overlay(frame: &mut Frame, session: &Session, tab_manager:
         cursor_screen_x = inner.x + visual_col as u16;
         cursor_screen_y = inner.y + (visual_row - scroll) as u16;
         if cursor_screen_y < inner.y + inner.height {
-            frame.set_cursor_position((cursor_screen_x.min(inner.x + inner.width - 1), cursor_screen_y));
+            frame.set_cursor_position((
+                cursor_screen_x.min(inner.x + inner.width - 1),
+                cursor_screen_y,
+            ));
         }
     } else {
         cursor_screen_x = inner.x;
@@ -303,11 +384,21 @@ pub fn draw_tab_input_overlay(frame: &mut Frame, session: &Session, tab_manager:
 fn render_update_line(tab_manager: &TabManager) -> Line<'static> {
     if tab_manager.update_in_progress {
         const SPINNER_CHARS: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-        let spinner = SPINNER_CHARS[tab_manager.update_spinner_frame as usize % SPINNER_CHARS.len()];
+        let spinner =
+            SPINNER_CHARS[tab_manager.update_spinner_frame as usize % SPINNER_CHARS.len()];
         Line::from(vec![
-            Span::styled(format!(" {} ", spinner), Style::default().fg(Color::Yellow).bold()),
-            Span::styled("Installing update... ", Style::default().fg(Color::Yellow).bold()),
-            Span::styled("(this may take a moment)", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                format!(" {} ", spinner),
+                Style::default().fg(Color::Yellow).bold(),
+            ),
+            Span::styled(
+                "Installing update... ",
+                Style::default().fg(Color::Yellow).bold(),
+            ),
+            Span::styled(
+                "(this may take a moment)",
+                Style::default().fg(Color::DarkGray),
+            ),
         ])
     } else if let Some(ref notice) = tab_manager.update_notice {
         Line::from(vec![
@@ -321,24 +412,23 @@ fn render_update_line(tab_manager: &TabManager) -> Line<'static> {
         ])
     } else {
         match &tab_manager.update_status {
-            UpdateStatus::UpdateAvailable(info) => {
-                Line::from(vec![
-                    Span::styled(" Update available ", Style::default().fg(Color::Green).bold()),
-                    Span::styled(
-                        format!("({}, {}) ", info.short_sha, info.commit_date),
-                        Style::default().fg(Color::Green),
-                    ),
-                    Span::styled("Enter ", Style::default().fg(Color::DarkGray)),
-                    Span::styled("/update", Style::default().fg(Color::Yellow)),
-                    Span::styled(" to install", Style::default().fg(Color::DarkGray)),
-                ])
-            }
-            UpdateStatus::CheckFailed(err) => {
-                Line::from(vec![
-                    Span::styled(" Update check failed: ", Style::default().fg(Color::Yellow)),
-                    Span::styled(err.clone(), Style::default().fg(Color::DarkGray)),
-                ])
-            }
+            UpdateStatus::UpdateAvailable(info) => Line::from(vec![
+                Span::styled(
+                    " Update available ",
+                    Style::default().fg(Color::Green).bold(),
+                ),
+                Span::styled(
+                    format!("({}, {}) ", info.short_sha, info.commit_date),
+                    Style::default().fg(Color::Green),
+                ),
+                Span::styled("Enter ", Style::default().fg(Color::DarkGray)),
+                Span::styled("/update", Style::default().fg(Color::Yellow)),
+                Span::styled(" to install", Style::default().fg(Color::DarkGray)),
+            ]),
+            UpdateStatus::CheckFailed(err) => Line::from(vec![
+                Span::styled(" Update check failed: ", Style::default().fg(Color::Yellow)),
+                Span::styled(err.clone(), Style::default().fg(Color::DarkGray)),
+            ]),
             _ => Line::from(""),
         }
     }
@@ -362,9 +452,9 @@ pub fn draw_plan_modal(frame: &mut Frame, session: &Session) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),  // Title
-            Constraint::Min(0),     // Content
-            Constraint::Length(3),  // Instructions
+            Constraint::Length(3), // Title
+            Constraint::Min(0),    // Content
+            Constraint::Length(3), // Instructions
         ])
         .split(popup_area);
 
@@ -449,9 +539,13 @@ fn render_command_line(tab_manager: &TabManager) -> ratatui::text::Text<'static>
     const SPINNER_CHARS: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
     if tab_manager.command_in_progress {
-        let spinner = SPINNER_CHARS[tab_manager.update_spinner_frame as usize % SPINNER_CHARS.len()];
+        let spinner =
+            SPINNER_CHARS[tab_manager.update_spinner_frame as usize % SPINNER_CHARS.len()];
         ratatui::text::Text::from(Line::from(vec![
-            Span::styled(format!(" {} ", spinner), Style::default().fg(Color::Yellow).bold()),
+            Span::styled(
+                format!(" {} ", spinner),
+                Style::default().fg(Color::Yellow).bold(),
+            ),
             Span::styled("Running command...", Style::default().fg(Color::Yellow)),
         ]))
     } else if let Some(ref notice) = tab_manager.command_notice {
@@ -461,17 +555,35 @@ fn render_command_line(tab_manager: &TabManager) -> ratatui::text::Text<'static>
             .map(|line| {
                 // Color code status symbols
                 if line.contains("✓") {
-                    Line::from(Span::styled(format!(" {}", line), Style::default().fg(Color::Green)))
+                    Line::from(Span::styled(
+                        format!(" {}", line),
+                        Style::default().fg(Color::Green),
+                    ))
                 } else if line.contains("✗") {
-                    Line::from(Span::styled(format!(" {}", line), Style::default().fg(Color::Red)))
+                    Line::from(Span::styled(
+                        format!(" {}", line),
+                        Style::default().fg(Color::Red),
+                    ))
                 } else if line.contains("○") {
-                    Line::from(Span::styled(format!(" {}", line), Style::default().fg(Color::DarkGray)))
+                    Line::from(Span::styled(
+                        format!(" {}", line),
+                        Style::default().fg(Color::DarkGray),
+                    ))
                 } else if line.starts_with("[config") {
-                    Line::from(Span::styled(format!(" {}", line), Style::default().fg(Color::Cyan).bold()))
+                    Line::from(Span::styled(
+                        format!(" {}", line),
+                        Style::default().fg(Color::Cyan).bold(),
+                    ))
                 } else if line.trim().starts_with("Note:") {
-                    Line::from(Span::styled(format!(" {}", line), Style::default().fg(Color::Yellow)))
+                    Line::from(Span::styled(
+                        format!(" {}", line),
+                        Style::default().fg(Color::Yellow),
+                    ))
                 } else {
-                    Line::from(Span::styled(format!(" {}", line), Style::default().fg(Color::White)))
+                    Line::from(Span::styled(
+                        format!(" {}", line),
+                        Style::default().fg(Color::White),
+                    ))
                 }
             })
             .collect();

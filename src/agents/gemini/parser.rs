@@ -218,7 +218,8 @@ mod tests {
     #[test]
     fn test_parse_candidates_structure() {
         let mut parser = GeminiParser::new();
-        let line = r#"{"candidates": [{"content": {"parts": [{"text": "Part 1"}, {"text": "Part 2"}]}}]}"#;
+        let line =
+            r#"{"candidates": [{"content": {"parts": [{"text": "Part 1"}, {"text": "Part 2"}]}}]}"#;
         let events = parser.parse_line_multi(line).unwrap();
         assert_eq!(events.len(), 2);
         match &events[0] {

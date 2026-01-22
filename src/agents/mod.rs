@@ -52,11 +52,7 @@ pub enum AgentType {
 }
 
 impl AgentType {
-    pub fn from_config(
-        name: &str,
-        config: &AgentConfig,
-        working_dir: PathBuf,
-    ) -> Result<Self> {
+    pub fn from_config(name: &str, config: &AgentConfig, working_dir: PathBuf) -> Result<Self> {
         match config.command.as_str() {
             "claude" => Ok(Self::Claude(claude::ClaudeAgent::new(
                 name.to_string(),
@@ -106,7 +102,12 @@ impl AgentType {
 
     /// Prepare a prompt request for this agent type.
     /// Handles merging system prompt into user prompt for agents that don't support it.
-    fn prepare_prompt(&self, user_prompt: String, system_prompt: Option<String>, max_turns: Option<u32>) -> PreparedPrompt {
+    fn prepare_prompt(
+        &self,
+        user_prompt: String,
+        system_prompt: Option<String>,
+        max_turns: Option<u32>,
+    ) -> PreparedPrompt {
         let mut request = PromptRequest::new(user_prompt);
         if let Some(sys) = system_prompt {
             request = request.with_system_prompt(sys);

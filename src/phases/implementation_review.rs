@@ -89,10 +89,8 @@ pub async fn run_implementation_review_phase(
         build_implementation_review_prompt(state, working_dir, iteration, implementation_log_path);
 
     // Get report path
-    let report_path = planning_paths::session_implementation_review_path(
-        &state.workflow_session_id,
-        iteration,
-    )?;
+    let report_path =
+        planning_paths::session_implementation_review_path(&state.workflow_session_id, iteration)?;
 
     // Implementation review is stateless per round - we don't need conversation resume
     let _conversation_key = implementation_reviewing_conversation_key(agent_name);
@@ -197,11 +195,9 @@ fn build_implementation_review_prompt(
     };
 
     // Get review output path
-    let review_output = planning_paths::session_implementation_review_path(
-        &state.workflow_session_id,
-        iteration,
-    )
-    .unwrap_or_else(|_| working_dir.join(format!("review_{}.md", iteration)));
+    let review_output =
+        planning_paths::session_implementation_review_path(&state.workflow_session_id, iteration)
+            .unwrap_or_else(|_| working_dir.join(format!("review_{}.md", iteration)));
 
     let log_section = match implementation_log_path {
         Some(log) => format!("- Implementation log: {}\n", log.display()),
@@ -280,8 +276,7 @@ mod tests {
         let state = minimal_state();
         let working_dir = PathBuf::from("/tmp/workspace");
         let log_path = PathBuf::from("/tmp/session/implementation_1.log");
-        let prompt =
-            build_implementation_review_prompt(&state, &working_dir, 1, Some(&log_path));
+        let prompt = build_implementation_review_prompt(&state, &working_dir, 1, Some(&log_path));
 
         // Should include the implementation log path
         assert!(prompt.contains("Implementation log:"));

@@ -48,7 +48,9 @@ use crate::session_tracking::SessionTracker;
 use crate::state::{Phase, State};
 use crate::state_machine::{StateSnapshot, WorkflowStateMachine};
 use crate::structured_logger::StructuredLogger;
-use crate::tui::{CancellationError, Event, SessionEventSender, UserApprovalResponse, WorkflowCommand};
+use crate::tui::{
+    CancellationError, Event, SessionEventSender, UserApprovalResponse, WorkflowCommand,
+};
 use anyhow::Result;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -59,13 +61,16 @@ use planning::run_planning_phase;
 use reviewing::{run_reviewing_phase, run_sequential_reviewing_phase, WorkflowPhaseContext};
 use revising::run_revising_phase;
 
-
 pub enum WorkflowResult {
     Accepted,
     /// User requested implementation workflow
     ImplementationRequested,
-    NeedsRestart { user_feedback: String },
-    Aborted { reason: String },
+    NeedsRestart {
+        user_feedback: String,
+    },
+    Aborted {
+        reason: String,
+    },
     /// Workflow was cleanly stopped at a phase boundary
     Stopped,
 }
@@ -112,12 +117,19 @@ pub async fn run_workflow_with_config(
 
     // Create session logger for workflow events
     let session_logger = create_session_logger(&state.workflow_session_id)?;
-    session_logger.log(LogLevel::Info, LogCategory::Workflow, "Session logger initialized");
+    session_logger.log(
+        LogLevel::Info,
+        LogCategory::Workflow,
+        "Session logger initialized",
+    );
 
     // Create structured JSONL logger for debugging
     let structured_logger = {
         let logs_dir = planning_paths::session_logs_dir(&state.workflow_session_id)?;
-        Arc::new(StructuredLogger::new(&state.workflow_session_id, &logs_dir)?)
+        Arc::new(StructuredLogger::new(
+            &state.workflow_session_id,
+            &logs_dir,
+        )?)
     };
     structured_logger.log_workflow_spawn(false);
 
@@ -172,13 +184,21 @@ pub async fn run_workflow_with_config(
         )
         .await
     {
-        session_logger.log(LogLevel::Warn, LogCategory::Workflow, &format!("Session registration failed (non-fatal): {}", e));
+        session_logger.log(
+            LogLevel::Warn,
+            LogCategory::Workflow,
+            &format!("Session registration failed (non-fatal): {}", e),
+        );
     }
 
-    session_logger.log(LogLevel::Info, LogCategory::Workflow, &format!(
-        "=== WORKFLOW START: phase={:?}, iteration={} ===",
-        state.phase, state.iteration
-    ));
+    session_logger.log(
+        LogLevel::Info,
+        LogCategory::Workflow,
+        &format!(
+            "=== WORKFLOW START: phase={:?}, iteration={} ===",
+            state.phase, state.iteration
+        ),
+    );
 
     let phase_context = WorkflowPhaseContext {
         working_dir: &working_dir,
@@ -230,11 +250,21 @@ pub async fn run_workflow_with_config(
                         if let Ok(cmd) = control_rx.try_recv() {
                             match cmd {
                                 WorkflowCommand::Interrupt { feedback } => {
-                                    session_logger.log(LogLevel::Info, LogCategory::Workflow, "Planning phase cancelled, restarting with feedback");
-                                    return Ok(WorkflowResult::NeedsRestart { user_feedback: feedback });
+                                    session_logger.log(
+                                        LogLevel::Info,
+                                        LogCategory::Workflow,
+                                        "Planning phase cancelled, restarting with feedback",
+                                    );
+                                    return Ok(WorkflowResult::NeedsRestart {
+                                        user_feedback: feedback,
+                                    });
                                 }
                                 WorkflowCommand::Stop => {
-                                    session_logger.log(LogLevel::Info, LogCategory::Workflow, "Planning phase cancelled for stop");
+                                    session_logger.log(
+                                        LogLevel::Info,
+                                        LogCategory::Workflow,
+                                        "Planning phase cancelled for stop",
+                                    );
                                     let _ = tracker.mark_stopped(&state.workflow_session_id).await;
                                     return Ok(WorkflowResult::Stopped);
                                 }
@@ -295,11 +325,21 @@ pub async fn run_workflow_with_config(
                         if let Ok(cmd) = control_rx.try_recv() {
                             match cmd {
                                 WorkflowCommand::Interrupt { feedback } => {
-                                    session_logger.log(LogLevel::Info, LogCategory::Workflow, "Reviewing phase cancelled, restarting with feedback");
-                                    return Ok(WorkflowResult::NeedsRestart { user_feedback: feedback });
+                                    session_logger.log(
+                                        LogLevel::Info,
+                                        LogCategory::Workflow,
+                                        "Reviewing phase cancelled, restarting with feedback",
+                                    );
+                                    return Ok(WorkflowResult::NeedsRestart {
+                                        user_feedback: feedback,
+                                    });
                                 }
                                 WorkflowCommand::Stop => {
-                                    session_logger.log(LogLevel::Info, LogCategory::Workflow, "Reviewing phase cancelled for stop");
+                                    session_logger.log(
+                                        LogLevel::Info,
+                                        LogCategory::Workflow,
+                                        "Reviewing phase cancelled for stop",
+                                    );
                                     let _ = tracker.mark_stopped(&state.workflow_session_id).await;
                                     return Ok(WorkflowResult::Stopped);
                                 }
@@ -348,11 +388,21 @@ pub async fn run_workflow_with_config(
                         if let Ok(cmd) = control_rx.try_recv() {
                             match cmd {
                                 WorkflowCommand::Interrupt { feedback } => {
-                                    session_logger.log(LogLevel::Info, LogCategory::Workflow, "Revising phase cancelled, restarting with feedback");
-                                    return Ok(WorkflowResult::NeedsRestart { user_feedback: feedback });
+                                    session_logger.log(
+                                        LogLevel::Info,
+                                        LogCategory::Workflow,
+                                        "Revising phase cancelled, restarting with feedback",
+                                    );
+                                    return Ok(WorkflowResult::NeedsRestart {
+                                        user_feedback: feedback,
+                                    });
                                 }
                                 WorkflowCommand::Stop => {
-                                    session_logger.log(LogLevel::Info, LogCategory::Workflow, "Revising phase cancelled for stop");
+                                    session_logger.log(
+                                        LogLevel::Info,
+                                        LogCategory::Workflow,
+                                        "Revising phase cancelled for stop",
+                                    );
                                     let _ = tracker.mark_stopped(&state.workflow_session_id).await;
                                     return Ok(WorkflowResult::Stopped);
                                 }
@@ -373,10 +423,14 @@ pub async fn run_workflow_with_config(
         }
     }
 
-    session_logger.log(LogLevel::Info, LogCategory::Workflow, &format!(
-        "=== WORKFLOW END: phase={:?}, iteration={} ===",
-        state.phase, state.iteration
-    ));
+    session_logger.log(
+        LogLevel::Info,
+        LogCategory::Workflow,
+        &format!(
+            "=== WORKFLOW END: phase={:?}, iteration={} ===",
+            state.phase, state.iteration
+        ),
+    );
 
     if state.phase == Phase::Complete {
         let result = handle_completion(
@@ -390,7 +444,11 @@ pub async fn run_workflow_with_config(
 
         // Check if implementation was requested
         if matches!(result, WorkflowResult::ImplementationRequested) {
-            session_logger.log(LogLevel::Info, LogCategory::Workflow, "Starting implementation workflow");
+            session_logger.log(
+                LogLevel::Info,
+                LogCategory::Workflow,
+                "Starting implementation workflow",
+            );
 
             let impl_result = run_implementation_workflow(
                 &mut state,
@@ -410,10 +468,16 @@ pub async fn run_workflow_with_config(
                     use crate::app::implementation::ImplementationWorkflowResult;
                     match impl_outcome {
                         ImplementationWorkflowResult::Approved => {
-                            sender.send_output("[implementation] Implementation complete and approved!".to_string());
+                            sender.send_output(
+                                "[implementation] Implementation complete and approved!"
+                                    .to_string(),
+                            );
                             return Ok(WorkflowResult::Accepted);
                         }
-                        ImplementationWorkflowResult::Failed { iterations_used, last_feedback } => {
+                        ImplementationWorkflowResult::Failed {
+                            iterations_used,
+                            last_feedback,
+                        } => {
                             let msg = format!(
                                 "Implementation failed after {} iterations. Last feedback: {}",
                                 iterations_used,
@@ -423,11 +487,15 @@ pub async fn run_workflow_with_config(
                             return Ok(WorkflowResult::Aborted { reason: msg });
                         }
                         ImplementationWorkflowResult::Cancelled { iterations_used } => {
-                            sender.send_output(format!("[implementation] Cancelled after {} iterations", iterations_used));
+                            sender.send_output(format!(
+                                "[implementation] Cancelled after {} iterations",
+                                iterations_used
+                            ));
                             return Ok(WorkflowResult::Stopped);
                         }
                         ImplementationWorkflowResult::NoChanges { iterations_used } => {
-                            let msg = format!("No changes detected after {} iterations", iterations_used);
+                            let msg =
+                                format!("No changes detected after {} iterations", iterations_used);
                             sender.send_output(format!("[implementation] {}", msg));
                             return Ok(WorkflowResult::Aborted { reason: msg });
                         }

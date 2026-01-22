@@ -1,4 +1,3 @@
-
 use super::theme::Theme;
 use super::util::{format_bytes, format_duration, format_tokens};
 use crate::tui::{Session, SessionStatus};
@@ -26,13 +25,17 @@ pub fn draw_stats(frame: &mut Frame, session: &Session, area: Rect, show_live_to
     let mut stats_text = vec![
         Line::from(vec![Span::styled(
             "── Usage ──",
-            Style::default().fg(theme.stats_header).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(theme.stats_header)
+                .add_modifier(Modifier::BOLD),
         )]),
         Line::from(vec![
             Span::styled(" Cost: ", Style::default().fg(theme.text)),
             Span::styled(
                 format!("${:.4}", cost),
-                Style::default().fg(theme.stats_cost).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(theme.stats_cost)
+                    .add_modifier(Modifier::BOLD),
             ),
         ]),
         Line::from(vec![
@@ -58,7 +61,10 @@ pub fn draw_stats(frame: &mut Frame, session: &Session, area: Rect, show_live_to
     )]));
     stats_text.push(Line::from(vec![
         Span::raw(" Phase: "),
-        Span::styled(session.phase_name(), Style::default().fg(phase_color).bold()),
+        Span::styled(
+            session.phase_name(),
+            Style::default().fg(phase_color).bold(),
+        ),
     ]));
     stats_text.push(Line::from(format!(" Iter: {}/{}", iter, max_iter)));
     stats_text.push(Line::from(vec![
@@ -74,14 +80,19 @@ pub fn draw_stats(frame: &mut Frame, session: &Session, area: Rect, show_live_to
         stats_text.push(Line::from(""));
         stats_text.push(Line::from(vec![Span::styled(
             "── Summary ──",
-            Style::default().fg(theme.warning).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(theme.warning)
+                .add_modifier(Modifier::BOLD),
         )]));
 
         let spinner_chars = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
         let spinner_char = spinner_chars[(session.spinner_frame as usize) % spinner_chars.len()];
 
         stats_text.push(Line::from(vec![
-            Span::styled(format!(" {} ", spinner_char), Style::default().fg(theme.warning)),
+            Span::styled(
+                format!(" {} ", spinner_char),
+                Style::default().fg(theme.warning),
+            ),
             Span::styled("Generating...", Style::default().fg(theme.accent)),
         ]));
     }
@@ -135,7 +146,9 @@ fn build_account_usage(session: &Session, theme: &Theme) -> Vec<Line<'static>> {
         lines.push(Line::from(""));
         lines.push(Line::from(vec![Span::styled(
             "── Account ──",
-            Style::default().fg(theme.stats_header).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(theme.stats_header)
+                .add_modifier(Modifier::BOLD),
         )]));
 
         let mut providers: Vec<_> = session.account_usage.providers.values().collect();
@@ -190,7 +203,9 @@ fn build_account_usage(session: &Session, theme: &Theme) -> Vec<Line<'static>> {
                         Span::styled("  Plan: ", Style::default().fg(theme.text)),
                         Span::styled(
                             plan.clone(),
-                            Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
+                            Style::default()
+                                .fg(theme.accent)
+                                .add_modifier(Modifier::BOLD),
                         ),
                     ]));
                 }
@@ -406,7 +421,11 @@ fn build_tool_stats(session: &Session, show_live_tools: bool, theme: &Theme) -> 
             }
         }
 
-        let total_tools: usize = session.active_tools_by_agent.values().map(|v| v.len()).sum();
+        let total_tools: usize = session
+            .active_tools_by_agent
+            .values()
+            .map(|v| v.len())
+            .sum();
         if total_tools > max_display {
             lines.push(Line::from(Span::styled(
                 format!("   +{} more", total_tools - max_display),
@@ -420,9 +439,7 @@ fn build_tool_stats(session: &Session, show_live_tools: bool, theme: &Theme) -> 
             Span::styled(" Errors: ", Style::default().fg(theme.muted)),
             Span::styled(
                 format!("{}", session.tool_error_count),
-                Style::default()
-                    .fg(theme.text)
-                    .add_modifier(Modifier::BOLD),
+                Style::default().fg(theme.text).add_modifier(Modifier::BOLD),
             ),
         ]));
     }
@@ -440,7 +457,9 @@ fn build_tool_stats(session: &Session, show_live_tools: bool, theme: &Theme) -> 
     }
 
     if session.tool_call_count > 0 {
-        let success_count = session.tool_call_count.saturating_sub(session.tool_error_count);
+        let success_count = session
+            .tool_call_count
+            .saturating_sub(session.tool_error_count);
         let success_rate = (success_count as f64 / session.tool_call_count as f64) * 100.0;
         let color = if success_rate >= 95.0 {
             theme.success
@@ -475,7 +494,10 @@ fn build_timing_stats(session: &Session, theme: &Theme) -> Vec<Line<'static>> {
         }
         if let Some((phase, start)) = &session.current_phase_start {
             lines.push(Line::from(vec![
-                Span::styled(format!(" {}: ", phase), Style::default().fg(theme.phase_current)),
+                Span::styled(
+                    format!(" {}: ", phase),
+                    Style::default().fg(theme.phase_current),
+                ),
                 Span::styled(
                     format_duration(start.elapsed()),
                     Style::default().fg(theme.phase_current),

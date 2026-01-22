@@ -102,7 +102,6 @@ pub struct RunTab {
 }
 
 impl RunTab {
-
     pub fn new(phase: String) -> Self {
         Self {
             phase,
@@ -186,8 +185,8 @@ pub enum ApprovalContext {
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
 pub enum FeedbackTarget {
     #[default]
-    ApprovalDecline,    // Existing: decline with feedback in approval flow
-    WorkflowInterrupt,  // New: interrupt active workflow with feedback
+    ApprovalDecline, // Existing: decline with feedback in approval flow
+    WorkflowInterrupt, // New: interrupt active workflow with feedback
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
@@ -220,7 +219,7 @@ pub enum SessionStatus {
     Planning,
     GeneratingSummary,
     AwaitingApproval,
-    Stopped,  // Cleanly stopped session, can be resumed
+    Stopped, // Cleanly stopped session, can be resumed
     Complete,
     Error,
     // Verification workflow states

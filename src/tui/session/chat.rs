@@ -1,4 +1,3 @@
-
 use super::model::{ChatMessage, RunTab, RunTabEntry, SummaryState, ToolTimelineEntry};
 use super::Session;
 
@@ -10,7 +9,6 @@ fn normalize_phase(phase: &str) -> &str {
 }
 
 impl Session {
-
     pub fn add_run_tab(&mut self, phase: String) {
         self.run_tabs.push(RunTab::new(phase));
 
@@ -18,13 +16,15 @@ impl Session {
     }
 
     pub fn add_chat_message(&mut self, agent_name: &str, phase: &str, message: String) {
-
         if message.trim().is_empty() {
             return;
         }
 
         let normalized_phase = normalize_phase(phase);
-        let tab_idx = self.run_tabs.iter().position(|t| t.phase == normalized_phase);
+        let tab_idx = self
+            .run_tabs
+            .iter()
+            .position(|t| t.phase == normalized_phase);
         let idx = match tab_idx {
             Some(i) => i,
             None => {
@@ -40,14 +40,15 @@ impl Session {
                 message,
             }));
 
-        if self.chat_follow_mode {
-
-        }
+        if self.chat_follow_mode {}
     }
 
     pub fn add_tool_entry(&mut self, phase: &str, entry: ToolTimelineEntry) {
         let normalized_phase = normalize_phase(phase);
-        let tab_idx = self.run_tabs.iter().position(|t| t.phase == normalized_phase);
+        let tab_idx = self
+            .run_tabs
+            .iter()
+            .position(|t| t.phase == normalized_phase);
         let idx = match tab_idx {
             Some(i) => i,
             None => {
@@ -58,9 +59,7 @@ impl Session {
 
         self.run_tabs[idx].entries.push(RunTabEntry::Tool(entry));
 
-        if self.chat_follow_mode {
-
-        }
+        if self.chat_follow_mode {}
     }
 
     pub fn next_run_tab(&mut self) {

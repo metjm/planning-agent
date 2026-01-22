@@ -1,4 +1,3 @@
-
 use super::theme::Theme;
 use super::util::compute_wrapped_line_count_text;
 use crate::tui::Session;
@@ -66,7 +65,12 @@ pub fn draw_objective(frame: &mut Frame, session: &Session, area: Rect) {
         // Split by newlines to preserve user formatting
         objective_text
             .lines()
-            .map(|line| Line::from(Span::styled(line.to_string(), Style::default().fg(theme.text))))
+            .map(|line| {
+                Line::from(Span::styled(
+                    line.to_string(),
+                    Style::default().fg(theme.text),
+                ))
+            })
             .collect()
     };
 

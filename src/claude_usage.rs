@@ -26,11 +26,10 @@ pub struct ClaudeUsage {
 }
 
 impl ClaudeUsage {
-
     #[allow(dead_code)]
     pub fn is_stale(&self) -> bool {
         match self.fetched_at {
-            Some(t) => t.elapsed() > Duration::from_secs(300), 
+            Some(t) => t.elapsed() > Duration::from_secs(300),
             None => true,
         }
     }
@@ -109,7 +108,8 @@ impl DebugLogger {
     fn log(&mut self, message: &str) {
         if self.enabled {
             let elapsed_ms = self.start.elapsed().as_millis();
-            self.entries.push(format!("[+{:06}ms] {}", elapsed_ms, message));
+            self.entries
+                .push(format!("[+{:06}ms] {}", elapsed_ms, message));
         }
     }
 
@@ -136,11 +136,7 @@ impl DebugLogger {
         }
 
         if let Ok(log_path) = planning_paths::claude_usage_log_path() {
-            if let Ok(mut file) = OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&log_path)
-            {
+            if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&log_path) {
                 let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
                 let _ = writeln!(file, "\n=== Claude Usage Fetch: {} ===", timestamp);
                 for entry in &self.entries {
@@ -225,7 +221,10 @@ fn detect_cli_state(output: &str) -> CliState {
         trimmed.ends_with('>')
             || trimmed.ends_with('❯')
             || trimmed.starts_with('❯')
-            || (trimmed.contains('>') && (trimmed.contains("claude") || trimmed.contains("opus") || trimmed.contains("sonnet")))
+            || (trimmed.contains('>')
+                && (trimmed.contains("claude")
+                    || trimmed.contains("opus")
+                    || trimmed.contains("sonnet")))
     });
 
     if has_prompt {
@@ -240,7 +239,10 @@ fn detect_cli_state(output: &str) -> CliState {
 
 fn run_claude_usage_via_pty(command: &str, _timeout: Duration) -> Result<String, String> {
     let mut logger = DebugLogger::new();
-    logger.log(&format!("Starting Claude usage fetch, command: {}", command));
+    logger.log(&format!(
+        "Starting Claude usage fetch, command: {}",
+        command
+    ));
 
     let prompt_timeout = get_prompt_timeout();
     let usage_timeout = get_usage_timeout();
@@ -348,7 +350,10 @@ fn run_claude_usage_via_pty(command: &str, _timeout: Duration) -> Result<String,
 
         // Early exit for auth/setup states
         if matches!(cli_state, CliState::RequiresAuth | CliState::FirstRun) {
-            logger.log(&format!("Early detection of special state: {:?}", cli_state));
+            logger.log(&format!(
+                "Early detection of special state: {:?}",
+                cli_state
+            ));
             logger.log_output_snapshot("Output at early detection", &stripped, 2048);
 
             let _ = child.kill();
@@ -357,14 +362,23 @@ fn run_claude_usage_via_pty(command: &str, _timeout: Duration) -> Result<String,
             let _ = reader_handle.join();
 
             return match cli_state {
-                CliState::RequiresAuth => Err("Claude CLI requires login. Run 'claude' to authenticate.".to_string()),
-                CliState::FirstRun => Err("Claude CLI requires setup. Run 'claude' to complete first-time configuration.".to_string()),
+                CliState::RequiresAuth => {
+                    Err("Claude CLI requires login. Run 'claude' to authenticate.".to_string())
+                }
+                CliState::FirstRun => Err(
+                    "Claude CLI requires setup. Run 'claude' to complete first-time configuration."
+                        .to_string(),
+                ),
                 _ => unreachable!(),
             };
         }
 
         if cli_state == CliState::Ready && len > 100 {
-            logger.log(&format!("Prompt detected after {}ms, buffer size: {} bytes", start.elapsed().as_millis(), len));
+            logger.log(&format!(
+                "Prompt detected after {}ms, buffer size: {} bytes",
+                start.elapsed().as_millis(),
+                len
+            ));
             logger.log_output_snapshot("Output at prompt detection", &stripped, 1024);
             break;
         }
@@ -385,13 +399,17 @@ fn run_claude_usage_via_pty(command: &str, _timeout: Duration) -> Result<String,
     // Phase 2: Send /usage command
     logger.log("Phase 2: Sending /usage command...");
     for c in "/usage".chars() {
-        writer.write_all(&[c as u8]).map_err(|e| format!("Failed to send char: {}", e))?;
+        writer
+            .write_all(&[c as u8])
+            .map_err(|e| format!("Failed to send char: {}", e))?;
         std::thread::sleep(Duration::from_millis(50));
     }
 
     std::thread::sleep(Duration::from_millis(200));
 
-    writer.write_all(b"\r").map_err(|e| format!("Failed to send Enter: {}", e))?;
+    writer
+        .write_all(b"\r")
+        .map_err(|e| format!("Failed to send Enter: {}", e))?;
     logger.log("/usage command sent");
 
     // Phase 3: Wait for usage output
@@ -420,7 +438,10 @@ fn run_claude_usage_via_pty(command: &str, _timeout: Duration) -> Result<String,
             last_len = len;
         } else if has_usage_output && usage_start.elapsed() > Duration::from_millis(1500) {
             usage_found = true;
-            logger.log(&format!("Usage output detected after {}ms", usage_start.elapsed().as_millis()));
+            logger.log(&format!(
+                "Usage output detected after {}ms",
+                usage_start.elapsed().as_millis()
+            ));
             break;
         }
 
@@ -469,7 +490,10 @@ fn run_claude_usage_via_pty(command: &str, _timeout: Duration) -> Result<String,
     let output = output_buffer.lock().unwrap().clone();
     let result = String::from_utf8_lossy(&output).into_owned();
 
-    logger.log(&format!("Total fetch time: {}ms", start.elapsed().as_millis()));
+    logger.log(&format!(
+        "Total fetch time: {}ms",
+        start.elapsed().as_millis()
+    ));
     logger.log_output_snapshot("Final output", &strip_ansi_codes(&result), 4096);
 
     Ok(result)
@@ -480,9 +504,8 @@ fn strip_ansi_codes(text: &str) -> String {
     let mut chars = text.chars().peekable();
     while let Some(c) = chars.next() {
         if c == '\x1b' {
-
             if chars.peek() == Some(&'[') {
-                chars.next(); 
+                chars.next();
                 while let Some(&next) = chars.peek() {
                     chars.next();
                     if next.is_ascii_alphabetic() {
@@ -555,7 +578,9 @@ pub fn fetch_claude_usage_sync() -> ClaudeUsage {
                     ts,
                     UsageWindowSpan::Unknown, // Session duration not verifiable
                 ),
-                (Some(pct), None) => UsageWindow::with_percent_and_span(pct, UsageWindowSpan::Unknown),
+                (Some(pct), None) => {
+                    UsageWindow::with_percent_and_span(pct, UsageWindowSpan::Unknown)
+                }
                 _ => UsageWindow::default(),
             };
             let weekly = match (weekly_pct, weekly_reset) {
@@ -564,7 +589,9 @@ pub fn fetch_claude_usage_sync() -> ClaudeUsage {
                     ts,
                     UsageWindowSpan::Days(7), // Weekly window is 7 days
                 ),
-                (Some(pct), None) => UsageWindow::with_percent_and_span(pct, UsageWindowSpan::Days(7)),
+                (Some(pct), None) => {
+                    UsageWindow::with_percent_and_span(pct, UsageWindowSpan::Days(7))
+                }
                 _ => UsageWindow::default(),
             };
 
@@ -588,7 +615,6 @@ fn parse_usage_used_percent(text: &str, section_keyword: &str) -> Option<u8> {
         let line_lower = line.to_lowercase();
 
         if line_lower.contains(&section_keyword_lower) {
-
             for candidate in lines.iter().skip(i).take(5) {
                 if candidate.to_lowercase().contains("used") {
                     // '%' is ASCII, so pct_pos is guaranteed to be at a valid UTF-8 boundary

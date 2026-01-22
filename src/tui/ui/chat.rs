@@ -1,7 +1,9 @@
 use super::theme::Theme;
 use super::util::{compute_wrapped_line_count, parse_markdown_line, wrap_text_at_width};
 use crate::tui::session::ReviewerStatus;
-use crate::tui::{FocusedPanel, RunTab, RunTabEntry, Session, SummaryState, ToolResultSummary, ToolTimelineEntry};
+use crate::tui::{
+    FocusedPanel, RunTab, RunTabEntry, Session, SummaryState, ToolResultSummary, ToolTimelineEntry,
+};
 use ratatui::{
     layout::Rect,
     style::{Color, Modifier, Style},
@@ -19,7 +21,11 @@ pub(super) fn draw_chat_content(
 ) {
     let theme = Theme::for_session(session);
     let is_focused = session.focused_panel == FocusedPanel::Chat;
-    let border_color = if is_focused { theme.border_focused } else { theme.success };
+    let border_color = if is_focused {
+        theme.border_focused
+    } else {
+        theme.success
+    };
 
     let title = if let Some(tab) = active_tab {
         if session.chat_follow_mode {
@@ -68,12 +74,12 @@ pub(super) fn draw_chat_content(
                         };
                         let badge = Span::styled(
                             format!("[{}] ", msg.agent_name),
-                            Style::default().fg(agent_color).add_modifier(Modifier::BOLD),
+                            Style::default()
+                                .fg(agent_color)
+                                .add_modifier(Modifier::BOLD),
                         );
-                        let content = Span::styled(
-                            msg.message.clone(),
-                            Style::default().fg(Color::White),
-                        );
+                        let content =
+                            Span::styled(msg.message.clone(), Style::default().fg(Color::White));
                         Line::from(vec![badge, content])
                     }
                     RunTabEntry::Tool(tool_entry) => {
@@ -106,7 +112,8 @@ pub(super) fn draw_chat_content(
                                 let label =
                                     format_tool_label(display_name, input_preview, max_preview_len);
                                 let duration = format_duration_secs(*duration_ms);
-                                let summary = format_result_summary(result_summary, max_summary_len);
+                                let summary =
+                                    format_result_summary(result_summary, max_summary_len);
                                 let suffix = if summary.is_empty() {
                                     format!(" ({})", duration)
                                 } else {
@@ -129,7 +136,9 @@ pub(super) fn draw_chat_content(
                         };
                         let badge = Span::styled(
                             format!("[{}] ", agent_name),
-                            Style::default().fg(agent_color).add_modifier(Modifier::BOLD),
+                            Style::default()
+                                .fg(agent_color)
+                                .add_modifier(Modifier::BOLD),
                         );
                         let details = format!("{}{}", label, suffix);
                         Line::from(vec![
@@ -185,7 +194,11 @@ pub(super) fn draw_chat_input(frame: &mut Frame, session: &Session, area: Rect) 
 
     let theme = Theme::for_session(session);
     let is_focused = session.focused_panel == FocusedPanel::ChatInput;
-    let border_color = if is_focused { theme.border_focused } else { theme.border };
+    let border_color = if is_focused {
+        theme.border_focused
+    } else {
+        theme.border
+    };
     let title = if session.implementation_interaction.running {
         " Follow-up [running] "
     } else {
@@ -275,36 +288,48 @@ pub(super) fn draw_summary_panel(
     area: Rect,
 ) {
     let is_focused = session.focused_panel == FocusedPanel::Summary;
-    let border_color = if is_focused { Color::Yellow } else { Color::Magenta };
+    let border_color = if is_focused {
+        Color::Yellow
+    } else {
+        Color::Magenta
+    };
 
     let (title, lines): (String, Vec<Line>) = if let Some(tab) = active_tab {
         match tab.summary_state {
-            SummaryState::None => {
-                (" Summary ".to_string(), vec![Line::from(Span::styled(
+            SummaryState::None => (
+                " Summary ".to_string(),
+                vec![Line::from(Span::styled(
                     "No summary available",
                     Style::default().fg(Color::DarkGray),
-                ))])
-            }
+                ))],
+            ),
             SummaryState::Generating => {
                 let spinner_chars = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-                let spinner = spinner_chars[(tab.summary_spinner_frame as usize) % spinner_chars.len()];
+                let spinner =
+                    spinner_chars[(tab.summary_spinner_frame as usize) % spinner_chars.len()];
                 let title = if is_focused {
                     format!(" {} Summary [*] ", spinner)
                 } else {
                     format!(" {} Summary ", spinner)
                 };
-                (title, vec![
-                    Line::from(""),
-                    Line::from(vec![
-                        Span::styled(format!("  {} ", spinner), Style::default().fg(Color::Yellow)),
-                        Span::styled("Generating summary...", Style::default().fg(Color::Cyan)),
-                    ]),
-                    Line::from(""),
-                    Line::from(Span::styled(
-                        "  This may take a moment.",
-                        Style::default().fg(Color::DarkGray),
-                    )),
-                ])
+                (
+                    title,
+                    vec![
+                        Line::from(""),
+                        Line::from(vec![
+                            Span::styled(
+                                format!("  {} ", spinner),
+                                Style::default().fg(Color::Yellow),
+                            ),
+                            Span::styled("Generating summary...", Style::default().fg(Color::Cyan)),
+                        ]),
+                        Line::from(""),
+                        Line::from(Span::styled(
+                            "  This may take a moment.",
+                            Style::default().fg(Color::DarkGray),
+                        )),
+                    ],
+                )
             }
             SummaryState::Ready => {
                 let title = if is_focused {
@@ -321,25 +346,31 @@ pub(super) fn draw_summary_panel(
                 } else {
                     " Summary Error ".to_string()
                 };
-                (title, vec![
-                    Line::from(""),
-                    Line::from(Span::styled(
-                        "  Failed to generate summary:",
-                        Style::default().fg(Color::Red),
-                    )),
-                    Line::from(""),
-                    Line::from(Span::styled(
-                        format!("  {}", tab.summary_text),
-                        Style::default().fg(Color::Red),
-                    )),
-                ])
+                (
+                    title,
+                    vec![
+                        Line::from(""),
+                        Line::from(Span::styled(
+                            "  Failed to generate summary:",
+                            Style::default().fg(Color::Red),
+                        )),
+                        Line::from(""),
+                        Line::from(Span::styled(
+                            format!("  {}", tab.summary_text),
+                            Style::default().fg(Color::Red),
+                        )),
+                    ],
+                )
             }
         }
     } else {
-        (" Summary ".to_string(), vec![Line::from(Span::styled(
-            "No active tab",
-            Style::default().fg(Color::DarkGray),
-        ))])
+        (
+            " Summary ".to_string(),
+            vec![Line::from(Span::styled(
+                "No active tab",
+                Style::default().fg(Color::DarkGray),
+            ))],
+        )
     };
 
     let summary_block = Block::default()
@@ -354,7 +385,9 @@ pub(super) fn draw_summary_panel(
     // Compute wrapped line count using block-less paragraph
     let total_lines = compute_wrapped_line_count(&lines, inner_width);
     let max_scroll = total_lines.saturating_sub(visible_height);
-    let scroll_pos = active_tab.map(|t| t.summary_scroll.min(max_scroll)).unwrap_or(0);
+    let scroll_pos = active_tab
+        .map(|t| t.summary_scroll.min(max_scroll))
+        .unwrap_or(0);
 
     let paragraph = Paragraph::new(lines)
         .block(summary_block)
@@ -387,7 +420,9 @@ pub(super) fn draw_run_tabs(frame: &mut Frame, session: &Session, area: Rect) {
         };
 
         let style = if is_active {
-            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(Color::DarkGray)
         };
@@ -411,7 +446,10 @@ fn truncate_input_preview(preview: &str, max_len: usize) -> String {
     if preview.len() <= max_len {
         preview.to_string()
     } else {
-        format!("{}...", preview.get(..max_len.saturating_sub(3)).unwrap_or(""))
+        format!(
+            "{}...",
+            preview.get(..max_len.saturating_sub(3)).unwrap_or("")
+        )
     }
 }
 
@@ -431,7 +469,11 @@ fn format_result_summary(summary: &ToolResultSummary, max_len: usize) -> String 
     }
 
     let first_line = summary.first_line.trim();
-    let display_line = if first_line.is_empty() { "..." } else { first_line };
+    let display_line = if first_line.is_empty() {
+        "..."
+    } else {
+        first_line
+    };
     let truncated_line = truncate_input_preview(display_line, max_len);
 
     if summary.line_count == 1 && !summary.truncated {
@@ -514,9 +556,11 @@ pub(super) fn draw_reviewer_history_panel(frame: &mut Frame, session: &Session, 
             // Each reviewer in the round
             for entry in &round.reviewers {
                 let (icon, color, suffix): (String, Color, String) = match &entry.status {
-                    ReviewerStatus::Running => {
-                        (spinner_chars[spinner_idx].to_string(), theme.warning, String::new())
-                    }
+                    ReviewerStatus::Running => (
+                        spinner_chars[spinner_idx].to_string(),
+                        theme.warning,
+                        String::new(),
+                    ),
                     ReviewerStatus::Completed {
                         approved,
                         summary,
@@ -538,7 +582,11 @@ pub(super) fn draw_reviewer_history_panel(frame: &mut Frame, session: &Session, 
                         } else {
                             summary.clone()
                         };
-                        (icon, color, format!(" ({}) {}", duration_display, summary_preview))
+                        (
+                            icon,
+                            color,
+                            format!(" ({}) {}", duration_display, summary_preview),
+                        )
                     }
                     ReviewerStatus::Failed { error } => {
                         let error_preview = if error.chars().count() > 25 {

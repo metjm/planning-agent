@@ -4,7 +4,7 @@
 //! (Claude, Codex, Gemini) emit, enabling consistent handling across the
 //! agent execution pipeline.
 
-use crate::tui::{TokenUsage, TodoItem};
+use crate::tui::{TodoItem, TokenUsage};
 use std::fmt;
 
 /// Errors that can occur during agent output parsing.

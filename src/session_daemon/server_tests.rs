@@ -26,8 +26,7 @@ impl TestFixture {
     }
 
     async fn handle_message(&self, line: &str) -> Option<DaemonMessage> {
-        let (response, _) =
-            handle_message_with_broadcast(line, &self.state, &self.events_tx).await;
+        let (response, _) = handle_message_with_broadcast(line, &self.state, &self.events_tx).await;
         response
     }
 }

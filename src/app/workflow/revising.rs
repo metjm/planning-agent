@@ -30,22 +30,34 @@ pub async fn run_revising_phase(
     if let Ok(cmd) = control_rx.try_recv() {
         match cmd {
             WorkflowCommand::Interrupt { feedback } => {
-                session_logger.log(LogLevel::Info, LogCategory::Workflow, &format!("Received interrupt during revising: {}", feedback));
+                session_logger.log(
+                    LogLevel::Info,
+                    LogCategory::Workflow,
+                    &format!("Received interrupt during revising: {}", feedback),
+                );
                 sender.send_output("[revision] Interrupted by user".to_string());
                 return Err(CancellationError { feedback }.into());
             }
             WorkflowCommand::Stop => {
-                session_logger.log(LogLevel::Info, LogCategory::Workflow, "Received stop during revising");
+                session_logger.log(
+                    LogLevel::Info,
+                    LogCategory::Workflow,
+                    "Received stop during revising",
+                );
                 sender.send_output("[revision] Stopping...".to_string());
                 return Ok(Some(WorkflowResult::Stopped));
             }
         }
     }
 
-    session_logger.log(LogLevel::Info, LogCategory::Workflow, &format!(
-        ">>> ENTERING Revising phase (iteration {})",
-        state.iteration
-    ));
+    session_logger.log(
+        LogLevel::Info,
+        LogCategory::Workflow,
+        &format!(
+            ">>> ENTERING Revising phase (iteration {})",
+            state.iteration
+        ),
+    );
     sender.send_phase_started("Revising".to_string());
     sender.send_output("".to_string());
     sender.send_output(format!(
@@ -53,13 +65,20 @@ pub async fn run_revising_phase(
         state.iteration
     ));
     // Revision uses the planning agent for session continuity
-    sender.send_output(format!("Agent: {} (planning agent)", config.workflow.planning.agent));
+    sender.send_output(format!(
+        "Agent: {} (planning agent)",
+        config.workflow.planning.agent
+    ));
 
     let max_retries = config.failure_policy.max_retries as usize;
     let mut retry_attempts = 0usize;
 
     loop {
-        session_logger.log(LogLevel::Info, LogCategory::Workflow, "Calling run_revision_phase_with_context...");
+        session_logger.log(
+            LogLevel::Info,
+            LogCategory::Workflow,
+            "Calling run_revision_phase_with_context...",
+        );
         let revision_result = run_revision_phase_with_context(
             state,
             working_dir,
@@ -78,12 +97,20 @@ pub async fn run_revising_phase(
                 break;
             }
             Err(e) if e.downcast_ref::<CancellationError>().is_some() => {
-                session_logger.log(LogLevel::Info, LogCategory::Workflow, "Revising phase was cancelled");
+                session_logger.log(
+                    LogLevel::Info,
+                    LogCategory::Workflow,
+                    "Revising phase was cancelled",
+                );
                 return Err(e);
             }
             Err(e) => {
                 let error_msg = format!("{}", e);
-                session_logger.log(LogLevel::Info, LogCategory::Workflow, &format!("Revising phase failed: {}", error_msg));
+                session_logger.log(
+                    LogLevel::Info,
+                    LogCategory::Workflow,
+                    &format!("Revising phase failed: {}", error_msg),
+                );
                 sender.send_output(format!("[revision] Failed: {}", error_msg));
 
                 // Check if we can auto-retry
@@ -97,7 +124,9 @@ pub async fn run_revising_phase(
                 }
 
                 // Max retries reached - prompt user for decision
-                sender.send_output("[revision] Failed after retries; awaiting your decision...".to_string());
+                sender.send_output(
+                    "[revision] Failed after retries; awaiting your decision...".to_string(),
+                );
                 // Revision uses planning agent
                 let summary = build_workflow_failure_summary(
                     "Revising",
@@ -109,16 +138,25 @@ pub async fn run_revising_phase(
                 );
                 sender.send_workflow_failure(summary);
 
-                let decision = wait_for_workflow_failure_decision(working_dir, approval_rx, control_rx).await;
+                let decision =
+                    wait_for_workflow_failure_decision(working_dir, approval_rx, control_rx).await;
 
                 match decision {
                     WorkflowFailureDecision::Retry => {
-                        session_logger.log(LogLevel::Info, LogCategory::Workflow, "User chose to retry revision");
+                        session_logger.log(
+                            LogLevel::Info,
+                            LogCategory::Workflow,
+                            "User chose to retry revision",
+                        );
                         retry_attempts = 0; // Reset retry counter for fresh attempt
                         continue;
                     }
                     WorkflowFailureDecision::Stop => {
-                        session_logger.log(LogLevel::Info, LogCategory::Workflow, "User chose to stop and save state after revision failure");
+                        session_logger.log(
+                            LogLevel::Info,
+                            LogCategory::Workflow,
+                            "User chose to stop and save state after revision failure",
+                        );
                         // Save failure context for later recovery
                         // Uses planning agent for session continuity
                         state.set_failure(FailureContext {
@@ -135,13 +173,21 @@ pub async fn run_revising_phase(
                         return Ok(Some(WorkflowResult::Stopped));
                     }
                     WorkflowFailureDecision::Abort => {
-                        session_logger.log(LogLevel::Info, LogCategory::Workflow, "User chose to abort after revision failure");
+                        session_logger.log(
+                            LogLevel::Info,
+                            LogCategory::Workflow,
+                            "User chose to abort after revision failure",
+                        );
                         return Ok(Some(WorkflowResult::Aborted {
                             reason: format!("Revision failed: {}", error_msg),
                         }));
                     }
                     WorkflowFailureDecision::Stopped => {
-                        session_logger.log(LogLevel::Info, LogCategory::Workflow, "Workflow stopped during revision failure decision");
+                        session_logger.log(
+                            LogLevel::Info,
+                            LogCategory::Workflow,
+                            "Workflow stopped during revision failure decision",
+                        );
                         return Ok(Some(WorkflowResult::Stopped));
                     }
                 }
@@ -150,12 +196,16 @@ pub async fn run_revising_phase(
     }
 
     last_reviews.clear();
-    session_logger.log(LogLevel::Info, LogCategory::Workflow, "run_revision_phase_with_context completed");
+    session_logger.log(
+        LogLevel::Info,
+        LogCategory::Workflow,
+        "run_revision_phase_with_context completed",
+    );
 
     // Reset sequential review state: restart from first reviewer
     // and increment plan version since the plan was modified
     if let Some(ref mut seq_state) = state.sequential_review {
-        seq_state.increment_version();  // Clears approvals AND accumulated_reviews, increments version
+        seq_state.increment_version(); // Clears approvals AND accumulated_reviews, increments version
         seq_state.reset_to_first_reviewer();
         sender.send_output(format!(
             "[sequential] Plan revised - restarting from first reviewer (version {})",
@@ -189,10 +239,14 @@ pub async fn run_revising_phase(
     state.iteration += 1;
     // Update feedback filename for the new iteration before transitioning to review
     state.update_feedback_for_iteration(state.iteration);
-    session_logger.log(LogLevel::Info, LogCategory::Workflow, &format!(
-        "Transitioning: Revising -> Reviewing (iteration now {})",
-        state.iteration
-    ));
+    session_logger.log(
+        LogLevel::Info,
+        LogCategory::Workflow,
+        &format!(
+            "Transitioning: Revising -> Reviewing (iteration now {})",
+            state.iteration
+        ),
+    );
     state.transition(Phase::Reviewing)?;
     state.set_updated_at();
     state.save_atomic(state_path)?;

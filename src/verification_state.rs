@@ -80,10 +80,14 @@ impl VerificationState {
         if !state_file.exists() {
             return Ok(None);
         }
-        let content = fs::read_to_string(&state_file)
-            .with_context(|| format!("Failed to read verification state: {}", state_file.display()))?;
-        let state: Self = serde_json::from_str(&content)
-            .with_context(|| "Failed to parse verification state")?;
+        let content = fs::read_to_string(&state_file).with_context(|| {
+            format!(
+                "Failed to read verification state: {}",
+                state_file.display()
+            )
+        })?;
+        let state: Self =
+            serde_json::from_str(&content).with_context(|| "Failed to parse verification state")?;
         Ok(Some(state))
     }
 
@@ -145,7 +149,6 @@ impl VerificationState {
             )
         }
     }
-
 }
 
 /// Normalizes a plan path to always point to the plan folder (not plan.md file).
@@ -320,5 +323,4 @@ mod tests {
         assert_eq!(loaded.max_iterations, state.max_iterations);
         assert_eq!(loaded.workflow_session_id, state.workflow_session_id);
     }
-
 }

@@ -92,14 +92,14 @@ impl Session {
                 ui_state.focused_panel
             },
             workflow_state,
-            state_snapshot: None, // Will be populated when workflow spawns
-            snapshot_rx: None,    // Will be populated when workflow spawns
+            state_snapshot: None,       // Will be populated when workflow spawns
+            snapshot_rx: None,          // Will be populated when workflow spawns
             start_time: Instant::now(), // Reset to now
             total_cost: ui_state.total_cost,
-            running: false, // Will be set when workflow resumes
+            running: false,                        // Will be set when workflow resumes
             active_tools_by_agent: HashMap::new(), // Reset
             completed_tools_by_agent: HashMap::new(), // Reset
-            cli_instances: Vec::new(), // Runtime-only, reset on resume
+            cli_instances: Vec::new(),             // Runtime-only, reset on resume
             approval_mode: ui_state.approval_mode,
             approval_context: ui_state.approval_context,
             plan_summary: ui_state.plan_summary,
@@ -127,7 +127,7 @@ impl Session {
             total_cache_creation_tokens: ui_state.total_cache_creation_tokens,
             total_cache_read_tokens: ui_state.total_cache_read_tokens,
             phase_times: HashMap::new(), // Reset
-            current_phase_start: None, // Reset
+            current_phase_start: None,   // Reset
             tool_call_count: ui_state.tool_call_count,
             last_bytes_sample: (Instant::now(), 0), // Reset
             bytes_per_second: ui_state.bytes_per_second,
@@ -137,8 +137,8 @@ impl Session {
             tool_error_count: ui_state.tool_error_count,
             total_tool_duration_ms: ui_state.total_tool_duration_ms,
             completed_tool_count: ui_state.completed_tool_count,
-            workflow_handle: None, // Reset
-            approval_tx: None, // Reset
+            workflow_handle: None,     // Reset
+            approval_tx: None,         // Reset
             workflow_control_tx: None, // Reset
             feedback_target: ui_state.feedback_target,
             current_run_id: ui_state.current_run_id,
@@ -151,7 +151,7 @@ impl Session {
             todo_scroll_position: ui_state.todo_scroll_position,
             tab_mention_state: MentionState::new(), // Runtime-only, reset on resume
             feedback_mention_state: MentionState::new(), // Runtime-only, reset on resume
-            tab_slash_state: SlashState::new(), // Runtime-only, reset on resume
+            tab_slash_state: SlashState::new(),     // Runtime-only, reset on resume
             plan_modal_open: ui_state.plan_modal_open,
             plan_modal_scroll: ui_state.plan_modal_scroll,
             plan_modal_content: String::new(), // Content is re-read from disk when modal opens

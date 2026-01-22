@@ -78,7 +78,11 @@ impl Session {
         self.state_snapshot
             .as_ref()
             .map(|s| s.feature_name.as_str())
-            .or_else(|| self.workflow_state.as_ref().map(|s| s.feature_name.as_str()))
+            .or_else(|| {
+                self.workflow_state
+                    .as_ref()
+                    .map(|s| s.feature_name.as_str())
+            })
             .unwrap_or(&self.name)
     }
 

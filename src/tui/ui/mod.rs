@@ -1,4 +1,3 @@
-
 mod approval_overlay;
 mod chat;
 mod cli_instances;
@@ -101,7 +100,9 @@ fn draw_tab_bar(frame: &mut Frame, tab_manager: &TabManager, area: Rect) {
         };
 
         let style = if is_active {
-            Style::default().fg(theme.tab_active).add_modifier(Modifier::BOLD)
+            Style::default()
+                .fg(theme.tab_active)
+                .add_modifier(Modifier::BOLD)
         } else if session.approval_mode != ApprovalMode::None {
             Style::default().fg(theme.tab_approval)
         } else {
@@ -112,7 +113,10 @@ fn draw_tab_bar(frame: &mut Frame, tab_manager: &TabManager, area: Rect) {
         spans.push(Span::raw(" "));
     }
 
-    spans.push(Span::styled("[Ctrl++]", Style::default().fg(theme.success).dim()));
+    spans.push(Span::styled(
+        "[Ctrl++]",
+        Style::default().fg(theme.success).dim(),
+    ));
 
     let title = if let Some(ref state) = active_session.workflow_state {
         let plan_path = state.plan_file.display().to_string();

@@ -84,7 +84,10 @@ async fn test_subscription_connect() {
 
     // Now try to subscribe
     let subscription = DaemonSubscription::connect().await;
-    assert!(subscription.is_some(), "Should be able to connect and subscribe");
+    assert!(
+        subscription.is_some(),
+        "Should be able to connect and subscribe"
+    );
 }
 
 #[tokio::test]
@@ -114,7 +117,9 @@ async fn test_subscription_receives_register_notification() {
     client.register(record).await.expect("Register failed");
 
     // Wait for our notification (filtering out notifications from other sessions)
-    match wait_for_session_notification(&mut subscription, &session_id, Duration::from_secs(2)).await {
+    match wait_for_session_notification(&mut subscription, &session_id, Duration::from_secs(2))
+        .await
+    {
         Ok(record) => {
             assert_eq!(record.workflow_session_id, session_id);
             assert_eq!(record.phase, "Planning");
@@ -149,10 +154,14 @@ async fn test_subscription_receives_update_notification() {
 
     // Register first
     let mut record = create_test_record(&session_id);
-    client.register(record.clone()).await.expect("Register failed");
+    client
+        .register(record.clone())
+        .await
+        .expect("Register failed");
 
     // Consume register notification (filtered to our session)
-    let _ = wait_for_session_notification(&mut subscription, &session_id, Duration::from_secs(1)).await;
+    let _ =
+        wait_for_session_notification(&mut subscription, &session_id, Duration::from_secs(1)).await;
 
     // Update the session
     record.phase = "Reviewing".to_string();
@@ -160,7 +169,9 @@ async fn test_subscription_receives_update_notification() {
     client.update(record).await.expect("Update failed");
 
     // Wait for update notification (filtered to our session)
-    match wait_for_session_notification(&mut subscription, &session_id, Duration::from_secs(2)).await {
+    match wait_for_session_notification(&mut subscription, &session_id, Duration::from_secs(2))
+        .await
+    {
         Ok(record) => {
             assert_eq!(record.workflow_session_id, session_id);
             assert_eq!(record.phase, "Reviewing");
@@ -199,13 +210,19 @@ async fn test_subscription_receives_heartbeat_notification() {
     client.register(record).await.expect("Register failed");
 
     // Consume register notification (filtered to our session)
-    let _ = wait_for_session_notification(&mut subscription, &session_id, Duration::from_secs(1)).await;
+    let _ =
+        wait_for_session_notification(&mut subscription, &session_id, Duration::from_secs(1)).await;
 
     // Send heartbeat
-    client.heartbeat(&session_id).await.expect("Heartbeat failed");
+    client
+        .heartbeat(&session_id)
+        .await
+        .expect("Heartbeat failed");
 
     // Wait for heartbeat notification (filtered to our session)
-    match wait_for_session_notification(&mut subscription, &session_id, Duration::from_secs(2)).await {
+    match wait_for_session_notification(&mut subscription, &session_id, Duration::from_secs(2))
+        .await
+    {
         Ok(record) => {
             assert_eq!(record.workflow_session_id, session_id);
         }
@@ -268,7 +285,10 @@ async fn test_subscription_try_recv() {
         }
     }
 
-    assert!(found_our_session, "Should have received notification for our session");
+    assert!(
+        found_our_session,
+        "Should have received notification for our session"
+    );
 
     cleanup_session(&client, &session_id).await;
 }

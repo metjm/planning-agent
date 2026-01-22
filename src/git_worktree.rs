@@ -31,7 +31,6 @@ pub struct WorktreeInfo {
     pub has_submodules: bool,
 }
 
-
 /// Result of attempting to set up a worktree.
 pub enum WorktreeSetupResult {
     /// Successfully created a worktree
@@ -152,7 +151,13 @@ pub fn create_session_worktree(
         let short_id = session_id.get(..8).unwrap_or(session_id);
         let safe_feature: String = feature_name
             .chars()
-            .map(|c| if c.is_alphanumeric() || c == '-' { c } else { '-' })
+            .map(|c| {
+                if c.is_alphanumeric() || c == '-' {
+                    c
+                } else {
+                    '-'
+                }
+            })
             .collect();
 
         // Validate that sanitized feature name isn't empty after sanitization
@@ -209,19 +214,16 @@ pub fn create_session_worktree(
                     .output();
 
                 match retry {
-                    Ok(o) if o.status.success() => {
-                        WorktreeSetupResult::Created(WorktreeInfo {
-                            worktree_path,
-                            branch_name: unique_branch,
-                            source_branch: repo_info.current_branch,
-                            original_dir: repo_info.repo_root,
-                            has_submodules,
-                        })
+                    Ok(o) if o.status.success() => WorktreeSetupResult::Created(WorktreeInfo {
+                        worktree_path,
+                        branch_name: unique_branch,
+                        source_branch: repo_info.current_branch,
+                        original_dir: repo_info.repo_root,
+                        has_submodules,
+                    }),
+                    _ => {
+                        WorktreeSetupResult::Failed(format!("Git worktree add failed: {}", stderr))
                     }
-                    _ => WorktreeSetupResult::Failed(format!(
-                        "Git worktree add failed: {}",
-                        stderr
-                    )),
                 }
             } else {
                 WorktreeSetupResult::Failed(format!("Git worktree add failed: {}", stderr))
@@ -367,7 +369,13 @@ mod tests {
         // Test that feature names with special characters get sanitized
         let sanitized: String = "test/feature@with!special#chars"
             .chars()
-            .map(|c| if c.is_alphanumeric() || c == '-' { c } else { '-' })
+            .map(|c| {
+                if c.is_alphanumeric() || c == '-' {
+                    c
+                } else {
+                    '-'
+                }
+            })
             .collect();
         assert_eq!(sanitized, "test-feature-with-special-chars");
     }
@@ -377,7 +385,13 @@ mod tests {
         // Test fallback for names that become empty after sanitization
         let sanitized: String = "!!@@##"
             .chars()
-            .map(|c| if c.is_alphanumeric() || c == '-' { c } else { '-' })
+            .map(|c| {
+                if c.is_alphanumeric() || c == '-' {
+                    c
+                } else {
+                    '-'
+                }
+            })
             .collect();
         let safe = if sanitized.trim_matches('-').is_empty() {
             "feature".to_string()

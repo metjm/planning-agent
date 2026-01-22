@@ -46,7 +46,8 @@ impl GeminiAgent {
         context: AgentContext,
     ) -> Result<AgentResult> {
         let emitter = ContextEmitter::new(context.clone(), self.name.clone());
-        self.execute_streaming_internal(prepared, &emitter, Some(&context)).await
+        self.execute_streaming_internal(prepared, &emitter, Some(&context))
+            .await
     }
 
     async fn execute_streaming_internal(
@@ -74,11 +75,7 @@ impl GeminiAgent {
         Ok(output.into())
     }
 
-    fn build_command(
-        &self,
-        prompt: &str,
-        context: Option<&AgentContext>,
-    ) -> Command {
+    fn build_command(&self, prompt: &str, context: Option<&AgentContext>) -> Command {
         let mut cmd = Command::new(&self.config.command);
 
         // Add --resume if we have a conversation ID and session persistence is enabled
@@ -110,7 +107,10 @@ impl GeminiAgent {
                 format!(" {}", self.config.args.join(" "))
             };
             let context_suffix = if has_context { " (with context)" } else { "" };
-            logger.log_line("start", &format!("command: {}{}{}", self.config.command, args, context_suffix));
+            logger.log_line(
+                "start",
+                &format!("command: {}{}{}", self.config.command, args, context_suffix),
+            );
             logger.log_line("prompt", &prompt.chars().take(200).collect::<String>());
         }
     }
@@ -172,7 +172,11 @@ mod tests {
     fn test_gemini_agent_new() {
         let config = AgentConfig {
             command: "gemini".to_string(),
-            args: vec!["-p".to_string(), "--output-format".to_string(), "json".to_string()],
+            args: vec![
+                "-p".to_string(),
+                "--output-format".to_string(),
+                "json".to_string(),
+            ],
             allowed_tools: vec![],
             session_persistence: SessionPersistenceConfig::default(),
         };

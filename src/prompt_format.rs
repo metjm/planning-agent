@@ -132,7 +132,8 @@ impl PromptBuilder {
 
         // Inputs
         if !self.inputs.is_empty() {
-            let inputs_content: Vec<String> = self.inputs
+            let inputs_content: Vec<String> = self
+                .inputs
                 .iter()
                 .map(|(label, value)| xml_tag(label, value))
                 .collect();
@@ -141,7 +142,8 @@ impl PromptBuilder {
 
         // Constraints
         if !self.constraints.is_empty() {
-            let constraints_content = self.constraints
+            let constraints_content = self
+                .constraints
                 .iter()
                 .map(|c| format!("- {}", c))
                 .collect::<Vec<_>>()
@@ -286,12 +288,14 @@ mod tests {
             .input("workspace-root", "/workspaces/myproject")
             .input("objective", "Add user authentication")
             .constraint("Use absolute paths for all file references")
-            .output_format(r#"<plan-feedback>
+            .output_format(
+                r#"<plan-feedback>
 ## Summary
 [Your review summary]
 
 ## Overall Assessment: [APPROVED or NEEDS REVISION]
-</plan-feedback>"#)
+</plan-feedback>"#,
+            )
             .build();
 
         assert!(prompt.starts_with("<user-prompt>"));

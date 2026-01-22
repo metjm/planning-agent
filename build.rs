@@ -7,10 +7,7 @@ const CHECKED_EXTENSIONS: &[&str] = &["rs", "md", "yaml", "toml"];
 
 const EXCLUDED_DIRS: &[&str] = &["target", ".git", "node_modules"];
 
-const EXCLUDED_FILES: &[&str] = &[
-    "Cargo.lock",
-    "docs/plans/file-line-limit.md",
-];
+const EXCLUDED_FILES: &[&str] = &["Cargo.lock", "docs/plans/file-line-limit.md"];
 
 fn main() {
     println!("cargo:rerun-if-changed=.git/HEAD");
@@ -34,12 +31,12 @@ fn main() {
 
     println!("cargo:rustc-env=PLANNING_AGENT_GIT_SHA={}", sha);
 
+    enforce_formatting();
     enforce_line_limits();
 }
 
 fn enforce_line_limits() {
-    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR")
-        .expect("CARGO_MANIFEST_DIR must be set");
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR must be set");
     let root = PathBuf::from(&manifest_dir);
 
     let files = collect_files_to_check(&root);
@@ -72,7 +69,12 @@ fn enforce_line_limits() {
         eprintln!("FILE LINE LIMIT EXCEEDED (max {} lines)", MAX_LINES);
         eprintln!("========================================");
         for (path, lines) in &violations {
-            eprintln!("  {} - {} lines (exceeds by {})", path.display(), lines, lines - MAX_LINES);
+            eprintln!(
+                "  {} - {} lines (exceeds by {})",
+                path.display(),
+                lines,
+                lines - MAX_LINES
+            );
         }
         eprintln!("========================================\n");
         eprintln!("Please split these files into smaller modules.");
@@ -176,7 +178,10 @@ fn count_lines(path: &Path) -> std::io::Result<usize> {
 }
 
 fn count_non_empty_lines(content: &str) -> usize {
-    content.lines().filter(|line| !line.trim().is_empty()).count()
+    content
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .count()
 }
 
 fn strip_rust_comments(content: &str) -> String {
@@ -301,4 +306,86 @@ fn strip_rust_comments(content: &str) -> String {
     }
 
     result
+}
+
+fn enforce_formatting() {
+    // Skip formatting check if SKIP_FORMAT_CHECK is set (useful for CI or initial setup)
+    if std::env::var("SKIP_FORMAT_CHECK").is_ok() {
+        return;
+    }
+
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR must be set");
+    let root = PathBuf::from(&manifest_dir);
+
+    // Collect all .rs files
+    let rust_files: Vec<PathBuf> = collect_files_to_check(&root)
+        .into_iter()
+        .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("rs"))
+        .collect();
+
+    if rust_files.is_empty() {
+        return;
+    }
+
+    // Check if rustfmt is available
+    let rustfmt_check = Command::new("rustfmt").arg("--version").output();
+
+    if rustfmt_check.is_err() || !rustfmt_check.unwrap().status.success() {
+        // rustfmt not available, skip check
+        println!("cargo:warning=rustfmt not found, skipping format check");
+        return;
+    }
+
+    // Run rustfmt --check on all rust files
+    let mut cmd = Command::new("rustfmt");
+    cmd.arg("--check").arg("--edition").arg("2021");
+
+    for file in &rust_files {
+        cmd.arg(file);
+    }
+
+    let output = match cmd.output() {
+        Ok(o) => o,
+        Err(e) => {
+            println!("cargo:warning=Failed to run rustfmt: {}", e);
+            return;
+        }
+    };
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+
+        // Extract unformatted file names from rustfmt output
+        let mut unformatted_files: Vec<String> = Vec::new();
+        for line in stdout.lines().chain(stderr.lines()) {
+            if line.starts_with("Diff in ") {
+                if let Some(path) = line.strip_prefix("Diff in ") {
+                    let path = path.trim_end_matches(':');
+                    if let Ok(rel) = Path::new(path).strip_prefix(&root) {
+                        unformatted_files.push(rel.to_string_lossy().to_string());
+                    } else {
+                        unformatted_files.push(path.to_string());
+                    }
+                }
+            }
+        }
+
+        eprintln!("\n========================================");
+        eprintln!("CODE FORMATTING CHECK FAILED");
+        eprintln!("========================================");
+        if !unformatted_files.is_empty() {
+            eprintln!("The following files are not formatted:");
+            for file in &unformatted_files {
+                eprintln!("  - {}", file);
+            }
+        } else {
+            eprintln!("Some files are not properly formatted.");
+        }
+        eprintln!("========================================");
+        eprintln!("\nTo fix, run:\n");
+        eprintln!("    cargo fmt");
+        eprintln!("\n========================================\n");
+        panic!("Build failed: code is not formatted. Run 'cargo fmt' to fix.");
+    }
 }

@@ -65,7 +65,10 @@ pub enum Event {
         agent_name: String,
         phase: String,
     },
-    ToolFinished { tool_id: Option<String>, agent_name: String },
+    ToolFinished {
+        tool_id: Option<String>,
+        agent_name: String,
+    },
     StateUpdate(State),
     RequestUserApproval(String),
     BytesReceived(usize),
@@ -82,16 +85,38 @@ pub enum Event {
     },
     StopReason(String),
 
-    SessionOutput { session_id: usize, line: String },
-    SessionStreaming { session_id: usize, line: String },
-    SessionStateUpdate { session_id: usize, state: State },
-    SessionApprovalRequest { session_id: usize, summary: String },
-    SessionReviewDecisionRequest { session_id: usize, summary: String },
+    SessionOutput {
+        session_id: usize,
+        line: String,
+    },
+    SessionStreaming {
+        session_id: usize,
+        line: String,
+    },
+    SessionStateUpdate {
+        session_id: usize,
+        state: State,
+    },
+    SessionApprovalRequest {
+        session_id: usize,
+        summary: String,
+    },
+    SessionReviewDecisionRequest {
+        session_id: usize,
+        summary: String,
+    },
 
     /// A review round has started
-    SessionReviewRoundStarted { session_id: usize, round: u32 },
+    SessionReviewRoundStarted {
+        session_id: usize,
+        round: u32,
+    },
     /// A reviewer has started within a round
-    SessionReviewerStarted { session_id: usize, round: u32, display_id: String },
+    SessionReviewerStarted {
+        session_id: usize,
+        round: u32,
+        display_id: String,
+    },
     /// A reviewer has completed within a round
     SessionReviewerCompleted {
         session_id: usize,
@@ -109,9 +134,16 @@ pub enum Event {
         error: String,
     },
     /// A review round has completed with aggregate verdict
-    SessionReviewRoundCompleted { session_id: usize, round: u32, approved: bool },
+    SessionReviewRoundCompleted {
+        session_id: usize,
+        round: u32,
+        approved: bool,
+    },
 
-    SessionTokenUsage { session_id: usize, usage: TokenUsage },
+    SessionTokenUsage {
+        session_id: usize,
+        usage: TokenUsage,
+    },
     SessionToolStarted {
         session_id: usize,
         tool_id: Option<String>,
@@ -120,11 +152,26 @@ pub enum Event {
         agent_name: String,
         phase: String,
     },
-    SessionToolFinished { session_id: usize, tool_id: Option<String>, agent_name: String },
-    SessionBytesReceived { session_id: usize, bytes: usize },
-    SessionPhaseStarted { session_id: usize, phase: String },
-    SessionTurnCompleted { session_id: usize },
-    SessionModelDetected { session_id: usize, name: String },
+    SessionToolFinished {
+        session_id: usize,
+        tool_id: Option<String>,
+        agent_name: String,
+    },
+    SessionBytesReceived {
+        session_id: usize,
+        bytes: usize,
+    },
+    SessionPhaseStarted {
+        session_id: usize,
+        phase: String,
+    },
+    SessionTurnCompleted {
+        session_id: usize,
+    },
+    SessionModelDetected {
+        session_id: usize,
+        name: String,
+    },
     SessionToolResultReceived {
         session_id: usize,
         tool_id: Option<String>,
@@ -133,21 +180,45 @@ pub enum Event {
         phase: String,
         summary: ToolResultSummary,
     },
-    SessionStopReason { session_id: usize, reason: String },
-    SessionWorkflowComplete { session_id: usize },
-    SessionWorkflowError { session_id: usize, error: String },
+    SessionStopReason {
+        session_id: usize,
+        reason: String,
+    },
+    SessionWorkflowComplete {
+        session_id: usize,
+    },
+    SessionWorkflowError {
+        session_id: usize,
+        error: String,
+    },
     /// Workflow was cleanly stopped and a snapshot was saved
-    SessionWorkflowStopped { session_id: usize },
-    SessionGeneratingSummary { session_id: usize },
+    SessionWorkflowStopped {
+        session_id: usize,
+    },
+    SessionGeneratingSummary {
+        session_id: usize,
+    },
 
-    SessionPlanGenerationFailed { session_id: usize, error: String },
+    SessionPlanGenerationFailed {
+        session_id: usize,
+        error: String,
+    },
 
     /// All reviewers failed after retry exhaustion - prompts for recovery decision
-    SessionAllReviewersFailed { session_id: usize, summary: String },
+    SessionAllReviewersFailed {
+        session_id: usize,
+        summary: String,
+    },
 
-    SessionMaxIterationsReached { session_id: usize, summary: String },
+    SessionMaxIterationsReached {
+        session_id: usize,
+        summary: String,
+    },
 
-    SessionUserOverrideApproval { session_id: usize, summary: String },
+    SessionUserOverrideApproval {
+        session_id: usize,
+        summary: String,
+    },
 
     SessionAgentMessage {
         session_id: usize,
@@ -157,11 +228,14 @@ pub enum Event {
     },
 
     /// Generic workflow failure that can be recovered via retry/stop/abort
-    SessionWorkflowFailure { session_id: usize, summary: String },
+    SessionWorkflowFailure {
+        session_id: usize,
+        summary: String,
+    },
 
     SessionTodosUpdate {
         session_id: usize,
-        agent_name: String,  
+        agent_name: String,
         todos: Vec<TodoItem>,
     },
 
@@ -195,15 +269,31 @@ pub enum Event {
 
     // Verification workflow events
     /// Verification phase started
-    SessionVerificationStarted { session_id: usize, iteration: u32 },
+    SessionVerificationStarted {
+        session_id: usize,
+        iteration: u32,
+    },
     /// Verification phase completed with verdict
-    SessionVerificationCompleted { session_id: usize, verdict: String, report: String },
+    SessionVerificationCompleted {
+        session_id: usize,
+        verdict: String,
+        report: String,
+    },
     /// Fixing phase started
-    SessionFixingStarted { session_id: usize, iteration: u32 },
+    SessionFixingStarted {
+        session_id: usize,
+        iteration: u32,
+    },
     /// Fixing phase completed
-    SessionFixingCompleted { session_id: usize },
+    SessionFixingCompleted {
+        session_id: usize,
+    },
     /// Verification workflow result
-    SessionVerificationResult { session_id: usize, approved: bool, iterations_used: u32 },
+    SessionVerificationResult {
+        session_id: usize,
+        approved: bool,
+        iterations_used: u32,
+    },
 
     /// CLI instance lifecycle events
     SessionCliInstanceStarted {
@@ -275,7 +365,7 @@ pub enum UserApprovalResponse {
     ReviewContinue,
 
     PlanGenerationRetry,
-    PlanGenerationContinue,  // Continue with existing plan file if available
+    PlanGenerationContinue, // Continue with existing plan file if available
     AbortWorkflow,
     ProceedWithoutApproval,
     ContinueReviewing,
@@ -791,9 +881,11 @@ impl SessionEventSender {
 
     /// Sends an implementation interaction finished event.
     pub fn send_implementation_interaction_finished(&self) {
-        let _ = self.inner.send(Event::SessionImplementationInteractionFinished {
-            session_id: self.session_id,
-        });
+        let _ = self
+            .inner
+            .send(Event::SessionImplementationInteractionFinished {
+                session_id: self.session_id,
+            });
     }
 }
 
@@ -852,7 +944,11 @@ mod tests {
         sender.send_run_tab_summary_error("Planning".to_string(), "Error message".to_string());
 
         match rx.try_recv().unwrap() {
-            Event::SessionRunTabSummaryGenerating { session_id, phase, run_id } => {
+            Event::SessionRunTabSummaryGenerating {
+                session_id,
+                phase,
+                run_id,
+            } => {
                 assert_eq!(session_id, 1);
                 assert_eq!(phase, "Planning");
                 assert_eq!(run_id, 42);
@@ -861,7 +957,12 @@ mod tests {
         }
 
         match rx.try_recv().unwrap() {
-            Event::SessionRunTabSummaryReady { session_id, phase, summary, run_id } => {
+            Event::SessionRunTabSummaryReady {
+                session_id,
+                phase,
+                summary,
+                run_id,
+            } => {
                 assert_eq!(session_id, 1);
                 assert_eq!(phase, "Planning");
                 assert_eq!(summary, "Summary content");
@@ -871,7 +972,12 @@ mod tests {
         }
 
         match rx.try_recv().unwrap() {
-            Event::SessionRunTabSummaryError { session_id, phase, error, run_id } => {
+            Event::SessionRunTabSummaryError {
+                session_id,
+                phase,
+                error,
+                run_id,
+            } => {
                 assert_eq!(session_id, 1);
                 assert_eq!(phase, "Planning");
                 assert_eq!(error, "Error message");

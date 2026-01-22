@@ -8,11 +8,14 @@ mod tabs;
 mod title;
 pub mod ui;
 
+pub use event::{
+    CancellationError, Event, EventHandler, SessionEventSender, TokenUsage, UserApprovalResponse,
+    WorkflowCommand,
+};
 pub use session::{
     ApprovalContext, ApprovalMode, CliInstanceId, FeedbackTarget, FocusedPanel, InputMode, RunTab,
     RunTabEntry, Session, SessionContext, SessionStatus, SummaryState, TodoItem, TodoStatus,
     ToolKind, ToolResultSummary, ToolTimelineEntry,
 };
 pub use tabs::TabManager;
-pub use event::{CancellationError, Event, EventHandler, SessionEventSender, TokenUsage, UserApprovalResponse, WorkflowCommand};
 pub use title::TerminalTitleManager;

@@ -243,7 +243,11 @@ impl SessionLogger {
         }
         if let Ok(mut file) = self.main_log.lock() {
             let timestamp = format_timestamp();
-            let _ = writeln!(file, "[{}] [{}] [{}] {}", timestamp, level, category, message);
+            let _ = writeln!(
+                file,
+                "[{}] [{}] [{}] {}",
+                timestamp, level, category, message
+            );
             let _ = file.flush();
         }
     }
@@ -257,7 +261,10 @@ impl SessionLogger {
     #[allow(dead_code)]
     pub fn log_agent(&self, agent_name: &str, kind: &str, message: &str) {
         let timestamp = format_timestamp();
-        let formatted = format!("[{}] [AGENT:{}] {}: {}", timestamp, agent_name, kind, message);
+        let formatted = format!(
+            "[{}] [AGENT:{}] {}: {}",
+            timestamp, agent_name, kind, message
+        );
 
         // Write to main log
         if let Ok(mut file) = self.main_log.lock() {
@@ -437,7 +444,10 @@ pub fn create_session_logger(session_id: &str) -> Result<Arc<SessionLogger>> {
 
 /// Creates a SessionLogger with a specific log level, wrapped in Arc.
 #[allow(dead_code)]
-pub fn create_session_logger_with_level(session_id: &str, level: LogLevel) -> Result<Arc<SessionLogger>> {
+pub fn create_session_logger_with_level(
+    session_id: &str,
+    level: LogLevel,
+) -> Result<Arc<SessionLogger>> {
     Ok(Arc::new(SessionLogger::new_with_level(session_id, level)?))
 }
 
@@ -495,7 +505,11 @@ mod tests {
         let logger = SessionLogger::new(&session_id).unwrap();
 
         // These should not panic
-        logger.log(LogLevel::Info, LogCategory::Workflow, "Test workflow message");
+        logger.log(
+            LogLevel::Info,
+            LogCategory::Workflow,
+            "Test workflow message",
+        );
         logger.log_agent("test-agent", "stdout", "Test agent output");
         logger.log_agent_stream("test-agent", "stderr", "Test stream output");
         logger.info("Test info");

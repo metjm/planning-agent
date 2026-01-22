@@ -66,8 +66,7 @@ impl SessionContext {
         worktree_info: Option<&WorktreeState>,
         workflow_config: WorkflowConfig,
     ) -> Self {
-        let effective_working_dir =
-            compute_effective_working_dir(&base_working_dir, worktree_info);
+        let effective_working_dir = compute_effective_working_dir(&base_working_dir, worktree_info);
 
         Self {
             base_working_dir,

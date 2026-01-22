@@ -94,60 +94,59 @@ impl Session {
             }
         };
 
-        let (display_name, input_preview, duration_ms) = if let Some((display_name, input_preview, duration_ms)) =
-            tool_info
-        {
-            let completed_at = Instant::now();
+        let (display_name, input_preview, duration_ms) =
+            if let Some((display_name, input_preview, duration_ms)) = tool_info {
+                let completed_at = Instant::now();
 
-            // Move to completed tools list
-            let completed_tool = CompletedTool {
-                display_name: display_name.clone(),
-                input_preview: input_preview.clone(),
-                duration_ms,
-                is_error,
-                completed_at,
-            };
+                // Move to completed tools list
+                let completed_tool = CompletedTool {
+                    display_name: display_name.clone(),
+                    input_preview: input_preview.clone(),
+                    duration_ms,
+                    is_error,
+                    completed_at,
+                };
 
-            // Insert at the beginning for reverse chronological order (newest first)
-            self.completed_tools_by_agent
-                .entry(agent_name.to_string())
-                .or_default()
-                .insert(0, completed_tool);
+                // Insert at the beginning for reverse chronological order (newest first)
+                self.completed_tools_by_agent
+                    .entry(agent_name.to_string())
+                    .or_default()
+                    .insert(0, completed_tool);
 
-            // Enforce retention cap
-            self.trim_completed_tools();
+                // Enforce retention cap
+                self.trim_completed_tools();
 
-            // Clean up empty active tools entries
-            if let Some(tools) = self.active_tools_by_agent.get(agent_name) {
-                if tools.is_empty() {
-                    self.active_tools_by_agent.remove(agent_name);
+                // Clean up empty active tools entries
+                if let Some(tools) = self.active_tools_by_agent.get(agent_name) {
+                    if tools.is_empty() {
+                        self.active_tools_by_agent.remove(agent_name);
+                    }
                 }
-            }
-            (display_name, input_preview, duration_ms)
-        } else {
-            // No active tools found - create a synthetic completed entry only for true orphan results
-            // (This is an edge case where we got a result without a matching start)
-            let display_name = normalized_id.unwrap_or("unknown").to_string();
-            let input_preview = String::new();
-            let duration_ms = 0;
+                (display_name, input_preview, duration_ms)
+            } else {
+                // No active tools found - create a synthetic completed entry only for true orphan results
+                // (This is an edge case where we got a result without a matching start)
+                let display_name = normalized_id.unwrap_or("unknown").to_string();
+                let input_preview = String::new();
+                let duration_ms = 0;
 
-            let completed_tool = CompletedTool {
-                display_name: display_name.clone(),
-                input_preview: input_preview.clone(),
-                duration_ms,
-                is_error,
-                completed_at: Instant::now(),
+                let completed_tool = CompletedTool {
+                    display_name: display_name.clone(),
+                    input_preview: input_preview.clone(),
+                    duration_ms,
+                    is_error,
+                    completed_at: Instant::now(),
+                };
+
+                self.completed_tools_by_agent
+                    .entry(agent_name.to_string())
+                    .or_default()
+                    .insert(0, completed_tool);
+
+                self.trim_completed_tools();
+
+                (display_name, input_preview, duration_ms)
             };
-
-            self.completed_tools_by_agent
-                .entry(agent_name.to_string())
-                .or_default()
-                .insert(0, completed_tool);
-
-            self.trim_completed_tools();
-
-            (display_name, input_preview, duration_ms)
-        };
 
         ToolCompletionInfo {
             display_name,
@@ -160,7 +159,11 @@ impl Session {
     /// Trim completed tools to stay under the retention cap
     pub fn trim_completed_tools(&mut self) {
         // Count total completed tools
-        let total: usize = self.completed_tools_by_agent.values().map(|v| v.len()).sum();
+        let total: usize = self
+            .completed_tools_by_agent
+            .values()
+            .map(|v| v.len())
+            .sum();
 
         if total <= MAX_COMPLETED_TOOLS {
             return;

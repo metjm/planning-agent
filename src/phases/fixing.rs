@@ -76,10 +76,7 @@ pub async fn run_fixing_phase(
         )
         .await?;
 
-    session_sender.send_output(format!(
-        "[fixing:{}] Fix phase complete",
-        agent_name
-    ));
+    session_sender.send_output(format!("[fixing:{}] Fix phase complete", agent_name));
     session_sender.send_output(format!(
         "[fixing:{}] Result preview: {}...",
         agent_name,
@@ -91,10 +88,7 @@ pub async fn run_fixing_phase(
         .plan_path
         .join(format!("fix_{}.log", verification_state.iteration));
     if let Err(e) = fs::write(&fix_log_path, &result.output) {
-        session_sender.send_output(format!(
-            "[fixing] Warning: Could not save fix log: {}",
-            e
-        ));
+        session_sender.send_output(format!("[fixing] Warning: Could not save fix log: {}", e));
     }
 
     Ok(())
@@ -109,7 +103,8 @@ fn build_fixing_prompt(state: &VerificationState, verification_report: &str) -> 
 
     PromptBuilder::new()
         .phase("fixing")
-        .instructions(r#"Fix the implementation issues identified in the verification report.
+        .instructions(
+            r#"Fix the implementation issues identified in the verification report.
 
 1. Read the original plan to understand the intended implementation
 2. Review each issue from the verification report
@@ -121,11 +116,18 @@ Focus on:
 - Not introducing new bugs
 - Maintaining code quality and consistency with existing patterns
 
-After making your fixes, provide a brief summary of what you changed."#)
+After making your fixes, provide a brief summary of what you changed."#,
+        )
         .input("workspace-root", &state.working_dir.display().to_string())
         .input("plan-path", &plan_path.display().to_string())
-        .input("working-directory", &state.working_dir.display().to_string())
-        .context(&format!("# Issues to Fix\n\nThe verification found the following issues:\n\n{}", feedback))
+        .input(
+            "working-directory",
+            &state.working_dir.display().to_string(),
+        )
+        .context(&format!(
+            "# Issues to Fix\n\nThe verification found the following issues:\n\n{}",
+            feedback
+        ))
         .constraint("Use absolute paths for all file references in your summary")
         .build()
 }

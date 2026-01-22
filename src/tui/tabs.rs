@@ -185,9 +185,9 @@ impl TabManager {
     }
 
     pub fn has_pending_approval(&self) -> bool {
-        self.sessions.iter().any(|s| {
-            s.approval_mode != super::session::ApprovalMode::None
-        })
+        self.sessions
+            .iter()
+            .any(|s| s.approval_mode != super::session::ApprovalMode::None)
     }
 
     pub fn sessions_needing_attention(&self) -> Vec<usize> {
@@ -281,7 +281,7 @@ mod tests {
         manager.active_tab = 2;
         manager.close_tab(1);
         assert_eq!(manager.len(), 2);
-        assert_eq!(manager.active_tab, 1); 
+        assert_eq!(manager.active_tab, 1);
     }
 
     #[test]
@@ -290,7 +290,7 @@ mod tests {
         assert_eq!(manager.len(), 1);
 
         manager.close_tab(0);
-        assert_eq!(manager.len(), 1); 
+        assert_eq!(manager.len(), 1);
     }
 
     #[test]

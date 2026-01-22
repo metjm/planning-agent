@@ -57,7 +57,7 @@ impl ProviderUsage {
             display_name: "Gemini".to_string(),
             session: UsageWindow::default(),
             weekly: usage.daily, // Gemini daily maps to weekly slot
-            plan_type: None, // Gemini /stats doesn't provide plan info
+            plan_type: None,     // Gemini /stats doesn't provide plan info
             fetched_at: usage.fetched_at,
             status_message: usage.error_message,
             supports_usage: true,
@@ -90,7 +90,6 @@ pub struct AccountUsage {
 }
 
 impl AccountUsage {
-
     pub fn new() -> Self {
         Self {
             providers: HashMap::new(),
@@ -144,9 +143,9 @@ pub fn fetch_all_provider_usage_sync() -> AccountUsage {
             }
             None => {
                 // Claude fetch timed out, add error status but don't block others
-                account_usage.update(ProviderUsage::from_claude_usage(
-                    ClaudeUsage::with_error("Fetch timed out".to_string()),
-                ));
+                account_usage.update(ProviderUsage::from_claude_usage(ClaudeUsage::with_error(
+                    "Fetch timed out".to_string(),
+                )));
             }
         }
     } else {
@@ -162,9 +161,9 @@ pub fn fetch_all_provider_usage_sync() -> AccountUsage {
                 account_usage.update(ProviderUsage::from_gemini_usage(usage));
             }
             None => {
-                account_usage.update(ProviderUsage::from_gemini_usage(
-                    GeminiUsage::with_error("Fetch timed out".to_string()),
-                ));
+                account_usage.update(ProviderUsage::from_gemini_usage(GeminiUsage::with_error(
+                    "Fetch timed out".to_string(),
+                )));
             }
         }
     }
@@ -176,9 +175,9 @@ pub fn fetch_all_provider_usage_sync() -> AccountUsage {
                 account_usage.update(ProviderUsage::from_codex_usage(usage));
             }
             None => {
-                account_usage.update(ProviderUsage::from_codex_usage(
-                    CodexUsage::with_error("Fetch timed out".to_string()),
-                ));
+                account_usage.update(ProviderUsage::from_codex_usage(CodexUsage::with_error(
+                    "Fetch timed out".to_string(),
+                )));
             }
         }
     }
@@ -309,7 +308,10 @@ mod tests {
             eprintln!("  plan_type: {:?}", gemini.plan_type);
             eprintln!("  status_message: {:?}", gemini.status_message);
 
-            assert!(gemini.supports_usage, "Gemini should support usage via /stats");
+            assert!(
+                gemini.supports_usage,
+                "Gemini should support usage via /stats"
+            );
             // plan_type should be None - Gemini /stats doesn't provide plan info
             assert_eq!(gemini.plan_type, None, "Gemini plan_type should be None");
             if gemini.status_message.is_none() {
@@ -331,7 +333,10 @@ mod tests {
             eprintln!("  plan_type: {:?}", codex.plan_type);
             eprintln!("  status_message: {:?}", codex.status_message);
 
-            assert!(codex.supports_usage, "Codex should support usage via /status");
+            assert!(
+                codex.supports_usage,
+                "Codex should support usage via /status"
+            );
             if codex.status_message.is_none() {
                 if let Some(session) = codex.session.used_percent {
                     eprintln!("  5h used: {}%", session);

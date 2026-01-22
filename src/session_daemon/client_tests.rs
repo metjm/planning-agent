@@ -87,7 +87,10 @@ async fn test_client_update_session() {
 
     // Register
     let mut record = create_test_record(session_id);
-    client.register(record.clone()).await.expect("Register failed");
+    client
+        .register(record.clone())
+        .await
+        .expect("Register failed");
 
     // Update
     record.phase = "Reviewing".to_string();
@@ -97,7 +100,8 @@ async fn test_client_update_session() {
 
     // Verify update via list
     let sessions = client.list().await.expect("List failed");
-    let session = sessions.iter()
+    let session = sessions
+        .iter()
         .find(|s| s.workflow_session_id == session_id)
         .expect("Session not found");
 
@@ -129,7 +133,8 @@ async fn test_client_heartbeat() {
 
     // Session should still be Running
     let sessions = client.list().await.expect("List failed");
-    let session = sessions.iter()
+    let session = sessions
+        .iter()
         .find(|s| s.workflow_session_id == session_id)
         .expect("Session not found");
 
@@ -160,7 +165,8 @@ async fn test_client_force_stop() {
 
     // Session should be Stopped
     let sessions = client.list().await.expect("List failed");
-    let session = sessions.iter()
+    let session = sessions
+        .iter()
         .find(|s| s.workflow_session_id == session_id)
         .expect("Session not found");
 
@@ -226,33 +232,48 @@ async fn test_client_full_workflow_cycle() {
     assert!(sessions.iter().any(|s| s.workflow_session_id == session_id));
 
     // 2. Update (phase transition to Reviewing)
-    let mut record = sessions.iter()
+    let mut record = sessions
+        .iter()
         .find(|s| s.workflow_session_id == session_id)
         .unwrap()
         .clone();
     record.phase = "Reviewing".to_string();
     record.workflow_status = "Reviewing".to_string();
-    client.update(record).await.expect("Update to Reviewing failed");
+    client
+        .update(record)
+        .await
+        .expect("Update to Reviewing failed");
 
     // 3. Heartbeat (keep alive during review)
-    client.heartbeat(session_id).await.expect("Heartbeat failed");
+    client
+        .heartbeat(session_id)
+        .await
+        .expect("Heartbeat failed");
 
     // 4. Update (phase transition to Revising)
     let sessions = client.list().await.expect("List failed");
-    let mut record = sessions.iter()
+    let mut record = sessions
+        .iter()
         .find(|s| s.workflow_session_id == session_id)
         .unwrap()
         .clone();
     record.phase = "Revising".to_string();
     record.iteration = 2;
-    client.update(record).await.expect("Update to Revising failed");
+    client
+        .update(record)
+        .await
+        .expect("Update to Revising failed");
 
     // 5. Force stop (workflow complete) - this also serves as cleanup
-    client.force_stop(session_id).await.expect("Force stop failed");
+    client
+        .force_stop(session_id)
+        .await
+        .expect("Force stop failed");
 
     // Verify final state
     let sessions = client.list().await.expect("Final list failed");
-    let final_session = sessions.iter()
+    let final_session = sessions
+        .iter()
         .find(|s| s.workflow_session_id == session_id)
         .expect("Session not found");
 

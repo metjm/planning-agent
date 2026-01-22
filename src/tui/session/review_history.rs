@@ -3,7 +3,7 @@
 //! This module contains methods for tracking review rounds and their statuses
 //! in the TUI session.
 
-use super::{ReviewerEntry, ReviewerStatus, ReviewRound, Session};
+use super::{ReviewRound, ReviewerEntry, ReviewerStatus, Session};
 
 impl Session {
     /// Start a new review round
@@ -17,7 +17,9 @@ impl Session {
     pub fn reviewer_started(&mut self, round: u32, display_id: String) {
         if let Some(review_round) = self.review_history.iter_mut().find(|r| r.round == round) {
             // Remove existing entry for this reviewer (in case of retry)
-            review_round.reviewers.retain(|r| r.display_id != display_id);
+            review_round
+                .reviewers
+                .retain(|r| r.display_id != display_id);
             review_round.reviewers.push(ReviewerEntry {
                 display_id,
                 status: ReviewerStatus::Running,

@@ -70,7 +70,9 @@ pub fn draw_session_browser_overlay(frame: &mut Frame, tab_manager: &TabManager)
 
     let title = Paragraph::new(Line::from(vec![Span::styled(
         title_text,
-        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
     )]))
     .block(
         Block::default()
@@ -140,7 +142,10 @@ pub fn draw_session_browser_overlay(frame: &mut Frame, tab_manager: &TabManager)
 
     // Selected session detail (working directory)
     let detail_line = if !entries.is_empty() {
-        let selected_idx = tab_manager.session_browser.selected_idx.min(entries.len().saturating_sub(1));
+        let selected_idx = tab_manager
+            .session_browser
+            .selected_idx
+            .min(entries.len().saturating_sub(1));
         let selected = &entries[selected_idx];
         let dir_str = selected.working_dir.display().to_string();
         let max_len = popup_width.saturating_sub(6) as usize; // " → " prefix + margins
@@ -220,9 +225,7 @@ pub fn draw_session_browser_overlay(frame: &mut Frame, tab_manager: &TabManager)
         let error_para = Paragraph::new(Line::from(vec![
             Span::styled(
                 " Error: ",
-                Style::default()
-                    .fg(Color::Red)
-                    .add_modifier(Modifier::BOLD),
+                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
             ),
             Span::styled(error.clone(), Style::default().fg(Color::Red)),
         ]))
@@ -253,7 +256,8 @@ pub fn draw_session_browser_overlay(frame: &mut Frame, tab_manager: &TabManager)
 
             // Show spinner for Running sessions, selection indicator otherwise
             let prefix = if entry.liveness == LivenessState::Running {
-                let spinner_char = SPINNER_CHARS[(tab_manager.update_spinner_frame as usize) % SPINNER_CHARS.len()];
+                let spinner_char = SPINNER_CHARS
+                    [(tab_manager.update_spinner_frame as usize) % SPINNER_CHARS.len()];
                 format!(" {} ", spinner_char)
             } else if is_selected {
                 " > ".to_string()
@@ -267,7 +271,10 @@ pub fn draw_session_browser_overlay(frame: &mut Frame, tab_manager: &TabManager)
             // Truncate feature name if too long (expanded from 16 to 23 chars)
             let max_name_len = 23;
             let feature_name: String = if entry.feature_name.len() > max_name_len {
-                format!("{}...", entry.feature_name.get(..max_name_len - 3).unwrap_or(""))
+                format!(
+                    "{}...",
+                    entry.feature_name.get(..max_name_len - 3).unwrap_or("")
+                )
             } else {
                 entry.feature_name.clone()
             };
@@ -304,7 +311,7 @@ pub fn draw_session_browser_overlay(frame: &mut Frame, tab_manager: &TabManager)
             // Liveness style with color - show PID for running sessions
             let liveness_str = if entry.liveness == LivenessState::Running {
                 if let Some(pid) = entry.pid {
-                    format!("Run {}", pid)  // "Run 12345" fits in 12 chars
+                    format!("Run {}", pid) // "Run 12345" fits in 12 chars
                 } else {
                     "Running".to_string()
                 }
@@ -382,9 +389,7 @@ pub fn draw_session_browser_overlay(frame: &mut Frame, tab_manager: &TabManager)
         Span::raw("Resume "),
         Span::styled(
             " [s] ",
-            Style::default()
-                .fg(Color::Red)
-                .add_modifier(Modifier::BOLD),
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
         ),
         Span::raw("Stop "),
         Span::styled(
@@ -403,9 +408,7 @@ pub fn draw_session_browser_overlay(frame: &mut Frame, tab_manager: &TabManager)
         Span::raw("Refresh "),
         Span::styled(
             " [Esc/q] ",
-            Style::default()
-                .fg(Color::Red)
-                .add_modifier(Modifier::BOLD),
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
         ),
         Span::raw("Close"),
     ]))
@@ -418,7 +421,11 @@ pub fn draw_session_browser_overlay(frame: &mut Frame, tab_manager: &TabManager)
 }
 
 /// Draw a confirmation dialog overlay.
-fn draw_confirmation_dialog(frame: &mut Frame, parent_area: Rect, confirmation: &ConfirmationState) {
+fn draw_confirmation_dialog(
+    frame: &mut Frame,
+    parent_area: Rect,
+    confirmation: &ConfirmationState,
+) {
     // Draw dimmed background
     frame.render_widget(Clear, parent_area);
 
@@ -491,7 +498,12 @@ fn draw_confirmation_dialog(frame: &mut Frame, parent_area: Rect, confirmation: 
     // Message
     let message_spans: Vec<Line> = message_lines
         .iter()
-        .map(|line| Line::from(Span::styled(format!(" {}", line), Style::default().fg(Color::White))))
+        .map(|line| {
+            Line::from(Span::styled(
+                format!(" {}", line),
+                Style::default().fg(Color::White),
+            ))
+        })
         .collect();
 
     let message_widget = Paragraph::new(message_spans).block(
@@ -513,9 +525,7 @@ fn draw_confirmation_dialog(frame: &mut Frame, parent_area: Rect, confirmation: 
         Span::styled("Yes  ", Style::default().fg(Color::White)),
         Span::styled(
             "[n] ",
-            Style::default()
-                .fg(Color::Red)
-                .add_modifier(Modifier::BOLD),
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
         ),
         Span::styled("No  ", Style::default().fg(Color::White)),
         Span::styled(

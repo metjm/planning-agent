@@ -120,7 +120,10 @@ mod tests {
         let prepared = prepare_prompt(request, AgentCapabilities::Claude);
 
         assert_eq!(prepared.prompt, "user prompt");
-        assert_eq!(prepared.system_prompt_arg, Some("system prompt".to_string()));
+        assert_eq!(
+            prepared.system_prompt_arg,
+            Some("system prompt".to_string())
+        );
         assert_eq!(prepared.max_turns_arg, Some(10));
     }
 

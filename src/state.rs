@@ -32,7 +32,9 @@ fn generate_plan_folder_name(sanitized_name: &str) -> String {
 /// Returns an error if the home directory cannot be determined.
 #[allow(dead_code)]
 fn generate_plan_path(folder_name: &str) -> Result<PathBuf> {
-    Ok(planning_paths::plans_dir()?.join(folder_name).join("plan.md"))
+    Ok(planning_paths::plans_dir()?
+        .join(folder_name)
+        .join("plan.md"))
 }
 
 /// Generates a feedback file path inside a plan folder.
@@ -100,8 +102,7 @@ fn is_session_centric_path(plan_file: &Path) -> bool {
         if let Some(folder_name) = parent.file_name() {
             let folder_str = folder_name.to_string_lossy();
             // UUID format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx (36 chars with hyphens)
-            return folder_str.len() == 36
-                && folder_str.chars().filter(|c| *c == '-').count() == 4;
+            return folder_str.len() == 36 && folder_str.chars().filter(|c| *c == '-').count() == 4;
         }
     }
     false
@@ -371,10 +372,12 @@ impl SequentialReviewState {
 
     /// Called when a reviewer approves - records their approval and stores the review.
     pub fn record_approval(&mut self, reviewer_id: &str, review: &SerializableReviewResult) {
-        self.approvals.insert(reviewer_id.to_string(), self.plan_version);
+        self.approvals
+            .insert(reviewer_id.to_string(), self.plan_version);
         // Remove any existing review from this reviewer (shouldn't happen but be safe)
         self.accumulated_reviews.retain(|(id, _)| id != reviewer_id);
-        self.accumulated_reviews.push((reviewer_id.to_string(), review.clone()));
+        self.accumulated_reviews
+            .push((reviewer_id.to_string(), review.clone()));
     }
 
     /// Called after revision - increments version and clears stale approvals and accumulated reviews.
@@ -388,9 +391,9 @@ impl SequentialReviewState {
     /// Checks if all reviewers have approved the current plan version.
     /// Takes &[&str] (reviewer display IDs) to avoid circular dependency with config.rs.
     pub fn all_approved(&self, reviewer_ids: &[&str]) -> bool {
-        reviewer_ids.iter().all(|id| {
-            self.approvals.get(*id) == Some(&self.plan_version)
-        })
+        reviewer_ids
+            .iter()
+            .all(|id| self.approvals.get(*id) == Some(&self.plan_version))
     }
 
     /// Resets to first reviewer for a new cycle (after revision or config change).
@@ -420,7 +423,10 @@ impl SequentialReviewState {
 
         // Check if any entry in current_cycle_order is no longer in config
         let cycle_invalid = !self.current_cycle_order.is_empty()
-            && self.current_cycle_order.iter().any(|id| !valid_ids.contains(id.as_str()));
+            && self
+                .current_cycle_order
+                .iter()
+                .any(|id| !valid_ids.contains(id.as_str()));
 
         // Check if index is out of bounds for the cycle order (if populated) or reviewer count
         let index_invalid = if self.current_cycle_order.is_empty() {
@@ -440,12 +446,18 @@ impl SequentialReviewState {
 
     /// Increments the run count for a reviewer. Called before each review execution.
     pub fn increment_run_count(&mut self, reviewer_id: &str) {
-        *self.reviewer_run_counts.entry(reviewer_id.to_string()).or_insert(0) += 1;
+        *self
+            .reviewer_run_counts
+            .entry(reviewer_id.to_string())
+            .or_insert(0) += 1;
     }
 
     /// Returns the run count for a reviewer (0 if never run).
     pub fn get_run_count(&self, reviewer_id: &str) -> u32 {
-        self.reviewer_run_counts.get(reviewer_id).copied().unwrap_or(0)
+        self.reviewer_run_counts
+            .get(reviewer_id)
+            .copied()
+            .unwrap_or(0)
     }
 
     /// Records which reviewer rejected the plan.
@@ -632,7 +644,9 @@ impl State {
     pub fn update_feedback_for_iteration(&mut self, iteration: u32) {
         // For session-centric paths, use the session ID directly
         if is_session_centric_path(&self.plan_file) || !self.workflow_session_id.is_empty() {
-            if let Ok(path) = planning_paths::session_feedback_path(&self.workflow_session_id, iteration) {
+            if let Ok(path) =
+                planning_paths::session_feedback_path(&self.workflow_session_id, iteration)
+            {
                 self.feedback_file = path;
                 return;
             }
@@ -647,16 +661,15 @@ impl State {
         }
 
         // Legacy fallback: generate a new folder for feedback
-        let sanitized_name = extract_sanitized_name(&self.plan_file)
-            .unwrap_or_else(|| {
-                // Fallback: sanitize feature_name
-                self.feature_name
-                    .to_lowercase()
-                    .replace(' ', "-")
-                    .chars()
-                    .filter(|c| c.is_alphanumeric() || *c == '-')
-                    .collect::<String>()
-            });
+        let sanitized_name = extract_sanitized_name(&self.plan_file).unwrap_or_else(|| {
+            // Fallback: sanitize feature_name
+            self.feature_name
+                .to_lowercase()
+                .replace(' ', "-")
+                .chars()
+                .filter(|c| c.is_alphanumeric() || *c == '-')
+                .collect::<String>()
+        });
 
         // Generate a new folder for legacy plans
         let folder_name = generate_plan_folder_name(&sanitized_name);
@@ -741,8 +754,8 @@ impl State {
     pub fn load(path: &Path) -> Result<Self> {
         let content = fs::read_to_string(path)
             .with_context(|| format!("Failed to read state file: {}", path.display()))?;
-        let mut state: State = serde_json::from_str(&content)
-            .with_context(|| "Failed to parse state file as JSON")?;
+        let mut state: State =
+            serde_json::from_str(&content).with_context(|| "Failed to parse state file as JSON")?;
         state.ensure_workflow_session_id();
         Ok(state)
     }
@@ -790,11 +803,7 @@ impl State {
             self.phase = to;
             Ok(())
         } else {
-            anyhow::bail!(
-                "Invalid state transition from {:?} to {:?}",
-                self.phase,
-                to
-            )
+            anyhow::bail!("Invalid state transition from {:?} to {:?}", self.phase, to)
         }
     }
 

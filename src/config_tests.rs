@@ -714,7 +714,10 @@ implementation:
     // Validation should fail because implementing agent doesn't exist
     let result = config.validate();
     assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("implementing agent"));
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("implementing agent"));
 }
 
 #[test]
@@ -743,5 +746,8 @@ workflow:
     // Validation should fail
     let result = config.validate();
     assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("no distinct reviewing agent"));
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("no distinct reviewing agent"));
 }

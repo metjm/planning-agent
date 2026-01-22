@@ -201,11 +201,11 @@ impl Theme {
             // Primary colors - warmer tones
             text: Color::White,
             muted: Color::DarkGray,
-            accent: Color::Rgb(255, 165, 0),    // Orange
+            accent: Color::Rgb(255, 165, 0),       // Orange
             accent_alt: Color::Rgb(255, 100, 100), // Coral/light red
 
             // Border colors - warm tones
-            border: Color::Rgb(200, 100, 50),   // Burnt orange
+            border: Color::Rgb(200, 100, 50), // Burnt orange
             border_focused: Color::Rgb(255, 200, 100), // Gold
 
             // Semantic colors (keep consistent for usability)
@@ -230,22 +230,22 @@ impl Theme {
             // Output tag colors - distinct for implementation
             tag_planning: Color::Cyan,
             tag_implementation: Color::Rgb(255, 165, 0), // Orange
-            tag_agent: Color::Rgb(150, 255, 150),  // Light green
+            tag_agent: Color::Rgb(150, 255, 150),        // Light green
 
             // Stats panel colors - warm
-            stats_header: Color::Rgb(255, 165, 0), // Orange
+            stats_header: Color::Rgb(255, 165, 0),  // Orange
             stats_border: Color::Rgb(200, 100, 50), // Burnt orange
             stats_cost: Color::Green,
             stats_tokens_in: Color::Rgb(255, 200, 100), // Gold
             stats_tokens_out: Color::Green,
 
             // Markdown colors - warm tones
-            md_h1: Color::Rgb(255, 100, 100),   // Coral
-            md_h2: Color::Rgb(255, 165, 0),     // Orange
-            md_h3: Color::Rgb(255, 200, 100),   // Gold
+            md_h1: Color::Rgb(255, 100, 100),     // Coral
+            md_h2: Color::Rgb(255, 165, 0),       // Orange
+            md_h3: Color::Rgb(255, 200, 100),     // Gold
             md_bullet: Color::Rgb(255, 200, 100), // Gold
-            md_bold: Color::Rgb(255, 200, 100), // Gold
-            md_code: Color::Rgb(150, 255, 150), // Light green
+            md_bold: Color::Rgb(255, 200, 100),   // Gold
+            md_code: Color::Rgb(150, 255, 150),   // Light green
 
             // Todo colors - warm
             todo_header: Color::Rgb(255, 165, 0), // Orange
@@ -257,7 +257,7 @@ impl Theme {
             cli_border: Color::Rgb(200, 100, 50), // Burnt orange
             cli_running: Color::Rgb(150, 255, 150), // Light green
             cli_elapsed: Color::Rgb(255, 200, 100), // Gold
-            cli_idle: Color::Rgb(255, 165, 0),  // Orange
+            cli_idle: Color::Rgb(255, 165, 0),    // Orange
 
             // Objective panel colors - warm
             objective_border: Color::Rgb(255, 165, 0), // Orange
@@ -313,7 +313,10 @@ mod tests {
         assert_ne!(planning.accent, implementation.accent);
         assert_ne!(planning.border, implementation.border);
         assert_ne!(planning.stats_header, implementation.stats_header);
-        assert_ne!(planning.tag_implementation, implementation.tag_implementation);
+        assert_ne!(
+            planning.tag_implementation,
+            implementation.tag_implementation
+        );
     }
 
     #[test]

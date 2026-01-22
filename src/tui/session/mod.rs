@@ -11,7 +11,6 @@ mod tools;
 
 pub use cli_instances::{CliInstance, CliInstanceId};
 
-pub use context::SessionContext;
 use crate::app::WorkflowResult;
 use crate::cli_usage::AccountUsage;
 use crate::phases::implementing_conversation_key;
@@ -20,6 +19,7 @@ use crate::tui::event::{TokenUsage, WorkflowCommand};
 use crate::tui::mention::MentionState;
 use crate::tui::slash::SlashState;
 use anyhow::Result;
+pub use context::SessionContext;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, watch};
@@ -29,7 +29,7 @@ use super::event::UserApprovalResponse;
 
 pub use model::{
     ApprovalContext, ApprovalMode, FeedbackTarget, FocusedPanel, ImplementationSuccessModal,
-    InputMode, PasteBlock, ReviewerEntry, ReviewerStatus, ReviewRound, RunTab, RunTabEntry,
+    InputMode, PasteBlock, ReviewRound, ReviewerEntry, ReviewerStatus, RunTab, RunTabEntry,
     SessionStatus, SummaryState, TodoItem, TodoStatus, ToolKind, ToolResultSummary,
     ToolTimelineEntry,
 };
@@ -76,7 +76,6 @@ pub struct ToolCompletionInfo {
 
 /// Maximum number of completed tools to retain per session
 const MAX_COMPLETED_TOOLS: usize = 100;
-
 
 pub struct Session {
     pub id: usize,
@@ -478,13 +477,11 @@ impl Session {
     }
 
     pub fn scroll_up(&mut self) {
-
         self.output_follow_mode = false;
         self.scroll_position = self.scroll_position.saturating_sub(1);
     }
 
     pub fn scroll_down(&mut self) {
-
         self.scroll_position = self.scroll_position.saturating_add(1);
     }
 
@@ -494,7 +491,6 @@ impl Session {
     }
 
     pub fn scroll_to_bottom(&mut self) {
-
         self.output_follow_mode = true;
         self.scroll_position = self.output_lines.len().saturating_sub(1);
     }
@@ -507,18 +503,15 @@ impl Session {
     }
 
     pub fn streaming_scroll_up(&mut self) {
-
         self.streaming_follow_mode = false;
         self.streaming_scroll_position = self.streaming_scroll_position.saturating_sub(1);
     }
 
     pub fn streaming_scroll_down(&mut self) {
-
         self.streaming_scroll_position = self.streaming_scroll_position.saturating_add(1);
     }
 
     pub fn streaming_scroll_to_bottom(&mut self) {
-
         self.streaming_follow_mode = true;
         self.streaming_scroll_position = self.streaming_lines.len().saturating_sub(1);
     }
@@ -797,7 +790,7 @@ impl Session {
                     };
                     lines.push(format!("  {} {}", status, todo.active_form));
                 }
-                lines.push(String::new()); 
+                lines.push(String::new());
             }
         }
 
@@ -909,8 +902,11 @@ impl Session {
                         true
                     }
                     Err(e) => {
-                        self.plan_modal_content =
-                            format!("Unable to read plan file:\n{}\n\nError: {}", plan_path.display(), e);
+                        self.plan_modal_content = format!(
+                            "Unable to read plan file:\n{}\n\nError: {}",
+                            plan_path.display(),
+                            e
+                        );
                         self.plan_modal_open = true;
                         self.plan_modal_scroll = 0;
                         true

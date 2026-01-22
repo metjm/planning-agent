@@ -16,7 +16,6 @@ impl TerminalTitleManager {
 
     pub fn save_title(&self) {
         if self.is_supported {
-
             let _ = io::stdout().write_all(b"\x1b[22;0t");
             let _ = io::stdout().flush();
         }
@@ -24,7 +23,6 @@ impl TerminalTitleManager {
 
     pub fn restore_title(&self) {
         if self.is_supported {
-
             let _ = io::stdout().write_all(b"\x1b[23;0t");
             let _ = io::stdout().flush();
         }

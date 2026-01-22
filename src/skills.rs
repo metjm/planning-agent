@@ -79,7 +79,8 @@ mod tests {
     fn plan_review_skill_contains_no_timeline_directive() {
         assert!(
             PLAN_REVIEW_SKILL.contains(NO_TIMELINE_DIRECTIVE)
-                || PLAN_REVIEW_SKILL.contains("timelines, schedules, dates, durations, or time estimates"),
+                || PLAN_REVIEW_SKILL
+                    .contains("timelines, schedules, dates, durations, or time estimates"),
             "Plan-review skill must contain the no-timeline directive"
         );
         for phrase in EXAMPLE_PHRASES {

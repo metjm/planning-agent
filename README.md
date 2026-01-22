@@ -13,11 +13,13 @@ flowchart LR
     C --> U{User Approval}
     U -->|accept| Done
     U -->|decline| P
+    U -->|implement| I[Implementation]
+    I --> Done
 ```
 
 Phases:
 - **Planning**: Agent generates `plan.md` based on objective.
-- **Reviewing**: One or more agents evaluate plan; any rejection triggers revision.
+- **Reviewing**: One or more agents evaluate plan sequentially; any rejection triggers revision.
 - **Revising**: Agent updates plan based on feedback; loops back to review.
 - **Complete**: User approval gate—accept, decline with feedback, or press `[i]` to hand off to Claude Code.
 
@@ -31,30 +33,29 @@ planning [OPTIONS] [OBJECTIVE]...
 
 | Flag | Description |
 |------|-------------|
-| `--headless` | Non-interactive mode (no TUI) |
+| `--claude` | Use Claude-only workflow (enabled by default) |
 | `--max-iterations N` | Max review/revise cycles (default: 3) |
 | `--config PATH` | Custom workflow.yaml |
 | `--name NAME` | Feature name override |
 | `--working-dir PATH` | Working directory |
-| `--continue` | Resume from existing plan |
-| `--resume-session ID` | Resume stopped session |
+| `-c, --continue-workflow` | Resume from existing plan |
+| `--resume-session ID` | Resume stopped session by ID |
 | `--list-sessions` | List saved session snapshots |
 | `--cleanup-sessions` | Remove old snapshots |
 | `--older-than DAYS` | Age threshold for cleanup |
+| `--verify PLAN` | Verify implementation against plan (accepts path, name pattern, or "latest") |
+| `--list-plans` | List all available plans |
+| `--worktree` | Enable git worktree creation (isolated branch for planning) |
+| `--worktree-dir PATH` | Custom directory for git worktree |
+| `--worktree-branch NAME` | Custom branch name (default: planning-agent/<feature>-<session-short>) |
+| `--no-daemon` | Disable session tracking |
 
-```mermaid
-flowchart TD
-    CLI[planning command] --> LS{--list-sessions?}
-    LS -->|yes| List[Print snapshots]
-    LS -->|no| CS{--cleanup-sessions?}
-    CS -->|yes| Clean[Remove old snapshots]
-    CS -->|no| HL{--headless?}
-    HL -->|yes| Headless[Run headless workflow]
-    HL -->|no| TUI[Run TUI]
-    TUI --> RS{--resume-session?}
-    RS -->|yes| Resume[Load snapshot & continue]
-    RS -->|no| New[Start new workflow]
-```
+## TUI Commands
+
+In the TUI naming screen, type `/` to access commands:
+- `/update` - Install an available update
+- `/config-dangerous` - Configure CLI tools to bypass approvals
+- `/sessions` - View and resume workflow sessions
 
 ## Storage
 
@@ -62,21 +63,21 @@ All data is stored under `~/.planning-agent/`:
 
 ```
 ~/.planning-agent/
-├── plans/                          # Plan and feedback files
-│   └── <timestamp>-<uuid>_<feature>/
-│       ├── plan.md
-│       └── feedback_<N>.md
-├── sessions/                       # Session snapshots
-│   └── <session-id>.json
-├── state/<wd-hash>/                # Workflow state (per working directory)
-│   └── <feature>.json
-├── logs/<wd-hash>/                 # Logs (per working directory)
-│   ├── workflow-<run>.log
-│   └── agent-stream-<run>.log
-└── update-installed                # Update marker
+├── sessions/<session-id>/          # Session-centric storage (primary)
+│   ├── plan.md                     # Implementation plan
+│   ├── feedback_<N>_<reviewer>.md  # Review feedback per iteration
+│   ├── state.json                  # Workflow state
+│   ├── session.json                # Session snapshot (for resume)
+│   ├── session_info.json           # Metadata for listing
+│   └── logs/
+│       ├── session.log             # Main session log
+│       └── agent-stream.log        # Raw agent output
+├── plans/                          # Legacy plan folders (backward compat)
+├── state/<wd-hash>/                # Legacy workflow state
+└── logs/<wd-hash>/                 # Legacy logs
 ```
 
-The `<wd-hash>` is a 12-character hex hash of the working directory path, ensuring isolation between projects.
+Legacy paths exist for backward compatibility with existing sessions.
 
 ## Agent Configuration
 
@@ -86,28 +87,88 @@ Agents configured via `workflow.yaml` (or `--config`):
 agents:
   claude:
     command: "claude"
-    args: ["-p", "--output-format", "stream-json", "--dangerously-skip-permissions"]
-  codex:
-    command: "codex"
-    args: ["exec", "--json", "--dangerously-bypass-approvals-and-sandbox"]
-  gemini:
-    command: "gemini"
-    args: ["-p", "--output-format", "json"]
+    args:
+      - "-p"
+      - "--output-format"
+      - "stream-json"
+      - "--verbose"
+      - "--dangerously-skip-permissions"
+    allowed_tools:
+      - "Read"
+      - "Glob"
+      - "Grep"
+      - "Bash"
 
 workflow:
   planning:
-    agent: codex
-    max_turns: 200  # Applies to both planning AND revision phases
+    agent: claude
+    max_turns: 200
   reviewing:
-    agents: [claude, codex]
+    agents:
+      - claude
+      - agent: claude
+        id: claude-practices
+        prompt: |
+          Focus on repository practices and code reuse.
+      - agent: claude
+        id: claude-completeness
+        prompt: |
+          Focus on completeness and edge cases.
     aggregation: any_rejects
-  # Note: revision automatically uses the planning agent
+    sequential: true
+
+implementation:
+  enabled: true
+  max_iterations: 3
+  implementing:
+    agent: claude
+    max_turns: 100
+  reviewing:
+    agent: claude
 ```
 
-Default: codex plans and revises, claude+codex review (any rejection triggers revision).
+Default (`--claude`, enabled by default): Claude plans and revises, multiple Claude reviewers with specialized prompts run sequentially. Any rejection triggers revision.
 
-**Session Continuity**: When the planning agent has session_persistence enabled
-(Claude only), revision resumes the planning session, providing full context continuity.
+**Sequential Review**: Reviewers run one at a time. On rejection, revision happens immediately and all reviewers re-review from the beginning.
+
+**Session Continuity**: Revision resumes the planning agent's session, providing full context continuity.
+
+## Implementation Workflow
+
+After plan approval, press `[i]` to hand off to Claude Code for implementation:
+
+```mermaid
+flowchart LR
+    A[Approved Plan] --> I[Implementing]
+    I --> IR[Implementation Review]
+    IR -->|pass| D[Done]
+    IR -->|fail| I
+```
+
+The implementation workflow:
+1. Claude Code implements the approved plan
+2. A separate reviewer validates the implementation against the plan
+3. On failure, implementation iterates (max 3 by default)
+
+Configure in `workflow.yaml` under `implementation:` section.
+
+## Plan Verification
+
+Verify implementation against an approved plan:
+
+```bash
+# Verify against the most recent plan
+planning --verify latest
+
+# Verify against a specific plan
+planning --verify my-feature
+planning --verify /path/to/plan.md
+
+# List available plans
+planning --list-plans
+```
+
+Verification runs the verifying agent to check if the current codebase matches the approved plan.
 
 ## Installation
 
@@ -125,10 +186,24 @@ cd planning-agent
 
 If `planning` not found: `source "$HOME/.cargo/env"` or add `$HOME/.cargo/bin` to PATH.
 
+## Skills
+
+On startup, planning-agent auto-installs Claude Code skills to:
+- `~/.claude/skills/`
+- `~/.codex/skills/` (if CODEX_HOME set)
+
+Installed skills:
+- `planning` - Implementation planning skill
+- `plan-review` - Plan review skill
+- `implementation` - Implementation skill
+- `implementation-review` - Implementation review skill
+- `methodical-debugging` - Debugging skill
+
 ## Requirements
 
 - Rust toolchain
-- At least one configured AI CLI (claude, codex, or gemini)
+- Claude CLI (default workflow uses Claude-only mode)
+- Optional: codex, gemini CLIs for multi-agent workflows
 
 ## Warning
 

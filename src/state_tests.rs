@@ -16,7 +16,11 @@ fn test_new_state() {
         "got: {}",
         plan_file_str
     );
-    assert!(plan_file_str.ends_with("/plan.md"), "got: {}", plan_file_str);
+    assert!(
+        plan_file_str.ends_with("/plan.md"),
+        "got: {}",
+        plan_file_str
+    );
     // Verify session ID is in the path
     assert!(
         plan_file_str.contains(&state.workflow_session_id),
@@ -48,24 +52,37 @@ fn test_update_feedback_for_iteration() {
     let mut state = State::new("test-feature", "Test objective", 3).unwrap();
 
     // Initial feedback file should have round 1
-    assert!(state.feedback_file.to_string_lossy().ends_with("/feedback_1.md"));
+    assert!(state
+        .feedback_file
+        .to_string_lossy()
+        .ends_with("/feedback_1.md"));
 
     // Update to round 2
     state.update_feedback_for_iteration(2);
-    assert!(state.feedback_file.to_string_lossy().ends_with("/feedback_2.md"));
+    assert!(state
+        .feedback_file
+        .to_string_lossy()
+        .ends_with("/feedback_2.md"));
 
     // Update to round 3
     state.update_feedback_for_iteration(3);
-    assert!(state.feedback_file.to_string_lossy().ends_with("/feedback_3.md"));
+    assert!(state
+        .feedback_file
+        .to_string_lossy()
+        .ends_with("/feedback_3.md"));
 }
 
 #[test]
 fn test_extract_plan_folder_new_format() {
     // New format: ~/.planning-agent/plans/YYYYMMDD-HHMMSS-xxxxxxxx_my-feature/plan.md
-    let plan_file =
-        PathBuf::from("/home/user/.planning-agent/plans/20250101-120000-abcd1234_my-feature/plan.md");
+    let plan_file = PathBuf::from(
+        "/home/user/.planning-agent/plans/20250101-120000-abcd1234_my-feature/plan.md",
+    );
     let folder = extract_plan_folder(&plan_file);
-    assert_eq!(folder, Some("20250101-120000-abcd1234_my-feature".to_string()));
+    assert_eq!(
+        folder,
+        Some("20250101-120000-abcd1234_my-feature".to_string())
+    );
 }
 
 #[test]
@@ -78,8 +95,9 @@ fn test_extract_plan_folder_legacy_format() {
 #[test]
 fn test_extract_sanitized_name_new_format() {
     // New format: folder contains the feature name
-    let plan_file =
-        PathBuf::from("/home/user/.planning-agent/plans/20250101-120000-abcd1234_my-feature/plan.md");
+    let plan_file = PathBuf::from(
+        "/home/user/.planning-agent/plans/20250101-120000-abcd1234_my-feature/plan.md",
+    );
     let name = extract_sanitized_name(&plan_file);
     assert_eq!(name, Some("my-feature".to_string()));
 }
@@ -100,8 +118,9 @@ fn test_is_session_centric_path() {
     assert!(is_session_centric_path(&session_path));
 
     // Legacy plan path (timestamp-uuid_feature format)
-    let legacy_path =
-        PathBuf::from("/home/user/.planning-agent/plans/20250101-120000-abcd1234_my-feature/plan.md");
+    let legacy_path = PathBuf::from(
+        "/home/user/.planning-agent/plans/20250101-120000-abcd1234_my-feature/plan.md",
+    );
     assert!(!is_session_centric_path(&legacy_path));
 
     // Docs path
@@ -128,7 +147,11 @@ fn test_update_feedback_for_iteration_with_legacy_plan_file() {
         "got: {}",
         feedback_str
     );
-    assert!(feedback_str.ends_with("/feedback_2.md"), "got: {}", feedback_str);
+    assert!(
+        feedback_str.ends_with("/feedback_2.md"),
+        "got: {}",
+        feedback_str
+    );
     assert!(feedback_str.contains(&session_id), "got: {}", feedback_str);
 }
 
@@ -152,8 +175,16 @@ fn test_update_feedback_for_iteration_with_legacy_plan_file_no_session_id() {
         "got: {}",
         feedback_str
     );
-    assert!(feedback_str.ends_with("/feedback_2.md"), "got: {}", feedback_str);
-    assert!(feedback_str.contains("_existing-feature/"), "got: {}", feedback_str);
+    assert!(
+        feedback_str.ends_with("/feedback_2.md"),
+        "got: {}",
+        feedback_str
+    );
+    assert!(
+        feedback_str.contains("_existing-feature/"),
+        "got: {}",
+        feedback_str
+    );
 }
 
 #[test]
@@ -242,7 +273,10 @@ fn test_update_agent_conversation_id() {
 
     // Now it should be set
     let session = state.agent_conversations.get("claude").unwrap();
-    assert_eq!(session.conversation_id, Some("captured-uuid-123".to_string()));
+    assert_eq!(
+        session.conversation_id,
+        Some("captured-uuid-123".to_string())
+    );
 }
 
 #[test]

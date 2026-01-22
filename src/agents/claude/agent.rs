@@ -76,11 +76,7 @@ impl ClaudeAgent {
         Ok(output.into())
     }
 
-    fn build_command(
-        &self,
-        prepared: &PreparedPrompt,
-        context: Option<&AgentContext>,
-    ) -> Command {
+    fn build_command(&self, prepared: &PreparedPrompt, context: Option<&AgentContext>) -> Command {
         let mut cmd = Command::new(&self.config.command);
 
         for arg in &self.config.args {
@@ -117,7 +113,12 @@ impl ClaudeAgent {
         cmd
     }
 
-    fn log_start(&self, logger: &Option<AgentLogger>, prepared: &PreparedPrompt, has_context: bool) {
+    fn log_start(
+        &self,
+        logger: &Option<AgentLogger>,
+        prepared: &PreparedPrompt,
+        has_context: bool,
+    ) {
         if let Some(ref logger) = logger {
             let args = if self.config.args.is_empty() {
                 String::new()
@@ -125,8 +126,14 @@ impl ClaudeAgent {
                 format!(" {}", self.config.args.join(" "))
             };
             let suffix = if has_context { " (with context)" } else { "" };
-            logger.log_line("start", &format!("command: {}{}{}", self.config.command, args, suffix));
-            logger.log_line("prompt", &prepared.prompt.chars().take(200).collect::<String>());
+            logger.log_line(
+                "start",
+                &format!("command: {}{}{}", self.config.command, args, suffix),
+            );
+            logger.log_line(
+                "prompt",
+                &prepared.prompt.chars().take(200).collect::<String>(),
+            );
             if let Some(ref sys_prompt) = prepared.system_prompt_arg {
                 logger.log_line(
                     "system_prompt",

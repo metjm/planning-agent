@@ -1,4 +1,3 @@
-
 pub fn extract_bash_command(cmd: &str) -> String {
     let cmd = cmd.trim();
 
@@ -20,7 +19,6 @@ pub fn extract_bash_command(cmd: &str) -> String {
     let tokens: Vec<&str> = first_cmd.split_whitespace().collect();
 
     for token in tokens {
-
         if token.contains('=') && !token.starts_with('-') {
             continue;
         }
@@ -46,6 +44,9 @@ mod tests {
         assert_eq!(extract_bash_command("cd /tmp && ls"), "Bash:cd");
         assert_eq!(extract_bash_command("FOO=bar npm install"), "Bash:npm");
         assert_eq!(extract_bash_command("sudo apt install"), "Bash:apt");
-        assert_eq!(extract_bash_command("/usr/bin/python script.py"), "Bash:python");
+        assert_eq!(
+            extract_bash_command("/usr/bin/python script.py"),
+            "Bash:python"
+        );
     }
 }

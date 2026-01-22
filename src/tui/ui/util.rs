@@ -1,4 +1,3 @@
-
 use ratatui::{
     style::{Color, Modifier, Style},
     text::{Line, Span},
@@ -65,13 +64,17 @@ pub fn parse_markdown_line(line: &str) -> Line<'static> {
     if let Some(rest) = trimmed.strip_prefix("### ") {
         return Line::from(vec![Span::styled(
             rest.to_string(),
-            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
         )]);
     }
     if let Some(rest) = trimmed.strip_prefix("## ") {
         return Line::from(vec![Span::styled(
             rest.to_string(),
-            Style::default().fg(Color::Blue).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Blue)
+                .add_modifier(Modifier::BOLD),
         )]);
     }
     if let Some(rest) = trimmed.strip_prefix("# ") {
@@ -83,7 +86,10 @@ pub fn parse_markdown_line(line: &str) -> Line<'static> {
         )]);
     }
 
-    if let Some(rest) = trimmed.strip_prefix("- ").or_else(|| trimmed.strip_prefix("* ")) {
+    if let Some(rest) = trimmed
+        .strip_prefix("- ")
+        .or_else(|| trimmed.strip_prefix("* "))
+    {
         let mut spans = vec![Span::styled("• ", Style::default().fg(Color::Yellow))];
         spans.extend(parse_inline_markdown(rest));
         return Line::from(spans);
@@ -106,8 +112,7 @@ pub fn parse_inline_markdown(text: &str) -> Vec<Span<'static>> {
 
     while let Some(c) = chars.next() {
         if c == '*' && chars.peek() == Some(&'*') {
-
-            chars.next(); 
+            chars.next();
             if !current.is_empty() {
                 spans.push(Span::raw(std::mem::take(&mut current)));
             }
@@ -138,10 +143,7 @@ pub fn parse_inline_markdown(text: &str) -> Vec<Span<'static>> {
                 }
                 code_text.push(bc);
             }
-            spans.push(Span::styled(
-                code_text,
-                Style::default().fg(Color::Green),
-            ));
+            spans.push(Span::styled(code_text, Style::default().fg(Color::Green)));
         } else {
             current.push(c);
         }
@@ -269,4 +271,3 @@ pub fn compute_plan_modal_inner_size(terminal_width: u16, terminal_height: u16) 
 
     (inner_width, inner_height)
 }
-

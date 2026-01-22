@@ -106,9 +106,7 @@ impl SessionDaemonClient {
         }
 
         let mut conn_guard = self.connection.lock().await;
-        let conn = conn_guard
-            .as_mut()
-            .context("Not connected to daemon")?;
+        let conn = conn_guard.as_mut().context("Not connected to daemon")?;
 
         let msg = serde_json::to_string(&ClientMessage::List)?;
 
@@ -184,9 +182,7 @@ impl SessionDaemonClient {
         }
 
         let mut conn_guard = self.connection.lock().await;
-        let conn = conn_guard
-            .as_mut()
-            .context("Not connected to daemon")?;
+        let conn = conn_guard.as_mut().context("Not connected to daemon")?;
 
         let msg = serde_json::to_string(&message)?;
 
@@ -481,7 +477,10 @@ impl SessionDaemonClient {
                         // Check version mismatch
                         if let Some(daemon_sha) = Self::get_daemon_build_sha_windows(&mut conn) {
                             let our_sha = crate::update::BUILD_SHA;
-                            if daemon_sha != our_sha && our_sha != "unknown" && daemon_sha != "unknown" {
+                            if daemon_sha != our_sha
+                                && our_sha != "unknown"
+                                && daemon_sha != "unknown"
+                            {
                                 // Version mismatch - shutdown old daemon and spawn new one (silent)
                                 let _ = Self::send_shutdown_windows(&mut conn);
                                 // Wait for daemon to exit
@@ -667,7 +666,11 @@ pub fn is_process_alive(pid: u32) -> bool {
 
 #[cfg(windows)]
 extern "system" {
-    fn OpenProcess(dwDesiredAccess: u32, bInheritHandle: i32, dwProcessId: u32) -> *mut std::ffi::c_void;
+    fn OpenProcess(
+        dwDesiredAccess: u32,
+        bInheritHandle: i32,
+        dwProcessId: u32,
+    ) -> *mut std::ffi::c_void;
     fn GetExitCodeProcess(hProcess: *mut std::ffi::c_void, lpExitCode: *mut u32) -> i32;
     fn CloseHandle(hObject: *mut std::ffi::c_void) -> i32;
 }

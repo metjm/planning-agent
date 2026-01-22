@@ -24,7 +24,10 @@ pub fn extract_plan_feedback(output: &str) -> String {
 /// # Arguments
 /// * `content` - The feedback file content to parse
 /// * `require_tags` - If true, requires <plan-feedback> tags to be present
-pub fn parse_review_feedback(content: &str, require_tags: bool) -> Result<SubmittedReview, ParseFailureInfo> {
+pub fn parse_review_feedback(
+    content: &str,
+    require_tags: bool,
+) -> Result<SubmittedReview, ParseFailureInfo> {
     // First, check if plan-feedback tags are present
     let has_tags = content.contains("<plan-feedback>") && content.contains("</plan-feedback>");
 
@@ -76,7 +79,10 @@ pub fn parse_review_feedback(content: &str, require_tags: bool) -> Result<Submit
 /// Extract a summary from feedback text
 fn extract_summary_from_feedback(feedback: &str) -> String {
     // Try to find a summary section
-    let summary_re = Regex::new(r"(?is)##?\s*(?:summary|review summary|executive summary)[:\s]*\n+(.*?)(?:\n\n|\n##|\z)").unwrap();
+    let summary_re = Regex::new(
+        r"(?is)##?\s*(?:summary|review summary|executive summary)[:\s]*\n+(.*?)(?:\n\n|\n##|\z)",
+    )
+    .unwrap();
     if let Some(captures) = summary_re.captures(feedback) {
         if let Some(content) = captures.get(1) {
             let summary = content.as_str().trim();
@@ -105,8 +111,11 @@ fn extract_critical_issues_from_feedback(feedback: &str) -> Vec<String> {
         if let Some(content) = captures.get(1) {
             for line in content.as_str().lines() {
                 let trimmed = line.trim();
-                if trimmed.starts_with('-') || trimmed.starts_with('*') || trimmed.starts_with("•") {
-                    let issue = trimmed.trim_start_matches(['-', '*', '•', ' '].as_ref()).trim();
+                if trimmed.starts_with('-') || trimmed.starts_with('*') || trimmed.starts_with("•")
+                {
+                    let issue = trimmed
+                        .trim_start_matches(['-', '*', '•', ' '].as_ref())
+                        .trim();
                     if !issue.is_empty() {
                         issues.push(issue.to_string());
                     }
@@ -123,13 +132,19 @@ fn extract_recommendations_from_feedback(feedback: &str) -> Vec<String> {
     let mut recs = vec![];
 
     // Look for recommendations section
-    let recs_re = Regex::new(r"(?is)##?\s*(?:recommendations?|suggestions?|improvements?)[:\s]*\n+(.*?)(?:\n##|\z)").unwrap();
+    let recs_re = Regex::new(
+        r"(?is)##?\s*(?:recommendations?|suggestions?|improvements?)[:\s]*\n+(.*?)(?:\n##|\z)",
+    )
+    .unwrap();
     if let Some(captures) = recs_re.captures(feedback) {
         if let Some(content) = captures.get(1) {
             for line in content.as_str().lines() {
                 let trimmed = line.trim();
-                if trimmed.starts_with('-') || trimmed.starts_with('*') || trimmed.starts_with("•") {
-                    let rec = trimmed.trim_start_matches(['-', '*', '•', ' '].as_ref()).trim();
+                if trimmed.starts_with('-') || trimmed.starts_with('*') || trimmed.starts_with("•")
+                {
+                    let rec = trimmed
+                        .trim_start_matches(['-', '*', '•', ' '].as_ref())
+                        .trim();
                     if !rec.is_empty() {
                         recs.push(rec.to_string());
                     }
@@ -149,8 +164,10 @@ pub enum VerdictParseResult {
 }
 
 pub fn parse_verdict(feedback: &str) -> VerdictParseResult {
-    let re = Regex::new(r"(?i)overall\s+assessment[:\*\s]*\**\s*(APPROVED|NEEDS\s*_?\s*REVISION|MAJOR\s+ISSUES)")
-        .unwrap();
+    let re = Regex::new(
+        r"(?i)overall\s+assessment[:\*\s]*\**\s*(APPROVED|NEEDS\s*_?\s*REVISION|MAJOR\s+ISSUES)",
+    )
+    .unwrap();
 
     if let Some(captures) = re.captures(feedback) {
         if let Some(verdict_match) = captures.get(1) {
@@ -242,7 +259,8 @@ mod tests {
 
     #[test]
     fn test_extract_plan_feedback_with_tags() {
-        let output = "Some preamble\n<plan-feedback>\n## Summary\nThis is good\n</plan-feedback>\nEnd";
+        let output =
+            "Some preamble\n<plan-feedback>\n## Summary\nThis is good\n</plan-feedback>\nEnd";
         let feedback = extract_plan_feedback(output);
         assert!(feedback.contains("## Summary"));
         assert!(feedback.contains("This is good"));
