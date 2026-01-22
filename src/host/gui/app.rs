@@ -1,9 +1,11 @@
 //! Main host application using egui/eframe.
 
+use crate::host::gui::tray::{HostTray, TrayCommand};
 use crate::host::server::HostEvent;
 use crate::host::state::HostState;
 use eframe::egui;
 use egui_extras::{Column, TableBuilder};
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::{mpsc, Mutex};
@@ -18,6 +20,12 @@ pub struct HostApp {
     last_sync: Instant,
     /// Server port for display
     port: u16,
+    /// System tray icon
+    tray: Option<HostTray>,
+    /// Sessions we've already notified about (for deduplication)
+    notified_sessions: HashSet<String>,
+    /// Previous approval count (to detect new approvals)
+    prev_approval_count: usize,
 }
 
 #[derive(Default)]
@@ -31,6 +39,7 @@ struct DisplayData {
 
 #[derive(Clone)]
 struct DisplaySessionRow {
+    session_id: String,
     container_name: String,
     feature_name: String,
     phase: String,
@@ -46,12 +55,27 @@ impl HostApp {
         event_rx: mpsc::UnboundedReceiver<HostEvent>,
         port: u16,
     ) -> Self {
+        // Try to create tray icon (may fail on some platforms)
+        let tray = match HostTray::new() {
+            Ok(t) => {
+                eprintln!("[host] System tray icon created");
+                Some(t)
+            }
+            Err(e) => {
+                eprintln!("[host] Warning: Could not create tray icon: {}", e);
+                None
+            }
+        };
+
         Self {
             state,
             event_rx,
             display_data: DisplayData::default(),
             last_sync: Instant::now(),
             port,
+            tray,
+            notified_sessions: HashSet::new(),
+            prev_approval_count: 0,
         }
     }
 
@@ -62,6 +86,7 @@ impl HostApp {
             self.display_data.sessions = sessions
                 .iter()
                 .map(|s| DisplaySessionRow {
+                    session_id: s.session.session_id.clone(),
                     container_name: s.container_name.clone(),
                     feature_name: s.session.feature_name.clone(),
                     phase: s.session.phase.clone(),
@@ -77,10 +102,78 @@ impl HostApp {
             self.last_sync = Instant::now();
         }
     }
+
+    /// Check for new sessions awaiting approval and send notifications.
+    fn check_and_notify(&mut self) {
+        // Find sessions awaiting approval that we haven't notified about yet
+        let awaiting_approval: Vec<_> = self
+            .display_data
+            .sessions
+            .iter()
+            .filter(|s| {
+                let status_lower = s.status.to_lowercase();
+                (status_lower.contains("approval") || status_lower == "awaitingapproval")
+                    && !self.notified_sessions.contains(&s.session_id)
+            })
+            .collect();
+
+        for session in awaiting_approval {
+            // Mark as notified
+            self.notified_sessions.insert(session.session_id.clone());
+
+            // Send notification
+            if let Err(e) = notify_rust::Notification::new()
+                .summary("Planning Agent - Approval Required")
+                .body(&format!(
+                    "{} on {} is waiting for approval",
+                    session.feature_name, session.container_name
+                ))
+                .timeout(notify_rust::Timeout::Milliseconds(5000))
+                .show()
+            {
+                eprintln!("[host] Warning: Could not send notification: {}", e);
+            }
+        }
+
+        // Clean up notified_sessions for sessions that are no longer awaiting approval
+        let current_awaiting: HashSet<String> = self
+            .display_data
+            .sessions
+            .iter()
+            .filter(|s| {
+                let status_lower = s.status.to_lowercase();
+                status_lower.contains("approval") || status_lower == "awaitingapproval"
+            })
+            .map(|s| s.session_id.clone())
+            .collect();
+
+        self.notified_sessions
+            .retain(|id| current_awaiting.contains(id));
+    }
+
+    /// Handle tray icon commands.
+    fn handle_tray_commands(&mut self, ctx: &egui::Context) {
+        if let Some(ref tray) = self.tray {
+            while let Some(cmd) = tray.try_recv_command() {
+                match cmd {
+                    TrayCommand::ShowWindow => {
+                        // Request focus on the window
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                    }
+                    TrayCommand::Quit => {
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    }
+                }
+            }
+        }
+    }
 }
 
 impl eframe::App for HostApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Handle tray icon commands
+        self.handle_tray_commands(ctx);
+
         // Process any pending events (non-blocking)
         while let Ok(event) = self.event_rx.try_recv() {
             match event {
@@ -95,6 +188,8 @@ impl eframe::App for HostApp {
         // Sync display data periodically (every 100ms) or when state changed
         if self.last_sync.elapsed().as_millis() > 100 {
             self.sync_display_data();
+            // Check for new sessions awaiting approval and notify
+            self.check_and_notify();
         }
 
         // Request repaint every second for timestamp updates
