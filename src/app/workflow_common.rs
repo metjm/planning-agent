@@ -1,27 +1,9 @@
-use crate::app::failure::{FailureKind, NETWORK_ERROR_PATTERN};
-use crate::phases::{ReviewFailure, ReviewResult};
+use crate::app::failure::NETWORK_ERROR_PATTERN;
 use crate::planning_paths::SessionInfo;
 use crate::state::State;
 use regex::Regex;
 use std::fs;
 use std::path::Path;
-use std::time::Duration;
-
-/// Default retry limit for review failures.
-/// Can be overridden via config.failure_policy.max_retries.
-#[allow(dead_code)]
-pub const DEFAULT_REVIEW_FAILURE_RETRY_LIMIT: usize = 2;
-
-/// Creates the session folder before agent execution.
-/// Plan files are stored in ~/.planning-agent/sessions/<session-id>/ so paths are absolute.
-///
-/// Also creates session_info.json for fast session listing.
-/// Note: Plan file is created by AI agent, not pre-created empty.
-/// Note: Feedback files are created by individual reviewers during the reviewing phase.
-#[allow(dead_code)]
-pub fn pre_create_session_folder(state: &State) -> anyhow::Result<()> {
-    pre_create_session_folder_with_working_dir(state, None)
-}
 
 /// Creates the session folder, optionally recording a working directory.
 ///
@@ -79,54 +61,8 @@ pub fn plan_file_has_content(path: &Path) -> bool {
     }
 }
 
-#[allow(dead_code)]
-pub fn should_retry_review(
-    attempt: usize,
-    failures: &[ReviewFailure],
-    successful_reviews: &[ReviewResult],
-    max_retries: usize,
-) -> bool {
-    !failures.is_empty() && successful_reviews.is_empty() && attempt < max_retries
-}
-
-/// Classifies a failure from stderr content and exit code.
-///
-/// Priority order:
-/// 1. Timeout (explicit from caller)
-/// 2. Network (stderr pattern match)
-/// 3. ProcessExit (non-zero exit code)
-/// 4. Unknown (fallback)
-#[allow(dead_code)]
-pub fn classify_failure_from_stderr(
-    stderr: &str,
-    exit_code: Option<i32>,
-    is_timeout: bool,
-) -> FailureKind {
-    if is_timeout {
-        return FailureKind::Timeout;
-    }
-
-    // Check for network error patterns
-    if is_network_error(stderr) {
-        return FailureKind::Network;
-    }
-
-    // Check for non-zero exit code
-    if let Some(code) = exit_code {
-        if code != 0 {
-            return FailureKind::ProcessExit(code);
-        }
-    }
-
-    // Fallback to unknown with stderr content for debugging
-    FailureKind::Unknown(stderr.chars().take(500).collect())
-}
-
 /// Checks if stderr contains network error patterns.
-#[allow(dead_code)]
 pub fn is_network_error(stderr: &str) -> bool {
-    // Use lazy_static pattern for compiled regex, but for simplicity
-    // we'll compile on each call (acceptable for error paths)
     match Regex::new(NETWORK_ERROR_PATTERN) {
         Ok(re) => re.is_match(stderr),
         Err(_) => {
@@ -143,70 +79,11 @@ pub fn is_network_error(stderr: &str) -> bool {
     }
 }
 
-/// Calculates the backoff duration for a given retry attempt.
-///
-/// Uses exponential backoff: base_secs * 2^retry_count, capped at 5 minutes.
-#[allow(dead_code)]
-pub fn calculate_backoff(retry_count: u32, base_secs: u32) -> Duration {
-    let max_backoff_secs = 300u64; // 5 minutes cap
-    let backoff_secs = (base_secs as u64).saturating_mul(2u64.saturating_pow(retry_count));
-    Duration::from_secs(backoff_secs.min(max_backoff_secs))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::planning_paths;
     use std::fs;
     use tempfile::tempdir;
-
-    #[test]
-    fn test_should_retry_review_with_failures_and_empty_reviews() {
-        let failures = vec![ReviewFailure {
-            agent_name: "test".to_string(),
-            error: "error".to_string(),
-            bundle_path: None,
-            kind: FailureKind::Network,
-        }];
-        let reviews: Vec<ReviewResult> = vec![];
-        assert!(should_retry_review(0, &failures, &reviews, 2));
-    }
-
-    #[test]
-    fn test_should_retry_review_at_limit() {
-        let failures = vec![ReviewFailure {
-            agent_name: "test".to_string(),
-            error: "error".to_string(),
-            bundle_path: None,
-            kind: FailureKind::Timeout,
-        }];
-        let reviews: Vec<ReviewResult> = vec![];
-        assert!(!should_retry_review(2, &failures, &reviews, 2));
-    }
-
-    #[test]
-    fn test_should_retry_review_with_successful_reviews() {
-        let failures = vec![ReviewFailure {
-            agent_name: "test".to_string(),
-            error: "error".to_string(),
-            bundle_path: None,
-            kind: FailureKind::ProcessExit(1),
-        }];
-        let reviews = vec![ReviewResult {
-            agent_name: "claude".to_string(),
-            needs_revision: false,
-            feedback: "APPROVED".to_string(),
-            summary: "Plan looks good".to_string(),
-        }];
-        assert!(!should_retry_review(0, &failures, &reviews, 2));
-    }
-
-    #[test]
-    fn test_should_retry_review_no_failures() {
-        let failures: Vec<ReviewFailure> = vec![];
-        let reviews: Vec<ReviewResult> = vec![];
-        assert!(!should_retry_review(0, &failures, &reviews, 2));
-    }
 
     #[test]
     fn test_plan_file_has_content_returns_false_for_nonexistent() {
@@ -229,77 +106,6 @@ mod tests {
         let path = dir.path().join("plan.md");
         fs::write(&path, "# Plan\n\nThis is a plan.").unwrap();
         assert!(plan_file_has_content(&path));
-    }
-
-    #[test]
-    fn test_pre_create_session_folder_creates_folder() {
-        // State::new creates paths in ~/.planning-agent/sessions/ which are absolute
-        let state = State::new("test-feature", "Test objective", 3).unwrap();
-
-        // The paths should be absolute (starting with home dir)
-        assert!(
-            state.plan_file.is_absolute() || state.plan_file.to_string_lossy().starts_with("/")
-        );
-
-        let result = pre_create_session_folder(&state);
-        assert!(
-            result.is_ok(),
-            "pre_create_session_folder should succeed: {:?}",
-            result
-        );
-
-        // Verify session folder exists
-        let session_folder = state.plan_file.parent().unwrap();
-        assert!(
-            session_folder.exists(),
-            "Session folder should exist at {}",
-            session_folder.display()
-        );
-
-        // Plan file should NOT be pre-created (AI creates it with content)
-        assert!(
-            !state.plan_file.exists(),
-            "Plan file should NOT be pre-created"
-        );
-
-        // Verify session_info.json was created
-        let session_info_path = planning_paths::session_info_path(&state.workflow_session_id);
-        assert!(session_info_path.is_ok());
-        assert!(
-            session_info_path.unwrap().exists(),
-            "session_info.json should exist"
-        );
-
-        // Cleanup
-        if let Some(parent) = state.plan_file.parent() {
-            let _ = fs::remove_dir_all(parent);
-        }
-    }
-
-    #[test]
-    fn test_pre_create_session_folder_preserves_existing_plan() {
-        let state = State::new("test-feature-exists", "Test objective", 3).unwrap();
-
-        // First, create the folder and plan file with content
-        if let Some(parent) = state.plan_file.parent() {
-            fs::create_dir_all(parent).unwrap();
-        }
-        fs::write(&state.plan_file, "existing plan content").unwrap();
-
-        // Should succeed without error
-        let result = pre_create_session_folder(&state);
-        assert!(result.is_ok());
-
-        // Original content should be preserved (not touched)
-        assert_eq!(
-            fs::read_to_string(&state.plan_file).unwrap(),
-            "existing plan content"
-        );
-
-        // Cleanup
-        if let Some(parent) = state.plan_file.parent() {
-            let _ = fs::remove_dir_all(parent);
-        }
     }
 
     #[test]
@@ -326,75 +132,5 @@ mod tests {
         if let Some(parent) = state.plan_file.parent() {
             let _ = fs::remove_dir_all(parent);
         }
-    }
-
-    #[test]
-    fn test_classify_failure_timeout() {
-        let result = classify_failure_from_stderr("some output", Some(0), true);
-        assert_eq!(result, FailureKind::Timeout);
-    }
-
-    #[test]
-    fn test_classify_failure_network_errors() {
-        // Test various network error patterns
-        let patterns = [
-            "Error: connect ECONNREFUSED 127.0.0.1:443",
-            "network error: failed to resolve host",
-            "ETIMEDOUT waiting for response",
-            "connection refused by server",
-            "name resolution failed",
-            "DNS lookup failed",
-            "socket error: broken pipe",
-        ];
-
-        for pattern in patterns {
-            let result = classify_failure_from_stderr(pattern, Some(1), false);
-            assert_eq!(
-                result,
-                FailureKind::Network,
-                "Pattern '{}' should be classified as Network",
-                pattern
-            );
-        }
-    }
-
-    #[test]
-    fn test_classify_failure_process_exit() {
-        let result = classify_failure_from_stderr("some generic error", Some(42), false);
-        assert_eq!(result, FailureKind::ProcessExit(42));
-    }
-
-    #[test]
-    fn test_classify_failure_unknown() {
-        let result = classify_failure_from_stderr("something unusual happened", None, false);
-        match result {
-            FailureKind::Unknown(msg) => assert!(msg.contains("something unusual")),
-            other => panic!("Expected Unknown, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn test_is_network_error() {
-        assert!(is_network_error("connect ECONNREFUSED"));
-        assert!(is_network_error("NETWORK error"));
-        assert!(is_network_error("DNS resolution failed"));
-        assert!(!is_network_error("syntax error in code"));
-        assert!(!is_network_error("file not found"));
-    }
-
-    #[test]
-    fn test_calculate_backoff() {
-        // Base: 5 seconds
-        assert_eq!(calculate_backoff(0, 5), Duration::from_secs(5)); // 5 * 2^0 = 5
-        assert_eq!(calculate_backoff(1, 5), Duration::from_secs(10)); // 5 * 2^1 = 10
-        assert_eq!(calculate_backoff(2, 5), Duration::from_secs(20)); // 5 * 2^2 = 20
-        assert_eq!(calculate_backoff(3, 5), Duration::from_secs(40)); // 5 * 2^3 = 40
-    }
-
-    #[test]
-    fn test_calculate_backoff_cap() {
-        // Should be capped at 5 minutes (300 seconds)
-        assert_eq!(calculate_backoff(10, 5), Duration::from_secs(300));
-        assert_eq!(calculate_backoff(20, 5), Duration::from_secs(300));
     }
 }

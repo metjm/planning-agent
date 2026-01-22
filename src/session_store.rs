@@ -363,7 +363,7 @@ pub fn list_snapshots() -> Result<Vec<SessionSnapshotInfo>> {
 ///
 /// Only the session.json file is deleted, not the entire session directory
 /// (which may contain other files like logs and state).
-#[allow(dead_code)]
+#[cfg(test)]
 pub fn delete_snapshot(session_id: &str) -> Result<()> {
     let snapshot_path = get_snapshot_path(session_id)?;
     if snapshot_path.exists() {

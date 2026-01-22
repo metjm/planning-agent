@@ -7,26 +7,13 @@
 use crate::tui::{TodoItem, TokenUsage};
 use std::fmt;
 
-/// Errors that can occur during agent output parsing.
-/// Reserved for future structured error handling.
+/// Error type for agent output parsing (currently unused as parsers never fail).
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
-pub enum ParseError {
-    /// Invalid JSON encountered
-    InvalidJson(String),
-    /// Required field missing from parsed data
-    MissingField(String),
-    /// Unknown event type encountered
-    UnknownEvent(String),
-}
+pub struct ParseError;
 
 impl fmt::Display for ParseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            ParseError::InvalidJson(msg) => write!(f, "Invalid JSON: {}", msg),
-            ParseError::MissingField(field) => write!(f, "Missing field: {}", field),
-            ParseError::UnknownEvent(event_type) => write!(f, "Unknown event type: {}", event_type),
-        }
+        write!(f, "Parse error")
     }
 }
 
@@ -55,10 +42,6 @@ pub enum AgentEvent {
 
     /// Tool execution start (maps from ParsedEvent::ToolStarted)
     ToolStarted {
-        /// Internal tool name (may differ from display_name for some agents)
-        /// Used in test assertions and logging.
-        #[allow(dead_code)]
-        name: String,
         display_name: String,
         input_preview: String,
         /// Optional unique identifier for correlating with ToolResult.
@@ -142,8 +125,6 @@ pub struct AgentOutput {
     pub output: String,
     /// Whether the execution resulted in an error
     pub is_error: bool,
-    /// Cost in USD if available
-    pub cost_usd: Option<f64>,
     /// Captured conversation ID for resume (from agent's init/start message)
     pub conversation_id: Option<String>,
     /// Stop reason if agent was stopped (max_turns, max_tokens, cancelled, etc.)
@@ -179,12 +160,6 @@ pub trait AgentStreamParser {
             Err(e) => Err(e),
         }
     }
-
-    /// Reset any internal parser state.
-    ///
-    /// Call this between agent invocations if reusing a parser instance.
-    #[allow(dead_code)]
-    fn reset(&mut self);
 }
 
 #[cfg(test)]
@@ -193,14 +168,8 @@ mod tests {
 
     #[test]
     fn test_parse_error_display() {
-        let err = ParseError::InvalidJson("unexpected token".to_string());
-        assert_eq!(format!("{}", err), "Invalid JSON: unexpected token");
-
-        let err = ParseError::MissingField("content".to_string());
-        assert_eq!(format!("{}", err), "Missing field: content");
-
-        let err = ParseError::UnknownEvent("foo_bar".to_string());
-        assert_eq!(format!("{}", err), "Unknown event type: foo_bar");
+        let err = ParseError;
+        assert_eq!(format!("{}", err), "Parse error");
     }
 
     #[test]
@@ -228,13 +197,11 @@ mod tests {
         let output = AgentOutput {
             output: "test".to_string(),
             is_error: false,
-            cost_usd: Some(0.01),
             conversation_id: None,
             stop_reason: None,
         };
         assert_eq!(output.output, "test");
         assert!(!output.is_error);
-        assert_eq!(output.cost_usd, Some(0.01));
     }
 
     #[test]
@@ -242,7 +209,6 @@ mod tests {
         let output = AgentOutput {
             output: "test".to_string(),
             is_error: false,
-            cost_usd: None,
             conversation_id: Some("abc-123".to_string()),
             stop_reason: None,
         };

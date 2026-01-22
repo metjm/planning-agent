@@ -27,7 +27,6 @@ pub enum ThemePhase {
 /// Each color role has a specific purpose across all UI components.
 /// All phase themes use the same roles with different colors.
 #[derive(Debug, Clone, Copy)]
-#[allow(dead_code)]
 pub struct Theme {
     // === Primary colors ===
     /// Main text color
@@ -52,12 +51,6 @@ pub struct Theme {
     pub warning: Color,
     /// Error state color - always red
     pub error: Color,
-
-    // === Selection colors ===
-    /// Selection foreground
-    pub selection_fg: Color,
-    /// Selection background
-    pub selection_bg: Color,
 
     // === Phase-specific colors ===
     /// Current phase color
@@ -94,20 +87,6 @@ pub struct Theme {
     pub stats_tokens_in: Color,
     /// Token output color
     pub stats_tokens_out: Color,
-
-    // === Markdown colors ===
-    /// Heading level 1 color
-    pub md_h1: Color,
-    /// Heading level 2 color
-    pub md_h2: Color,
-    /// Heading level 3 color
-    pub md_h3: Color,
-    /// Bullet point color
-    pub md_bullet: Color,
-    /// Bold text color
-    pub md_bold: Color,
-    /// Inline code color
-    pub md_code: Color,
 
     // === Todo colors ===
     /// Todo header color
@@ -169,10 +148,6 @@ impl Theme {
             warning: Color::Yellow,
             error: Color::Red,
 
-            // Selection colors - blue theme
-            selection_fg: Color::Black,
-            selection_bg: Color::Rgb(100, 180, 255), // Sky blue
-
             // Phase-specific colors
             phase_current: Color::Rgb(130, 200, 255), // Light blue
             phase_complete: Color::Green,
@@ -194,14 +169,6 @@ impl Theme {
             stats_cost: Color::Green,
             stats_tokens_in: Color::Rgb(130, 200, 255), // Light blue
             stats_tokens_out: Color::Green,
-
-            // Markdown colors - blue tones
-            md_h1: Color::Rgb(150, 130, 255),     // Periwinkle
-            md_h2: Color::Rgb(100, 180, 255),     // Sky blue
-            md_h3: Color::Rgb(130, 200, 255),     // Light blue
-            md_bullet: Color::Rgb(130, 200, 255), // Light blue
-            md_bold: Color::Rgb(130, 200, 255),   // Light blue
-            md_code: Color::Rgb(150, 255, 150),   // Light green
 
             // Todo colors - blue
             todo_header: Color::Rgb(100, 180, 255), // Sky blue
@@ -247,10 +214,6 @@ impl Theme {
             warning: Color::Yellow,
             error: Color::Red,
 
-            // Selection colors - orange theme
-            selection_fg: Color::Black,
-            selection_bg: Color::Rgb(255, 165, 0), // Orange
-
             // Phase-specific colors
             phase_current: Color::Rgb(255, 200, 100), // Gold
             phase_complete: Color::Green,
@@ -272,14 +235,6 @@ impl Theme {
             stats_cost: Color::Green,
             stats_tokens_in: Color::Rgb(255, 200, 100), // Gold
             stats_tokens_out: Color::Green,
-
-            // Markdown colors - warm tones
-            md_h1: Color::Rgb(255, 100, 100),     // Coral
-            md_h2: Color::Rgb(255, 165, 0),       // Orange
-            md_h3: Color::Rgb(255, 200, 100),     // Gold
-            md_bullet: Color::Rgb(255, 200, 100), // Gold
-            md_bold: Color::Rgb(255, 200, 100),   // Gold
-            md_code: Color::Rgb(150, 255, 150),   // Light green
 
             // Todo colors - warm
             todo_header: Color::Rgb(255, 165, 0), // Orange
@@ -325,10 +280,6 @@ impl Theme {
             warning: Color::Yellow,
             error: Color::Red,
 
-            // Selection colors - green theme
-            selection_fg: Color::Black,
-            selection_bg: Color::Rgb(100, 220, 100), // Bright green
-
             // Phase-specific colors
             phase_current: Color::Rgb(150, 255, 150), // Light green
             phase_complete: Color::Green,
@@ -350,14 +301,6 @@ impl Theme {
             stats_cost: Color::Green,
             stats_tokens_in: Color::Rgb(150, 255, 150), // Light green
             stats_tokens_out: Color::Green,
-
-            // Markdown colors - green tones
-            md_h1: Color::Rgb(150, 255, 180),     // Mint
-            md_h2: Color::Rgb(100, 220, 100),     // Bright green
-            md_h3: Color::Rgb(150, 255, 150),     // Light green
-            md_bullet: Color::Rgb(150, 255, 150), // Light green
-            md_bold: Color::Rgb(150, 255, 150),   // Light green
-            md_code: Color::Rgb(200, 200, 100),   // Pale yellow
 
             // Todo colors - green
             todo_header: Color::Rgb(100, 220, 100), // Bright green

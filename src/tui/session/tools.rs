@@ -99,13 +99,7 @@ impl Session {
                 let completed_at = Instant::now();
 
                 // Move to completed tools list
-                let completed_tool = CompletedTool {
-                    display_name: display_name.clone(),
-                    input_preview: input_preview.clone(),
-                    duration_ms,
-                    is_error,
-                    completed_at,
-                };
+                let completed_tool = CompletedTool { completed_at };
 
                 // Insert at the beginning for reverse chronological order (newest first)
                 self.completed_tools_by_agent
@@ -131,10 +125,6 @@ impl Session {
                 let duration_ms = 0;
 
                 let completed_tool = CompletedTool {
-                    display_name: display_name.clone(),
-                    input_preview: input_preview.clone(),
-                    duration_ms,
-                    is_error,
                     completed_at: Instant::now(),
                 };
 
@@ -203,22 +193,6 @@ impl Session {
             // Clean up empty agent entries
             self.completed_tools_by_agent.retain(|_, v| !v.is_empty());
         }
-    }
-
-    /// Get all completed tools across all agents as a flat list
-    /// Note: Currently unused after replacing draw_tool_calls_panel with
-    /// draw_reviewer_history_panel, but kept for potential future tool tracking features.
-    #[allow(dead_code)]
-    pub fn all_completed_tools(&self) -> Vec<(&str, &CompletedTool)> {
-        let mut tools = Vec::new();
-        for (agent_name, agent_tools) in &self.completed_tools_by_agent {
-            for tool in agent_tools {
-                tools.push((agent_name.as_str(), tool));
-            }
-        }
-        // Sort by completed_at descending (newest first)
-        tools.sort_by(|a, b| b.1.completed_at.cmp(&a.1.completed_at));
-        tools
     }
 
     pub fn average_tool_duration_ms(&self) -> Option<u64> {

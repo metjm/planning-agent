@@ -60,18 +60,6 @@ fn test_parse_plan_type_not_found() {
 }
 
 #[test]
-fn test_claude_usage_is_stale() {
-    let usage = ClaudeUsage::default();
-    assert!(usage.is_stale());
-
-    let fresh = ClaudeUsage {
-        fetched_at: Some(Instant::now()),
-        ..Default::default()
-    };
-    assert!(!fresh.is_stale());
-}
-
-#[test]
 fn test_strip_ansi_codes() {
     assert_eq!(strip_ansi_codes("\x1b[32mHello\x1b[0m"), "Hello");
     assert_eq!(

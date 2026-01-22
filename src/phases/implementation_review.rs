@@ -23,12 +23,7 @@ const IMPLEMENTATION_REVIEW_SYSTEM_PROMPT: &str = "You are an implementation rev
 
 /// Result of running the implementation review phase.
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct ImplementationReviewResult {
-    /// The full review report
-    pub report: String,
-    /// Path to the saved review report
-    pub report_path: std::path::PathBuf,
     /// The parsed verdict
     pub verdict: VerificationVerdictResult,
     /// Extracted feedback for the next implementation iteration (if any)
@@ -48,7 +43,6 @@ pub struct ImplementationReviewResult {
 ///
 /// # Returns
 /// An `ImplementationReviewResult` containing the report and verdict.
-#[allow(dead_code)]
 pub async fn run_implementation_review_phase(
     state: &State,
     config: &WorkflowConfig,
@@ -172,12 +166,7 @@ pub async fn run_implementation_review_phase(
         None
     };
 
-    Ok(ImplementationReviewResult {
-        report,
-        report_path,
-        verdict,
-        feedback,
-    })
+    Ok(ImplementationReviewResult { verdict, feedback })
 }
 
 /// Builds the implementation review prompt with clean format and skill invocation at the end.
@@ -287,23 +276,8 @@ mod tests {
     }
 
     #[test]
-    fn test_implementation_review_result_with_approved_verdict() {
-        let result = ImplementationReviewResult {
-            report: "## Verdict\nAPPROVED\n\nAll good!".to_string(),
-            report_path: PathBuf::from("/tmp/review.md"),
-            verdict: VerificationVerdictResult::Approved,
-            feedback: None,
-        };
-
-        assert!(result.verdict.is_approved());
-        assert!(result.feedback.is_none());
-    }
-
-    #[test]
     fn test_implementation_review_result_with_needs_revision_verdict() {
         let result = ImplementationReviewResult {
-            report: "## Verdict\nNEEDS REVISION\n\n<implementation-feedback>Fix this</implementation-feedback>".to_string(),
-            report_path: PathBuf::from("/tmp/review.md"),
             verdict: VerificationVerdictResult::NeedsRevision,
             feedback: Some("Fix this".to_string()),
         };

@@ -50,14 +50,12 @@ pub fn reviewing_conversation_key(display_id: &str) -> String {
 
 /// Constructs the conversation key for implementation phases.
 /// Uses a separate namespace to prevent collision with planning/reviewing conversations.
-#[allow(dead_code)]
 pub fn implementing_conversation_key(agent_name: &str) -> String {
     format!("implementing/{}", agent_name)
 }
 
 /// Constructs the conversation key for implementation-review phases.
 /// Uses a separate namespace to prevent collision with other conversations.
-#[allow(dead_code)]
 pub fn implementation_reviewing_conversation_key(agent_name: &str) -> String {
     format!("implementation-reviewing/{}", agent_name)
 }

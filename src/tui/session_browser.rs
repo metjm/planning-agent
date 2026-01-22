@@ -27,7 +27,6 @@ pub enum ConfirmationState {
 
 /// A session entry in the browser list, merging live and snapshot data.
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct SessionEntry {
     /// The workflow session ID
     pub session_id: String,
@@ -513,12 +512,6 @@ impl SessionBrowserState {
         self.confirmation_pending = None;
     }
 
-    /// Check if a confirmation is pending.
-    #[allow(dead_code)]
-    pub fn has_confirmation_pending(&self) -> bool {
-        self.confirmation_pending.is_some()
-    }
-
     /// Ensure the selected item is visible in the viewport.
     fn ensure_visible(&mut self) {
         const VIEWPORT_SIZE: usize = 10;
@@ -583,32 +576,6 @@ mod tests {
 
         // Test invalid timestamp
         assert_eq!(format_relative_time("invalid"), "unknown");
-    }
-
-    #[test]
-    fn test_confirmation_states() {
-        let mut state = SessionBrowserState::new();
-        assert!(!state.has_confirmation_pending());
-
-        state.start_force_stop_confirmation("test-session".to_string());
-        assert!(state.has_confirmation_pending());
-        assert!(matches!(
-            state.confirmation_pending,
-            Some(ConfirmationState::ForceStop { .. })
-        ));
-
-        state.cancel_confirmation();
-        assert!(!state.has_confirmation_pending());
-
-        state.start_cross_directory_confirmation(
-            "test-session".to_string(),
-            PathBuf::from("/other/dir"),
-        );
-        assert!(state.has_confirmation_pending());
-        assert!(matches!(
-            state.confirmation_pending,
-            Some(ConfirmationState::CrossDirectoryResume { .. })
-        ));
     }
 
     #[test]

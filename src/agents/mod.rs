@@ -26,7 +26,6 @@ pub struct AgentContext {
     /// Optional cancellation signal receiver for cooperative cancellation.
     pub cancel_rx: Option<watch::Receiver<bool>>,
     /// Session logger for agent events.
-    #[allow(dead_code)]
     pub session_logger: Arc<SessionLogger>,
 }
 
@@ -34,13 +33,9 @@ pub struct AgentContext {
 pub struct AgentResult {
     pub output: String,
     pub is_error: bool,
-    /// Cost in USD (stored for potential display/logging, currently unused)
-    #[allow(dead_code)]
-    pub cost_usd: Option<f64>,
     /// Captured conversation ID for future resume (from agent's init message)
     pub conversation_id: Option<String>,
     /// Stop reason if agent was stopped (max_turns, max_tokens, cancelled, etc.)
-    #[allow(dead_code)]
     pub stop_reason: Option<String>,
 }
 

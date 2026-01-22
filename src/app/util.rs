@@ -1,6 +1,5 @@
 use crate::phases;
 use crate::planning_paths;
-use crate::session_logger::{LogCategory, LogLevel, SessionLogger};
 use crate::tui::TabManager;
 use std::collections::HashMap;
 use std::fs::OpenOptions;
@@ -13,20 +12,6 @@ pub fn get_run_id() -> String {
     RUN_ID
         .get_or_init(|| chrono::Local::now().format("%Y%m%d-%H%M%S").to_string())
         .clone()
-}
-
-/// Logs a workflow message using the session logger if available.
-///
-/// This is the preferred logging method for new code.
-#[allow(dead_code)]
-pub fn log_workflow_with_session(logger: &SessionLogger, message: &str) {
-    logger.log(LogLevel::Info, LogCategory::Workflow, message);
-}
-
-/// Logs a workflow message at a specific level using the session logger.
-#[allow(dead_code)]
-pub fn log_workflow_with_level(logger: &SessionLogger, level: LogLevel, message: &str) {
-    logger.log(level, LogCategory::Workflow, message);
 }
 
 pub fn debug_log(start: std::time::Instant, msg: &str) {

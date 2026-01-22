@@ -296,8 +296,8 @@ pub async fn handle_key_event(
         return Ok(false);
     }
 
-    // Handle 'r' to toggle review modal (global hotkey, works from any mode except error state or input areas)
-    if key.code == KeyCode::Char('r') && session.workflow_state.is_some() && !in_text_input {
+    // Handle 'v' to toggle review modal (global hotkey, works from any mode except error state or input areas)
+    if key.code == KeyCode::Char('v') && session.workflow_state.is_some() && !in_text_input {
         session.toggle_review_modal(working_dir);
         return Ok(false);
     }
@@ -306,7 +306,7 @@ pub async fn handle_key_event(
     if session.review_modal_open {
         let content = session.current_review_content().to_string();
         match key.code {
-            KeyCode::Esc | KeyCode::Char('r') => {
+            KeyCode::Esc | KeyCode::Char('v') => {
                 session.close_review_modal();
             }
             KeyCode::Tab | KeyCode::Right => {

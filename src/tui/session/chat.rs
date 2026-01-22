@@ -72,13 +72,6 @@ impl Session {
         self.active_run_tab = self.active_run_tab.saturating_sub(1);
     }
 
-    #[allow(dead_code)]
-    pub fn clear_chat_tabs(&mut self) {
-        self.run_tabs.clear();
-        self.active_run_tab = 0;
-        self.chat_follow_mode = true;
-    }
-
     pub fn chat_scroll_up(&mut self) {
         if let Some(tab) = self.run_tabs.get_mut(self.active_run_tab) {
             tab.scroll_position = tab.scroll_position.saturating_sub(1);

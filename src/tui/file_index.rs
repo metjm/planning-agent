@@ -106,7 +106,7 @@ impl FileIndex {
 
     /// Create a file index with entries but no repo root (for tests).
     /// When repo_root is None, insert_text() returns display_path (relative path).
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub fn with_entries(entries: Vec<FileEntry>) -> Self {
         Self {
             status: FileIndexStatus::Ready,

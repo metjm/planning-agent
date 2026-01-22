@@ -49,7 +49,6 @@ pub struct TokenUsage {
 /// Events for the TUI system. Some variants are for multi-session support
 /// and may not be used in all code paths.
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub enum Event {
     Key(KeyEvent),
     Paste(String),
@@ -57,33 +56,7 @@ pub enum Event {
     Resize,
 
     Output(String),
-    Streaming(String),
-    ToolStarted {
-        tool_id: Option<String>,
-        display_name: String,
-        input_preview: String,
-        agent_name: String,
-        phase: String,
-    },
-    ToolFinished {
-        tool_id: Option<String>,
-        agent_name: String,
-    },
     StateUpdate(State),
-    RequestUserApproval(String),
-    BytesReceived(usize),
-    TokenUsage(TokenUsage),
-    PhaseStarted(String),
-    TurnCompleted,
-    ModelDetected(String),
-    ToolResultReceived {
-        tool_id: Option<String>,
-        is_error: bool,
-        agent_name: String,
-        phase: String,
-        summary: ToolResultSummary,
-    },
-    StopReason(String),
 
     SessionOutput {
         session_id: usize,
@@ -183,20 +156,6 @@ pub enum Event {
     SessionStopReason {
         session_id: usize,
         reason: String,
-    },
-    SessionWorkflowComplete {
-        session_id: usize,
-    },
-    SessionWorkflowError {
-        session_id: usize,
-        error: String,
-    },
-    /// Workflow was cleanly stopped and a snapshot was saved
-    SessionWorkflowStopped {
-        session_id: usize,
-    },
-    SessionGeneratingSummary {
-        session_id: usize,
     },
 
     SessionPlanGenerationFailed {
@@ -318,7 +277,6 @@ pub enum Event {
 
     /// Slash command execution result
     SlashCommandResult {
-        session_id: usize,
         command: String,
         summary: String,
         error: Option<String>,

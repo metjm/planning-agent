@@ -24,10 +24,7 @@ pub const IMPLEMENTATION_FOLLOWUP_PHASE: &str = "Implementation Follow-up";
 
 /// Result of running the implementation phase.
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct ImplementationResult {
-    /// The full output/transcript from the implementation run
-    pub output: String,
     /// Path to the saved implementation log
     pub log_path: std::path::PathBuf,
     /// Whether the agent encountered an error
@@ -51,7 +48,6 @@ pub struct ImplementationResult {
 ///
 /// # Returns
 /// An `ImplementationResult` containing the output and metadata from the run.
-#[allow(dead_code)]
 pub async fn run_implementation_phase(
     state: &State,
     config: &WorkflowConfig,
@@ -143,10 +139,9 @@ pub async fn run_implementation_phase(
     ));
 
     Ok(ImplementationResult {
-        output: result.output,
         log_path,
         is_error: result.is_error,
-        stop_reason: None, // TODO: Populate from AgentResult when available
+        stop_reason: result.stop_reason,
         conversation_id: result.conversation_id,
     })
 }
@@ -212,7 +207,6 @@ async fn run_implementation_interaction_inner(
     })?;
 
     let session_logger = create_session_logger(&state.workflow_session_id)?;
-    session_sender.set_logger(session_logger.clone());
 
     session_sender.send_output(format!(
         "[implementation] Starting follow-up using agent: {}",

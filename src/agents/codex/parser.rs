@@ -64,7 +64,6 @@ impl CodexParser {
                                 .map(|s| s.to_string());
 
                             events.push(AgentEvent::ToolStarted {
-                                name: "command_execution".to_string(),
                                 display_name,
                                 input_preview,
                                 tool_use_id,
@@ -163,7 +162,6 @@ impl CodexParser {
                             .map(|s| s.to_string());
 
                         events.push(AgentEvent::ToolStarted {
-                            name: name.to_string(),
                             display_name: name.to_string(),
                             input_preview,
                             tool_use_id,
@@ -312,10 +310,6 @@ impl AgentStreamParser for CodexParser {
             }
         }
     }
-
-    fn reset(&mut self) {
-        self._event_count = 0;
-    }
 }
 
 #[cfg(test)]
@@ -353,10 +347,7 @@ mod tests {
         let events = parser.parse_line_multi(line).unwrap();
         assert_eq!(events.len(), 1);
         match &events[0] {
-            AgentEvent::ToolStarted {
-                name, display_name, ..
-            } => {
-                assert_eq!(name, "read_file");
+            AgentEvent::ToolStarted { display_name, .. } => {
                 assert_eq!(display_name, "read_file");
             }
             _ => panic!("Expected ToolStarted event"),
@@ -448,15 +439,6 @@ mod tests {
     }
 
     #[test]
-    fn test_reset() {
-        let mut parser = CodexParser::new();
-        let _ = parser.parse_line_multi(r#"{"type": "message", "content": "test"}"#);
-        parser.reset();
-        // After reset, the parser should be in initial state
-        assert_eq!(parser._event_count, 0);
-    }
-
-    #[test]
     fn test_parse_command_execution_started() {
         let mut parser = CodexParser::new();
         let line = r#"{"type":"item.started","item":{"id":"item_1","type":"command_execution","command":"/bin/bash -lc ls","aggregated_output":"","exit_code":null,"status":"in_progress"}}"#;
@@ -464,12 +446,10 @@ mod tests {
         assert_eq!(events.len(), 1);
         match &events[0] {
             AgentEvent::ToolStarted {
-                name,
                 display_name,
                 input_preview,
                 tool_use_id,
             } => {
-                assert_eq!(name, "command_execution");
                 assert_eq!(display_name, "ls");
                 assert_eq!(input_preview, "ls");
                 assert_eq!(tool_use_id, &Some("item_1".to_string()));

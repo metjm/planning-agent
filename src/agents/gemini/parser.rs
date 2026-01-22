@@ -84,7 +84,6 @@ impl GeminiParser {
                 // Gemini doesn't provide a tool_use_id in function calls,
                 // so we leave it as None (FIFO matching will be used)
                 events.push(AgentEvent::ToolStarted {
-                    name: name.to_string(),
                     display_name: name.to_string(),
                     input_preview,
                     tool_use_id: None,
@@ -193,10 +192,6 @@ impl AgentStreamParser for GeminiParser {
             }
         }
     }
-
-    fn reset(&mut self) {
-        self._event_count = 0;
-    }
 }
 
 #[cfg(test)]
@@ -239,10 +234,7 @@ mod tests {
         let events = parser.parse_line_multi(line).unwrap();
         assert_eq!(events.len(), 1);
         match &events[0] {
-            AgentEvent::ToolStarted {
-                name, display_name, ..
-            } => {
-                assert_eq!(name, "search");
+            AgentEvent::ToolStarted { display_name, .. } => {
                 assert_eq!(display_name, "search");
             }
             _ => panic!("Expected ToolStarted event"),
@@ -314,14 +306,6 @@ mod tests {
         let mut parser = GeminiParser::new();
         let events = parser.parse_line_multi("").unwrap();
         assert!(events.is_empty());
-    }
-
-    #[test]
-    fn test_reset() {
-        let mut parser = GeminiParser::new();
-        let _ = parser.parse_line_multi(r#"{"response": "test"}"#);
-        parser.reset();
-        assert_eq!(parser._event_count, 0);
     }
 
     #[test]

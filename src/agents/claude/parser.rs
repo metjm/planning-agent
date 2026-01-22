@@ -204,7 +204,6 @@ impl ClaudeParser {
                             .map(|s| s.to_string());
 
                         events.push(AgentEvent::ToolStarted {
-                            name: name.to_string(),
                             display_name,
                             input_preview,
                             tool_use_id,
@@ -254,10 +253,6 @@ impl AgentStreamParser for ClaudeParser {
 
     fn parse_line_multi(&mut self, line: &str) -> Result<Vec<AgentEvent>, ParseError> {
         Ok(self.parse_json(line))
-    }
-
-    fn reset(&mut self) {
-        self.last_message_type = None;
     }
 }
 
@@ -319,11 +314,10 @@ mod tests {
         let line = r#"{"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "toolu_123", "name": "Read", "input": {"path": "test.txt"}}]}}"#;
         let events = parser.parse_line_multi(line).unwrap();
         assert!(events.iter().any(|e| matches!(e, AgentEvent::ToolStarted {
-            name,
             display_name,
             tool_use_id,
             ..
-        } if name == "Read" && display_name == "Read" && tool_use_id == &Some("toolu_123".to_string()))));
+        } if display_name == "Read" && tool_use_id == &Some("toolu_123".to_string()))));
     }
 
     #[test]
@@ -338,20 +332,6 @@ mod tests {
         let mut parser = ClaudeParser::new();
         let events = parser.parse_line_multi("not json").unwrap();
         assert!(events.is_empty());
-    }
-
-    #[test]
-    fn test_reset() {
-        let mut parser = ClaudeParser::new();
-        let _ = parser.parse_line_multi(r#"{"type": "user", "message": {}}"#);
-        parser.reset();
-        // After reset, an assistant message should NOT trigger TurnCompleted
-        let events = parser
-            .parse_line_multi(r#"{"type": "assistant", "message": {}}"#)
-            .unwrap();
-        assert!(!events
-            .iter()
-            .any(|e| matches!(e, AgentEvent::TurnCompleted)));
     }
 
     #[test]

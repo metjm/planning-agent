@@ -42,7 +42,6 @@ pub enum UiMode {
     Implementation,
 }
 
-#[allow(dead_code)]
 impl ImplementationPhase {
     /// Returns a human-readable label for this phase.
     pub fn label(&self) -> &'static str {
@@ -72,7 +71,6 @@ pub struct ImplementationPhaseState {
     pub last_feedback: Option<String>,
 }
 
-#[allow(dead_code)]
 impl ImplementationPhaseState {
     /// Creates a new implementation phase state with the given max iterations.
     pub fn new(max_iterations: u32) -> Self {
@@ -117,7 +115,6 @@ impl ImplementationPhaseState {
 
 impl Phase {
     /// Get a UI-friendly label for the phase.
-    #[allow(dead_code)]
     pub fn label(&self) -> PhaseLabel {
         match self {
             Phase::Planning => PhaseLabel::Planning,
@@ -133,7 +130,6 @@ impl Phase {
 /// Unlike `Phase`, which is used for state machine transitions,
 /// `PhaseLabel` provides display-friendly formatting.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
 pub enum PhaseLabel {
     Planning,
     Reviewing,
@@ -141,7 +137,6 @@ pub enum PhaseLabel {
     Complete,
 }
 
-#[allow(dead_code)]
 impl PhaseLabel {
     /// Short label for compact display (e.g., status bars).
     pub fn short(&self) -> &'static str {
@@ -675,7 +670,6 @@ impl State {
 
     /// Sets the current failure context and adds it to history.
     /// Trims history if it exceeds MAX_FAILURE_HISTORY.
-    #[allow(dead_code)]
     pub fn set_failure(&mut self, failure: FailureContext) {
         self.failure_history.push(failure.clone());
         // Trim history if it exceeds the limit
@@ -688,13 +682,11 @@ impl State {
 
     /// Clears the current failure context (called after successful recovery).
     /// The failure remains in history for auditing.
-    #[allow(dead_code)]
     pub fn clear_failure(&mut self) {
         self.last_failure = None;
     }
 
     /// Returns true if there's an active failure requiring recovery.
-    #[allow(dead_code)]
     pub fn has_failure(&self) -> bool {
         self.last_failure.is_some()
     }
@@ -713,13 +705,6 @@ impl State {
             }
             _ => UiMode::Planning,
         }
-    }
-
-    /// Returns true if implementation workflow is currently active.
-    /// This is a convenience wrapper around `workflow_stage()`.
-    #[allow(dead_code)]
-    pub fn implementation_active(&self) -> bool {
-        self.workflow_stage() == UiMode::Implementation
     }
 }
 

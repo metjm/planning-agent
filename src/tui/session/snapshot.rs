@@ -91,7 +91,6 @@ impl Session {
             focused_panel: ui_state.focused_panel,
             workflow_state,
             state_snapshot: None,       // Will be populated when workflow spawns
-            snapshot_rx: None,          // Will be populated when workflow spawns
             start_time: Instant::now(), // Reset to now
             total_cost: ui_state.total_cost,
             running: false,                        // Will be set when workflow resumes

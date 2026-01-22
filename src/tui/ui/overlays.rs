@@ -149,7 +149,7 @@ pub fn draw_footer(frame: &mut Frame, session: &Session, tab_manager: &TabManage
     if session.workflow_state.is_some() {
         spans.push(Span::styled(" │ ", Style::default().fg(theme.muted)));
         spans.push(Span::styled(
-            "[p] Plan  [r] Reviews",
+            "[p] Plan  [v] Reviews",
             Style::default().fg(theme.border),
         ));
     }

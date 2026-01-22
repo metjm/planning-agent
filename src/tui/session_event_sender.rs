@@ -8,7 +8,6 @@ use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::mpsc;
 
-use crate::session_logger::{LogCategory, LogLevel, SessionLogger};
 use crate::state::State;
 use crate::tui::session::{CliInstanceId, TodoItem, ToolResultSummary};
 
@@ -20,71 +19,20 @@ pub struct SessionEventSender {
     session_id: usize,
     run_id: u64,
     inner: mpsc::UnboundedSender<Event>,
-    /// Optional session logger for workflow events.
-    session_logger: Option<Arc<SessionLogger>>,
     /// Monotonic counter for generating unique CLI instance IDs per session.
     cli_instance_counter: Arc<AtomicU64>,
 }
 
 /// Some methods may not be used in all code paths but are part of the
 /// public API for workflow integration.
-#[allow(dead_code)]
 impl SessionEventSender {
     pub fn new(session_id: usize, run_id: u64, sender: mpsc::UnboundedSender<Event>) -> Self {
         Self {
             session_id,
             run_id,
             inner: sender,
-            session_logger: None,
             cli_instance_counter: Arc::new(AtomicU64::new(0)),
         }
-    }
-
-    /// Creates a new SessionEventSender with a session logger attached.
-    pub fn with_logger(
-        session_id: usize,
-        run_id: u64,
-        sender: mpsc::UnboundedSender<Event>,
-        logger: Arc<SessionLogger>,
-    ) -> Self {
-        Self {
-            session_id,
-            run_id,
-            inner: sender,
-            session_logger: Some(logger),
-            cli_instance_counter: Arc::new(AtomicU64::new(0)),
-        }
-    }
-
-    /// Attaches a session logger to this sender.
-    pub fn set_logger(&mut self, logger: Arc<SessionLogger>) {
-        self.session_logger = Some(logger);
-    }
-
-    /// Returns the session logger if one is attached.
-    pub fn logger(&self) -> Option<&Arc<SessionLogger>> {
-        self.session_logger.as_ref()
-    }
-
-    pub fn session_id(&self) -> usize {
-        self.session_id
-    }
-
-    /// Logs a message to the session logger if available.
-    pub fn log(&self, level: LogLevel, category: LogCategory, message: &str) {
-        if let Some(ref logger) = self.session_logger {
-            logger.log(level, category, message);
-        }
-    }
-
-    /// Logs an info-level workflow message.
-    pub fn log_workflow(&self, message: &str) {
-        self.log(LogLevel::Info, LogCategory::Workflow, message);
-    }
-
-    /// Logs a debug-level workflow message.
-    pub fn log_workflow_debug(&self, message: &str) {
-        self.log(LogLevel::Debug, LogCategory::Workflow, message);
     }
 
     pub fn send_output(&self, line: String) {
@@ -204,31 +152,6 @@ impl SessionEventSender {
         let _ = self.inner.send(Event::SessionStopReason {
             session_id: self.session_id,
             reason,
-        });
-    }
-
-    pub fn send_workflow_complete(&self) {
-        let _ = self.inner.send(Event::SessionWorkflowComplete {
-            session_id: self.session_id,
-        });
-    }
-
-    pub fn send_workflow_error(&self, error: String) {
-        let _ = self.inner.send(Event::SessionWorkflowError {
-            session_id: self.session_id,
-            error,
-        });
-    }
-
-    pub fn send_workflow_stopped(&self) {
-        let _ = self.inner.send(Event::SessionWorkflowStopped {
-            session_id: self.session_id,
-        });
-    }
-
-    pub fn send_generating_summary(&self) {
-        let _ = self.inner.send(Event::SessionGeneratingSummary {
-            session_id: self.session_id,
         });
     }
 
@@ -358,10 +281,6 @@ impl SessionEventSender {
             error,
             run_id: self.run_id,
         });
-    }
-
-    pub fn raw_sender(&self) -> mpsc::UnboundedSender<Event> {
-        self.inner.clone()
     }
 
     // Verification workflow event helpers

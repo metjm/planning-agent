@@ -38,16 +38,7 @@ pub struct ReviewFailure {
     /// Path to the diagnostics bundle (if created after retry failure)
     pub bundle_path: Option<PathBuf>,
     /// Classified failure type for recovery decisions
-    #[allow(dead_code)]
     pub kind: FailureKind,
-}
-
-impl ReviewFailure {
-    /// Returns true if this failure is potentially recoverable via retry.
-    #[allow(dead_code)]
-    pub fn is_retryable(&self) -> bool {
-        self.kind.is_retryable()
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -59,8 +50,6 @@ pub struct ReviewBatchResult {
 /// Result from executing a single review attempt
 struct ReviewAttemptResult {
     output: String,
-    #[allow(dead_code)]
-    is_error: bool,
     started_at: String,
     ended_at: String,
 }
@@ -600,7 +589,6 @@ async fn execute_review_attempt(
 
     Ok(ReviewAttemptResult {
         output: result.output,
-        is_error: result.is_error,
         started_at,
         ended_at,
     })

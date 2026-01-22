@@ -1,8 +1,5 @@
-use crate::app::util::shorten_model_name;
 use crate::config::WorkflowConfig;
-use crate::tui::{
-    ApprovalMode, Event, FocusedPanel, SessionStatus, TabManager, ToolKind, ToolTimelineEntry,
-};
+use crate::tui::{ApprovalMode, Event, FocusedPanel, SessionStatus, TabManager};
 use anyhow::Result;
 use std::path::Path;
 use tokio::sync::mpsc;
@@ -53,114 +50,10 @@ pub async fn process_event(
         Event::Output(line) => {
             handle_legacy_output(first_session_id, line, tab_manager);
         }
-        Event::Streaming(line) => {
-            if let Some(session) = tab_manager.session_by_id_mut(first_session_id) {
-                session.add_streaming(line);
-            }
-        }
-        Event::ToolStarted {
-            tool_id,
-            display_name,
-            input_preview,
-            agent_name,
-            phase,
-        } => {
-            if let Some(session) = tab_manager.session_by_id_mut(first_session_id) {
-                session.tool_started(
-                    tool_id,
-                    display_name.clone(),
-                    input_preview.clone(),
-                    agent_name.clone(),
-                );
-                session.tool_call_count += 1;
-                session.add_tool_entry(
-                    &phase,
-                    ToolTimelineEntry::Started {
-                        agent_name,
-                        kind: ToolKind::from_display_name(&display_name),
-                        display_name,
-                        input_preview,
-                    },
-                );
-            }
-        }
-        Event::ToolFinished {
-            tool_id,
-            agent_name,
-        } => {
-            if let Some(session) = tab_manager.session_by_id_mut(first_session_id) {
-                session.tool_finished_for_agent(tool_id.as_deref(), &agent_name);
-            }
-        }
         Event::StateUpdate(new_state) => {
             if let Some(session) = tab_manager.session_by_id_mut(first_session_id) {
                 session.name = new_state.feature_name.clone();
                 session.workflow_state = Some(new_state);
-            }
-        }
-        Event::RequestUserApproval(summary) => {
-            if let Some(session) = tab_manager.session_by_id_mut(first_session_id) {
-                session.start_approval(summary);
-            }
-        }
-        Event::BytesReceived(bytes) => {
-            if let Some(session) = tab_manager.session_by_id_mut(first_session_id) {
-                session.add_bytes(bytes);
-            }
-        }
-        Event::TokenUsage(usage) => {
-            if let Some(session) = tab_manager.session_by_id_mut(first_session_id) {
-                session.add_token_usage(&usage);
-            }
-        }
-        Event::PhaseStarted(phase) => {
-            if let Some(session) = tab_manager.session_by_id_mut(first_session_id) {
-                session.start_phase(phase);
-
-                // Save snapshot on phase transition (natural checkpoint for recovery)
-                // Use session context's base_working_dir if available, otherwise fall back to global
-                if let Some(ref state) = session.workflow_state {
-                    let base_working_dir = session
-                        .context
-                        .as_ref()
-                        .map(|ctx| ctx.base_working_dir.as_path())
-                        .unwrap_or(working_dir);
-                    let _ = create_and_save_snapshot(session, state, base_working_dir);
-                }
-            }
-        }
-        Event::TurnCompleted => {
-            if let Some(session) = tab_manager.session_by_id_mut(first_session_id) {
-                session.turn_count += 1;
-            }
-        }
-        Event::ModelDetected(name) => {
-            if let Some(session) = tab_manager.session_by_id_mut(first_session_id) {
-                if session.model_name.is_none() {
-                    session.model_name = Some(shorten_model_name(&name));
-                }
-            }
-        }
-        Event::ToolResultReceived {
-            tool_id,
-            is_error,
-            agent_name,
-            phase,
-            summary,
-        } => {
-            handle_tool_result(
-                first_session_id,
-                tool_id.as_deref(),
-                is_error,
-                &agent_name,
-                &phase,
-                summary,
-                tab_manager,
-            );
-        }
-        Event::StopReason(reason) => {
-            if let Some(session) = tab_manager.session_by_id_mut(first_session_id) {
-                session.last_stop_reason = Some(reason);
             }
         }
         Event::SnapshotRequest => {
@@ -260,36 +153,5 @@ fn handle_legacy_output(session_id: usize, line: String, tab_manager: &mut TabMa
             }
         }
         session.add_output(line);
-    }
-}
-
-fn handle_tool_result(
-    session_id: usize,
-    tool_id: Option<&str>,
-    is_error: bool,
-    agent_name: &str,
-    phase: &str,
-    summary: crate::tui::ToolResultSummary,
-    tab_manager: &mut TabManager,
-) {
-    if let Some(session) = tab_manager.session_by_id_mut(session_id) {
-        let info = session.tool_result_received_for_agent(tool_id, is_error, agent_name);
-        if info.is_error {
-            session.tool_error_count += 1;
-        }
-        session.total_tool_duration_ms += info.duration_ms;
-        session.completed_tool_count += 1;
-        session.add_tool_entry(
-            phase,
-            ToolTimelineEntry::Finished {
-                agent_name: agent_name.to_string(),
-                kind: ToolKind::from_display_name(&info.display_name),
-                display_name: info.display_name,
-                input_preview: info.input_preview,
-                duration_ms: info.duration_ms,
-                is_error: info.is_error,
-                result_summary: summary,
-            },
-        );
     }
 }

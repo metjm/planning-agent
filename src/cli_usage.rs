@@ -24,20 +24,6 @@ pub struct ProviderUsage {
 }
 
 impl ProviderUsage {
-    #[allow(dead_code)]
-    pub fn not_available(provider: &str, display_name: &str) -> Self {
-        Self {
-            provider: provider.to_string(),
-            display_name: display_name.to_string(),
-            session: UsageWindow::default(),
-            weekly: UsageWindow::default(),
-            plan_type: None,
-            fetched_at: Some(Instant::now()),
-            status_message: Some("No usage command".to_string()),
-            supports_usage: false,
-        }
-    }
-
     pub fn from_claude_usage(usage: ClaudeUsage) -> Self {
         Self {
             provider: "claude".to_string(),
@@ -98,16 +84,6 @@ impl AccountUsage {
 
     pub fn update(&mut self, usage: ProviderUsage) {
         self.providers.insert(usage.provider.clone(), usage);
-    }
-
-    #[allow(dead_code)]
-    pub fn get(&self, provider: &str) -> Option<&ProviderUsage> {
-        self.providers.get(provider)
-    }
-
-    #[allow(dead_code)]
-    pub fn claude(&self) -> Option<&ProviderUsage> {
-        self.providers.get("claude")
     }
 }
 
@@ -191,16 +167,6 @@ mod tests {
     use crate::usage_reset::ResetTimestamp;
 
     #[test]
-    fn test_provider_usage_not_available() {
-        let usage = ProviderUsage::not_available("gemini", "Gemini");
-        assert_eq!(usage.provider, "gemini");
-        assert_eq!(usage.display_name, "Gemini");
-        assert!(!usage.supports_usage);
-        assert!(usage.status_message.is_some());
-        assert!(usage.fetched_at.is_some());
-    }
-
-    #[test]
     fn test_provider_usage_from_claude() {
         let ts = ResetTimestamp::from_epoch_seconds(1700000000);
         let claude_usage = ClaudeUsage {
@@ -217,17 +183,6 @@ mod tests {
         assert_eq!(provider.weekly.used_percent, Some(41));
         assert_eq!(provider.plan_type, Some("Max".to_string()));
         assert!(provider.supports_usage);
-    }
-
-    #[test]
-    fn test_account_usage_update() {
-        let mut account = AccountUsage::new();
-        account.update(ProviderUsage::not_available("gemini", "Gemini"));
-        account.update(ProviderUsage::not_available("codex", "Codex"));
-
-        assert!(account.get("gemini").is_some());
-        assert!(account.get("codex").is_some());
-        assert!(account.get("claude").is_none());
     }
 
     #[test]
@@ -282,7 +237,7 @@ mod tests {
 
         eprintln!("Found {} providers\n", account.providers.len());
 
-        if let Some(claude) = account.get("claude") {
+        if let Some(claude) = account.providers.get("claude") {
             eprintln!("Claude:");
             eprintln!("  supports_usage: {}", claude.supports_usage);
             eprintln!("  session: {:?}", claude.session);
@@ -301,7 +256,7 @@ mod tests {
             eprintln!("Claude: not found (CLI not installed?)");
         }
 
-        if let Some(gemini) = account.get("gemini") {
+        if let Some(gemini) = account.providers.get("gemini") {
             eprintln!("\nGemini:");
             eprintln!("  supports_usage: {}", gemini.supports_usage);
             eprintln!("  daily (as weekly): {:?}", gemini.weekly);
@@ -325,7 +280,7 @@ mod tests {
             eprintln!("\nGemini: not found (CLI not installed)");
         }
 
-        if let Some(codex) = account.get("codex") {
+        if let Some(codex) = account.providers.get("codex") {
             eprintln!("\nCodex:");
             eprintln!("  supports_usage: {}", codex.supports_usage);
             eprintln!("  session (5h): {:?}", codex.session);

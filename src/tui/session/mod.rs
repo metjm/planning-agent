@@ -50,19 +50,8 @@ pub struct ActiveTool {
 }
 
 /// Represents a completed tool call
-/// Note: Fields are currently unused after replacing draw_tool_calls_panel with
-/// draw_reviewer_history_panel, but kept for potential future tool tracking features.
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct CompletedTool {
-    /// Human-readable display name of the tool
-    pub display_name: String,
-    /// Compact preview of tool input (e.g., file path, command)
-    pub input_preview: String,
-    /// Duration in milliseconds
-    pub duration_ms: u64,
-    /// Whether the tool execution resulted in an error
-    pub is_error: bool,
     /// When the tool completed (for ordering/truncation)
     pub completed_at: Instant,
 }
@@ -96,9 +85,6 @@ pub struct Session {
     pub workflow_state: Option<State>,
     /// Read-only snapshot for TUI display. Updated via watch channel.
     pub state_snapshot: Option<crate::state_machine::StateSnapshot>,
-    /// Watch channel receiver for state updates from workflow.
-    #[allow(dead_code)]
-    pub snapshot_rx: Option<watch::Receiver<crate::state_machine::StateSnapshot>>,
     pub start_time: Instant,
     pub total_cost: f64,
     pub running: bool,
@@ -220,7 +206,6 @@ pub struct ImplementationInteractionState {
 
 /// Session provides the full API surface for session management.
 /// Some methods may not be used in all code paths but are part of the public API.
-#[allow(dead_code)]
 impl Session {
     pub fn new(id: usize) -> Self {
         Self {
@@ -238,7 +223,6 @@ impl Session {
 
             workflow_state: None,
             state_snapshot: None, // Will be set when workflow spawns
-            snapshot_rx: None,    // Will be set when workflow spawns
             start_time: Instant::now(),
             total_cost: 0.0,
             running: true,
@@ -441,24 +425,6 @@ impl Session {
         self.streaming_scroll_position = self.streaming_lines.len().saturating_sub(1);
     }
 
-    pub fn streaming_scroll_up(&mut self) {
-        self.streaming_follow_mode = false;
-        self.streaming_scroll_position = self.streaming_scroll_position.saturating_sub(1);
-    }
-
-    pub fn streaming_scroll_down(&mut self) {
-        self.streaming_scroll_position = self.streaming_scroll_position.saturating_add(1);
-    }
-
-    pub fn streaming_scroll_to_bottom(&mut self) {
-        self.streaming_follow_mode = true;
-        self.streaming_scroll_position = self.streaming_lines.len().saturating_sub(1);
-    }
-
-    pub fn toggle_focus(&mut self) {
-        self.toggle_focus_with_visibility(false)
-    }
-
     /// Toggle focus between panels, considering visibility of Todos panel.
     /// `todos_visible` indicates whether the Todos panel is currently visible
     /// (based on terminal width and whether todos exist).
@@ -637,34 +603,6 @@ impl Session {
                 (state.iteration, state.max_iterations)
             }
             None => (0, 0),
-        }
-    }
-
-    pub fn handle_completion(&mut self, result: WorkflowResult) {
-        match result {
-            WorkflowResult::Accepted => {
-                self.status = SessionStatus::Complete;
-                self.running = false;
-            }
-            WorkflowResult::NeedsRestart { .. } => {
-                self.status = SessionStatus::Planning;
-            }
-            WorkflowResult::Aborted { reason } => {
-                self.status = SessionStatus::Error;
-                self.running = false;
-                self.error_state = Some(reason);
-            }
-            WorkflowResult::Stopped => {
-                self.status = SessionStatus::Stopped;
-                self.running = false;
-                // Note: snapshot saving happens in the caller (tui_runner/events.rs)
-                // before handle_completion is called
-            }
-            WorkflowResult::ImplementationRequested => {
-                // This is handled inside run_workflow_with_config, should not reach here
-                // If it does, treat as planning since implementation is starting
-                self.status = SessionStatus::Planning;
-            }
         }
     }
 

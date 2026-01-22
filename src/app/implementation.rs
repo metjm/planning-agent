@@ -18,7 +18,6 @@ use std::sync::Arc;
 
 /// Result of the implementation workflow.
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub enum ImplementationWorkflowResult {
     /// Implementation was approved
     Approved,
@@ -48,7 +47,6 @@ pub enum ImplementationWorkflowResult {
 /// * `session_sender` - Channel to send session events
 /// * `session_logger` - Logger for the session
 /// * `initial_feedback` - Optional initial feedback to start with
-#[allow(dead_code)]
 pub async fn run_implementation_workflow(
     state: &mut State,
     config: &WorkflowConfig,

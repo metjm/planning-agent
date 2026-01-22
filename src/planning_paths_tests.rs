@@ -191,47 +191,6 @@ fn test_session_logs_dir() {
 }
 
 #[test]
-fn test_session_log_path() {
-    if env::var("HOME").is_err() {
-        return;
-    }
-
-    let session_id = format!("test-session-{}", uuid::Uuid::new_v4());
-    let result = session_log_path(&session_id);
-    assert!(result.is_ok());
-    let path = result.unwrap();
-    assert!(path.ends_with("session.log"));
-}
-
-#[test]
-fn test_session_agent_log_path() {
-    if env::var("HOME").is_err() {
-        return;
-    }
-
-    let session_id = format!("test-session-{}", uuid::Uuid::new_v4());
-    let result = session_agent_log_path(&session_id);
-    assert!(result.is_ok());
-    let path = result.unwrap();
-    assert!(path.ends_with("agent-stream.log"));
-}
-
-#[test]
-fn test_session_diagnostics_dir() {
-    if env::var("HOME").is_err() {
-        return;
-    }
-
-    let session_id = format!("test-session-{}", uuid::Uuid::new_v4());
-    let result = session_diagnostics_dir(&session_id);
-    assert!(result.is_ok());
-    let path = result.unwrap();
-    assert!(path.ends_with("diagnostics"));
-    assert!(path.to_string_lossy().contains(&session_id));
-    assert!(path.exists());
-}
-
-#[test]
 fn test_session_info_path() {
     if env::var("HOME").is_err() {
         return;
@@ -324,18 +283,4 @@ fn test_session_implementation_review_path() {
     assert!(result2.is_ok());
     let path2 = result2.unwrap();
     assert!(path2.ends_with("implementation_review_2.md"));
-}
-
-#[test]
-fn test_session_implementation_fingerprint_path() {
-    if env::var("HOME").is_err() {
-        return;
-    }
-
-    let session_id = format!("test-session-{}", uuid::Uuid::new_v4());
-    let result = session_implementation_fingerprint_path(&session_id);
-    assert!(result.is_ok());
-    let path = result.unwrap();
-    assert!(path.ends_with("implementation_fingerprint.json"));
-    assert!(path.to_string_lossy().contains(&session_id));
 }

@@ -92,7 +92,6 @@ impl RunnerConfig {
 
     /// Sets a cancellation receiver for cooperative cancellation.
     /// When the sender sends `true`, the agent process will be killed.
-    #[allow(dead_code)]
     pub fn with_cancel_rx(mut self, cancel_rx: watch::Receiver<bool>) -> Self {
         self.cancel_rx = Some(cancel_rx);
         self
@@ -552,7 +551,6 @@ pub async fn run_agent_process<P: AgentStreamParser>(
     Ok(AgentOutput {
         output: final_output,
         is_error,
-        cost_usd: total_cost,
         conversation_id: captured_conversation_id,
         stop_reason: last_stop_reason,
     })
@@ -644,7 +642,6 @@ impl From<AgentOutput> for AgentResult {
         AgentResult {
             output: output.output,
             is_error: output.is_error,
-            cost_usd: output.cost_usd,
             conversation_id: output.conversation_id,
             stop_reason: output.stop_reason,
         }
@@ -676,14 +673,12 @@ mod tests {
         let output = AgentOutput {
             output: "test output".to_string(),
             is_error: false,
-            cost_usd: Some(0.05),
             conversation_id: Some("conv-123".to_string()),
             stop_reason: Some("max_turns".to_string()),
         };
         let result: AgentResult = output.into();
         assert_eq!(result.output, "test output");
         assert!(!result.is_error);
-        assert_eq!(result.cost_usd, Some(0.05));
         assert_eq!(result.conversation_id, Some("conv-123".to_string()));
         assert_eq!(result.stop_reason, Some("max_turns".to_string()));
     }
@@ -693,7 +688,6 @@ mod tests {
         let output = AgentOutput {
             output: "test output".to_string(),
             is_error: false,
-            cost_usd: None,
             conversation_id: None,
             stop_reason: None,
         };

@@ -83,15 +83,6 @@ pub struct BundleConfig<'a> {
     pub workflow_session_id: Option<&'a str>,
 }
 
-/// Redacted config metadata (only non-sensitive fields)
-#[derive(Debug, Clone, Serialize)]
-#[allow(dead_code)]
-struct RedactedConfigMetadata {
-    pub agent_names: Vec<String>,
-    pub aggregation_mode: String,
-    pub phases: Vec<String>,
-}
-
 /// Creates a diagnostics bundle for a failed review.
 ///
 /// Returns `Some(PathBuf)` with the bundle path on success, or `None` if bundle

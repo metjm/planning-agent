@@ -26,14 +26,6 @@ pub struct ClaudeUsage {
 }
 
 impl ClaudeUsage {
-    #[allow(dead_code)]
-    pub fn is_stale(&self) -> bool {
-        match self.fetched_at {
-            Some(t) => t.elapsed() > Duration::from_secs(300),
-            None => true,
-        }
-    }
-
     pub fn claude_not_available() -> Self {
         Self {
             error_message: Some("Claude CLI not found".to_string()),

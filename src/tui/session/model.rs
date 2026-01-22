@@ -245,9 +245,6 @@ pub struct ImplementationSuccessModal {
 pub struct ReviewModalEntry {
     /// Display name shown in tab (e.g., "Round 1 - claude", "Round 2")
     pub display_name: String,
-    /// Full path to the feedback file (retained for potential future UI features)
-    #[allow(dead_code)]
-    pub file_path: std::path::PathBuf,
     /// Cached content of the feedback file
     pub content: String,
     /// Sort key for ordering: iteration * 1_000_000 + (1_000_000 - agent_ordinal)

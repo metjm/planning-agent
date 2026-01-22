@@ -27,7 +27,6 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
-use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 /// Log verbosity levels, ordered from most to least severe.
@@ -68,50 +67,18 @@ impl std::fmt::Display for LogLevel {
     }
 }
 
-/// Configuration for session logging.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[allow(dead_code)]
-pub struct LoggingConfig {
-    /// The minimum log level to output. Messages below this level are ignored.
-    /// Default: Debug (verbose by default)
-    #[serde(default)]
-    pub level: LogLevel,
-}
-
-impl Default for LoggingConfig {
-    fn default() -> Self {
-        Self {
-            level: LogLevel::Debug, // Verbose by default
-        }
-    }
-}
-
 /// Log categories for structured logging.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
 pub enum LogCategory {
     /// Workflow phase transitions and decisions
     Workflow,
-    /// Agent invocations and responses
-    Agent,
-    /// State saves and loads
-    State,
-    /// UI events and user input
-    Ui,
-    /// System errors, warnings, and diagnostics
-    System,
 }
 
 impl LogCategory {
     /// Returns the uppercase string representation for log output.
-    #[allow(dead_code)]
     pub fn as_str(&self) -> &'static str {
         match self {
             LogCategory::Workflow => "WORKFLOW",
-            LogCategory::Agent => "AGENT",
-            LogCategory::State => "STATE",
-            LogCategory::Ui => "UI",
-            LogCategory::System => "SYSTEM",
         }
     }
 }
@@ -130,10 +97,6 @@ impl std::fmt::Display for LogCategory {
 ///
 /// All timestamps are in UTC ISO 8601 format for consistency and portability.
 pub struct SessionLogger {
-    #[allow(dead_code)]
-    session_id: String,
-    #[allow(dead_code)]
-    session_dir: PathBuf,
     main_log: Arc<Mutex<File>>,
     agent_log: Arc<Mutex<File>>,
     /// Minimum log level to output. Messages below this level are ignored.
@@ -164,7 +127,6 @@ impl SessionLogger {
     ///
     /// Messages below the specified level will not be logged.
     pub fn new_with_level(session_id: &str, log_level: LogLevel) -> Result<Self> {
-        let session_dir = planning_paths::session_dir(session_id)?;
         let logs_dir = planning_paths::session_logs_dir(session_id)?;
 
         let main_log_path = logs_dir.join("session.log");
@@ -201,35 +163,15 @@ impl SessionLogger {
         merge_startup_logs(&mut main);
 
         Ok(Self {
-            session_id: session_id.to_string(),
-            session_dir,
             main_log: Arc::new(Mutex::new(main)),
             agent_log: Arc::new(Mutex::new(agent)),
             log_level,
         })
     }
 
-    /// Returns the configured log level.
-    #[allow(dead_code)]
-    pub fn log_level(&self) -> LogLevel {
-        self.log_level
-    }
-
     /// Checks if a message at the given level should be logged.
     pub fn should_log(&self, level: LogLevel) -> bool {
         level <= self.log_level
-    }
-
-    /// Returns the session ID.
-    #[allow(dead_code)]
-    pub fn session_id(&self) -> &str {
-        &self.session_id
-    }
-
-    /// Returns the session directory path.
-    #[allow(dead_code)]
-    pub fn session_dir(&self) -> &Path {
-        &self.session_dir
     }
 
     /// Logs a message with the specified level and category to the main session log.
@@ -252,33 +194,6 @@ impl SessionLogger {
         }
     }
 
-    /// Logs an agent-related message with agent name and kind.
-    ///
-    /// Format: `[YYYY-MM-DDTHH:MM:SS.mmmZ] [AGENT:name] kind: message`
-    ///
-    /// This writes to both the main session log and the agent-stream log.
-    /// Agent messages are always logged regardless of level (they're high-signal).
-    #[allow(dead_code)]
-    pub fn log_agent(&self, agent_name: &str, kind: &str, message: &str) {
-        let timestamp = format_timestamp();
-        let formatted = format!(
-            "[{}] [AGENT:{}] {}: {}",
-            timestamp, agent_name, kind, message
-        );
-
-        // Write to main log
-        if let Ok(mut file) = self.main_log.lock() {
-            let _ = writeln!(file, "{}", formatted);
-            let _ = file.flush();
-        }
-
-        // Write to agent stream log
-        if let Ok(mut file) = self.agent_log.lock() {
-            let _ = writeln!(file, "{}", formatted);
-            let _ = file.flush();
-        }
-    }
-
     /// Logs raw agent stream output to the agent-stream log only.
     ///
     /// Format: `[YYYY-MM-DDTHH:MM:SS.mmmZ] [agent:kind] line`
@@ -291,66 +206,6 @@ impl SessionLogger {
             let _ = writeln!(file, "[{}][{}][{}] {}", timestamp, agent_name, kind, line);
             let _ = file.flush();
         }
-    }
-
-    /// Logs an info-level message.
-    #[allow(dead_code)]
-    pub fn info(&self, message: &str) {
-        self.log(LogLevel::Info, LogCategory::System, message);
-    }
-
-    /// Logs a warning-level message.
-    #[allow(dead_code)]
-    pub fn warn(&self, message: &str) {
-        self.log(LogLevel::Warn, LogCategory::System, message);
-    }
-
-    /// Logs an error-level message.
-    #[allow(dead_code)]
-    pub fn error(&self, message: &str) {
-        self.log(LogLevel::Error, LogCategory::System, message);
-    }
-
-    /// Logs a debug-level message.
-    #[allow(dead_code)]
-    pub fn debug(&self, message: &str) {
-        self.log(LogLevel::Debug, LogCategory::System, message);
-    }
-
-    /// Logs a trace-level message.
-    #[allow(dead_code)]
-    pub fn trace(&self, message: &str) {
-        self.log(LogLevel::Trace, LogCategory::System, message);
-    }
-
-    /// Logs a workflow phase transition.
-    #[allow(dead_code)]
-    pub fn log_phase_transition(&self, from: &str, to: &str) {
-        self.log(
-            LogLevel::Info,
-            LogCategory::Workflow,
-            &format!("Phase transition: {} -> {}", from, to),
-        );
-    }
-
-    /// Logs a state save event.
-    #[allow(dead_code)]
-    pub fn log_state_save(&self, path: &Path) {
-        self.log(
-            LogLevel::Debug,
-            LogCategory::State,
-            &format!("State saved to: {}", path.display()),
-        );
-    }
-
-    /// Logs a state load event.
-    #[allow(dead_code)]
-    pub fn log_state_load(&self, path: &Path) {
-        self.log(
-            LogLevel::Debug,
-            LogCategory::State,
-            &format!("State loaded from: {}", path.display()),
-        );
     }
 }
 
@@ -442,15 +297,6 @@ pub fn create_session_logger(session_id: &str) -> Result<Arc<SessionLogger>> {
     Ok(Arc::new(SessionLogger::new(session_id)?))
 }
 
-/// Creates a SessionLogger with a specific log level, wrapped in Arc.
-#[allow(dead_code)]
-pub fn create_session_logger_with_level(
-    session_id: &str,
-    level: LogLevel,
-) -> Result<Arc<SessionLogger>> {
-    Ok(Arc::new(SessionLogger::new_with_level(session_id, level)?))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -459,16 +305,11 @@ mod tests {
     #[test]
     fn test_log_category_as_str() {
         assert_eq!(LogCategory::Workflow.as_str(), "WORKFLOW");
-        assert_eq!(LogCategory::Agent.as_str(), "AGENT");
-        assert_eq!(LogCategory::State.as_str(), "STATE");
-        assert_eq!(LogCategory::Ui.as_str(), "UI");
-        assert_eq!(LogCategory::System.as_str(), "SYSTEM");
     }
 
     #[test]
     fn test_log_category_display() {
         assert_eq!(format!("{}", LogCategory::Workflow), "WORKFLOW");
-        assert_eq!(format!("{}", LogCategory::Agent), "AGENT");
     }
 
     #[test]
@@ -489,10 +330,6 @@ mod tests {
         let session_id = format!("test-{}", uuid::Uuid::new_v4());
         let result = SessionLogger::new(&session_id);
         assert!(result.is_ok());
-
-        let logger = result.unwrap();
-        assert_eq!(logger.session_id(), session_id);
-        assert!(logger.session_dir().exists());
     }
 
     #[test]
@@ -510,21 +347,7 @@ mod tests {
             LogCategory::Workflow,
             "Test workflow message",
         );
-        logger.log_agent("test-agent", "stdout", "Test agent output");
         logger.log_agent_stream("test-agent", "stderr", "Test stream output");
-        logger.info("Test info");
-        logger.warn("Test warning");
-        logger.error("Test error");
-        logger.debug("Test debug");
-        logger.trace("Test trace");
-        logger.log_phase_transition("Planning", "Reviewing");
-        logger.log_state_save(Path::new("/tmp/test.json"));
-        logger.log_state_load(Path::new("/tmp/test.json"));
-
-        // Verify log files exist
-        let logs_dir = logger.session_dir().join("logs");
-        assert!(logs_dir.join("session.log").exists());
-        assert!(logs_dir.join("agent-stream.log").exists());
     }
 
     #[test]
@@ -539,8 +362,7 @@ mod tests {
 
         let logger = result.unwrap();
         // Arc should allow cloning
-        let logger2 = Arc::clone(&logger);
-        assert_eq!(logger.session_id(), logger2.session_id());
+        let _logger2 = Arc::clone(&logger);
     }
 
     #[test]
@@ -582,12 +404,6 @@ mod tests {
         assert!(!logger.should_log(LogLevel::Info));
         assert!(!logger.should_log(LogLevel::Debug));
         assert!(!logger.should_log(LogLevel::Trace));
-    }
-
-    #[test]
-    fn test_logging_config_default() {
-        let config = LoggingConfig::default();
-        assert_eq!(config.level, LogLevel::Debug);
     }
 
     #[test]

@@ -42,7 +42,6 @@ pub struct TabManager {
 
 /// TabManager provides the full API surface for multi-tab management.
 /// Some methods may not be used in all code paths but are part of the public API.
-#[allow(dead_code)]
 impl TabManager {
     pub fn new() -> Self {
         let mut manager = Self {
@@ -145,58 +144,16 @@ impl TabManager {
         }
     }
 
-    pub fn tab_titles(&self) -> Vec<&str> {
-        self.sessions
-            .iter()
-            .map(|s| {
-                if s.name.is_empty() {
-                    "New Tab"
-                } else {
-                    s.name.as_str()
-                }
-            })
-            .collect()
-    }
-
     pub fn len(&self) -> usize {
         self.sessions.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.sessions.is_empty()
     }
 
     pub fn session_by_id_mut(&mut self, id: usize) -> Option<&mut Session> {
         self.sessions.iter_mut().find(|s| s.id == id)
     }
 
-    pub fn session_by_id(&self, id: usize) -> Option<&Session> {
-        self.sessions.iter().find(|s| s.id == id)
-    }
-
     pub fn sessions_mut(&mut self) -> impl Iterator<Item = &mut Session> {
         self.sessions.iter_mut()
-    }
-
-    pub fn switch_to_session(&mut self, session_id: usize) {
-        if let Some(idx) = self.sessions.iter().position(|s| s.id == session_id) {
-            self.active_tab = idx;
-        }
-    }
-
-    pub fn has_pending_approval(&self) -> bool {
-        self.sessions
-            .iter()
-            .any(|s| s.approval_mode != super::session::ApprovalMode::None)
-    }
-
-    pub fn sessions_needing_attention(&self) -> Vec<usize> {
-        self.sessions
-            .iter()
-            .enumerate()
-            .filter(|(_, s)| s.approval_mode != super::session::ApprovalMode::None)
-            .map(|(i, _)| i)
-            .collect()
     }
 }
 
@@ -291,33 +248,6 @@ mod tests {
 
         manager.close_tab(0);
         assert_eq!(manager.len(), 1);
-    }
-
-    #[test]
-    fn test_session_by_id() {
-        let mut manager = TabManager::new();
-        let first_id = manager.sessions[0].id;
-
-        manager.add_session();
-        let second_id = manager.sessions[1].id;
-
-        assert!(manager.session_by_id(first_id).is_some());
-        assert!(manager.session_by_id(second_id).is_some());
-        assert!(manager.session_by_id(999).is_none());
-    }
-
-    #[test]
-    fn test_session_by_id_after_close() {
-        let mut manager = TabManager::new();
-        manager.add_session();
-
-        let first_id = manager.sessions[0].id;
-        let second_id = manager.sessions[1].id;
-
-        manager.close_tab(0);
-
-        assert!(manager.session_by_id(first_id).is_none());
-        assert!(manager.session_by_id(second_id).is_some());
     }
 
     #[test]

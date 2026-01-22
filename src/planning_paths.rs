@@ -200,30 +200,11 @@ pub fn session_snapshot_path(session_id: &str) -> Result<PathBuf> {
 /// Returns the session logs directory: `~/.planning-agent/sessions/<session-id>/logs/`
 ///
 /// Creates the directory if it doesn't exist.
-#[allow(dead_code)]
 pub fn session_logs_dir(session_id: &str) -> Result<PathBuf> {
     let dir = session_dir(session_id)?.join("logs");
     fs::create_dir_all(&dir)
         .with_context(|| format!("Failed to create session logs directory: {}", dir.display()))?;
     Ok(dir)
-}
-
-/// Returns the session main log file: `~/.planning-agent/sessions/<session-id>/logs/session.log`
-#[allow(dead_code)]
-pub fn session_log_path(session_id: &str) -> Result<PathBuf> {
-    Ok(session_logs_dir(session_id)?.join("session.log"))
-}
-
-/// Returns the session agent stream log: `~/.planning-agent/sessions/<session-id>/logs/agent-stream.log`
-#[allow(dead_code)]
-pub fn session_agent_log_path(session_id: &str) -> Result<PathBuf> {
-    Ok(session_logs_dir(session_id)?.join("agent-stream.log"))
-}
-
-/// Returns the session workflow log: `~/.planning-agent/sessions/<session-id>/logs/workflow.log`
-#[allow(dead_code)]
-pub fn session_workflow_log_path(session_id: &str) -> Result<PathBuf> {
-    Ok(session_logs_dir(session_id)?.join("workflow.log"))
 }
 
 // ============================================================================
@@ -232,41 +213,14 @@ pub fn session_workflow_log_path(session_id: &str) -> Result<PathBuf> {
 
 /// Returns the implementation log path for a given iteration.
 /// Format: `~/.planning-agent/sessions/<session-id>/implementation_<iteration>.log`
-#[allow(dead_code)]
 pub fn session_implementation_log_path(session_id: &str, iteration: u32) -> Result<PathBuf> {
     Ok(session_dir(session_id)?.join(format!("implementation_{}.log", iteration)))
 }
 
 /// Returns the implementation review report path for a given iteration.
 /// Format: `~/.planning-agent/sessions/<session-id>/implementation_review_<iteration>.md`
-#[allow(dead_code)]
 pub fn session_implementation_review_path(session_id: &str, iteration: u32) -> Result<PathBuf> {
     Ok(session_dir(session_id)?.join(format!("implementation_review_{}.md", iteration)))
-}
-
-/// Returns the implementation change fingerprint file path.
-/// Format: `~/.planning-agent/sessions/<session-id>/implementation_fingerprint.json`
-///
-/// This file stores a hash of repository changes to detect if implementation
-/// has been modified between orchestrator runs.
-#[allow(dead_code)]
-pub fn session_implementation_fingerprint_path(session_id: &str) -> Result<PathBuf> {
-    Ok(session_dir(session_id)?.join("implementation_fingerprint.json"))
-}
-
-/// Returns the session diagnostics directory: `~/.planning-agent/sessions/<session-id>/diagnostics/`
-///
-/// Creates the directory if it doesn't exist.
-#[allow(dead_code)]
-pub fn session_diagnostics_dir(session_id: &str) -> Result<PathBuf> {
-    let dir = session_dir(session_id)?.join("diagnostics");
-    fs::create_dir_all(&dir).with_context(|| {
-        format!(
-            "Failed to create session diagnostics directory: {}",
-            dir.display()
-        )
-    })?;
-    Ok(dir)
 }
 
 /// Returns the session info metadata file: `~/.planning-agent/sessions/<session-id>/session_info.json`
@@ -290,7 +244,6 @@ pub fn sessiond_pid_path() -> Result<PathBuf> {
 }
 
 /// Returns the session daemon lock file path: `~/.planning-agent/sessiond.lock`
-#[allow(dead_code)]
 pub fn sessiond_lock_path() -> Result<PathBuf> {
     Ok(planning_agent_home_dir()?.join("sessiond.lock"))
 }
@@ -401,14 +354,6 @@ impl SessionInfo {
         }
     }
 
-    /// Updates the session info with a new phase and iteration.
-    #[allow(dead_code)]
-    pub fn update(&mut self, phase: &str, iteration: u32) {
-        self.phase = phase.to_string();
-        self.iteration = iteration;
-        self.updated_at = chrono::Utc::now().to_rfc3339();
-    }
-
     /// Saves the session info to the session_info.json file.
     pub fn save(&self, session_id: &str) -> Result<()> {
         let path = session_info_path(session_id)?;
@@ -420,7 +365,7 @@ impl SessionInfo {
     }
 
     /// Loads session info from the session_info.json file.
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub fn load(session_id: &str) -> Result<Self> {
         let path = session_info_path(session_id)?;
         let content = fs::read_to_string(&path)

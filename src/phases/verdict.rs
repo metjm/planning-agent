@@ -17,13 +17,7 @@ pub enum VerificationVerdictResult {
     ParseFailure { reason: String },
 }
 
-#[allow(dead_code)]
 impl VerificationVerdictResult {
-    /// Returns true if the verdict indicates approval.
-    pub fn is_approved(&self) -> bool {
-        matches!(self, VerificationVerdictResult::Approved)
-    }
-
     /// Returns true if the verdict indicates revision is needed.
     pub fn needs_revision(&self) -> bool {
         matches!(
@@ -103,7 +97,6 @@ pub fn extract_verification_feedback(report: &str) -> Option<String> {
 /// Extracts feedback content from `<implementation-feedback>` tags.
 ///
 /// Convenience wrapper around `extract_feedback_tag` for implementation-review reports.
-#[allow(dead_code)]
 pub fn extract_implementation_feedback(report: &str) -> Option<String> {
     extract_feedback_tag("implementation-feedback", report)
 }
@@ -212,23 +205,6 @@ Some custom content here.
 "#;
         let feedback = extract_feedback_tag("custom-tag", report).unwrap();
         assert!(feedback.contains("custom content"));
-    }
-
-    #[test]
-    fn test_verdict_result_methods() {
-        assert!(VerificationVerdictResult::Approved.is_approved());
-        assert!(!VerificationVerdictResult::NeedsRevision.is_approved());
-        assert!(!VerificationVerdictResult::ParseFailure {
-            reason: "test".to_string()
-        }
-        .is_approved());
-
-        assert!(!VerificationVerdictResult::Approved.needs_revision());
-        assert!(VerificationVerdictResult::NeedsRevision.needs_revision());
-        assert!(VerificationVerdictResult::ParseFailure {
-            reason: "test".to_string()
-        }
-        .needs_revision());
     }
 
     #[test]

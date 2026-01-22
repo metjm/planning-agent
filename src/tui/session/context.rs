@@ -6,7 +6,6 @@
 
 use crate::config::WorkflowConfig;
 use crate::state::WorktreeState;
-use crate::tui::file_index::FileIndex;
 use std::path::{Path, PathBuf};
 
 /// Per-session context tracking working directory, paths, and configuration.
@@ -14,7 +13,6 @@ use std::path::{Path, PathBuf};
 /// This context enables sessions from different directories to coexist in
 /// the same TUI process by tracking directory-specific state per session.
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // Some fields are for future Step 4 (session-scoped file index)
 pub struct SessionContext {
     /// Base working directory (used for state/log paths, persisted in snapshots).
     /// This is the directory passed to `planning` CLI or stored in session snapshot.
@@ -29,11 +27,6 @@ pub struct SessionContext {
 
     /// Workflow configuration for this session.
     pub workflow_config: WorkflowConfig,
-
-    /// File index scoped to effective_working_dir.
-    /// None until the index is built asynchronously.
-    /// Note: This field is for Step 4 (session-scoped file index) implementation.
-    pub file_index: Option<FileIndex>,
 }
 
 impl SessionContext {
@@ -52,7 +45,6 @@ impl SessionContext {
             effective_working_dir: effective,
             state_path,
             workflow_config,
-            file_index: None,
         }
     }
 
@@ -73,26 +65,7 @@ impl SessionContext {
             effective_working_dir,
             state_path,
             workflow_config,
-            file_index: None,
         }
-    }
-
-    /// Updates the effective_working_dir, typically after worktree creation.
-    #[allow(dead_code)] // For Step 4 (session-scoped file index)
-    pub fn set_effective_working_dir(&mut self, path: PathBuf) {
-        self.effective_working_dir = path;
-    }
-
-    /// Sets the file index for this session context.
-    #[allow(dead_code)] // For Step 4 (session-scoped file index)
-    pub fn set_file_index(&mut self, index: FileIndex) {
-        self.file_index = Some(index);
-    }
-
-    /// Gets the file index, if available.
-    #[allow(dead_code)] // For Step 4 (session-scoped file index)
-    pub fn file_index(&self) -> Option<&FileIndex> {
-        self.file_index.as_ref()
     }
 }
 

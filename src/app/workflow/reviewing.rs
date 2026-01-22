@@ -35,13 +35,6 @@ impl<'a> WorkflowPhaseContext<'a> {
         self.session_logger
             .log(LogLevel::Info, LogCategory::Workflow, message);
     }
-
-    /// Logs a workflow message at a specific level.
-    #[allow(dead_code)]
-    pub fn log_workflow_level(&self, level: LogLevel, message: &str) {
-        self.session_logger
-            .log(level, LogCategory::Workflow, message);
-    }
 }
 
 pub async fn run_reviewing_phase(

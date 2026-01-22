@@ -32,18 +32,6 @@ fn test_add_output_enables_follow_mode() {
 }
 
 #[test]
-fn test_toggle_focus() {
-    let mut session = Session::new(0);
-    assert_eq!(session.focused_panel, FocusedPanel::Output);
-
-    session.toggle_focus();
-    assert_eq!(session.focused_panel, FocusedPanel::Chat);
-
-    session.toggle_focus();
-    assert_eq!(session.focused_panel, FocusedPanel::Output);
-}
-
-#[test]
 fn test_input_mode_transitions() {
     let mut session = Session::new(0);
     assert_eq!(session.input_mode, InputMode::Normal);
@@ -599,20 +587,6 @@ fn test_run_tab_navigation() {
 
     session.next_run_tab();
     assert_eq!(session.active_run_tab, 2);
-}
-
-#[test]
-fn test_clear_chat_tabs() {
-    let mut session = Session::new(0);
-    session.add_run_tab("Planning".to_string());
-    session.add_chat_message("claude", "Planning", "Test".to_string());
-    session.chat_follow_mode = false;
-
-    session.clear_chat_tabs();
-
-    assert!(session.run_tabs.is_empty());
-    assert_eq!(session.active_run_tab, 0);
-    assert!(session.chat_follow_mode);
 }
 
 #[test]

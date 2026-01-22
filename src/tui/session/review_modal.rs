@@ -102,7 +102,6 @@ impl Session {
 
         Some(ReviewModalEntry {
             display_name,
-            file_path: path.to_path_buf(),
             content,
             sort_key,
         })

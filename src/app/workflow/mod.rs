@@ -85,7 +85,6 @@ pub struct WorkflowRunConfig {
     pub session_id: usize,
     pub run_id: u64,
     /// If true, disable session daemon tracking (for tests/headless mode)
-    #[allow(dead_code)]
     pub no_daemon: bool,
     /// Optional watch channel sender for broadcasting state snapshots to TUI.
     /// When provided, the workflow will broadcast StateSnapshot updates that

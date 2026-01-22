@@ -13,10 +13,6 @@ pub struct SlashCommandInfo {
     pub command: &'static str,
     /// Human-readable description
     pub description: &'static str,
-    /// Alternative input forms (e.g., "/config dangerous" for "/config-dangerous")
-    /// Reserved for future use with fuzzy matching of aliases.
-    #[allow(dead_code)]
-    pub aliases: &'static [&'static str],
 }
 
 /// All available slash commands for autocomplete.
@@ -24,37 +20,30 @@ pub const SLASH_COMMANDS: &[SlashCommandInfo] = &[
     SlashCommandInfo {
         command: "/update",
         description: "Install an available update",
-        aliases: &[],
     },
     SlashCommandInfo {
         command: "/config-dangerous",
         description: "Configure CLI tools to bypass approvals",
-        aliases: &["/config dangerous"],
     },
     SlashCommandInfo {
         command: "/sessions",
         description: "View and resume workflow sessions",
-        aliases: &[],
     },
     SlashCommandInfo {
         command: "/max-iterations",
         description: "Set max iterations (e.g., /max-iterations 5)",
-        aliases: &[],
     },
     SlashCommandInfo {
         command: "/sequential",
         description: "Enable sequential review mode",
-        aliases: &[],
     },
     SlashCommandInfo {
         command: "/parallel",
         description: "Enable parallel review mode",
-        aliases: &[],
     },
     SlashCommandInfo {
         command: "/aggregation",
         description: "Set aggregation: any-rejects, all-reject, majority",
-        aliases: &[],
     },
 ];
 

@@ -217,20 +217,6 @@ pub async fn handle_session_event(
                 session.last_stop_reason = Some(reason);
             }
         }
-        Event::SessionWorkflowComplete { session_id } => {
-            handle_workflow_complete(session_id, tab_manager, working_dir);
-        }
-        Event::SessionWorkflowError { session_id, error } => {
-            if let Some(session) = tab_manager.session_by_id_mut(session_id) {
-                session.handle_error(&error);
-            }
-        }
-        Event::SessionGeneratingSummary { session_id } => {
-            if let Some(session) = tab_manager.session_by_id_mut(session_id) {
-                session.status = crate::tui::SessionStatus::GeneratingSummary;
-                session.spinner_frame = 0;
-            }
-        }
         Event::SessionPlanGenerationFailed { session_id, error } => {
             if let Some(session) = tab_manager.session_by_id_mut(session_id) {
                 session.start_plan_generation_failed(error);
@@ -337,7 +323,6 @@ pub async fn handle_session_event(
             tab_manager.file_index = index;
         }
         Event::SlashCommandResult {
-            session_id: _,
             command,
             summary,
             error,
@@ -458,30 +443,6 @@ pub async fn handle_session_event(
         _ => {}
     }
     Ok(())
-}
-
-fn handle_workflow_complete(session_id: usize, tab_manager: &mut TabManager, working_dir: &Path) {
-    use crate::tui::SessionStatus;
-
-    if let Some(session) = tab_manager.session_by_id_mut(session_id) {
-        session.status = SessionStatus::Complete;
-        session.running = false;
-
-        // Save a snapshot for completed sessions so they appear in /sessions history
-        if let Some(ref state) = session.workflow_state {
-            let base_working_dir = session
-                .context
-                .as_ref()
-                .map(|ctx| ctx.base_working_dir.as_path())
-                .unwrap_or(working_dir);
-            if let Err(e) = create_and_save_snapshot(session, state, base_working_dir) {
-                session.add_output(format!(
-                    "[planning] Warning: Failed to save completion snapshot: {}",
-                    e
-                ));
-            }
-        }
-    }
 }
 
 async fn handle_update_install_finished(

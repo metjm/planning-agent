@@ -181,9 +181,6 @@ pub(crate) async fn handle_naming_tab_input(
                             }
                         }
                         SlashCommand::ConfigDangerous => {
-                            // Get session_id before accessing tab_manager
-                            let session_id = session.id;
-
                             // Clear any previous command state
                             tab_manager.command_error = None;
                             tab_manager.command_notice = None;
@@ -203,7 +200,6 @@ pub(crate) async fn handle_naming_tab_input(
                                             None
                                         };
                                         let _ = cmd_tx.send(Event::SlashCommandResult {
-                                            session_id,
                                             command: "config-dangerous".to_string(),
                                             summary: config_result.summary(),
                                             error,
@@ -211,7 +207,6 @@ pub(crate) async fn handle_naming_tab_input(
                                     }
                                     Err(e) => {
                                         let _ = cmd_tx.send(Event::SlashCommandResult {
-                                            session_id,
                                             command: "config-dangerous".to_string(),
                                             summary: String::new(),
                                             error: Some(e),

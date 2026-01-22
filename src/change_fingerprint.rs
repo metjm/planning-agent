@@ -27,7 +27,6 @@ const EXCLUDED_DIRS: &[&str] = &[".git", "target", "node_modules", ".planning-ag
 ///
 /// # Returns
 /// A u64 hash representing the current state of changes.
-#[allow(dead_code)]
 pub fn compute_change_fingerprint(working_dir: &Path) -> Result<u64> {
     if is_git_repo(working_dir) {
         compute_git_fingerprint(working_dir)

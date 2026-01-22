@@ -104,7 +104,6 @@ impl UsageWindow {
     }
 
     /// Creates a new usage window with percent and reset timestamp.
-    #[allow(dead_code)]
     pub fn with_percent_and_reset(percent: u8, reset_at: ResetTimestamp) -> Self {
         Self {
             used_percent: Some(percent),
@@ -192,7 +191,6 @@ pub struct ResetTimestamp {
 
 impl ResetTimestamp {
     /// Creates a new reset timestamp from Unix epoch seconds.
-    #[allow(dead_code)]
     pub fn from_epoch_seconds(seconds: i64) -> Self {
         Self {
             epoch_seconds: seconds,
@@ -200,7 +198,6 @@ impl ResetTimestamp {
     }
 
     /// Creates a reset timestamp from the current time plus a duration.
-    #[allow(dead_code)]
     pub fn from_duration_from_now(duration: Duration) -> Self {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
