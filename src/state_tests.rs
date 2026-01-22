@@ -845,3 +845,101 @@ fn test_backward_compatibility_without_run_counts() {
     assert!(loaded.reviewer_run_counts.is_empty()); // Default empty
     assert!(loaded.current_cycle_order.is_empty()); // Default empty
 }
+
+// ============================================================================
+// Round-robin tiebreaker tests
+// ============================================================================
+
+#[test]
+fn test_tiebreaker_prefers_previous_rejecting_reviewer() {
+    // When run counts are equal, the previous rejecting reviewer should go first
+    let mut state = SequentialReviewState::new();
+    state.reviewer_run_counts.insert("A".to_string(), 2);
+    state.reviewer_run_counts.insert("B".to_string(), 2);
+    state.reviewer_run_counts.insert("C".to_string(), 2);
+
+    // Record that C rejected
+    state.record_rejection("C");
+
+    let tiebreaker = state.start_new_cycle(&["A", "B", "C"]);
+
+    // C should be first despite config order putting it last
+    assert_eq!(state.current_cycle_order, vec!["C", "A", "B"]);
+    // Should return the rejector ID
+    assert_eq!(tiebreaker, Some("C".to_string()));
+}
+
+#[test]
+fn test_tiebreaker_only_applies_when_counts_equal() {
+    // Tiebreaker should only affect ordering within the same run count tier
+    let mut state = SequentialReviewState::new();
+    state.reviewer_run_counts.insert("A".to_string(), 1); // Lowest count
+    state.reviewer_run_counts.insert("B".to_string(), 2);
+    state.reviewer_run_counts.insert("C".to_string(), 2);
+
+    // Record that C rejected (C is tied with B, not A)
+    state.record_rejection("C");
+
+    let tiebreaker = state.start_new_cycle(&["A", "B", "C"]);
+
+    // A should still be first (lowest count), C before B in the tie
+    assert_eq!(state.current_cycle_order, vec!["A", "C", "B"]);
+    assert_eq!(tiebreaker, Some("C".to_string()));
+}
+
+#[test]
+fn test_rejection_cleared_after_start_new_cycle() {
+    let mut state = SequentialReviewState::new();
+    state.record_rejection("A");
+    assert!(state.last_rejecting_reviewer.is_some());
+
+    let _ = state.start_new_cycle(&["A", "B"]);
+
+    // The take() call should have cleared it
+    assert!(state.last_rejecting_reviewer.is_none());
+}
+
+#[test]
+fn test_no_tiebreaker_when_no_previous_rejection() {
+    // When no reviewer rejected, config order is preserved (existing behavior)
+    let mut state = SequentialReviewState::new();
+    state.reviewer_run_counts.insert("A".to_string(), 2);
+    state.reviewer_run_counts.insert("B".to_string(), 2);
+    state.reviewer_run_counts.insert("C".to_string(), 2);
+
+    let tiebreaker = state.start_new_cycle(&["A", "B", "C"]);
+
+    // Config order preserved
+    assert_eq!(state.current_cycle_order, vec!["A", "B", "C"]);
+    // No tiebreaker used
+    assert_eq!(tiebreaker, None);
+}
+
+#[test]
+fn test_serialization_preserves_last_rejecting_reviewer() {
+    let mut state = SequentialReviewState::new();
+    state.record_rejection("A");
+
+    let json = serde_json::to_string(&state).unwrap();
+    let loaded: SequentialReviewState = serde_json::from_str(&json).unwrap();
+
+    assert_eq!(loaded.last_rejecting_reviewer, Some("A".to_string()));
+}
+
+#[test]
+fn test_backward_compatibility_without_last_rejecting_reviewer() {
+    // Simulate loading old state without the new field
+    let old_json = r#"{
+        "current_reviewer_index": 0,
+        "plan_version": 1,
+        "approvals": {},
+        "accumulated_reviews": [],
+        "reviewer_run_counts": {"A": 1, "B": 1},
+        "current_cycle_order": ["A", "B"]
+    }"#;
+
+    let loaded: SequentialReviewState = serde_json::from_str(old_json).unwrap();
+
+    // Should default to None
+    assert!(loaded.last_rejecting_reviewer.is_none());
+}

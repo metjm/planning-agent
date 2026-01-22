@@ -355,12 +355,16 @@ pub async fn run_sequential_reviewing_phase(
 
     // Start new cycle if needed (cycle order empty after reset or config change)
     if seq_state.needs_cycle_start() {
-        seq_state.start_new_cycle(&reviewer_ids);
-        context.log_workflow(&format!(
+        let tiebreaker = seq_state.start_new_cycle(&reviewer_ids);
+        let mut log_msg = format!(
             "Sequential review: started new cycle with order {:?} (run counts: {:?})",
             seq_state.current_cycle_order,
             reviewer_ids.iter().map(|id| (*id, seq_state.get_run_count(id))).collect::<Vec<_>>()
-        ));
+        );
+        if let Some(rejector) = tiebreaker {
+            log_msg.push_str(&format!(" [tiebreaker: prioritized previous rejector '{}']", rejector));
+        }
+        context.log_workflow(&log_msg);
     }
 
     // Emit round started ONLY for first reviewer in this sequential cycle
@@ -526,6 +530,8 @@ pub async fn run_sequential_reviewing_phase(
     let seq_state = state.sequential_review.as_mut().unwrap();
 
     if review.needs_revision {
+        // Record the rejecting reviewer for tiebreaker in next cycle
+        seq_state.record_rejection(reviewer_id);
         // Reviewer rejected - transition to revision
         context.log_workflow(&format!(
             "Reviewer {} REJECTED (plan version {}) - transitioning to revision",

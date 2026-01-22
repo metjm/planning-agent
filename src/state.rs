@@ -347,6 +347,12 @@ pub struct SequentialReviewState {
     /// or is reset, so it's recomputed on the next cycle.
     #[serde(default)]
     pub current_cycle_order: Vec<String>,
+    /// The reviewer who rejected the previous plan version.
+    /// Used as a tiebreaker in round-robin selection: when reviewers have equal
+    /// run counts, the previous rejecting reviewer goes first (to verify fix).
+    /// Set when a reviewer rejects, cleared when consumed by start_new_cycle.
+    #[serde(default)]
+    pub last_rejecting_reviewer: Option<String>,
 }
 
 impl SequentialReviewState {
@@ -359,6 +365,7 @@ impl SequentialReviewState {
             accumulated_reviews: Vec::new(),
             reviewer_run_counts: HashMap::new(),
             current_cycle_order: Vec::new(),
+            last_rejecting_reviewer: None,
         }
     }
 
@@ -441,14 +448,50 @@ impl SequentialReviewState {
         self.reviewer_run_counts.get(reviewer_id).copied().unwrap_or(0)
     }
 
+    /// Records which reviewer rejected the plan.
+    /// This is used as a tiebreaker in round-robin selection.
+    pub fn record_rejection(&mut self, reviewer_id: &str) {
+        self.last_rejecting_reviewer = Some(reviewer_id.to_string());
+    }
+
     /// Starts a new review cycle by computing and storing the sorted reviewer order.
-    /// Reviewers are sorted by run count (ascending). Ties are broken by config order
-    /// (stable sort). Must be called when starting a new cycle.
-    pub fn start_new_cycle(&mut self, reviewer_ids: &[&str]) {
+    /// Reviewers are sorted by:
+    /// 1. Run count (ascending) - reviewer with lowest count runs first
+    /// 2. Previous rejection (tiebreaker) - if tied, prefer the previous rejecting reviewer
+    /// 3. Config order (stable sort) - if still tied, preserve config order
+    ///
+    /// Returns the ID of the previous rejecting reviewer if the tiebreaker was used,
+    /// allowing callers to log when the tiebreaker affects ordering.
+    ///
+    /// Must be called when starting a new cycle.
+    pub fn start_new_cycle(&mut self, reviewer_ids: &[&str]) -> Option<String> {
         let mut sorted: Vec<String> = reviewer_ids.iter().map(|s| (*s).to_string()).collect();
-        sorted.sort_by_key(|id| self.get_run_count(id));
+
+        // Capture the last rejecting reviewer for the closure and return value
+        let last_rejector = self.last_rejecting_reviewer.take(); // take() also clears the field
+        let tiebreaker_used = last_rejector.clone();
+
+        sorted.sort_by(|a, b| {
+            let count_a = self.get_run_count(a);
+            let count_b = self.get_run_count(b);
+
+            match count_a.cmp(&count_b) {
+                std::cmp::Ordering::Equal => {
+                    // Tiebreaker: prefer the previous rejecting reviewer
+                    match (&last_rejector, a, b) {
+                        (Some(rejector), a, _) if a == rejector => std::cmp::Ordering::Less,
+                        (Some(rejector), _, b) if b == rejector => std::cmp::Ordering::Greater,
+                        _ => std::cmp::Ordering::Equal, // Stable sort preserves config order
+                    }
+                }
+                other => other,
+            }
+        });
+
         self.current_cycle_order = sorted;
         self.current_reviewer_index = 0;
+
+        tiebreaker_used
     }
 
     /// Gets the current reviewer's display_id from the stored cycle order.
