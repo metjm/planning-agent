@@ -74,6 +74,7 @@ pub fn start_resumed_workflow(
                     session_id: sid,
                     run_id,
                     no_daemon: false,
+                    snapshot_tx: None, // Legacy mode - state updates via Event::SessionStateUpdate
                 },
             )
             .await
@@ -152,6 +153,7 @@ pub async fn handle_init_completion(
                                 session_id: sid,
                                 run_id,
                                 no_daemon: false,
+                                snapshot_tx: None, // Legacy mode - state updates via Event::SessionStateUpdate
                             },
                         )
                         .await
@@ -355,6 +357,7 @@ fn handle_workflow_restart(
                         session_id: sid,
                         run_id,
                         no_daemon: false,
+                        snapshot_tx: None, // Legacy mode - state updates via Event::SessionStateUpdate
                     },
                 )
                 .await

@@ -17,6 +17,8 @@ mod session_store;
 mod session_tracking;
 mod skills;
 mod state;
+pub mod state_machine;
+pub mod structured_logger;
 mod tui;
 mod update;
 mod usage_reset;

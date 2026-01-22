@@ -1,4 +1,3 @@
-
 mod chat;
 mod cli_instances;
 pub mod context;
@@ -7,6 +6,7 @@ pub mod model;
 mod paste;
 mod review_history;
 mod snapshot;
+mod state_helpers;
 mod tools;
 
 pub use cli_instances::{CliInstance, CliInstanceId};
@@ -91,7 +91,13 @@ pub struct Session {
     pub streaming_follow_mode: bool,
     pub focused_panel: FocusedPanel,
 
+    /// Full workflow state (legacy, for persistence). Use state_snapshot for display.
     pub workflow_state: Option<State>,
+    /// Read-only snapshot for TUI display. Updated via watch channel.
+    pub state_snapshot: Option<crate::state_machine::StateSnapshot>,
+    /// Watch channel receiver for state updates from workflow.
+    #[allow(dead_code)]
+    pub snapshot_rx: Option<watch::Receiver<crate::state_machine::StateSnapshot>>,
     pub start_time: Instant,
     pub total_cost: f64,
     pub running: bool,
@@ -220,6 +226,8 @@ impl Session {
             focused_panel: FocusedPanel::default(),
 
             workflow_state: None,
+            state_snapshot: None, // Will be set when workflow spawns
+            snapshot_rx: None,    // Will be set when workflow spawns
             start_time: Instant::now(),
             total_cost: 0.0,
             running: true,
@@ -698,17 +706,6 @@ impl Session {
                 (state.iteration, state.max_iterations)
             }
             None => (0, 0),
-        }
-    }
-
-    pub fn feature_name(&self) -> &str {
-        if !self.name.is_empty() {
-            &self.name
-        } else {
-            match &self.workflow_state {
-                Some(state) => &state.feature_name,
-                None => "New Tab",
-            }
         }
     }
 

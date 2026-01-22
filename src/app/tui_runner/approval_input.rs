@@ -245,6 +245,7 @@ pub async fn handle_all_reviewers_failed_input(
                                     session_id: sid,
                                     run_id,
                                     no_daemon: false,
+                                    snapshot_tx: None, // Legacy mode - state updates via Event::SessionStateUpdate
                                 },
                             )
                             .await
@@ -376,6 +377,7 @@ pub async fn handle_workflow_failure_input(
                                     session_id: sid,
                                     run_id,
                                     no_daemon: false,
+                                    snapshot_tx: None, // Legacy mode - state updates via Event::SessionStateUpdate
                                 },
                             )
                             .await

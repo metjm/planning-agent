@@ -42,14 +42,17 @@ mod revising;
 
 use crate::app::implementation::run_implementation_workflow;
 use crate::config::WorkflowConfig;
+use crate::planning_paths;
 use crate::session_logger::{create_session_logger, LogCategory, LogLevel};
 use crate::session_tracking::SessionTracker;
 use crate::state::{Phase, State};
+use crate::state_machine::{StateSnapshot, WorkflowStateMachine};
+use crate::structured_logger::StructuredLogger;
 use crate::tui::{CancellationError, Event, SessionEventSender, UserApprovalResponse, WorkflowCommand};
 use anyhow::Result;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 
 use completion::handle_completion;
 use planning::run_planning_phase;
@@ -79,6 +82,13 @@ pub struct WorkflowRunConfig {
     /// If true, disable session daemon tracking (for tests/headless mode)
     #[allow(dead_code)]
     pub no_daemon: bool,
+    /// Optional watch channel sender for broadcasting state snapshots to TUI.
+    /// When provided, the workflow will broadcast StateSnapshot updates that
+    /// the TUI can poll for state changes. This enables the new centralized
+    /// state management architecture.
+    ///
+    /// If None (default), the workflow uses legacy Event::SessionStateUpdate.
+    pub snapshot_tx: Option<watch::Sender<StateSnapshot>>,
 }
 
 pub async fn run_workflow_with_config(
@@ -95,6 +105,7 @@ pub async fn run_workflow_with_config(
         session_id,
         run_id,
         no_daemon,
+        snapshot_tx,
     } = run_config;
 
     let sender = SessionEventSender::new(session_id, run_id, output_tx);
@@ -102,6 +113,48 @@ pub async fn run_workflow_with_config(
     // Create session logger for workflow events
     let session_logger = create_session_logger(&state.workflow_session_id)?;
     session_logger.log(LogLevel::Info, LogCategory::Workflow, "Session logger initialized");
+
+    // Create structured JSONL logger for debugging
+    let structured_logger = {
+        let logs_dir = planning_paths::session_logs_dir(&state.workflow_session_id)?;
+        Arc::new(StructuredLogger::new(&state.workflow_session_id, &logs_dir)?)
+    };
+    structured_logger.log_workflow_spawn(false);
+
+    // Create state machine if snapshot_tx is provided (new architecture)
+    // Otherwise fall back to legacy direct state mutation
+    let state_machine: Option<WorkflowStateMachine> = if let Some(tx) = snapshot_tx {
+        // Create state machine that will broadcast to the provided channel
+        // Note: We create a new state machine wrapping the existing state,
+        // but we need to use the existing tx from the caller
+        let initial_snapshot = StateSnapshot::from(&state);
+        let _ = tx.send(initial_snapshot);
+
+        // For now, we create the state machine but continue using direct state mutation
+        // TODO: Migrate phase handlers to use state machine commands
+        let (machine, _rx) = WorkflowStateMachine::new(state.clone(), structured_logger.clone());
+
+        // Store the tx for broadcasting (but we don't use the machine's rx)
+        // The TUI already has the rx from when it called watch::channel()
+        drop(_rx);
+
+        // Actually, we need to think about this differently.
+        // The state machine creates its own watch channel internally.
+        // We should either:
+        // 1. Pass the tx into the state machine constructor, or
+        // 2. Return the rx from the state machine and use that
+        //
+        // For incremental migration, let's keep it simple:
+        // We'll create the state machine with its own watch channel,
+        // and just broadcast snapshots manually after state changes.
+
+        Some(machine)
+    } else {
+        None
+    };
+
+    // Suppress unused warning for now - will be used when phase handlers are migrated
+    let _ = state_machine;
 
     // Create session tracker for daemon integration
     let tracker = Arc::new(SessionTracker::new(no_daemon));
