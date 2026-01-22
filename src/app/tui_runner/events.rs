@@ -193,7 +193,16 @@ fn handle_tick_event(
     working_dir: &Path,
 ) {
     for session in tab_manager.sessions_mut() {
-        if session.status == SessionStatus::GeneratingSummary {
+        // Advance spinner for any active/running state (header animation)
+        if session.running
+            || matches!(
+                session.status,
+                SessionStatus::Planning
+                    | SessionStatus::GeneratingSummary
+                    | SessionStatus::Verifying
+                    | SessionStatus::Fixing
+            )
+        {
             session.spinner_frame = session.spinner_frame.wrapping_add(1);
         }
         session.advance_summary_spinners();

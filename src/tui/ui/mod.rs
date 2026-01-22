@@ -246,8 +246,8 @@ fn draw_tab_bar(frame: &mut Frame, tab_manager: &TabManager, area: Rect) {
     let phase_name = active_session.phase_name();
     let (iter, max_iter) = active_session.iteration();
 
-    // Determine status icon using tab_manager's spinner frame (global UI element)
-    let status_icon = determine_header_status(active_session, tab_manager.update_spinner_frame);
+    // Determine status icon using session's spinner frame (animated per-session)
+    let status_icon = determine_header_status(active_session, active_session.spinner_frame);
     let icon_char = status_icon.to_char();
 
     // Determine background color based on phase
