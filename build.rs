@@ -33,6 +33,7 @@ fn main() {
 
     enforce_formatting();
     enforce_line_limits();
+    enforce_no_dead_code_allows();
 }
 
 fn enforce_line_limits() {
@@ -255,5 +256,73 @@ fn enforce_formatting() {
         eprintln!("    cargo fmt");
         eprintln!("\n========================================\n");
         panic!("Build failed: code is not formatted. Run 'cargo fmt' to fix.");
+    }
+}
+
+fn enforce_no_dead_code_allows() {
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR must be set");
+    let root = PathBuf::from(&manifest_dir);
+
+    // Collect all .rs files (excluding build.rs itself)
+    let rust_files: Vec<PathBuf> = collect_files_to_check(&root)
+        .into_iter()
+        .filter(|p| {
+            p.extension().and_then(|e| e.to_str()) == Some("rs")
+                && p.file_name().and_then(|n| n.to_str()) != Some("build.rs")
+        })
+        .collect();
+
+    let mut violations: Vec<(PathBuf, Vec<(usize, String)>)> = Vec::new();
+
+    for file in &rust_files {
+        if let Ok(content) = std::fs::read_to_string(file) {
+            let mut file_violations = Vec::new();
+            for (line_num, line) in content.lines().enumerate() {
+                let trimmed = line.trim();
+                // Check for #[allow(dead_code)] or #![allow(dead_code)]
+                if (trimmed.starts_with("#[allow(") || trimmed.starts_with("#![allow("))
+                    && trimmed.contains("dead_code")
+                {
+                    file_violations.push((line_num + 1, line.to_string()));
+                }
+            }
+            if !file_violations.is_empty() {
+                let rel_path = file.strip_prefix(&root).unwrap_or(file).to_path_buf();
+                violations.push((rel_path, file_violations));
+            }
+        }
+    }
+
+    if !violations.is_empty() {
+        let total_count: usize = violations.iter().map(|(_, v)| v.len()).sum();
+
+        eprintln!("\n========================================");
+        eprintln!("#[allow(dead_code)] IS NOT ALLOWED");
+        eprintln!("========================================");
+        eprintln!();
+        for (path, lines) in &violations {
+            for (line_num, line_content) in lines {
+                eprintln!("  {}:{}", path.display(), line_num);
+                eprintln!("    {}", line_content.trim());
+                eprintln!();
+            }
+        }
+        eprintln!("========================================");
+        eprintln!();
+        eprintln!("Do NOT use #[allow(dead_code)] to silence warnings.");
+        eprintln!();
+        eprintln!("Instead:");
+        eprintln!("  - DELETE unused code entirely");
+        eprintln!("  - If the code is for tests, use #[cfg(test)]");
+        eprintln!("  - If the code is a public API, make it actually public");
+        eprintln!();
+        eprintln!("Keeping dead code around \"just in case\" creates");
+        eprintln!("maintenance burden and hides real issues.");
+        eprintln!();
+        eprintln!("========================================\n");
+        panic!(
+            "Build failed: {} #[allow(dead_code)] occurrence(s) found. Remove the dead code.",
+            total_count
+        );
     }
 }
