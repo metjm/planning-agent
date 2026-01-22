@@ -10,7 +10,7 @@ use crate::phases::implementation_review::run_implementation_review_phase;
 use crate::phases::implementing_conversation_key;
 use crate::phases::verdict::VerificationVerdictResult;
 use crate::session_logger::SessionLogger;
-use crate::state::{ImplementationPhase, ImplementationPhaseState, State};
+use crate::state::{ImplementationPhase, ImplementationPhaseState, ResumeStrategy, State};
 use crate::tui::SessionEventSender;
 use anyhow::{Context, Result};
 use std::path::Path;
@@ -123,6 +123,12 @@ pub async fn run_implementation_workflow(
             "[implementation] === Implementation Round {}/{} ===",
             iteration, max_iterations
         ));
+
+        // Ensure agent_conversations entry exists for implementing agent (for conversation ID capture)
+        if let Some(agent_cfg) = impl_config.implementing.as_ref() {
+            let key = implementing_conversation_key(&agent_cfg.agent);
+            state.get_or_create_agent_session(&key, ResumeStrategy::ConversationResume);
+        }
 
         let impl_result = run_implementation_phase(
             state,

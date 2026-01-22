@@ -97,7 +97,7 @@ pub async fn run_implementation_phase(
     // Prepare conversation key for resume
     let conversation_key = implementing_conversation_key(agent_name);
 
-    // Get existing conversation ID if available
+    // Get existing conversation ID if available (entry created by orchestrator)
     let conversation_id = state
         .agent_conversations
         .get(&conversation_key)
