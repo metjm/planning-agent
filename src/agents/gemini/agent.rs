@@ -1,7 +1,10 @@
 use super::parser::GeminiParser;
 use crate::agents::log::AgentLogger;
 use crate::agents::prompt::PreparedPrompt;
-use crate::agents::runner::{run_agent_process, ContextEmitter, EventEmitter, RunnerConfig};
+use crate::agents::runner::{
+    run_agent_process, ContextEmitter, EventEmitter, RunnerConfig, DEFAULT_ACTIVITY_TIMEOUT,
+    DEFAULT_OVERALL_TIMEOUT,
+};
 use crate::agents::{AgentContext, AgentResult};
 use crate::config::AgentConfig;
 use crate::state::ResumeStrategy;
@@ -9,9 +12,6 @@ use anyhow::Result;
 use std::path::PathBuf;
 use std::time::Duration;
 use tokio::process::Command;
-
-const DEFAULT_ACTIVITY_TIMEOUT: Duration = Duration::from_secs(300);
-const DEFAULT_OVERALL_TIMEOUT: Duration = Duration::from_secs(21600); // 6 hours
 
 #[derive(Debug, Clone)]
 pub struct GeminiAgent {

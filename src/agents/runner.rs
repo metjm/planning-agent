@@ -19,7 +19,7 @@ use tokio::sync::watch;
 use tokio::time::Instant;
 
 /// Default timeout for activity (no output) before killing the process.
-pub const DEFAULT_ACTIVITY_TIMEOUT: Duration = Duration::from_secs(300);
+pub const DEFAULT_ACTIVITY_TIMEOUT: Duration = Duration::from_secs(1800); // 30 minutes
 
 /// Default overall timeout for the entire agent execution.
 pub const DEFAULT_OVERALL_TIMEOUT: Duration = Duration::from_secs(21600); // 6 hours
