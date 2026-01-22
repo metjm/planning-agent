@@ -224,6 +224,54 @@ pub(crate) async fn handle_naming_tab_input(
                             // Open the session browser overlay
                             tab_manager.session_browser.open(working_dir);
                         }
+                        SlashCommand::MaxIterations(n) => {
+                            if let Some(ref mut state) = session.workflow_state {
+                                let old_value = state.max_iterations;
+                                state.max_iterations = n;
+                                if let Some(ref mut snapshot) = session.state_snapshot {
+                                    snapshot.max_iterations = n;
+                                }
+                                tab_manager.command_notice = Some(format!(
+                                    "max-iterations: {} -> {} (effective at next iteration)",
+                                    old_value, n
+                                ));
+                            } else {
+                                tab_manager.command_notice = Some(format!(
+                                    "max-iterations set to {} (no active workflow)",
+                                    n
+                                ));
+                            }
+                        }
+                        SlashCommand::Sequential(enabled) => {
+                            if let Some(ref mut ctx) = session.context {
+                                let mode = if enabled { "sequential" } else { "parallel" };
+                                ctx.workflow_config.workflow.reviewing.sequential = enabled;
+                                tab_manager.command_notice = Some(format!(
+                                    "Review mode: {} (effective at next review phase)",
+                                    mode
+                                ));
+                            } else {
+                                tab_manager.command_notice =
+                                    Some("No active workflow config".to_string());
+                            }
+                        }
+                        SlashCommand::Aggregation(mode) => {
+                            if let Some(ref mut ctx) = session.context {
+                                let mode_str = match mode {
+                                    crate::config::AggregationMode::AnyRejects => "any-rejects",
+                                    crate::config::AggregationMode::AllReject => "all-reject",
+                                    crate::config::AggregationMode::Majority => "majority",
+                                };
+                                ctx.workflow_config.workflow.reviewing.aggregation = mode;
+                                tab_manager.command_notice = Some(format!(
+                                    "Aggregation: {} (effective at next review phase)",
+                                    mode_str
+                                ));
+                            } else {
+                                tab_manager.command_notice =
+                                    Some("No active workflow config".to_string());
+                            }
+                        }
                     }
                     return Ok(false);
                 }

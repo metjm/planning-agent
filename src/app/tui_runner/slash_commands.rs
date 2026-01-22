@@ -2,6 +2,7 @@
 //!
 //! Supports commands like `/update`, `/config-dangerous`, and `/config dangerous`.
 
+use crate::config::AggregationMode;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -15,6 +16,12 @@ pub enum SlashCommand {
     ConfigDangerous,
     /// View and resume workflow sessions.
     Sessions,
+    /// Set maximum iterations for the workflow.
+    MaxIterations(u32),
+    /// Set sequential (true) or parallel (false) review mode.
+    Sequential(bool),
+    /// Set review aggregation mode.
+    Aggregation(AggregationMode),
 }
 
 /// Parse a slash command from input text.
@@ -42,6 +49,29 @@ pub fn parse_slash_command(input: &str) -> Option<(SlashCommand, Vec<String>)> {
         "/update" => Some((SlashCommand::Update, args)),
         "/config-dangerous" => Some((SlashCommand::ConfigDangerous, args)),
         "/sessions" => Some((SlashCommand::Sessions, args)),
+        "/max-iterations" => {
+            if args.len() != 1 {
+                return None;
+            }
+            match args[0].parse::<u32>() {
+                Ok(n) if n >= 1 => Some((SlashCommand::MaxIterations(n), vec![])),
+                _ => None,
+            }
+        }
+        "/sequential" => Some((SlashCommand::Sequential(true), vec![])),
+        "/parallel" => Some((SlashCommand::Sequential(false), vec![])),
+        "/aggregation" => {
+            if args.len() != 1 {
+                return None;
+            }
+            let mode = match args[0].to_lowercase().as_str() {
+                "any-rejects" | "any_rejects" => AggregationMode::AnyRejects,
+                "all-reject" | "all_reject" => AggregationMode::AllReject,
+                "majority" => AggregationMode::Majority,
+                _ => return None,
+            };
+            Some((SlashCommand::Aggregation(mode), vec![]))
+        }
         "/config" => {
             // Check for "/config dangerous" variant
             if args.first().map(|s| s.as_str()) == Some("dangerous") {
@@ -696,5 +726,120 @@ path = "/some/path"
 
         // Clean up
         std::fs::remove_dir_all(&temp_dir).ok();
+    }
+
+    #[test]
+    fn test_parse_max_iterations_valid() {
+        assert_eq!(
+            parse_slash_command("/max-iterations 5"),
+            Some((SlashCommand::MaxIterations(5), vec![]))
+        );
+        assert_eq!(
+            parse_slash_command("/max-iterations 1"),
+            Some((SlashCommand::MaxIterations(1), vec![]))
+        );
+        assert_eq!(
+            parse_slash_command("  /max-iterations 10  "),
+            Some((SlashCommand::MaxIterations(10), vec![]))
+        );
+    }
+
+    #[test]
+    fn test_parse_max_iterations_invalid() {
+        // Zero is not allowed
+        assert_eq!(parse_slash_command("/max-iterations 0"), None);
+        // Non-numeric
+        assert_eq!(parse_slash_command("/max-iterations abc"), None);
+        // Missing argument
+        assert_eq!(parse_slash_command("/max-iterations"), None);
+        // Extra argument
+        assert_eq!(parse_slash_command("/max-iterations 5 extra"), None);
+        // Negative (parsed as non-numeric)
+        assert_eq!(parse_slash_command("/max-iterations -1"), None);
+    }
+
+    #[test]
+    fn test_parse_sequential() {
+        assert_eq!(
+            parse_slash_command("/sequential"),
+            Some((SlashCommand::Sequential(true), vec![]))
+        );
+        assert_eq!(
+            parse_slash_command("  /sequential  "),
+            Some((SlashCommand::Sequential(true), vec![]))
+        );
+    }
+
+    #[test]
+    fn test_parse_parallel() {
+        assert_eq!(
+            parse_slash_command("/parallel"),
+            Some((SlashCommand::Sequential(false), vec![]))
+        );
+        assert_eq!(
+            parse_slash_command("  /parallel  "),
+            Some((SlashCommand::Sequential(false), vec![]))
+        );
+    }
+
+    #[test]
+    fn test_parse_aggregation_any_rejects() {
+        assert_eq!(
+            parse_slash_command("/aggregation any-rejects"),
+            Some((
+                SlashCommand::Aggregation(AggregationMode::AnyRejects),
+                vec![]
+            ))
+        );
+        // Also accept underscore variant
+        assert_eq!(
+            parse_slash_command("/aggregation any_rejects"),
+            Some((
+                SlashCommand::Aggregation(AggregationMode::AnyRejects),
+                vec![]
+            ))
+        );
+    }
+
+    #[test]
+    fn test_parse_aggregation_all_reject() {
+        assert_eq!(
+            parse_slash_command("/aggregation all-reject"),
+            Some((
+                SlashCommand::Aggregation(AggregationMode::AllReject),
+                vec![]
+            ))
+        );
+        // Also accept underscore variant
+        assert_eq!(
+            parse_slash_command("/aggregation all_reject"),
+            Some((
+                SlashCommand::Aggregation(AggregationMode::AllReject),
+                vec![]
+            ))
+        );
+    }
+
+    #[test]
+    fn test_parse_aggregation_majority() {
+        assert_eq!(
+            parse_slash_command("/aggregation majority"),
+            Some((SlashCommand::Aggregation(AggregationMode::Majority), vec![]))
+        );
+        // Case insensitive
+        assert_eq!(
+            parse_slash_command("/aggregation MAJORITY"),
+            Some((SlashCommand::Aggregation(AggregationMode::Majority), vec![]))
+        );
+    }
+
+    #[test]
+    fn test_parse_aggregation_invalid() {
+        // Unknown mode
+        assert_eq!(parse_slash_command("/aggregation invalid"), None);
+        // Missing argument
+        assert_eq!(parse_slash_command("/aggregation"), None);
+        // Extra argument
+        assert_eq!(parse_slash_command("/aggregation any-rejects extra"), None);
     }
 }

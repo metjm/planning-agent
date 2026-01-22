@@ -36,6 +36,26 @@ pub const SLASH_COMMANDS: &[SlashCommandInfo] = &[
         description: "View and resume workflow sessions",
         aliases: &[],
     },
+    SlashCommandInfo {
+        command: "/max-iterations",
+        description: "Set max iterations (e.g., /max-iterations 5)",
+        aliases: &[],
+    },
+    SlashCommandInfo {
+        command: "/sequential",
+        description: "Enable sequential review mode",
+        aliases: &[],
+    },
+    SlashCommandInfo {
+        command: "/parallel",
+        description: "Enable parallel review mode",
+        aliases: &[],
+    },
+    SlashCommandInfo {
+        command: "/aggregation",
+        description: "Set aggregation: any-rejects, all-reject, majority",
+        aliases: &[],
+    },
 ];
 
 /// A match result for slash command autocomplete.
