@@ -302,10 +302,6 @@ fn draw_tab_bar(frame: &mut Frame, tab_manager: &TabManager, area: Rect) {
         tab_spans.push(Span::styled(label, style));
         tab_spans.push(Span::styled(" ", Style::default().bg(bg_color)));
     }
-    tab_spans.push(Span::styled(
-        "[Ctrl++]",
-        Style::default().fg(theme.success).dim().bg(bg_color),
-    ));
 
     // ============================================================
     // Calculate spacing for right alignment
@@ -313,7 +309,6 @@ fn draw_tab_bar(frame: &mut Frame, tab_manager: &TabManager, area: Rect) {
     // Width calculation strategy:
     // - left_section: String width via UnicodeWidthStr
     // - tabs: Line::width() gives total display width of all tab_spans
-    //   (includes the trailing space after [Ctrl++])
     // - right_section: String width via UnicodeWidthStr
     //
     // Safety: saturating_sub ensures padding >= 0. If terminal is too
