@@ -3,6 +3,8 @@ pub mod failure;
 pub mod implementation;
 pub mod tui_runner;
 pub mod util;
+#[cfg(test)]
+mod util_tests;
 pub mod verify;
 pub mod workflow;
 pub mod workflow_common;

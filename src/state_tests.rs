@@ -1,7 +1,6 @@
 //! Tests for state module.
 
 use super::*;
-use std::path::PathBuf;
 
 #[test]
 fn test_new_state() {
@@ -70,121 +69,6 @@ fn test_update_feedback_for_iteration() {
         .feedback_file
         .to_string_lossy()
         .ends_with("/feedback_3.md"));
-}
-
-#[test]
-fn test_extract_plan_folder_new_format() {
-    // New format: ~/.planning-agent/plans/YYYYMMDD-HHMMSS-xxxxxxxx_my-feature/plan.md
-    let plan_file = PathBuf::from(
-        "/home/user/.planning-agent/plans/20250101-120000-abcd1234_my-feature/plan.md",
-    );
-    let folder = extract_plan_folder(&plan_file);
-    assert_eq!(
-        folder,
-        Some("20250101-120000-abcd1234_my-feature".to_string())
-    );
-}
-
-#[test]
-fn test_extract_plan_folder_legacy_format() {
-    let plan_file = PathBuf::from("docs/plans/existing-feature.md");
-    let folder = extract_plan_folder(&plan_file);
-    assert_eq!(folder, None);
-}
-
-#[test]
-fn test_extract_sanitized_name_new_format() {
-    // New format: folder contains the feature name
-    let plan_file = PathBuf::from(
-        "/home/user/.planning-agent/plans/20250101-120000-abcd1234_my-feature/plan.md",
-    );
-    let name = extract_sanitized_name(&plan_file);
-    assert_eq!(name, Some("my-feature".to_string()));
-}
-
-#[test]
-fn test_extract_sanitized_name_legacy_format() {
-    let plan_file = PathBuf::from("docs/plans/existing-feature.md");
-    let name = extract_sanitized_name(&plan_file);
-    assert_eq!(name, Some("existing-feature".to_string()));
-}
-
-#[test]
-fn test_is_session_centric_path() {
-    // Session-centric path (UUID in parent)
-    let session_path = PathBuf::from(
-        "/home/user/.planning-agent/sessions/550e8400-e29b-41d4-a716-446655440000/plan.md",
-    );
-    assert!(is_session_centric_path(&session_path));
-
-    // Legacy plan path (timestamp-uuid_feature format)
-    let legacy_path = PathBuf::from(
-        "/home/user/.planning-agent/plans/20250101-120000-abcd1234_my-feature/plan.md",
-    );
-    assert!(!is_session_centric_path(&legacy_path));
-
-    // Docs path
-    let docs_path = PathBuf::from("docs/plans/feature.md");
-    assert!(!is_session_centric_path(&docs_path));
-}
-
-#[test]
-fn test_update_feedback_for_iteration_with_legacy_plan_file() {
-    // Simulate loading a state with legacy plan file format
-    let mut state = State::new("test", "test", 3).unwrap();
-    let session_id = state.workflow_session_id.clone();
-    // Manually set to legacy format
-    state.plan_file = PathBuf::from("docs/plans/existing-feature.md");
-    state.feedback_file = PathBuf::from("docs/plans/existing-feature_feedback.md");
-
-    // Update to round 2 - should use session-centric path since session_id is set
-    state.update_feedback_for_iteration(2);
-
-    // Feedback file should use session directory since workflow_session_id is present
-    let feedback_str = state.feedback_file.to_string_lossy();
-    assert!(
-        feedback_str.contains(".planning-agent/sessions/"),
-        "got: {}",
-        feedback_str
-    );
-    assert!(
-        feedback_str.ends_with("/feedback_2.md"),
-        "got: {}",
-        feedback_str
-    );
-    assert!(feedback_str.contains(&session_id), "got: {}", feedback_str);
-}
-
-#[test]
-fn test_update_feedback_for_iteration_with_legacy_plan_file_no_session_id() {
-    // Simulate loading a very old state with no session_id
-    let mut state = State::new("test", "test", 3).unwrap();
-    // Clear session ID to simulate legacy state
-    state.workflow_session_id = String::new();
-    // Manually set to legacy format
-    state.plan_file = PathBuf::from("docs/plans/existing-feature.md");
-    state.feedback_file = PathBuf::from("docs/plans/existing-feature_feedback.md");
-
-    // Update to round 2 - should generate a new folder for feedback (legacy path)
-    state.update_feedback_for_iteration(2);
-
-    // Feedback file should be in a new folder with the proper format
-    let feedback_str = state.feedback_file.to_string_lossy();
-    assert!(
-        feedback_str.contains(".planning-agent/plans/"),
-        "got: {}",
-        feedback_str
-    );
-    assert!(
-        feedback_str.ends_with("/feedback_2.md"),
-        "got: {}",
-        feedback_str
-    );
-    assert!(
-        feedback_str.contains("_existing-feature/"),
-        "got: {}",
-        feedback_str
-    );
 }
 
 #[test]

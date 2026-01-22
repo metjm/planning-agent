@@ -166,15 +166,7 @@ fn should_check_file(path: &Path, root: &Path) -> bool {
 
 fn count_lines(path: &Path) -> std::io::Result<usize> {
     let content = std::fs::read_to_string(path)?;
-
-    let is_rust = path.extension().and_then(|e| e.to_str()) == Some("rs");
-
-    if is_rust {
-        let stripped = strip_rust_comments(&content);
-        Ok(count_non_empty_lines(&stripped))
-    } else {
-        Ok(count_non_empty_lines(&content))
-    }
+    Ok(count_non_empty_lines(&content))
 }
 
 fn count_non_empty_lines(content: &str) -> usize {
@@ -182,130 +174,6 @@ fn count_non_empty_lines(content: &str) -> usize {
         .lines()
         .filter(|line| !line.trim().is_empty())
         .count()
-}
-
-fn strip_rust_comments(content: &str) -> String {
-    let mut result = String::with_capacity(content.len());
-    let chars: Vec<char> = content.chars().collect();
-    let len = chars.len();
-    let mut i = 0;
-
-    while i < len {
-        if chars[i] == 'r' && i + 1 < len && (chars[i + 1] == '"' || chars[i + 1] == '#') {
-            let start = i;
-            i += 1;
-
-            let mut hash_count = 0;
-            while i < len && chars[i] == '#' {
-                hash_count += 1;
-                i += 1;
-            }
-
-            if i < len && chars[i] == '"' {
-                result.push_str(&chars[start..=i].iter().collect::<String>());
-                i += 1;
-
-                while i < len {
-                    if chars[i] == '"' {
-                        let close_start = i;
-                        i += 1;
-                        let mut close_hashes = 0;
-                        while i < len && chars[i] == '#' && close_hashes < hash_count {
-                            close_hashes += 1;
-                            i += 1;
-                        }
-                        result.push_str(&chars[close_start..i].iter().collect::<String>());
-                        if close_hashes == hash_count {
-                            break;
-                        }
-                    } else {
-                        result.push(chars[i]);
-                        i += 1;
-                    }
-                }
-                continue;
-            } else {
-                result.push_str(&chars[start..i].iter().collect::<String>());
-                continue;
-            }
-        }
-
-        if chars[i] == '"' {
-            result.push(chars[i]);
-            i += 1;
-            while i < len {
-                if chars[i] == '\\' && i + 1 < len {
-                    result.push(chars[i]);
-                    result.push(chars[i + 1]);
-                    i += 2;
-                } else if chars[i] == '"' {
-                    result.push(chars[i]);
-                    i += 1;
-                    break;
-                } else {
-                    result.push(chars[i]);
-                    i += 1;
-                }
-            }
-            continue;
-        }
-
-        if chars[i] == '\'' {
-            result.push(chars[i]);
-            i += 1;
-            if i < len {
-                if chars[i] == '\\' && i + 1 < len {
-                    result.push(chars[i]);
-                    result.push(chars[i + 1]);
-                    i += 2;
-                } else {
-                    result.push(chars[i]);
-                    i += 1;
-                }
-                if i < len && chars[i] == '\'' {
-                    result.push(chars[i]);
-                    i += 1;
-                }
-            }
-            continue;
-        }
-
-        if chars[i] == '/' && i + 1 < len && chars[i + 1] == '/' {
-            while i < len && chars[i] != '\n' {
-                i += 1;
-            }
-            if i < len {
-                result.push('\n');
-                i += 1;
-            }
-            continue;
-        }
-
-        if chars[i] == '/' && i + 1 < len && chars[i + 1] == '*' {
-            i += 2;
-            let mut depth = 1;
-            while i < len && depth > 0 {
-                if chars[i] == '/' && i + 1 < len && chars[i + 1] == '*' {
-                    depth += 1;
-                    i += 2;
-                } else if chars[i] == '*' && i + 1 < len && chars[i + 1] == '/' {
-                    depth -= 1;
-                    i += 2;
-                } else {
-                    if chars[i] == '\n' {
-                        result.push('\n');
-                    }
-                    i += 1;
-                }
-            }
-            continue;
-        }
-
-        result.push(chars[i]);
-        i += 1;
-    }
-
-    result
 }
 
 fn enforce_formatting() {

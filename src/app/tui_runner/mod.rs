@@ -3,6 +3,7 @@ mod events;
 mod input;
 mod input_naming;
 mod session_browser_input;
+mod session_events;
 pub mod slash_commands;
 pub mod snapshot_helper;
 mod workflow_lifecycle;

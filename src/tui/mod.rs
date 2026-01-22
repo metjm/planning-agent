@@ -3,6 +3,7 @@ pub mod file_index;
 pub mod mention;
 pub mod session;
 pub mod session_browser;
+mod session_event_sender;
 pub mod slash;
 mod tabs;
 mod title;

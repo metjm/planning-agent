@@ -8,106 +8,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
-/// Generates a unique folder name for a plan using timestamp and UUID.
-/// Format: YYYYMMDD-HHMMSS-xxxxxxxx_<sanitized_name>
-///
-/// **DEPRECATED**: Only used for legacy plan structure.
-/// New sessions use session-centric paths directly.
-fn generate_plan_folder_name(sanitized_name: &str) -> String {
-    let timestamp = Utc::now().format("%Y%m%d-%H%M%S");
-    let uuid_str = Uuid::new_v4().to_string();
-    // UUID is ASCII hex, safe to slice at byte boundaries
-    #[allow(clippy::string_slice)]
-    let uuid_suffix = &uuid_str[..8];
-    format!("{}-{}_{}", timestamp, uuid_suffix, sanitized_name)
-}
-
-/// Generates the plan file path inside a plan folder.
-/// Format: ~/.planning-agent/plans/<folder>/plan.md
-///
-/// **DEPRECATED**: Only used for legacy plan structure.
-/// New sessions use `planning_paths::session_plan_path()`.
-///
-/// # Errors
-/// Returns an error if the home directory cannot be determined.
-#[allow(dead_code)]
-fn generate_plan_path(folder_name: &str) -> Result<PathBuf> {
-    Ok(planning_paths::plans_dir()?
-        .join(folder_name)
-        .join("plan.md"))
-}
-
-/// Generates a feedback file path inside a plan folder.
-/// Format: ~/.planning-agent/plans/<folder>/feedback_<round>.md
-///
-/// **DEPRECATED**: Only used for legacy plan structure.
-/// New sessions use `planning_paths::session_feedback_path()`.
-///
-/// # Errors
-/// Returns an error if the home directory cannot be determined.
-fn generate_feedback_path(folder_name: &str, round: u32) -> Result<PathBuf> {
-    Ok(planning_paths::plans_dir()?
-        .join(folder_name)
-        .join(format!("feedback_{}.md", round)))
-}
-
-/// Extracts the plan folder name from a plan file path.
-/// Works with both new format (in ~/.planning-agent/plans/) and legacy format (docs/plans/).
-///
-/// **DEPRECATED**: Only used for legacy plan structure.
-fn extract_plan_folder(plan_file: &Path) -> Option<String> {
-    // New format: ~/.planning-agent/plans/<folder>/plan.md
-    // The folder is the parent of the plan file
-    if let Some(parent) = plan_file.parent() {
-        if let Some(folder_name) = parent.file_name() {
-            let folder_str = folder_name.to_str()?;
-            // Validate it looks like a timestamp-uuid prefix folder
-            if folder_str.len() >= 24 && folder_str.chars().nth(8) == Some('-') {
-                return Some(folder_str.to_string());
-            }
-        }
-    }
-    None
-}
-
-/// Extracts the sanitized feature name from a plan folder or legacy filename.
-///
-/// **DEPRECATED**: Only used for legacy plan structure.
-fn extract_sanitized_name(plan_file: &Path) -> Option<String> {
-    // Try new format first: folder name like "YYYYMMDD-HHMMSS-xxxxxxxx_feature-name"
-    if let Some(folder_name) = extract_plan_folder(plan_file) {
-        if let Some((_, feature_part)) = folder_name.split_once('_') {
-            return Some(feature_part.to_string());
-        }
-    }
-
-    // Legacy format: docs/plans/feature-name.md
-    let filename = plan_file.file_stem()?.to_str()?;
-
-    // Check for old timestamp format in filename
-    if let Some((prefix, suffix)) = filename.split_once('_') {
-        if prefix.len() >= 24 && prefix.chars().nth(8) == Some('-') {
-            return Some(suffix.to_string());
-        }
-    }
-
-    // Plain legacy format
-    Some(filename.to_string())
-}
-
-/// Checks if a plan file path uses the session-centric structure.
-/// Session-centric paths contain a UUID session_id in the parent directory.
-fn is_session_centric_path(plan_file: &Path) -> bool {
-    if let Some(parent) = plan_file.parent() {
-        if let Some(folder_name) = parent.file_name() {
-            let folder_str = folder_name.to_string_lossy();
-            // UUID format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx (36 chars with hyphens)
-            return folder_str.len() == 36 && folder_str.chars().filter(|c| *c == '-').count() == 4;
-        }
-    }
-    false
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum Phase {
@@ -642,38 +542,10 @@ impl State {
     /// Updates the feedback filename for a new iteration/round.
     /// This should be called before each review phase to generate a new feedback filename.
     pub fn update_feedback_for_iteration(&mut self, iteration: u32) {
-        // For session-centric paths, use the session ID directly
-        if is_session_centric_path(&self.plan_file) || !self.workflow_session_id.is_empty() {
-            if let Ok(path) =
-                planning_paths::session_feedback_path(&self.workflow_session_id, iteration)
-            {
-                self.feedback_file = path;
-                return;
-            }
-        }
-
-        // Legacy path handling: try to extract the folder name from the plan file path
-        if let Some(folder_name) = extract_plan_folder(&self.plan_file) {
-            if let Ok(path) = generate_feedback_path(&folder_name, iteration) {
-                self.feedback_file = path;
-                return;
-            }
-        }
-
-        // Legacy fallback: generate a new folder for feedback
-        let sanitized_name = extract_sanitized_name(&self.plan_file).unwrap_or_else(|| {
-            // Fallback: sanitize feature_name
-            self.feature_name
-                .to_lowercase()
-                .replace(' ', "-")
-                .chars()
-                .filter(|c| c.is_alphanumeric() || *c == '-')
-                .collect::<String>()
-        });
-
-        // Generate a new folder for legacy plans
-        let folder_name = generate_plan_folder_name(&sanitized_name);
-        if let Ok(path) = generate_feedback_path(&folder_name, iteration) {
+        // Use session-centric paths with the workflow session ID
+        if let Ok(path) =
+            planning_paths::session_feedback_path(&self.workflow_session_id, iteration)
+        {
             self.feedback_file = path;
         }
     }

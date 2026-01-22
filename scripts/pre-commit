@@ -1,0 +1,61 @@
+#!/bin/sh
+# Pre-commit hook for planning-agent
+#
+# To install this hook, run from the repository root:
+#   cp scripts/pre-commit .git/hooks/pre-commit
+#   chmod +x .git/hooks/pre-commit
+#
+# Or create a symlink:
+#   ln -sf ../../scripts/pre-commit .git/hooks/pre-commit
+
+set -e
+
+MAX_LINES=750
+
+echo "=== Pre-commit checks ==="
+
+# Check file line limits (fast check before running cargo)
+# Count non-empty lines to match build.rs logic
+echo "Checking file line limits (max ${MAX_LINES} non-empty lines)..."
+oversized_files=""
+for file in $(find src -name "*.rs" -type f); do
+    lines=$(grep -c '.' "$file" 2>/dev/null || echo 0)
+    if [ "$lines" -gt "$MAX_LINES" ]; then
+        exceeds=$((lines - MAX_LINES))
+        oversized_files="${oversized_files}  ${file} - ${lines} lines (exceeds by ${exceeds})\n"
+    fi
+done
+
+if [ -n "$oversized_files" ]; then
+    echo ""
+    echo "========================================"
+    echo "FILE LINE LIMIT EXCEEDED (max ${MAX_LINES} lines)"
+    echo "========================================"
+    printf "$oversized_files"
+    echo "========================================"
+    echo ""
+    echo "Please split these files into smaller modules."
+    echo "See docs/plans/file-line-limit.md for guidance."
+    echo ""
+    exit 1
+fi
+echo "  All files within line limit"
+
+# Check formatting
+echo "Checking code formatting..."
+cargo fmt -- --check
+
+# Build (this also runs the build.rs line limit check)
+echo "Building..."
+cargo build
+
+# Run clippy
+echo "Running clippy..."
+cargo clippy --all-targets --all-features -- -D warnings
+
+# Run tests
+echo "Running tests..."
+cargo test
+
+echo ""
+echo "=== All pre-commit checks passed ==="
