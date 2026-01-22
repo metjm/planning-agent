@@ -46,7 +46,7 @@ use crate::planning_paths;
 use crate::session_logger::{create_session_logger, LogCategory, LogLevel};
 use crate::session_tracking::SessionTracker;
 use crate::state::{Phase, State};
-use crate::state_machine::{StateSnapshot, WorkflowStateMachine};
+use crate::state_machine::StateSnapshot;
 use crate::structured_logger::StructuredLogger;
 use crate::tui::{
     CancellationError, Event, SessionEventSender, UserApprovalResponse, WorkflowCommand,
@@ -132,40 +132,11 @@ pub async fn run_workflow_with_config(
     };
     structured_logger.log_workflow_spawn(false);
 
-    // Create state machine if snapshot_tx is provided (new architecture)
-    // Otherwise fall back to legacy direct state mutation
-    let state_machine: Option<WorkflowStateMachine> = if let Some(tx) = snapshot_tx {
-        // Create state machine that will broadcast to the provided channel
-        // Note: We create a new state machine wrapping the existing state,
-        // but we need to use the existing tx from the caller
+    // Broadcast initial state snapshot if TUI provided a snapshot channel
+    if let Some(ref tx) = snapshot_tx {
         let initial_snapshot = StateSnapshot::from(&state);
         let _ = tx.send(initial_snapshot);
-
-        // For now, we create the state machine but continue using direct state mutation
-        // TODO: Migrate phase handlers to use state machine commands
-        let (machine, _rx) = WorkflowStateMachine::new(state.clone(), structured_logger.clone());
-
-        // Store the tx for broadcasting (but we don't use the machine's rx)
-        // The TUI already has the rx from when it called watch::channel()
-        drop(_rx);
-
-        // Actually, we need to think about this differently.
-        // The state machine creates its own watch channel internally.
-        // We should either:
-        // 1. Pass the tx into the state machine constructor, or
-        // 2. Return the rx from the state machine and use that
-        //
-        // For incremental migration, let's keep it simple:
-        // We'll create the state machine with its own watch channel,
-        // and just broadcast snapshots manually after state changes.
-
-        Some(machine)
-    } else {
-        None
-    };
-
-    // Suppress unused warning for now - will be used when phase handlers are migrated
-    let _ = state_machine;
+    }
 
     // Create session tracker for daemon integration
     let tracker = Arc::new(SessionTracker::new(no_daemon));
