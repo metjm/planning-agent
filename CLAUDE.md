@@ -72,7 +72,7 @@ Max iterations (default 3) prevents infinite revision loops.
 **State Management** (`src/state.rs`):
 - `State` - Workflow state with phase, iteration, plan paths
 - `Phase` enum: Planning, Reviewing, Revising, Complete
-- Persisted to `~/.planning-agent/state/<wd-hash>/<feature>.json`
+- Persisted to `~/.planning-agent/sessions/<session-id>/state.json`
 
 **Prompt Handling** (`src/agents/prompt.rs`):
 - `PreparedPrompt` - Centralized prompt preparation for all agent types
@@ -89,7 +89,6 @@ Max iterations (default 3) prevents infinite revision loops.
 
 All data stored under `~/.planning-agent/`:
 
-**Session-Centric Structure** (new sessions):
 ```
 ~/.planning-agent/sessions/<session-id>/
 ├── plan.md              # Implementation plan
@@ -103,14 +102,6 @@ All data stored under `~/.planning-agent/`:
 │   └── agent-stream.log # Raw agent output
 └── diagnostics/         # Failure bundles
 ```
-
-**Legacy Structure** (backward compatibility):
-- `plans/` - Legacy plan folders with timestamp-uuid prefix
-- `sessions/*.json` - Legacy snapshot files
-- `state/<wd-hash>/` - Per-project workflow state
-- `logs/<wd-hash>/` - Workflow and agent stream logs
-
-The system reads from both structures for backward compatibility with existing sessions.
 
 ### Agent Protocol
 
@@ -162,6 +153,21 @@ This is non-negotiable. Every problem must be properly investigated and fixed. W
 - Mark tests as ignored instead of fixing them
 - Add `#[allow(...)]` attributes to silence legitimate warnings
 - Hand-wave problems away with vague explanations
+
+### No Backwards Compatibility Code
+
+**Delete old code. Never keep deprecated features around.**
+
+When refactoring or changing functionality:
+
+- **DELETE** old code paths, don't keep them "just in case"
+- **DELETE** deprecated functions immediately, don't mark them `#[deprecated]`
+- **DELETE** legacy format support, don't maintain dual-path loading
+- **DELETE** unused parameters, don't add `#[allow(unused)]`
+- **DELETE** catch-all enum variants like `Unknown` with `#[serde(other)]`
+- **DELETE** backwards compatibility tests when removing features
+
+Make a clean cut. Users with old data can either migrate manually or lose access - that's acceptable for transient data like planning sessions. The maintenance burden of compatibility code is never worth it.
 
 When tests fail, you investigate why they fail and fix the root cause. When refactoring is needed, you do the refactoring properly. When something is broken, you take ownership and fix it.
 
