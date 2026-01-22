@@ -137,90 +137,7 @@ pub struct Theme {
 }
 
 impl Theme {
-    /// Returns the planning mode color palette.
-    ///
-    /// This is the original/default palette with cyan/magenta/yellow tones.
-    pub fn planning() -> Self {
-        Self {
-            // Primary colors
-            text: Color::White,
-            muted: Color::DarkGray,
-            accent: Color::Cyan,
-            accent_alt: Color::Magenta,
-
-            // Border colors
-            border: Color::Blue,
-            border_focused: Color::Yellow,
-
-            // Semantic colors
-            success: Color::Green,
-            warning: Color::Yellow,
-            error: Color::Red,
-
-            // Selection colors
-            selection_fg: Color::Black,
-            selection_bg: Color::Cyan,
-
-            // Phase-specific colors
-            phase_current: Color::Yellow,
-            phase_complete: Color::Green,
-            phase_pending: Color::DarkGray,
-
-            // Tab bar colors
-            tab_active: Color::Yellow,
-            tab_inactive: Color::DarkGray,
-            tab_approval: Color::Magenta,
-
-            // Output tag colors
-            tag_planning: Color::Cyan,
-            tag_implementation: Color::Blue,
-            tag_agent: Color::Green,
-
-            // Stats panel colors
-            stats_header: Color::Cyan,
-            stats_border: Color::Magenta,
-            stats_cost: Color::Green,
-            stats_tokens_in: Color::Cyan,
-            stats_tokens_out: Color::Green,
-
-            // Markdown colors
-            md_h1: Color::Magenta,
-            md_h2: Color::Blue,
-            md_h3: Color::Cyan,
-            md_bullet: Color::Yellow,
-            md_bold: Color::Yellow,
-            md_code: Color::Green,
-
-            // Todo colors
-            todo_header: Color::Cyan,
-            todo_in_progress: Color::Yellow,
-            todo_complete: Color::Green,
-            todo_pending: Color::White,
-
-            // CLI instances colors
-            cli_border: Color::Blue,
-            cli_running: Color::Green,
-            cli_elapsed: Color::Cyan,
-            cli_idle: Color::Yellow,
-
-            // Objective panel colors
-            objective_border: Color::Cyan,
-
-            // Phase header backgrounds - bold, distinct colors
-            phase_bg_planning: Color::Rgb(0, 100, 150), // Deep blue
-            phase_bg_reviewing: Color::Rgb(100, 80, 140), // Purple
-            phase_bg_revising: Color::Rgb(140, 100, 0), // Amber/orange
-            phase_bg_complete: Color::Rgb(0, 100, 50),  // Deep green
-            phase_bg_waiting: Color::Rgb(80, 80, 80),   // Dark gray
-            phase_bg_stopped: Color::Rgb(60, 60, 90),   // Muted blue-gray (distinct from waiting)
-            phase_bg_error: Color::Rgb(140, 30, 30),    // Dark red
-        }
-    }
-
-    /// Returns the implementation mode color palette.
-    ///
-    /// Uses a distinctly different color scheme with orange/red/warm tones
-    /// to make it visually unambiguous that implementation is active.
+    /// Returns the default (warm) color palette with orange/warm tones.
     pub fn implementation() -> Self {
         Self {
             // Primary colors - warmer tones
@@ -299,35 +216,22 @@ impl Theme {
     }
 
     /// Returns the appropriate theme for a session based on its UI mode.
-    pub fn for_session(session: &Session) -> Self {
-        match session.ui_mode() {
-            UiMode::Planning => Self::planning(),
-            UiMode::Implementation => Self::implementation(),
-        }
+    pub fn for_session(_session: &Session) -> Self {
+        // Default to warm theme for all modes
+        Self::implementation()
     }
 
     /// Returns the appropriate theme for a given UI mode.
     #[allow(dead_code)]
-    pub fn for_mode(mode: UiMode) -> Self {
-        match mode {
-            UiMode::Planning => Self::planning(),
-            UiMode::Implementation => Self::implementation(),
-        }
+    pub fn for_mode(_mode: UiMode) -> Self {
+        // Default to warm theme for all modes
+        Self::implementation()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_planning_theme_has_distinct_colors() {
-        let theme = Theme::planning();
-        // Verify key colors are set correctly
-        assert_eq!(theme.accent, Color::Cyan);
-        assert_eq!(theme.border_focused, Color::Yellow);
-        assert_eq!(theme.stats_border, Color::Magenta);
-    }
 
     #[test]
     fn test_implementation_theme_has_distinct_colors() {
@@ -339,26 +243,12 @@ mod tests {
     }
 
     #[test]
-    fn test_themes_are_visually_distinct() {
-        let planning = Theme::planning();
-        let implementation = Theme::implementation();
-
-        // Key colors should be different
-        assert_ne!(planning.accent, implementation.accent);
-        assert_ne!(planning.border, implementation.border);
-        assert_ne!(planning.stats_header, implementation.stats_header);
-        assert_ne!(
-            planning.tag_implementation,
-            implementation.tag_implementation
-        );
-    }
-
-    #[test]
     fn test_theme_for_mode() {
+        // Both modes return warm theme
         let planning = Theme::for_mode(UiMode::Planning);
         let implementation = Theme::for_mode(UiMode::Implementation);
 
-        assert_eq!(planning.accent, Color::Cyan);
+        assert_eq!(planning.accent, Color::Rgb(255, 165, 0));
         assert_eq!(implementation.accent, Color::Rgb(255, 165, 0));
     }
 }
