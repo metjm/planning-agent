@@ -65,11 +65,7 @@ async fn test_session_sync() {
     let mut state = HostState::new();
 
     // Add container
-    state.add_container(
-        "container-1".to_string(),
-        "Test Container".to_string(),
-        std::path::PathBuf::from("/test"),
-    );
+    state.add_container("container-1".to_string(), "Test Container".to_string());
 
     // Sync sessions
     let sessions = vec![
@@ -109,14 +105,7 @@ async fn test_session_sync() {
         .to_lowercase()
         .contains("approval"));
     // Verify container info is passed through
-    assert_eq!(display[0].container_id, "container-1");
     assert_eq!(display[0].container_name, "Test Container");
-
-    // Verify container state
-    let container = state.containers.get("container-1").unwrap();
-    assert_eq!(container.working_dir, std::path::PathBuf::from("/test"));
-    // connected_at should be recent
-    assert!(container.connected_at.elapsed().as_secs() < 5);
 }
 
 #[tokio::test]
@@ -664,11 +653,11 @@ async fn test_multi_container_scenario() {
         let sessions = state_guard.sessions();
         assert_eq!(sessions.len(), 4);
 
-        let container_ids: std::collections::HashSet<_> =
-            sessions.iter().map(|s| s.container_id.as_str()).collect();
-        assert!(container_ids.contains("container-1"));
-        assert!(container_ids.contains("container-2"));
-        assert!(container_ids.contains("container-3"));
+        let container_names: std::collections::HashSet<_> =
+            sessions.iter().map(|s| s.container_name.as_str()).collect();
+        assert!(container_names.contains("Container 1"));
+        assert!(container_names.contains("Container 2"));
+        assert!(container_names.contains("Container 3"));
     }
 
     // Disconnect one container and verify cleanup

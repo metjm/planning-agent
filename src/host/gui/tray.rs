@@ -62,13 +62,6 @@ impl HostTray {
         })
     }
 
-    /// Update the tray tooltip with session count.
-    /// Note: tray-icon doesn't support updating tooltip after creation in v1.
-    pub fn update_tooltip(&self, active_sessions: usize, approval_count: usize) {
-        // This is a no-op in v1 of tray-icon - tooltip cannot be updated after creation
-        let _ = (active_sessions, approval_count);
-    }
-
     /// Try to receive a tray command (non-blocking).
     pub fn try_recv_command(&self) -> Option<TrayCommand> {
         self.command_rx.try_recv().ok()

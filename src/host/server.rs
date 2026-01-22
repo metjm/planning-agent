@@ -76,7 +76,7 @@ pub(crate) async fn handle_connection(
         DaemonToHost::Hello {
             container_id,
             container_name,
-            working_dir,
+            working_dir: _,
             protocol_version,
         } => {
             // Check protocol version
@@ -91,11 +91,7 @@ pub(crate) async fn handle_connection(
             // Register container
             {
                 let mut state_guard = state.lock().await;
-                state_guard.add_container(
-                    container_id.clone(),
-                    container_name.clone(),
-                    working_dir,
-                );
+                state_guard.add_container(container_id.clone(), container_name.clone());
             }
 
             // Send Welcome

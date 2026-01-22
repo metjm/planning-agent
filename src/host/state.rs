@@ -5,16 +5,12 @@
 
 use crate::host_protocol::SessionInfo;
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::time::Instant;
 
 /// Represents a connected container daemon.
 #[derive(Debug, Clone)]
 pub struct ConnectedContainer {
-    pub container_id: String,
     pub container_name: String,
-    pub working_dir: PathBuf,
-    pub connected_at: Instant,
     pub last_message_at: Instant,
     pub sessions: HashMap<String, SessionInfo>,
 }
@@ -38,7 +34,6 @@ impl Default for HostState {
 /// Session with container context for display.
 #[derive(Debug, Clone)]
 pub struct DisplaySession {
-    pub container_id: String,
     pub container_name: String,
     pub session: SessionInfo,
 }
@@ -53,20 +48,12 @@ impl HostState {
     }
 
     /// Register a new container connection.
-    pub fn add_container(
-        &mut self,
-        container_id: String,
-        container_name: String,
-        working_dir: PathBuf,
-    ) {
+    pub fn add_container(&mut self, container_id: String, container_name: String) {
         let now = Instant::now();
         self.containers.insert(
-            container_id.clone(),
+            container_id,
             ConnectedContainer {
-                container_id,
                 container_name,
-                working_dir,
-                connected_at: now,
                 last_message_at: now,
                 sessions: HashMap::new(),
             },
@@ -131,7 +118,6 @@ impl HostState {
             for container in self.containers.values() {
                 for session in container.sessions.values() {
                     sessions.push(DisplaySession {
-                        container_id: container.container_id.clone(),
                         container_name: container.container_name.clone(),
                         session: session.clone(),
                     });
@@ -203,11 +189,7 @@ mod tests {
     #[test]
     fn test_add_container() {
         let mut state = HostState::new();
-        state.add_container(
-            "c1".to_string(),
-            "Container 1".to_string(),
-            PathBuf::from("/test"),
-        );
+        state.add_container("c1".to_string(), "Container 1".to_string());
 
         assert_eq!(state.containers.len(), 1);
         assert!(state.containers.contains_key("c1"));
@@ -216,11 +198,7 @@ mod tests {
     #[test]
     fn test_sync_sessions() {
         let mut state = HostState::new();
-        state.add_container(
-            "c1".to_string(),
-            "Container 1".to_string(),
-            PathBuf::from("/test"),
-        );
+        state.add_container("c1".to_string(), "Container 1".to_string());
 
         let sessions = vec![
             make_session("s1", "Running"),
@@ -235,11 +213,7 @@ mod tests {
     #[test]
     fn test_sessions_sorted_by_status() {
         let mut state = HostState::new();
-        state.add_container(
-            "c1".to_string(),
-            "Container 1".to_string(),
-            PathBuf::from("/test"),
-        );
+        state.add_container("c1".to_string(), "Container 1".to_string());
 
         let sessions = vec![
             make_session("s1", "Running"),
@@ -263,11 +237,7 @@ mod tests {
     #[test]
     fn test_remove_container() {
         let mut state = HostState::new();
-        state.add_container(
-            "c1".to_string(),
-            "Container 1".to_string(),
-            PathBuf::from("/test"),
-        );
+        state.add_container("c1".to_string(), "Container 1".to_string());
         state.sync_sessions("c1", vec![make_session("s1", "Running")]);
 
         state.remove_container("c1");
@@ -279,11 +249,7 @@ mod tests {
     #[test]
     fn test_update_session() {
         let mut state = HostState::new();
-        state.add_container(
-            "c1".to_string(),
-            "Container 1".to_string(),
-            PathBuf::from("/test"),
-        );
+        state.add_container("c1".to_string(), "Container 1".to_string());
         state.sync_sessions("c1", vec![make_session("s1", "Running")]);
 
         // Update the session
@@ -296,11 +262,7 @@ mod tests {
     #[test]
     fn test_remove_session() {
         let mut state = HostState::new();
-        state.add_container(
-            "c1".to_string(),
-            "Container 1".to_string(),
-            PathBuf::from("/test"),
-        );
+        state.add_container("c1".to_string(), "Container 1".to_string());
         state.sync_sessions(
             "c1",
             vec![make_session("s1", "Running"), make_session("s2", "Running")],

@@ -24,8 +24,6 @@ pub struct HostApp {
     tray: Option<HostTray>,
     /// Sessions we've already notified about (for deduplication)
     notified_sessions: HashSet<String>,
-    /// Previous approval count (to detect new approvals)
-    prev_approval_count: usize,
 }
 
 #[derive(Default)]
@@ -75,7 +73,6 @@ impl HostApp {
             port,
             tray,
             notified_sessions: HashSet::new(),
-            prev_approval_count: 0,
         }
     }
 
@@ -177,9 +174,19 @@ impl eframe::App for HostApp {
         // Process any pending events (non-blocking)
         while let Ok(event) = self.event_rx.try_recv() {
             match event {
-                HostEvent::ContainerConnected { .. }
-                | HostEvent::ContainerDisconnected { .. }
-                | HostEvent::SessionsUpdated => {
+                HostEvent::ContainerConnected {
+                    container_id,
+                    container_name,
+                } => {
+                    eprintln!(
+                        "[host-gui] Container connected: {} ({})",
+                        container_name, container_id
+                    );
+                }
+                HostEvent::ContainerDisconnected { container_id } => {
+                    eprintln!("[host-gui] Container disconnected: {}", container_id);
+                }
+                HostEvent::SessionsUpdated => {
                     // Will sync on next frame
                 }
             }
