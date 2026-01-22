@@ -134,6 +134,14 @@ pub struct SessionUiState {
     #[serde(default)]
     pub plan_modal_scroll: usize,
 
+    // Review modal state (content is re-read from disk on restore, not persisted)
+    #[serde(default)]
+    pub review_modal_open: bool,
+    #[serde(default)]
+    pub review_modal_scroll: usize,
+    #[serde(default)]
+    pub review_modal_tab: usize,
+
     // Review history (uses serde(default) for backward compatibility with v4 snapshots)
     #[serde(default)]
     pub review_history: Vec<ReviewRound>,
@@ -589,6 +597,9 @@ impl SessionUiState {
             current_run_id: 0,
             plan_modal_open: false,
             plan_modal_scroll: 0,
+            review_modal_open: false,
+            review_modal_scroll: 0,
+            review_modal_tab: 0,
             review_history: Vec::new(),
             review_history_spinner_frame: 0,
             review_history_scroll: 0,

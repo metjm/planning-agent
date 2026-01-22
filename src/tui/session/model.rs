@@ -235,3 +235,22 @@ pub struct PasteBlock {
 pub struct ImplementationSuccessModal {
     pub iterations_used: u32,
 }
+
+/// Entry representing a single review feedback file for modal display.
+///
+/// Entries are sorted by (iteration DESC, agent_name ASC) to show most recent
+/// reviews first, with deterministic ordering when multiple agents review
+/// the same iteration.
+#[derive(Debug, Clone)]
+pub struct ReviewModalEntry {
+    /// Display name shown in tab (e.g., "Round 1 - claude", "Round 2")
+    pub display_name: String,
+    /// Full path to the feedback file (retained for potential future UI features)
+    #[allow(dead_code)]
+    pub file_path: std::path::PathBuf,
+    /// Cached content of the feedback file
+    pub content: String,
+    /// Sort key for ordering: iteration * 1_000_000 + (1_000_000 - agent_ordinal)
+    /// Higher values = more recent iteration, lower agent_ordinal = earlier in alphabet
+    pub sort_key: u64,
+}

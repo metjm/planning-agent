@@ -118,6 +118,42 @@ fn compute_plan_modal_visible_height() -> usize {
     visible_height as usize
 }
 
+/// Compute the max scroll for the review modal based on wrapped lines and terminal size.
+fn compute_review_modal_max_scroll(content: &str) -> usize {
+    let (term_width, term_height) = crossterm::terminal::size().unwrap_or((80, 24));
+    let (inner_width, visible_height) = compute_review_modal_inner_size(term_width, term_height);
+
+    let content_lines: Vec<Line> = content.lines().map(parse_markdown_line).collect();
+    let total_lines = compute_wrapped_line_count(&content_lines, inner_width);
+
+    total_lines.saturating_sub(visible_height as usize)
+}
+
+/// Compute the visible height of the review modal for page scrolling.
+fn compute_review_modal_visible_height() -> usize {
+    let (term_width, term_height) = crossterm::terminal::size().unwrap_or((80, 24));
+    let (_, visible_height) = compute_review_modal_inner_size(term_width, term_height);
+    visible_height as usize
+}
+
+/// Compute the inner dimensions of the review modal.
+/// Returns (inner_width, visible_height) for content area.
+fn compute_review_modal_inner_size(term_width: u16, term_height: u16) -> (u16, u16) {
+    let popup_width = (term_width as f32 * 0.8) as u16;
+    let popup_height = (term_height as f32 * 0.8) as u16;
+
+    // Vertical layout: Title (3) + Content (min 0) + Instructions (3)
+    // Content block has borders (2), so inner_height = content_chunk_height - 2
+    // Title and instructions take 6 lines total
+    let content_chunk_height = popup_height.saturating_sub(6);
+    let inner_height = content_chunk_height.saturating_sub(2);
+
+    // Content block has borders (2)
+    let inner_width = popup_width.saturating_sub(2);
+
+    (inner_width, inner_height)
+}
+
 /// Compute the max scroll for the review history panel.
 /// The panel is shown when terminal width >= 100, taking up 30% of the chat area.
 fn compute_review_history_max_scroll(
@@ -257,6 +293,53 @@ pub async fn handle_key_event(
         || session.approval_mode == ApprovalMode::EnteringFeedback;
     if key.code == KeyCode::Char('p') && session.workflow_state.is_some() && !in_text_input {
         session.toggle_plan_modal(working_dir);
+        return Ok(false);
+    }
+
+    // Handle 'r' to toggle review modal (global hotkey, works from any mode except error state or input areas)
+    if key.code == KeyCode::Char('r') && session.workflow_state.is_some() && !in_text_input {
+        session.toggle_review_modal(working_dir);
+        return Ok(false);
+    }
+
+    // Handle review modal input when it's open (intercept keys before other handlers)
+    if session.review_modal_open {
+        let content = session.current_review_content().to_string();
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('r') => {
+                session.close_review_modal();
+            }
+            KeyCode::Tab | KeyCode::Right => {
+                session.review_modal_next_tab();
+            }
+            KeyCode::BackTab | KeyCode::Left => {
+                session.review_modal_prev_tab();
+            }
+            KeyCode::Char('j') | KeyCode::Down => {
+                let max_scroll = compute_review_modal_max_scroll(&content);
+                session.review_modal_scroll_down(max_scroll);
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                session.review_modal_scroll_up();
+            }
+            KeyCode::Char('g') => {
+                session.review_modal_scroll_to_top();
+            }
+            KeyCode::Char('G') => {
+                let max_scroll = compute_review_modal_max_scroll(&content);
+                session.review_modal_scroll_to_bottom(max_scroll);
+            }
+            KeyCode::PageDown => {
+                let visible_height = compute_review_modal_visible_height();
+                let max_scroll = compute_review_modal_max_scroll(&content);
+                session.review_modal_page_down(visible_height, max_scroll);
+            }
+            KeyCode::PageUp => {
+                let visible_height = compute_review_modal_visible_height();
+                session.review_modal_page_up(visible_height);
+            }
+            _ => {}
+        }
         return Ok(false);
     }
 

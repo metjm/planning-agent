@@ -222,6 +222,10 @@ pub fn draw(frame: &mut Frame, tab_manager: &TabManager) {
     if session.plan_modal_open {
         overlays::draw_plan_modal(frame, session);
     }
+    // Render review modal BEFORE error overlay so errors always take precedence
+    if session.review_modal_open {
+        overlays::draw_review_modal(frame, session);
+    }
     // Render session browser overlay
     if tab_manager.session_browser.open {
         session_browser_overlay::draw_session_browser_overlay(frame, tab_manager);

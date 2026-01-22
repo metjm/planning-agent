@@ -148,7 +148,10 @@ pub fn draw_footer(frame: &mut Frame, session: &Session, tab_manager: &TabManage
 
     if session.workflow_state.is_some() {
         spans.push(Span::styled(" │ ", Style::default().fg(theme.muted)));
-        spans.push(Span::styled("[p] Plan", Style::default().fg(theme.border)));
+        spans.push(Span::styled(
+            "[p] Plan  [r] Reviews",
+            Style::default().fg(theme.border),
+        ));
     }
 
     let daemon_indicator = if tab_manager.daemon_connected {
@@ -524,6 +527,140 @@ pub fn draw_plan_modal(frame: &mut Frame, session: &Session) {
         Span::styled("  [PgUp/Dn] ", Style::default().fg(Color::Cyan).bold()),
         Span::raw("Page  "),
         Span::styled("  [Esc/p] ", Style::default().fg(Color::Yellow).bold()),
+        Span::raw("Close"),
+    ]))
+    .block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::DarkGray)),
+    );
+    frame.render_widget(instructions, chunks[2]);
+}
+
+/// Draw the review modal overlay showing review feedback with tabs.
+///
+/// The modal is 80% of the terminal size with a tab bar for switching reviews.
+pub fn draw_review_modal(frame: &mut Frame, session: &Session) {
+    let area = frame.area();
+
+    let popup_width = (area.width as f32 * 0.8) as u16;
+    let popup_height = (area.height as f32 * 0.8) as u16;
+    let popup_x = (area.width - popup_width) / 2;
+    let popup_y = (area.height - popup_height) / 2;
+
+    let popup_area = Rect::new(popup_x, popup_y, popup_width, popup_height);
+
+    frame.render_widget(Clear, popup_area);
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3), // Title with tabs
+            Constraint::Min(0),    // Content
+            Constraint::Length(3), // Instructions
+        ])
+        .split(popup_area);
+
+    // Title block with tab bar
+    let tab_spans: Vec<Span> = session
+        .review_modal_entries
+        .iter()
+        .enumerate()
+        .flat_map(|(i, entry)| {
+            let is_selected = i == session.review_modal_tab;
+            let style = if is_selected {
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(ratatui::style::Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::DarkGray)
+            };
+            let bracket_style = if is_selected {
+                Style::default().fg(Color::Cyan)
+            } else {
+                Style::default().fg(Color::DarkGray)
+            };
+            vec![
+                Span::styled("[", bracket_style),
+                Span::styled(entry.display_name.clone(), style),
+                Span::styled("] ", bracket_style),
+            ]
+        })
+        .collect();
+
+    let title_line = Line::from(tab_spans);
+    let title = Paragraph::new(title_line).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Cyan))
+            .title(" Reviews (Tab/Arrow to switch) "),
+    );
+    frame.render_widget(title, chunks[0]);
+
+    // Content block with scrolling
+    let content_block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Blue))
+        .title(" Content (j/k to scroll) ");
+
+    let inner_area = content_block.inner(chunks[1]);
+    let visible_height = inner_area.height as usize;
+    let inner_width = inner_area.width;
+
+    let content_text = session.current_review_content();
+    let content_lines: Vec<Line> = content_text.lines().map(parse_markdown_line).collect();
+
+    let total_lines = compute_wrapped_line_count(&content_lines, inner_width);
+    let max_scroll = total_lines.saturating_sub(visible_height);
+    let scroll_pos = session.review_modal_scroll.min(max_scroll);
+
+    let content = Paragraph::new(content_lines)
+        .block(content_block)
+        .wrap(Wrap { trim: false })
+        .scroll((scroll_pos as u16, 0));
+    frame.render_widget(content, chunks[1]);
+
+    // Scrollbar
+    if total_lines > visible_height {
+        let mut scrollbar_state = ScrollbarState::new(total_lines).position(scroll_pos);
+        frame.render_stateful_widget(
+            Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                .begin_symbol(Some("↑"))
+                .end_symbol(Some("↓")),
+            chunks[1],
+            &mut scrollbar_state,
+        );
+    }
+
+    // Instructions
+    let instructions = Paragraph::new(Line::from(vec![
+        Span::styled(
+            "  [Tab/Arrow] ",
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(ratatui::style::Modifier::BOLD),
+        ),
+        Span::raw("Switch Review  "),
+        Span::styled(
+            "  [j/k] ",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(ratatui::style::Modifier::BOLD),
+        ),
+        Span::raw("Scroll  "),
+        Span::styled(
+            "  [g/G] ",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(ratatui::style::Modifier::BOLD),
+        ),
+        Span::raw("Top/Bottom  "),
+        Span::styled(
+            "  [Esc/r] ",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(ratatui::style::Modifier::BOLD),
+        ),
         Span::raw("Close"),
     ]))
     .block(

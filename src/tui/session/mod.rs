@@ -7,6 +7,7 @@ pub mod model;
 mod paste;
 mod plan_modal;
 mod review_history;
+mod review_modal;
 mod snapshot;
 mod tools;
 
@@ -30,8 +31,8 @@ use super::event::UserApprovalResponse;
 
 pub use model::{
     ApprovalContext, ApprovalMode, FeedbackTarget, FocusedPanel, ImplementationSuccessModal,
-    InputMode, PasteBlock, ReviewRound, ReviewerEntry, ReviewerStatus, RunTab, RunTabEntry,
-    SessionStatus, SummaryState, TodoItem, TodoStatus, ToolKind, ToolResultSummary,
+    InputMode, PasteBlock, ReviewModalEntry, ReviewRound, ReviewerEntry, ReviewerStatus, RunTab,
+    RunTabEntry, SessionStatus, SummaryState, TodoItem, TodoStatus, ToolKind, ToolResultSummary,
     ToolTimelineEntry,
 };
 
@@ -188,6 +189,16 @@ pub struct Session {
     /// Cached plan modal content (runtime-only, not serialized)
     pub plan_modal_content: String,
 
+    /// Whether the review modal is currently open
+    pub review_modal_open: bool,
+    /// Scroll position within the review modal content
+    pub review_modal_scroll: usize,
+    /// Currently selected review tab index (0 = most recent)
+    pub review_modal_tab: usize,
+    /// Loaded review entries: (display_name, file_path, content, sort_key)
+    /// Sorted by (iteration DESC, agent_name ASC) for deterministic ordering.
+    pub review_modal_entries: Vec<ReviewModalEntry>,
+
     /// Per-session context tracking working directory, paths, and configuration.
     /// None for sessions created before this feature or not yet initialized.
     pub context: Option<SessionContext>,
@@ -300,6 +311,11 @@ impl Session {
             plan_modal_open: false,
             plan_modal_scroll: 0,
             plan_modal_content: String::new(),
+
+            review_modal_open: false,
+            review_modal_scroll: 0,
+            review_modal_tab: 0,
+            review_modal_entries: Vec::new(),
 
             context: None,
 
