@@ -3,8 +3,6 @@
 //! This module provides a high-level interface for registering and updating
 //! sessions with the session daemon, including background heartbeat tasks.
 
-#![allow(dead_code)]
-
 use crate::session_daemon::{LivenessState, SessionDaemonClient, SessionRecord};
 use anyhow::Result;
 use std::collections::HashMap;
@@ -169,6 +167,7 @@ impl SessionTracker {
     }
 
     /// Returns true if session tracking is enabled and connected.
+    #[cfg(test)]
     pub async fn is_connected(&self) -> bool {
         if self.disabled {
             return false;
@@ -266,6 +265,7 @@ impl SessionTracker {
     }
 
     /// Lists all sessions from the daemon.
+    #[cfg(test)]
     pub async fn list(&self) -> Result<Vec<SessionRecord>> {
         if self.disabled {
             return Ok(Vec::new());
@@ -276,6 +276,7 @@ impl SessionTracker {
     }
 
     /// Force-stops a session (marks as stopped immediately).
+    #[cfg(test)]
     pub async fn force_stop(&self, session_id: &str) -> Result<()> {
         if self.disabled {
             return Ok(());
@@ -286,18 +287,8 @@ impl SessionTracker {
         Ok(())
     }
 
-    /// Requests daemon shutdown (for updates).
-    pub async fn shutdown_daemon(&self) -> Result<()> {
-        if self.disabled {
-            return Ok(());
-        }
-
-        let client = self.client.lock().await;
-        client.shutdown().await?;
-        Ok(())
-    }
-
     /// Attempts to reconnect to the daemon.
+    #[cfg(test)]
     pub async fn reconnect(&self) -> Result<()> {
         if self.disabled {
             return Ok(());
@@ -316,6 +307,7 @@ impl SessionTracker {
     }
 
     /// Returns whether tracking is disabled.
+    #[cfg(test)]
     pub fn is_disabled(&self) -> bool {
         self.disabled
     }

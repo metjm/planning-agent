@@ -73,4 +73,12 @@ pub struct Cli {
     /// Custom branch name for git worktree (default: planning-agent/<feature>-<session-short>)
     #[arg(long)]
     pub worktree_branch: Option<String>,
+
+    /// Run as host application aggregating sessions from containers
+    #[arg(long)]
+    pub host: bool,
+
+    /// Port for host mode TCP server (default: 17717)
+    #[arg(long, default_value = "17717")]
+    pub port: u16,
 }

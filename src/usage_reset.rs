@@ -4,9 +4,6 @@
 //! all provider usage tracking (Claude, Gemini, Codex) to support countdown
 //! rendering in the UI.
 
-// Some methods/types are defined for future use in UI rendering
-#![allow(dead_code)]
-
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -95,6 +92,7 @@ pub struct UsageWindow {
 
 impl UsageWindow {
     /// Creates a new usage window with just the percent used.
+    #[cfg(test)]
     pub fn with_percent(percent: u8) -> Self {
         Self {
             used_percent: Some(percent),
@@ -104,6 +102,7 @@ impl UsageWindow {
     }
 
     /// Creates a new usage window with percent and reset timestamp.
+    #[cfg(test)]
     pub fn with_percent_and_reset(percent: u8, reset_at: ResetTimestamp) -> Self {
         Self {
             used_percent: Some(percent),

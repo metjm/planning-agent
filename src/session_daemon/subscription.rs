@@ -3,8 +3,6 @@
 //! This module provides `DaemonSubscription` which uses tokio async I/O
 //! to subscribe to session change events from the daemon.
 
-#![allow(dead_code)]
-
 use crate::planning_paths;
 use crate::session_daemon::protocol::{ClientMessage, DaemonMessage};
 
@@ -226,6 +224,7 @@ impl DaemonSubscription {
     }
 
     /// Try to receive an event without blocking.
+    #[cfg(test)]
     pub fn try_recv(&mut self) -> Option<DaemonMessage> {
         self.rx.try_recv().ok()
     }

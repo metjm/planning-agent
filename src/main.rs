@@ -8,6 +8,8 @@ mod config;
 mod diagnostics;
 mod gemini_usage;
 mod git_worktree;
+mod host;
+mod host_protocol;
 mod phases;
 mod planning_paths;
 pub mod prompt_format;
@@ -64,6 +66,11 @@ async fn async_main() -> Result<()> {
     // Handle session daemon mode (internal, used by connect-or-spawn)
     if cli.session_daemon {
         return session_daemon::run_daemon().await;
+    }
+
+    // Handle host mode (desktop GUI aggregating container sessions)
+    if cli.host {
+        return run_host(cli.port).await;
     }
 
     // Handle session management commands first (no TUI needed)
@@ -338,4 +345,61 @@ fn truncate_string(s: &str, max_len: usize) -> String {
         let prefix = s.get(..max_len.saturating_sub(3)).unwrap_or("");
         format!("{}...", prefix)
     }
+}
+
+/// Run the host application with GUI and TCP server.
+#[cfg(feature = "host-gui")]
+async fn run_host(port: u16) -> Result<()> {
+    use crate::host::gui::app::HostApp;
+    use crate::host::server::run_server;
+    use crate::host::state::HostState;
+    use eframe::egui;
+    use std::sync::Arc;
+    use tokio::sync::{mpsc, Mutex};
+
+    let state = Arc::new(Mutex::new(HostState::new()));
+    let (event_tx, event_rx) = mpsc::unbounded_channel();
+
+    // Spawn TCP server in background
+    let server_state = state.clone();
+    let server_handle = tokio::spawn(async move {
+        if let Err(e) = run_server(port, server_state, event_tx).await {
+            eprintln!("[host] Server error: {}", e);
+        }
+    });
+
+    // Run GUI on main thread (required for macOS)
+    let native_options = eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default()
+            .with_inner_size([1200.0, 600.0])
+            .with_min_inner_size([800.0, 400.0])
+            .with_title("Planning Agent Host"),
+        ..Default::default()
+    };
+
+    // This blocks until window is closed
+    let gui_result = eframe::run_native(
+        "Planning Agent Host",
+        native_options,
+        Box::new(move |_cc| Ok(Box::new(HostApp::new(state, event_rx, port)))),
+    );
+
+    // Cleanup
+    server_handle.abort();
+
+    gui_result.map_err(|e| anyhow::anyhow!("GUI error: {}", e))
+}
+
+/// Stub for host mode when GUI feature is not enabled.
+#[cfg(not(feature = "host-gui"))]
+async fn run_host(_port: u16) -> Result<()> {
+    anyhow::bail!(
+        "Host mode requires the 'host-gui' feature.\n\
+         Build with: cargo build --features host-gui\n\
+         \n\
+         Note: This feature requires GUI system libraries:\n\
+         - macOS: Available by default\n\
+         - Linux: Install libgtk-3-dev, libatk1.0-dev, libpango1.0-dev\n\
+         - Windows: Available by default"
+    )
 }

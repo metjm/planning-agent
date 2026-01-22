@@ -3,8 +3,6 @@
 //! Provides the connect-or-spawn pattern for connecting to the session daemon
 //! and automatically spawning it if not running.
 
-#![allow(dead_code)]
-
 use crate::planning_paths;
 use crate::session_daemon::protocol::{ClientMessage, DaemonMessage, SessionRecord};
 use anyhow::{Context, Result};
@@ -641,55 +639,9 @@ impl SessionDaemonClient {
     }
 }
 
-/// Checks if a process with the given PID is alive.
-#[cfg(unix)]
-pub fn is_process_alive(pid: u32) -> bool {
-    unsafe { nix::libc::kill(pid as i32, 0) == 0 }
-}
-
-#[cfg(windows)]
-pub fn is_process_alive(pid: u32) -> bool {
-    use std::ptr::null_mut;
-    const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
-
-    unsafe {
-        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
-        if handle.is_null() {
-            return false;
-        }
-        let mut exit_code: u32 = 0;
-        let result = GetExitCodeProcess(handle, &mut exit_code);
-        CloseHandle(handle);
-        result != 0 && exit_code == 259 // STILL_ACTIVE
-    }
-}
-
-#[cfg(windows)]
-extern "system" {
-    fn OpenProcess(
-        dwDesiredAccess: u32,
-        bInheritHandle: i32,
-        dwProcessId: u32,
-    ) -> *mut std::ffi::c_void;
-    fn GetExitCodeProcess(hProcess: *mut std::ffi::c_void, lpExitCode: *mut u32) -> i32;
-    fn CloseHandle(hObject: *mut std::ffi::c_void) -> i32;
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_is_process_alive_self() {
-        let pid = std::process::id();
-        assert!(is_process_alive(pid));
-    }
-
-    #[test]
-    fn test_is_process_alive_nonexistent() {
-        // Use a very high PID that's unlikely to exist
-        assert!(!is_process_alive(999999999));
-    }
 
     #[test]
     fn test_client_degraded_mode() {

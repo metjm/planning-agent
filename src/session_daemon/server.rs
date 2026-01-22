@@ -5,12 +5,13 @@
 
 use crate::planning_paths;
 use crate::session_daemon::protocol::{ClientMessage, DaemonMessage, LivenessState, SessionRecord};
+use crate::session_daemon::upstream::{host_port, UpstreamConnection, UpstreamEvent};
 use crate::update::BUILD_SHA;
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::sync::{broadcast, Mutex};
+use tokio::sync::{broadcast, mpsc, Mutex};
 
 /// Log a daemon server event to ~/.planning-agent/daemon-debug.log
 fn daemon_log(msg: &str) {
@@ -158,6 +159,56 @@ pub async fn run_daemon() -> Result<()> {
 
     // Create session events broadcast channel for push notifications
     let (events_tx, _) = broadcast::channel::<SessionRecord>(64);
+
+    // Spawn upstream connection to host if PLANNING_AGENT_HOST_PORT is set
+    if let Some(port) = host_port() {
+        eprintln!(
+            "[sessiond] Upstream host connection enabled on port {}",
+            port
+        );
+
+        let (upstream_tx, upstream_rx) = mpsc::unbounded_channel::<UpstreamEvent>();
+        let upstream_conn = UpstreamConnection::new(port);
+
+        // Spawn upstream connection task
+        tokio::spawn(async move {
+            upstream_conn.run(upstream_rx).await;
+        });
+
+        // Spawn event forwarder: listens to events_tx and forwards to upstream_tx
+        let mut events_rx = events_tx.subscribe();
+        let forwarder_state = state.clone();
+        tokio::spawn(async move {
+            // Send initial sync on startup
+            {
+                let state_guard = forwarder_state.lock().await;
+                let all_sessions: Vec<SessionRecord> =
+                    state_guard.sessions.values().cloned().collect();
+                let _ = upstream_tx.send(UpstreamEvent::SyncSessions(all_sessions));
+            }
+
+            // Forward events as they occur
+            loop {
+                match events_rx.recv().await {
+                    Ok(record) => {
+                        if record.liveness == LivenessState::Stopped {
+                            // When a session is stopped via ForceStop, forward as SessionGone
+                            // (though the host can also track it as stopped)
+                        }
+                        let _ = upstream_tx.send(UpstreamEvent::SessionUpdate(record));
+                    }
+                    Err(broadcast::error::RecvError::Closed) => break,
+                    Err(broadcast::error::RecvError::Lagged(_)) => {
+                        // Re-sync if we missed events
+                        let state_guard = forwarder_state.lock().await;
+                        let all_sessions: Vec<SessionRecord> =
+                            state_guard.sessions.values().cloned().collect();
+                        let _ = upstream_tx.send(UpstreamEvent::SyncSessions(all_sessions));
+                    }
+                }
+            }
+        });
+    }
 
     // Start the listener
     #[cfg(unix)]

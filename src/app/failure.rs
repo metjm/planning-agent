@@ -5,9 +5,6 @@
 //! (all reviewers failed, empty plan output). It supports recovery decisions
 //! in both TUI and headless modes.
 
-// Allow dead code for now - these types will be used as we wire up the rest of the implementation
-#![allow(dead_code)]
-
 use crate::state::Phase;
 use serde::{Deserialize, Serialize};
 
@@ -186,21 +183,6 @@ impl FailurePolicy {
 /// These patterns are used to identify network-related failures.
 pub const NETWORK_ERROR_PATTERN: &str =
     r"(?i)connect|network|ECONNREFUSED|ETIMEDOUT|connection\s+refused|name\s+resolution|DNS|socket";
-
-/// Decision options for failure recovery in TUI mode.
-#[derive(Debug, Clone, PartialEq)]
-pub enum FailureDecision {
-    /// Retry the failed agents/operation.
-    Retry,
-    /// Stop workflow and save state for later resume.
-    Stop,
-    /// Abort workflow without saving recovery state.
-    Abort,
-    /// Continue with partial reviews (only when partial reviews exist).
-    ContinueWithoutReview,
-    /// Workflow was stopped via control channel.
-    Stopped,
-}
 
 #[cfg(test)]
 mod tests {
