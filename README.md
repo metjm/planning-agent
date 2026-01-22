@@ -186,6 +186,16 @@ cd planning-agent
 
 If `planning` not found: `source "$HOME/.cargo/env"` or add `$HOME/.cargo/bin` to PATH.
 
+### Host Mode (Desktop Dashboard)
+
+To install with the host mode GUI for monitoring sessions across containers:
+
+```bash
+cargo install --git https://github.com/metjm/planning-agent.git --features host-gui --force
+```
+
+Then run `planning --host` to start the dashboard. Container daemons connect via `PLANNING_AGENT_HOST_PORT=17717`.
+
 ## Skills
 
 On startup, planning-agent auto-installs Claude Code skills to:
