@@ -5,12 +5,21 @@
 
 use crate::host_protocol::SessionInfo;
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::time::Instant;
 
 /// Represents a connected container daemon.
 #[derive(Debug, Clone)]
 pub struct ConnectedContainer {
     pub container_name: String,
+    /// Working directory from ContainerInfo hello handshake.
+    /// Only read by GUI code (behind host-gui feature).
+    #[cfg_attr(not(feature = "host-gui"), allow(dead_code))]
+    pub working_dir: PathBuf,
+    /// When this container connected.
+    /// Only read by GUI code (behind host-gui feature).
+    #[cfg_attr(not(feature = "host-gui"), allow(dead_code))]
+    pub connected_at: Instant,
     pub last_message_at: Instant,
     pub sessions: HashMap<String, SessionInfo>,
     /// Git commit SHA the daemon was built from.
@@ -56,6 +65,7 @@ impl HostState {
         &mut self,
         container_id: String,
         container_name: String,
+        working_dir: PathBuf,
         git_sha: String,
         build_timestamp: u64,
     ) {
@@ -64,6 +74,8 @@ impl HostState {
             container_id,
             ConnectedContainer {
                 container_name,
+                working_dir,
+                connected_at: now,
                 last_message_at: now,
                 sessions: HashMap::new(),
                 git_sha,
@@ -220,6 +232,7 @@ mod tests {
             liveness: LivenessState::Running,
             started_at: chrono::Utc::now().to_rfc3339(),
             updated_at: chrono::Utc::now().to_rfc3339(),
+            pid: 0,
         }
     }
 
@@ -229,6 +242,7 @@ mod tests {
         state.add_container(
             "c1".to_string(),
             "Container 1".to_string(),
+            PathBuf::from("/test/work"),
             "abc123".to_string(),
             1234567890,
         );
@@ -240,6 +254,7 @@ mod tests {
         let container = state.containers.get("c1").unwrap();
         assert_eq!(container.git_sha, "abc123");
         assert_eq!(container.build_timestamp, 1234567890);
+        assert_eq!(container.working_dir, PathBuf::from("/test/work"));
     }
 
     #[test]
@@ -248,6 +263,7 @@ mod tests {
         state.add_container(
             "c1".to_string(),
             "Container 1".to_string(),
+            PathBuf::from("/test/work"),
             "abc123".to_string(),
             1234567890,
         );
@@ -268,6 +284,7 @@ mod tests {
         state.add_container(
             "c1".to_string(),
             "Container 1".to_string(),
+            PathBuf::from("/test/work"),
             "abc123".to_string(),
             1234567890,
         );
@@ -297,6 +314,7 @@ mod tests {
         state.add_container(
             "c1".to_string(),
             "Container 1".to_string(),
+            PathBuf::from("/test/work"),
             "abc123".to_string(),
             1234567890,
         );
@@ -314,6 +332,7 @@ mod tests {
         state.add_container(
             "c1".to_string(),
             "Container 1".to_string(),
+            PathBuf::from("/test/work"),
             "abc123".to_string(),
             1234567890,
         );
@@ -332,6 +351,7 @@ mod tests {
         state.add_container(
             "c1".to_string(),
             "Container 1".to_string(),
+            PathBuf::from("/test/work"),
             "abc123".to_string(),
             1234567890,
         );

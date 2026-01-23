@@ -86,6 +86,7 @@ async fn test_upstream_session_update_flow() {
         liveness: LivenessState::Running,
         started_at: "2024-01-01T00:00:00Z".to_string(),
         updated_at: "2024-01-01T00:00:00Z".to_string(),
+        pid: 0,
     }];
     client
         .sync_sessions(tarpc::context::current(), sessions)
@@ -108,6 +109,7 @@ async fn test_upstream_session_update_flow() {
         liveness: LivenessState::Running,
         started_at: "2024-01-01T00:00:00Z".to_string(),
         updated_at: "2024-01-01T00:01:00Z".to_string(),
+        pid: 0,
     };
     client
         .session_update(tarpc::context::current(), updated)
@@ -241,6 +243,7 @@ async fn test_upstream_client_sends_session_updates() {
         liveness: LivenessState::Running,
         started_at: "2024-01-01T00:00:00Z".to_string(),
         updated_at: "2024-01-01T00:00:00Z".to_string(),
+        pid: 0,
     };
     client
         .session_update(tarpc::context::current(), session_info)
@@ -285,6 +288,7 @@ async fn test_upstream_client_sync_sessions() {
             liveness: LivenessState::Running,
             started_at: "2024-01-01T00:00:00Z".to_string(),
             updated_at: "2024-01-01T00:00:00Z".to_string(),
+            pid: 0,
         },
         SessionInfo {
             session_id: "sync-2".to_string(),
@@ -295,6 +299,7 @@ async fn test_upstream_client_sync_sessions() {
             liveness: LivenessState::Running,
             started_at: "2024-01-01T00:00:00Z".to_string(),
             updated_at: "2024-01-01T00:01:00Z".to_string(),
+            pid: 0,
         },
         SessionInfo {
             session_id: "sync-3".to_string(),
@@ -305,6 +310,7 @@ async fn test_upstream_client_sync_sessions() {
             liveness: LivenessState::Stopped,
             started_at: "2024-01-01T00:00:00Z".to_string(),
             updated_at: "2024-01-01T00:02:00Z".to_string(),
+            pid: 0,
         },
     ];
     client
@@ -356,6 +362,7 @@ async fn test_upstream_client_session_gone() {
         liveness: LivenessState::Running,
         started_at: "2024-01-01T00:00:00Z".to_string(),
         updated_at: "2024-01-01T00:00:00Z".to_string(),
+        pid: 0,
     };
     client
         .sync_sessions(tarpc::context::current(), vec![session])

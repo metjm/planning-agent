@@ -26,6 +26,11 @@ pub struct SessionInfo {
     pub liveness: LivenessState,
     pub started_at: String,
     pub updated_at: String,
+    /// Process ID of the workflow process.
+    /// Uses serde(default) for graceful degradation if host receives message
+    /// from older daemon that doesn't send pid - will deserialize to 0.
+    #[serde(default)]
+    pub pid: u32,
 }
 
 impl SessionInfo {
@@ -40,6 +45,7 @@ impl SessionInfo {
             liveness: record.liveness,
             started_at: record.updated_at.clone(), // Use updated_at as proxy for started_at
             updated_at: record.updated_at.clone(),
+            pid: record.pid,
         }
     }
 }
@@ -59,6 +65,7 @@ mod tests {
             liveness: LivenessState::Running,
             started_at: "2024-01-01T00:00:00Z".to_string(),
             updated_at: "2024-01-01T00:00:00Z".to_string(),
+            pid: 0,
         };
 
         let json = serde_json::to_string(&session).unwrap();

@@ -4,12 +4,16 @@
 use crate::host::gui::tray::{HostTray, TrayCommand};
 use crate::host::rpc_server::HostEvent;
 use crate::host::state::HostState;
+use crate::session_daemon::LivenessState;
 use eframe::egui;
 use egui_extras::{Column, TableBuilder};
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::{mpsc, Mutex};
+
+/// Maximum number of log entries to keep.
+const MAX_LOG_ENTRIES: usize = 200;
 
 /// Main host application.
 pub struct HostApp {
@@ -26,6 +30,8 @@ pub struct HostApp {
     tray: Option<HostTray>,
     /// Sessions we've already notified about (for deduplication)
     notified_sessions: HashSet<String>,
+    /// Event log buffer (bounded)
+    log_entries: VecDeque<LogEntry>,
 }
 
 #[derive(Default)]
@@ -42,8 +48,12 @@ struct DisplayData {
 struct DisplayContainerRow {
     container_id: String,
     container_name: String,
-    git_sha: String,
-    build_timestamp: u64,
+    working_dir: String,
+    git_sha_short: String,
+    build_time: String,
+    connected_duration: String,
+    ping_ago: String,
+    ping_healthy: bool,
     session_count: usize,
 }
 
@@ -55,7 +65,39 @@ struct DisplaySessionRow {
     phase: String,
     iteration: u32,
     status: String,
+    liveness: LivenessDisplay,
+    pid: u32,
     updated_ago: String,
+}
+
+#[derive(Clone, Copy)]
+enum LivenessDisplay {
+    Running,
+    Unresponsive,
+    Stopped,
+}
+
+impl From<LivenessState> for LivenessDisplay {
+    fn from(state: LivenessState) -> Self {
+        match state {
+            LivenessState::Running => LivenessDisplay::Running,
+            LivenessState::Unresponsive => LivenessDisplay::Unresponsive,
+            LivenessState::Stopped => LivenessDisplay::Stopped,
+        }
+    }
+}
+
+#[derive(Clone)]
+struct LogEntry {
+    timestamp: String,
+    message: String,
+    level: LogLevel,
+}
+
+#[derive(Clone, Copy)]
+enum LogLevel {
+    Info,
+    Warning,
 }
 
 impl HostApp {
@@ -86,6 +128,7 @@ impl HostApp {
             port,
             tray,
             notified_sessions: HashSet::new(),
+            log_entries: VecDeque::new(),
         }
     }
 
@@ -103,6 +146,7 @@ impl HostApp {
             last_sync: Instant::now(),
             port,
             notified_sessions: HashSet::new(),
+            log_entries: VecDeque::new(),
         }
     }
 
@@ -129,19 +173,31 @@ impl HostApp {
                     phase: s.session.phase.clone(),
                     iteration: s.session.iteration,
                     status: s.session.status.clone(),
+                    liveness: s.session.liveness.into(),
+                    pid: s.session.pid,
                     updated_ago: format_relative_time(&s.session.updated_at),
                 })
                 .collect();
-            // Collect container info with version details
+            // Collect container info with enhanced display data
             self.display_data.containers = state
                 .containers
                 .iter()
-                .map(|(id, c)| DisplayContainerRow {
-                    container_id: id.clone(),
-                    container_name: c.container_name.clone(),
-                    git_sha: c.git_sha.clone(),
-                    build_timestamp: c.build_timestamp,
-                    session_count: c.sessions.len(),
+                .map(|(id, c)| {
+                    let ping_elapsed = c.last_message_at.elapsed();
+                    let ping_healthy = ping_elapsed.as_secs() < 60;
+                    let connected_elapsed = c.connected_at.elapsed();
+
+                    DisplayContainerRow {
+                        container_id: id.clone(),
+                        container_name: c.container_name.clone(),
+                        working_dir: c.working_dir.to_string_lossy().to_string(),
+                        git_sha_short: c.git_sha.chars().take(7).collect(),
+                        build_time: format_build_timestamp(c.build_timestamp),
+                        connected_duration: format_duration(connected_elapsed),
+                        ping_ago: format_ping_duration(ping_elapsed),
+                        ping_healthy,
+                        session_count: c.sessions.len(),
+                    }
                 })
                 .collect();
             self.display_data.active_count = state.active_count();
@@ -228,26 +284,8 @@ impl eframe::App for HostApp {
         // Handle tray icon commands
         self.handle_tray_commands(ctx);
 
-        // Process any pending events (non-blocking)
-        while let Ok(event) = self.event_rx.try_recv() {
-            match event {
-                HostEvent::ContainerConnected {
-                    container_id,
-                    container_name,
-                } => {
-                    eprintln!(
-                        "[host-gui] Container connected: {} ({})",
-                        container_name, container_id
-                    );
-                }
-                HostEvent::ContainerDisconnected { container_id } => {
-                    eprintln!("[host-gui] Container disconnected: {}", container_id);
-                }
-                HostEvent::SessionsUpdated => {
-                    // Will sync on next frame
-                }
-            }
-        }
+        // Process events and log them
+        self.process_events();
 
         // Sync display data periodically (every 100ms) or when state changed
         if self.last_sync.elapsed().as_millis() > 100 {
@@ -259,50 +297,51 @@ impl eframe::App for HostApp {
         // Request repaint every second for timestamp updates
         ctx.request_repaint_after(std::time::Duration::from_secs(1));
 
-        // Render UI
+        // Header panel with stats
         egui::TopBottomPanel::top("header").show(ctx, |ui| {
             ui.horizontal(|ui| {
-                ui.set_min_height(40.0);
-
+                ui.strong(format!("Planning Agent Host :{}", self.port));
+                ui.separator();
+                ui.label(format!(
+                    "Containers: {}",
+                    self.display_data.containers.len()
+                ));
+                ui.separator();
                 ui.label(format!(
                     "Sessions: {} active",
                     self.display_data.active_count
                 ));
                 ui.separator();
-
                 if self.display_data.approval_count > 0 {
                     ui.colored_label(
                         egui::Color32::from_rgb(255, 152, 0),
                         format!("{} awaiting approval", self.display_data.approval_count),
                     );
-                } else {
-                    ui.label("0 awaiting approval");
                 }
-                ui.separator();
-
-                ui.label(format!(
-                    "Last update: {}s ago",
-                    self.display_data.last_update_elapsed_secs
-                ));
             });
         });
 
-        egui::TopBottomPanel::bottom("status_bar").show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                ui.label(format!(
-                    "Connected: {} containers",
-                    self.display_data.container_count
-                ));
-                ui.separator();
-                ui.label(format!("Port: {}", self.port));
-                ui.separator();
-                // Show host's own version info
-                let host_sha = &crate::update::BUILD_SHA[..7.min(crate::update::BUILD_SHA.len())];
-                let host_time = format_build_timestamp(crate::update::BUILD_TIMESTAMP);
-                ui.label(format!("Host: {} ({})", host_sha, host_time));
+        // Bottom log panel
+        egui::TopBottomPanel::bottom("log_panel")
+            .resizable(true)
+            .min_height(60.0)
+            .default_height(100.0)
+            .max_height(200.0)
+            .show(ctx, |ui| {
+                self.render_log_panel(ui);
             });
-        });
 
+        // Left container sidebar
+        egui::SidePanel::left("containers")
+            .resizable(true)
+            .default_width(220.0)
+            .min_width(180.0)
+            .max_width(350.0)
+            .show(ctx, |ui| {
+                self.render_container_panel(ui);
+            });
+
+        // Central session table
         egui::CentralPanel::default().show(ctx, |ui| {
             self.render_session_table(ui);
         });
@@ -310,42 +349,135 @@ impl eframe::App for HostApp {
 }
 
 impl HostApp {
+    /// Process events from the event channel and log them.
+    fn process_events(&mut self) {
+        while let Ok(event) = self.event_rx.try_recv() {
+            let now = chrono::Local::now().format("%H:%M:%S").to_string();
+
+            match event {
+                HostEvent::ContainerConnected {
+                    container_id,
+                    container_name,
+                } => {
+                    self.add_log_entry(LogEntry {
+                        timestamp: now,
+                        message: format!(
+                            "Container '{}' ({}) connected",
+                            container_name, container_id
+                        ),
+                        level: LogLevel::Info,
+                    });
+                }
+                HostEvent::ContainerDisconnected { container_id } => {
+                    self.add_log_entry(LogEntry {
+                        timestamp: now,
+                        message: format!("Container '{}' disconnected", container_id),
+                        level: LogLevel::Warning,
+                    });
+                }
+                HostEvent::SessionsUpdated => {
+                    // Don't log every heartbeat, just note significant changes
+                }
+            }
+        }
+    }
+
+    /// Add a log entry to the bounded buffer.
+    fn add_log_entry(&mut self, entry: LogEntry) {
+        self.log_entries.push_back(entry);
+        while self.log_entries.len() > MAX_LOG_ENTRIES {
+            self.log_entries.pop_front();
+        }
+    }
+
+    /// Render the container sidebar panel.
+    fn render_container_panel(&self, ui: &mut egui::Ui) {
+        ui.heading("Containers");
+        ui.separator();
+
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            if self.display_data.containers.is_empty() {
+                ui.label("No containers connected");
+                ui.label("Waiting for daemons...");
+                return;
+            }
+
+            for container in &self.display_data.containers {
+                ui.push_id(&container.container_id, |ui| {
+                    // Health indicator color
+                    let health_color = if container.ping_healthy {
+                        egui::Color32::from_rgb(76, 175, 80) // Green
+                    } else {
+                        egui::Color32::from_rgb(255, 152, 0) // Orange
+                    };
+
+                    ui.horizontal(|ui| {
+                        // Colored dot for health
+                        let (rect, _) =
+                            ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
+                        ui.painter().circle_filled(rect.center(), 4.0, health_color);
+                        ui.strong(&container.container_name);
+                    });
+
+                    // Compact stats
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 4.0;
+                        ui.small(format!("Ping: {}", container.ping_ago));
+                        ui.small("|");
+                        ui.small(format!("{} sessions", container.session_count));
+                    });
+
+                    ui.small(format!("Connected: {}", container.connected_duration));
+                    ui.small(format!(
+                        "Build: {} ({})",
+                        container.git_sha_short, container.build_time
+                    ));
+                    ui.small(format!(
+                        "Dir: {}",
+                        truncate_path(&container.working_dir, 25)
+                    ));
+
+                    ui.add_space(8.0);
+                });
+            }
+        });
+    }
+
+    /// Render the log panel at the bottom.
+    fn render_log_panel(&self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            ui.strong("Event Log");
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.small(format!("{} entries", self.log_entries.len()));
+            });
+        });
+        ui.separator();
+
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .stick_to_bottom(true)
+            .show(ui, |ui| {
+                for entry in &self.log_entries {
+                    ui.horizontal(|ui| {
+                        // Timestamp in muted color
+                        ui.colored_label(egui::Color32::from_rgb(128, 128, 128), &entry.timestamp);
+
+                        // Message with level-based color
+                        let msg_color = match entry.level {
+                            LogLevel::Info => egui::Color32::WHITE,
+                            LogLevel::Warning => egui::Color32::from_rgb(255, 183, 77),
+                        };
+                        ui.colored_label(msg_color, &entry.message);
+                    });
+                }
+            });
+    }
+
+    /// Render the session table with liveness and PID columns.
     fn render_session_table(&self, ui: &mut egui::Ui) {
         if self.display_data.sessions.is_empty() {
-            ui.vertical_centered(|ui| {
-                ui.add_space(50.0);
-                ui.heading("No sessions");
-
-                if self.display_data.containers.is_empty() {
-                    ui.add_space(20.0);
-                    ui.label("Waiting for container daemons to connect...");
-                    ui.add_space(20.0);
-                    ui.label(format!(
-                        "Set PLANNING_AGENT_HOST_PORT={} in your containers",
-                        self.port
-                    ));
-                } else {
-                    ui.add_space(20.0);
-                    ui.label(format!(
-                        "{} daemon(s) connected, but no active sessions:",
-                        self.display_data.containers.len()
-                    ));
-                    ui.add_space(10.0);
-
-                    // Show connected containers with their versions
-                    for container in &self.display_data.containers {
-                        let sha = &container.git_sha[..7.min(container.git_sha.len())];
-                        let build_time = format_build_timestamp(container.build_timestamp);
-                        ui.label(format!(
-                            "• {} ({}) - {} sessions - git: {} ({})",
-                            container.container_name,
-                            container.container_id,
-                            container.session_count,
-                            sha,
-                            build_time,
-                        ));
-                    }
-                }
+            ui.centered_and_justified(|ui| {
+                ui.label("No active sessions");
             });
             return;
         }
@@ -354,13 +486,16 @@ impl HostApp {
             .striped(true)
             .resizable(true)
             .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-            .column(Column::initial(120.0).at_least(80.0).resizable(true))
-            .column(Column::initial(200.0).at_least(100.0).resizable(true))
-            .column(Column::exact(100.0))
-            .column(Column::exact(50.0))
-            .column(Column::exact(120.0))
-            .column(Column::exact(100.0))
-            .header(28.0, |mut header| {
+            .column(Column::exact(16.0)) // Liveness indicator
+            .column(Column::initial(100.0).at_least(80.0)) // Container
+            .column(Column::initial(180.0).at_least(100.0)) // Feature
+            .column(Column::exact(80.0)) // Phase
+            .column(Column::exact(35.0)) // Iter
+            .column(Column::exact(90.0)) // Status
+            .column(Column::exact(60.0)) // PID
+            .column(Column::exact(70.0)) // Updated
+            .header(24.0, |mut header| {
+                header.col(|_| {}); // Liveness - no header
                 header.col(|ui| {
                     ui.strong("Container");
                 });
@@ -377,12 +512,28 @@ impl HostApp {
                     ui.strong("Status");
                 });
                 header.col(|ui| {
+                    ui.strong("PID");
+                });
+                header.col(|ui| {
                     ui.strong("Updated");
                 });
             })
             .body(|mut body| {
                 for session in &self.display_data.sessions {
-                    body.row(28.0, |mut row| {
+                    body.row(22.0, |mut row| {
+                        // Liveness indicator
+                        row.col(|ui| {
+                            let color = match session.liveness {
+                                LivenessDisplay::Running => egui::Color32::from_rgb(76, 175, 80),
+                                LivenessDisplay::Unresponsive => {
+                                    egui::Color32::from_rgb(255, 183, 77)
+                                }
+                                LivenessDisplay::Stopped => egui::Color32::from_rgb(117, 117, 117),
+                            };
+                            let (rect, _) =
+                                ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
+                            ui.painter().circle_filled(rect.center(), 4.0, color);
+                        });
                         row.col(|ui| {
                             ui.label(&session.container_name);
                         });
@@ -397,6 +548,9 @@ impl HostApp {
                         });
                         row.col(|ui| {
                             self.render_status(ui, &session.status);
+                        });
+                        row.col(|ui| {
+                            ui.label(session.pid.to_string());
                         });
                         row.col(|ui| {
                             ui.label(&session.updated_ago);
@@ -448,6 +602,45 @@ fn format_build_timestamp(timestamp: u64) -> String {
     }
     Utc.timestamp_opt(timestamp as i64, 0)
         .single()
-        .map(|dt| dt.format("%Y-%m-%d %H:%M").to_string())
+        .map(|dt| dt.format("%m-%d %H:%M").to_string())
         .unwrap_or_else(|| "invalid".to_string())
+}
+
+/// Format a duration as a human-readable string (e.g., "5m", "2h 30m").
+fn format_duration(duration: std::time::Duration) -> String {
+    let secs = duration.as_secs();
+    if secs < 60 {
+        format!("{}s", secs)
+    } else if secs < 3600 {
+        format!("{}m", secs / 60)
+    } else {
+        let hours = secs / 3600;
+        let mins = (secs % 3600) / 60;
+        if mins > 0 {
+            format!("{}h {}m", hours, mins)
+        } else {
+            format!("{}h", hours)
+        }
+    }
+}
+
+/// Format ping duration (e.g., "2s ago", "45s ago").
+fn format_ping_duration(duration: std::time::Duration) -> String {
+    let secs = duration.as_secs();
+    if secs < 60 {
+        format!("{}s ago", secs)
+    } else if secs < 3600 {
+        format!("{}m ago", secs / 60)
+    } else {
+        format!("{}h ago", secs / 3600)
+    }
+}
+
+/// Truncate a path for display, showing the end portion.
+fn truncate_path(path: &str, max_len: usize) -> String {
+    if path.len() <= max_len {
+        path.to_string()
+    } else {
+        format!("...{}", &path[path.len().saturating_sub(max_len - 3)..])
+    }
 }

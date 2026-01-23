@@ -10,6 +10,8 @@ use crate::host::state::HostState;
 pub enum HostEvent {
     /// A new container daemon connected.
     ContainerConnected {
+        /// Container ID is only read by GUI code (behind host-gui feature).
+        #[cfg_attr(not(feature = "host-gui"), allow(dead_code))]
         container_id: String,
         container_name: String,
     },
@@ -78,6 +80,7 @@ impl HostService for HostServer {
             state.add_container(
                 info.container_id.clone(),
                 info.container_name.clone(),
+                info.working_dir.clone(),
                 info.git_sha.clone(),
                 info.build_timestamp,
             );
@@ -269,6 +272,7 @@ mod tests {
             liveness: LivenessState::Running,
             started_at: "2024-01-01T00:00:00Z".to_string(),
             updated_at: "2024-01-01T00:00:00Z".to_string(),
+            pid: 0,
         }
     }
 
