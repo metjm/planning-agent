@@ -55,6 +55,7 @@ fn main() {
     enforce_formatting();
     enforce_line_limits();
     enforce_no_dead_code_allows();
+    enforce_no_ignored_tests();
     enforce_no_test_skips();
     enforce_no_nested_runtimes();
     enforce_serial_for_env_mutations();
@@ -346,6 +347,75 @@ fn enforce_no_dead_code_allows() {
         eprintln!("========================================\n");
         panic!(
             "Build failed: {} #[allow(dead_code)] occurrence(s) found. Remove the dead code.",
+            total_count
+        );
+    }
+}
+
+/// Bans #[ignore] attribute on tests.
+///
+/// Ignored tests provide false confidence - they show up as "passing" in test counts
+/// but don't actually verify anything. Tests should either run or be deleted.
+fn enforce_no_ignored_tests() {
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR must be set");
+    let root = PathBuf::from(&manifest_dir);
+
+    let rust_files: Vec<PathBuf> = collect_files_to_check(&root)
+        .into_iter()
+        .filter(|p| {
+            p.extension().and_then(|e| e.to_str()) == Some("rs")
+                && p.file_name().and_then(|n| n.to_str()) != Some("build.rs")
+        })
+        .collect();
+
+    let mut violations: Vec<(PathBuf, Vec<(usize, String)>)> = Vec::new();
+
+    for file in &rust_files {
+        if let Ok(content) = std::fs::read_to_string(file) {
+            let mut file_violations = Vec::new();
+
+            for (line_num, line) in content.lines().enumerate() {
+                let trimmed = line.trim();
+                if trimmed == "#[ignore]" || trimmed.starts_with("#[ignore(") {
+                    file_violations.push((line_num + 1, line.to_string()));
+                }
+            }
+
+            if !file_violations.is_empty() {
+                let rel_path = file.strip_prefix(&root).unwrap_or(file).to_path_buf();
+                violations.push((rel_path, file_violations));
+            }
+        }
+    }
+
+    if !violations.is_empty() {
+        let total_count: usize = violations.iter().map(|(_, v)| v.len()).sum();
+
+        eprintln!("\n========================================");
+        eprintln!("#[ignore] TESTS ARE NOT ALLOWED");
+        eprintln!("========================================");
+        eprintln!();
+        for (path, lines) in &violations {
+            for (line_num, line_content) in lines {
+                eprintln!("  {}:{}", path.display(), line_num);
+                eprintln!("    {}", line_content.trim());
+                eprintln!();
+            }
+        }
+        eprintln!("========================================");
+        eprintln!();
+        eprintln!("Ignored tests provide false confidence - they appear");
+        eprintln!("to pass but don't actually verify anything.");
+        eprintln!();
+        eprintln!("Instead:");
+        eprintln!("  - Fix the test so it can run reliably");
+        eprintln!("  - Delete the test if it can't be fixed");
+        eprintln!("  - If it requires external tools, the unit tests");
+        eprintln!("    for parsing logic are sufficient");
+        eprintln!();
+        eprintln!("========================================\n");
+        panic!(
+            "Build failed: {} #[ignore] test(s) found. Fix or delete them.",
             total_count
         );
     }

@@ -145,18 +145,20 @@ Proper extraction maintains readability and creates logical module boundaries.
 
 The build script (`build.rs`) enforces several code quality rules. Violations fail the build:
 
-1. **No Silent Test Skips**: Tests cannot silently skip with early returns like `if !available { return; }`. Tests must either:
+1. **No #[ignore] Tests**: Tests cannot use the `#[ignore]` attribute. Ignored tests provide false confidence. Tests must either run or be deleted.
+
+2. **No Silent Test Skips**: Tests cannot silently skip with early returns like `if !available { return; }`. Tests must either:
    - Run and verify behavior (use `set_home_for_test()` for isolated test environments)
    - Fail explicitly if prerequisites aren't met
    - Be deleted if they can't run reliably
 
-2. **No Nested Tokio Runtimes**: Cannot use `std::thread::spawn` + `Runtime::new()` pattern. This causes async clients (tarpc) to break when the spawned thread's runtime is dropped. Make functions async instead.
+3. **No Nested Tokio Runtimes**: Cannot use `std::thread::spawn` + `Runtime::new()` pattern. This causes async clients (tarpc) to break when the spawned thread's runtime is dropped. Make functions async instead.
 
-3. **Serial Tests for Env Mutations**: Tests calling `std::env::set_var` or `std::env::remove_var` must have `#[serial]` or `#[serial_test::serial]` attribute to prevent parallel test interference.
+4. **Serial Tests for Env Mutations**: Tests calling `std::env::set_var` or `std::env::remove_var` must have `#[serial]` or `#[serial_test::serial]` attribute to prevent parallel test interference.
 
-4. **No #[allow(dead_code)]**: Delete unused code instead of silencing warnings.
+5. **No #[allow(dead_code)]**: Delete unused code instead of silencing warnings.
 
-5. **Code Formatting**: All code must pass `cargo fmt --check`.
+6. **Code Formatting**: All code must pass `cargo fmt --check`.
 
 ### Refactoring is Encouraged
 
