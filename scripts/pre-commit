@@ -46,8 +46,12 @@ echo "Checking code formatting..."
 cargo fmt -- --check
 
 # Build (this also runs the build.rs line limit check)
-echo "Building..."
+echo "Building (dev)..."
 cargo build
+
+# Check release build (catches dead code that only shows in release)
+echo "Checking release build..."
+cargo check --release
 
 # Run clippy
 echo "Running clippy..."
