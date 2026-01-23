@@ -91,33 +91,32 @@ impl RpcUpstream {
     /// Run upstream connection loop with automatic reconnection.
     /// This function runs indefinitely, reconnecting on disconnect.
     pub async fn run(self, mut session_rx: mpsc::UnboundedReceiver<UpstreamEvent>) {
-        let mut attempt = 0u32;
-        let mut logged_failure = false;
+        let mut consecutive_failures = 0u32;
 
         loop {
             match self.connect_and_run(&mut session_rx).await {
                 Ok(()) => {
-                    // Clean disconnect, reset backoff
-                    daemon_log("rpc_upstream", "Host disconnected, will reconnect");
-                    attempt = 0;
-                    logged_failure = false;
+                    // Clean disconnect
+                    daemon_log("rpc_upstream", "Host disconnected, reconnecting...");
+                    consecutive_failures = 0;
                 }
                 Err(e) => {
-                    // Only log first failure to avoid spam when no host is available
-                    if !logged_failure {
+                    consecutive_failures += 1;
+                    // Log every 12 failures (once per minute at 5s intervals)
+                    if consecutive_failures == 1 || consecutive_failures % 12 == 0 {
                         daemon_log(
                             "rpc_upstream",
-                            &format!("Connection error: {} (will retry silently)", e),
+                            &format!(
+                                "Connection failed (attempt {}): {}",
+                                consecutive_failures, e
+                            ),
                         );
-                        logged_failure = true;
                     }
                 }
             }
 
-            // Backoff before reconnect
-            let delay = backoff_delay(attempt);
-            attempt = attempt.saturating_add(1).min(10);
-            tokio::time::sleep(delay).await;
+            // Always retry every 5 seconds
+            tokio::time::sleep(Duration::from_secs(5)).await;
         }
     }
 
@@ -256,27 +255,9 @@ impl RpcUpstream {
     }
 }
 
-/// Calculate backoff delay for reconnection attempt.
-fn backoff_delay(attempt: u32) -> Duration {
-    let base_secs = 5u64;
-    let max_secs = 60u64;
-    let delay_secs = (base_secs * 2u64.pow(attempt)).min(max_secs);
-    Duration::from_secs(delay_secs)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_backoff_delay() {
-        assert_eq!(backoff_delay(0), Duration::from_secs(5));
-        assert_eq!(backoff_delay(1), Duration::from_secs(10));
-        assert_eq!(backoff_delay(2), Duration::from_secs(20));
-        assert_eq!(backoff_delay(3), Duration::from_secs(40));
-        assert_eq!(backoff_delay(4), Duration::from_secs(60)); // capped at 60
-        assert_eq!(backoff_delay(5), Duration::from_secs(60)); // stays at 60
-    }
 
     #[test]
     fn test_host_port_default() {
