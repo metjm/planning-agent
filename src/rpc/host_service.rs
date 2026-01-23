@@ -15,6 +15,10 @@ pub struct ContainerInfo {
     pub container_id: String,
     pub container_name: String,
     pub working_dir: PathBuf,
+    /// Git commit SHA the daemon was built from.
+    pub git_sha: String,
+    /// Unix timestamp when the daemon was built.
+    pub build_timestamp: u64,
 }
 
 /// Service exposed by the host to container daemons.

@@ -31,10 +31,20 @@ pub struct HostApp {
 #[derive(Default)]
 struct DisplayData {
     sessions: Vec<DisplaySessionRow>,
+    containers: Vec<DisplayContainerRow>,
     active_count: usize,
     approval_count: usize,
     container_count: usize,
     last_update_elapsed_secs: u64,
+}
+
+#[derive(Clone)]
+struct DisplayContainerRow {
+    container_id: String,
+    container_name: String,
+    git_sha: String,
+    build_timestamp: u64,
+    session_count: usize,
 }
 
 #[derive(Clone)]
@@ -100,6 +110,15 @@ impl HostApp {
         // Use try_lock to avoid blocking GUI
         if let Ok(mut state) = self.state.try_lock() {
             let sessions = state.sessions();
+            // Log session count for debugging (only when it changes)
+            let new_count = sessions.len();
+            if new_count != self.display_data.sessions.len() {
+                eprintln!(
+                    "[host-gui] sync_display_data: {} sessions from {} containers",
+                    new_count,
+                    state.containers.len()
+                );
+            }
             self.display_data.sessions = sessions
                 .iter()
                 .map(|s| DisplaySessionRow {
@@ -110,6 +129,18 @@ impl HostApp {
                     iteration: s.session.iteration,
                     status: s.session.status.clone(),
                     updated_ago: format_relative_time(&s.session.updated_at),
+                })
+                .collect();
+            // Collect container info with version details
+            self.display_data.containers = state
+                .containers
+                .iter()
+                .map(|(id, c)| DisplayContainerRow {
+                    container_id: id.clone(),
+                    container_name: c.container_name.clone(),
+                    git_sha: c.git_sha.clone(),
+                    build_timestamp: c.build_timestamp,
+                    session_count: c.sessions.len(),
                 })
                 .collect();
             self.display_data.active_count = state.active_count();
@@ -264,7 +295,10 @@ impl eframe::App for HostApp {
                 ui.separator();
                 ui.label(format!("Port: {}", self.port));
                 ui.separator();
-                ui.label(format!("v{}", env!("CARGO_PKG_VERSION")));
+                // Show host's own version info
+                let host_sha = &crate::update::BUILD_SHA[..7.min(crate::update::BUILD_SHA.len())];
+                let host_time = format_build_timestamp(crate::update::BUILD_TIMESTAMP);
+                ui.label(format!("Host: {} ({})", host_sha, host_time));
             });
         });
 
@@ -278,14 +312,39 @@ impl HostApp {
     fn render_session_table(&self, ui: &mut egui::Ui) {
         if self.display_data.sessions.is_empty() {
             ui.vertical_centered(|ui| {
-                ui.add_space(100.0);
-                ui.heading("No sessions connected");
-                ui.label("Waiting for container daemons to connect...");
-                ui.add_space(20.0);
-                ui.label(format!(
-                    "Set PLANNING_AGENT_HOST_PORT={} in your containers",
-                    self.port
-                ));
+                ui.add_space(50.0);
+                ui.heading("No sessions");
+
+                if self.display_data.containers.is_empty() {
+                    ui.add_space(20.0);
+                    ui.label("Waiting for container daemons to connect...");
+                    ui.add_space(20.0);
+                    ui.label(format!(
+                        "Set PLANNING_AGENT_HOST_PORT={} in your containers",
+                        self.port
+                    ));
+                } else {
+                    ui.add_space(20.0);
+                    ui.label(format!(
+                        "{} daemon(s) connected, but no active sessions:",
+                        self.display_data.containers.len()
+                    ));
+                    ui.add_space(10.0);
+
+                    // Show connected containers with their versions
+                    for container in &self.display_data.containers {
+                        let sha = &container.git_sha[..7.min(container.git_sha.len())];
+                        let build_time = format_build_timestamp(container.build_timestamp);
+                        ui.label(format!(
+                            "• {} ({}) - {} sessions - git: {} ({})",
+                            container.container_name,
+                            container.container_id,
+                            container.session_count,
+                            sha,
+                            build_time,
+                        ));
+                    }
+                }
             });
             return;
         }
@@ -378,4 +437,16 @@ fn format_relative_time(timestamp: &str) -> String {
             }
         })
         .unwrap_or_else(|_| "unknown".to_string())
+}
+
+/// Format a Unix timestamp into a human-readable date/time.
+fn format_build_timestamp(timestamp: u64) -> String {
+    use chrono::{TimeZone, Utc};
+    if timestamp == 0 {
+        return "unknown".to_string();
+    }
+    Utc.timestamp_opt(timestamp as i64, 0)
+        .single()
+        .map(|dt| dt.format("%Y-%m-%d %H:%M").to_string())
+        .unwrap_or_else(|| "invalid".to_string())
 }

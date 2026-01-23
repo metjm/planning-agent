@@ -10,12 +10,14 @@
 use crate::daemon_log::daemon_log;
 use crate::rpc::host_service::{ContainerInfo, HostServiceClient, SessionInfo, PROTOCOL_VERSION};
 use crate::rpc::SessionRecord;
+use crate::session_daemon::server::DaemonState;
 use anyhow::Result;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 use tarpc::client;
 use tarpc::tokio_serde::formats::Bincode;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Mutex};
 
 /// Default port for host connection.
 const DEFAULT_HOST_PORT: u16 = 17717;
@@ -23,8 +25,6 @@ const DEFAULT_HOST_PORT: u16 = 17717;
 /// Events to send upstream to host.
 #[derive(Debug, Clone)]
 pub enum UpstreamEvent {
-    /// Sync all sessions (sent on connect/reconnect)
-    SyncSessions(Vec<SessionRecord>),
     /// Single session updated
     SessionUpdate(SessionRecord),
     /// Session has stopped/completed and should be removed
@@ -56,12 +56,14 @@ pub struct RpcUpstream {
     container_id: String,
     container_name: String,
     working_dir: PathBuf,
+    /// Reference to daemon state for syncing sessions on connect.
+    daemon_state: Arc<Mutex<DaemonState>>,
 }
 
 impl RpcUpstream {
     /// Create a new upstream connection manager.
     /// Reads container identification from environment variables.
-    pub fn new(port: u16) -> Self {
+    pub fn new(port: u16, daemon_state: Arc<Mutex<DaemonState>>) -> Self {
         // Host address: "auto" tries localhost then host.docker.internal
         // Can be overridden with PLANNING_AGENT_HOST_ADDRESS
         let host =
@@ -85,6 +87,7 @@ impl RpcUpstream {
             container_id,
             container_name,
             working_dir,
+            daemon_state,
         }
     }
 
@@ -103,7 +106,7 @@ impl RpcUpstream {
                 Err(e) => {
                     consecutive_failures += 1;
                     // Log every 12 failures (once per minute at 5s intervals)
-                    if consecutive_failures == 1 || consecutive_failures % 12 == 0 {
+                    if consecutive_failures == 1 || consecutive_failures.is_multiple_of(12) {
                         daemon_log(
                             "rpc_upstream",
                             &format!(
@@ -195,6 +198,8 @@ impl RpcUpstream {
             container_id: self.container_id.clone(),
             container_name: self.container_name.clone(),
             working_dir: self.working_dir.clone(),
+            git_sha: crate::update::BUILD_SHA.to_string(),
+            build_timestamp: crate::update::BUILD_TIMESTAMP,
         };
 
         let hello_result = client
@@ -218,6 +223,28 @@ impl RpcUpstream {
             &format!("Connected to host at {}:{}", self.host, self.port),
         );
 
+        // Sync all current sessions immediately after connecting
+        // This ensures the host has up-to-date session info even if events were missed
+        {
+            let state = self.daemon_state.lock().await;
+            let sessions: Vec<SessionRecord> = state.sessions.values().cloned().collect();
+            if !sessions.is_empty() {
+                daemon_log(
+                    "rpc_upstream",
+                    &format!("Syncing {} existing sessions to host", sessions.len()),
+                );
+                let session_infos: Vec<SessionInfo> = sessions
+                    .iter()
+                    .map(SessionInfo::from_session_record)
+                    .collect();
+                client
+                    .sync_sessions(tarpc::context::current(), session_infos)
+                    .await?;
+            } else {
+                daemon_log("rpc_upstream", "No existing sessions to sync");
+            }
+        }
+
         // Main loop: forward session events
         let heartbeat_interval = Duration::from_secs(30);
         let mut heartbeat_timer = tokio::time::interval(heartbeat_interval);
@@ -226,12 +253,14 @@ impl RpcUpstream {
             tokio::select! {
                 event = session_rx.recv() => {
                     match event {
-                        Some(UpstreamEvent::SyncSessions(records)) => {
-                            daemon_log("rpc_upstream", &format!("Sending SyncSessions with {} sessions", records.len()));
-                            let sessions: Vec<SessionInfo> = records.iter().map(SessionInfo::from_session_record).collect();
-                            client.sync_sessions(tarpc::context::current(), sessions).await?;
-                        }
                         Some(UpstreamEvent::SessionUpdate(record)) => {
+                            daemon_log(
+                                "rpc_upstream",
+                                &format!(
+                                    "Sending SessionUpdate to host: {} (feature: {})",
+                                    record.workflow_session_id, record.feature_name
+                                ),
+                            );
                             let session = SessionInfo::from_session_record(&record);
                             client.session_update(tarpc::context::current(), session).await?;
                         }

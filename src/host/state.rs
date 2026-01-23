@@ -13,6 +13,10 @@ pub struct ConnectedContainer {
     pub container_name: String,
     pub last_message_at: Instant,
     pub sessions: HashMap<String, SessionInfo>,
+    /// Git commit SHA the daemon was built from.
+    pub git_sha: String,
+    /// Unix timestamp when the daemon was built.
+    pub build_timestamp: u64,
 }
 
 /// Aggregated state for the host application.
@@ -48,7 +52,13 @@ impl HostState {
     }
 
     /// Register a new container connection.
-    pub fn add_container(&mut self, container_id: String, container_name: String) {
+    pub fn add_container(
+        &mut self,
+        container_id: String,
+        container_name: String,
+        git_sha: String,
+        build_timestamp: u64,
+    ) {
         let now = Instant::now();
         self.containers.insert(
             container_id,
@@ -56,6 +66,8 @@ impl HostState {
                 container_name,
                 last_message_at: now,
                 sessions: HashMap::new(),
+                git_sha,
+                build_timestamp,
             },
         );
         self.invalidate_cache();
@@ -70,7 +82,18 @@ impl HostState {
     /// Sync all sessions for a container.
     pub fn sync_sessions(&mut self, container_id: &str, sessions: Vec<SessionInfo>) {
         if let Some(container) = self.containers.get_mut(container_id) {
+            eprintln!(
+                "[host-state] sync_sessions: {} sessions for container '{}'",
+                sessions.len(),
+                container_id
+            );
             container.sessions.clear();
+            for session in &sessions {
+                eprintln!(
+                    "[host-state]   - {} (feature: {})",
+                    session.session_id, session.feature_name
+                );
+            }
             for session in sessions {
                 container
                     .sessions
@@ -79,18 +102,32 @@ impl HostState {
             container.last_message_at = Instant::now();
             self.last_update = Instant::now();
             self.invalidate_cache();
+        } else {
+            eprintln!(
+                "[host-state] WARNING: sync_sessions called for unknown container '{}'",
+                container_id
+            );
         }
     }
 
     /// Update a single session.
     pub fn update_session(&mut self, container_id: &str, session: SessionInfo) {
         if let Some(container) = self.containers.get_mut(container_id) {
+            eprintln!(
+                "[host-state] update_session: {} (feature: {}) in container '{}'",
+                session.session_id, session.feature_name, container_id
+            );
             container
                 .sessions
                 .insert(session.session_id.clone(), session);
             container.last_message_at = Instant::now();
             self.last_update = Instant::now();
             self.invalidate_cache();
+        } else {
+            eprintln!(
+                "[host-state] WARNING: update_session called for unknown container '{}'",
+                container_id
+            );
         }
     }
 
@@ -189,16 +226,31 @@ mod tests {
     #[test]
     fn test_add_container() {
         let mut state = HostState::new();
-        state.add_container("c1".to_string(), "Container 1".to_string());
+        state.add_container(
+            "c1".to_string(),
+            "Container 1".to_string(),
+            "abc123".to_string(),
+            1234567890,
+        );
 
         assert_eq!(state.containers.len(), 1);
         assert!(state.containers.contains_key("c1"));
+
+        // Verify build info is stored
+        let container = state.containers.get("c1").unwrap();
+        assert_eq!(container.git_sha, "abc123");
+        assert_eq!(container.build_timestamp, 1234567890);
     }
 
     #[test]
     fn test_sync_sessions() {
         let mut state = HostState::new();
-        state.add_container("c1".to_string(), "Container 1".to_string());
+        state.add_container(
+            "c1".to_string(),
+            "Container 1".to_string(),
+            "abc123".to_string(),
+            1234567890,
+        );
 
         let sessions = vec![
             make_session("s1", "Running"),
@@ -213,7 +265,12 @@ mod tests {
     #[test]
     fn test_sessions_sorted_by_status() {
         let mut state = HostState::new();
-        state.add_container("c1".to_string(), "Container 1".to_string());
+        state.add_container(
+            "c1".to_string(),
+            "Container 1".to_string(),
+            "abc123".to_string(),
+            1234567890,
+        );
 
         let sessions = vec![
             make_session("s1", "Running"),
@@ -237,7 +294,12 @@ mod tests {
     #[test]
     fn test_remove_container() {
         let mut state = HostState::new();
-        state.add_container("c1".to_string(), "Container 1".to_string());
+        state.add_container(
+            "c1".to_string(),
+            "Container 1".to_string(),
+            "abc123".to_string(),
+            1234567890,
+        );
         state.sync_sessions("c1", vec![make_session("s1", "Running")]);
 
         state.remove_container("c1");
@@ -249,7 +311,12 @@ mod tests {
     #[test]
     fn test_update_session() {
         let mut state = HostState::new();
-        state.add_container("c1".to_string(), "Container 1".to_string());
+        state.add_container(
+            "c1".to_string(),
+            "Container 1".to_string(),
+            "abc123".to_string(),
+            1234567890,
+        );
         state.sync_sessions("c1", vec![make_session("s1", "Running")]);
 
         // Update the session
@@ -262,7 +329,12 @@ mod tests {
     #[test]
     fn test_remove_session() {
         let mut state = HostState::new();
-        state.add_container("c1".to_string(), "Container 1".to_string());
+        state.add_container(
+            "c1".to_string(),
+            "Container 1".to_string(),
+            "abc123".to_string(),
+            1234567890,
+        );
         state.sync_sessions(
             "c1",
             vec![make_session("s1", "Running"), make_session("s2", "Running")],

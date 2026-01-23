@@ -60,8 +60,8 @@ impl HostService for HostServer {
         protocol_version: u32,
     ) -> Result<String, HostError> {
         eprintln!(
-            "[host-rpc] Hello received from {} (protocol v{})",
-            info.container_id, protocol_version
+            "[host-rpc] Hello received from {} (protocol v{}, git={}, built={})",
+            info.container_id, protocol_version, info.git_sha, info.build_timestamp
         );
 
         // Check protocol version
@@ -75,7 +75,12 @@ impl HostService for HostServer {
         // Register container
         {
             let mut state = self.state.lock().await;
-            state.add_container(info.container_id.clone(), info.container_name.clone());
+            state.add_container(
+                info.container_id.clone(),
+                info.container_name.clone(),
+                info.git_sha.clone(),
+                info.build_timestamp,
+            );
         }
 
         // Store container ID for this connection
@@ -94,28 +99,57 @@ impl HostService for HostServer {
     }
 
     async fn sync_sessions(self, _: tarpc::context::Context, sessions: Vec<SessionInfo>) {
+        eprintln!(
+            "[host-rpc] sync_sessions received: {} sessions",
+            sessions.len()
+        );
+        for s in &sessions {
+            eprintln!(
+                "[host-rpc]   - {} (feature: {})",
+                s.session_id, s.feature_name
+            );
+        }
+
         let container_id = {
             let id = self.container_id.lock().await;
             id.clone()
         };
 
         if let Some(container_id) = container_id {
+            eprintln!(
+                "[host-rpc] Storing {} sessions for container {}",
+                sessions.len(),
+                container_id
+            );
             let mut state = self.state.lock().await;
             state.sync_sessions(&container_id, sessions);
             let _ = self.event_tx.send(HostEvent::SessionsUpdated);
+        } else {
+            eprintln!("[host-rpc] WARNING: sync_sessions received but no container_id set");
         }
     }
 
     async fn session_update(self, _: tarpc::context::Context, session: SessionInfo) {
+        eprintln!(
+            "[host-rpc] session_update received: {} (feature: {})",
+            session.session_id, session.feature_name
+        );
+
         let container_id = {
             let id = self.container_id.lock().await;
             id.clone()
         };
 
         if let Some(container_id) = container_id {
+            eprintln!(
+                "[host-rpc] Storing session {} in container {}",
+                session.session_id, container_id
+            );
             let mut state = self.state.lock().await;
             state.update_session(&container_id, session);
             let _ = self.event_tx.send(HostEvent::SessionsUpdated);
+        } else {
+            eprintln!("[host-rpc] WARNING: session_update received but no container_id set (Hello not called?)");
         }
     }
 
@@ -328,6 +362,8 @@ mod tests {
             container_id: "container-1".to_string(),
             container_name: "Test Container".to_string(),
             working_dir: std::path::PathBuf::from("/work"),
+            git_sha: "test123".to_string(),
+            build_timestamp: 1234567890,
         };
 
         let result = client
@@ -353,6 +389,8 @@ mod tests {
             container_id: "container-1".to_string(),
             container_name: "Test Container".to_string(),
             working_dir: std::path::PathBuf::from("/work"),
+            git_sha: "test123".to_string(),
+            build_timestamp: 1234567890,
         };
 
         // Use wrong protocol version
@@ -388,6 +426,8 @@ mod tests {
             container_id: "container-1".to_string(),
             container_name: "Test Container".to_string(),
             working_dir: std::path::PathBuf::from("/work"),
+            git_sha: "test123".to_string(),
+            build_timestamp: 1234567890,
         };
         client
             .hello(tarpc::context::current(), info, PROTOCOL_VERSION)
@@ -422,6 +462,8 @@ mod tests {
             container_id: "container-1".to_string(),
             container_name: "Test Container".to_string(),
             working_dir: std::path::PathBuf::from("/work"),
+            git_sha: "test123".to_string(),
+            build_timestamp: 1234567890,
         };
         client
             .hello(tarpc::context::current(), info, PROTOCOL_VERSION)
@@ -467,6 +509,8 @@ mod tests {
             container_id: "container-1".to_string(),
             container_name: "Test Container".to_string(),
             working_dir: std::path::PathBuf::from("/work"),
+            git_sha: "test123".to_string(),
+            build_timestamp: 1234567890,
         };
         client
             .hello(tarpc::context::current(), info, PROTOCOL_VERSION)
@@ -508,6 +552,8 @@ mod tests {
             container_id: "container-1".to_string(),
             container_name: "Test Container".to_string(),
             working_dir: std::path::PathBuf::from("/work"),
+            git_sha: "test123".to_string(),
+            build_timestamp: 1234567890,
         };
         client
             .hello(tarpc::context::current(), info, PROTOCOL_VERSION)
@@ -552,6 +598,8 @@ mod tests {
             container_id: "container-1".to_string(),
             container_name: "Test Container".to_string(),
             working_dir: std::path::PathBuf::from("/work"),
+            git_sha: "test123".to_string(),
+            build_timestamp: 1234567890,
         };
         client
             .hello(tarpc::context::current(), info, PROTOCOL_VERSION)
@@ -590,6 +638,8 @@ mod tests {
             container_id: "container-1".to_string(),
             container_name: "Test Container".to_string(),
             working_dir: std::path::PathBuf::from("/work"),
+            git_sha: "test123".to_string(),
+            build_timestamp: 1234567890,
         };
         client
             .hello(tarpc::context::current(), info, PROTOCOL_VERSION)
@@ -624,6 +674,8 @@ mod tests {
             container_id: "container-1".to_string(),
             container_name: "Test Container".to_string(),
             working_dir: std::path::PathBuf::from("/work"),
+            git_sha: "test123".to_string(),
+            build_timestamp: 1234567890,
         };
         client
             .hello(tarpc::context::current(), info, PROTOCOL_VERSION)
@@ -669,6 +721,8 @@ mod tests {
             container_id: "container-1".to_string(),
             container_name: "Container One".to_string(),
             working_dir: std::path::PathBuf::from("/work1"),
+            git_sha: "test123".to_string(),
+            build_timestamp: 1234567890,
         };
         client1
             .hello(tarpc::context::current(), info1, PROTOCOL_VERSION)
@@ -680,6 +734,8 @@ mod tests {
             container_id: "container-2".to_string(),
             container_name: "Container Two".to_string(),
             working_dir: std::path::PathBuf::from("/work2"),
+            git_sha: "test456".to_string(),
+            build_timestamp: 1234567891,
         };
         client2
             .hello(tarpc::context::current(), info2, PROTOCOL_VERSION)
@@ -724,6 +780,8 @@ mod tests {
             container_id: "disconnect-test".to_string(),
             container_name: "Disconnect Test".to_string(),
             working_dir: std::path::PathBuf::from("/work"),
+            git_sha: "test123".to_string(),
+            build_timestamp: 1234567890,
         };
         client
             .hello(tarpc::context::current(), info, PROTOCOL_VERSION)
@@ -741,15 +799,10 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(100)).await;
 
         // Check for disconnect event
-        if let Ok(Some(event)) =
+        if let Ok(Some(HostEvent::ContainerDisconnected { container_id })) =
             tokio::time::timeout(Duration::from_secs(1), server.event_rx.recv()).await
         {
-            match event {
-                HostEvent::ContainerDisconnected { container_id } => {
-                    assert_eq!(container_id, "disconnect-test");
-                }
-                _ => {} // May get other events first
-            }
+            assert_eq!(container_id, "disconnect-test");
         }
     }
 
@@ -762,6 +815,8 @@ mod tests {
             container_id: "display-test".to_string(),
             container_name: "Display Test Container".to_string(),
             working_dir: std::path::PathBuf::from("/work"),
+            git_sha: "test123".to_string(),
+            build_timestamp: 1234567890,
         };
         client
             .hello(tarpc::context::current(), info, PROTOCOL_VERSION)

@@ -166,12 +166,31 @@ impl DaemonServer {
         if let Some(upstream_tx) = &self.upstream_tx {
             // Send SessionGone for stopped sessions, SessionUpdate otherwise
             if record.liveness == LivenessState::Stopped {
+                daemon_log(
+                    "rpc_server",
+                    &format!(
+                        "Forwarding SessionGone to upstream: {}",
+                        record.workflow_session_id
+                    ),
+                );
                 let _ = upstream_tx.send(UpstreamEvent::SessionGone(
                     record.workflow_session_id.clone(),
                 ));
             } else {
+                daemon_log(
+                    "rpc_server",
+                    &format!(
+                        "Forwarding SessionUpdate to upstream: {} (feature: {})",
+                        record.workflow_session_id, record.feature_name
+                    ),
+                );
                 let _ = upstream_tx.send(UpstreamEvent::SessionUpdate(record));
             }
+        } else {
+            daemon_log(
+                "rpc_server",
+                "No upstream_tx configured, not forwarding session",
+            );
         }
     }
 
@@ -613,22 +632,11 @@ pub async fn run_daemon_rpc() -> anyhow::Result<()> {
         let (tx, rx) = mpsc::unbounded_channel();
 
         // Spawn upstream connection task
-        let upstream_conn = crate::session_daemon::rpc_upstream::RpcUpstream::new(host_port);
+        // Pass daemon state so upstream can sync sessions after connecting
+        let upstream_conn =
+            crate::session_daemon::rpc_upstream::RpcUpstream::new(host_port, state.clone());
         tokio::spawn(async move {
             upstream_conn.run(rx).await;
-        });
-
-        // Initial sync of existing sessions
-        let state_for_sync = state.clone();
-        let tx_clone = tx.clone();
-        tokio::spawn(async move {
-            let sessions: Vec<SessionRecord> = {
-                let state_guard = state_for_sync.lock().await;
-                state_guard.sessions.values().cloned().collect()
-            };
-            if !sessions.is_empty() {
-                let _ = tx_clone.send(UpstreamEvent::SyncSessions(sessions));
-            }
         });
 
         Some(tx)
