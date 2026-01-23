@@ -131,28 +131,20 @@ fn draw_output_panel(
 
     let inner_area = output_block.inner(area);
     let visible_height = inner_area.height as usize;
+    let inner_width = inner_area.width;
 
     // Register scrollable region
     regions.register(ScrollRegion::OutputPanel, inner_area);
 
-    let total_lines = session.output_lines.len();
-    let max_scroll = total_lines.saturating_sub(visible_height);
-
-    let start = if session.output_follow_mode {
-        max_scroll
-    } else {
-        session.scroll_position.min(max_scroll)
-    };
-
-    let end = (start + visible_height).min(total_lines);
-
-    let lines: Vec<Line> = if total_lines == 0 {
+    // Build all lines (not sliced) for proper scroll handling with wrapping
+    let lines: Vec<Line> = if session.output_lines.is_empty() {
         vec![Line::from(Span::styled(
             "Waiting for output...",
             Style::default().fg(theme.muted),
         ))]
     } else {
-        session.output_lines[start..end]
+        session
+            .output_lines
             .iter()
             .map(|line| {
                 if line.starts_with("[planning]") {
@@ -179,13 +171,24 @@ fn draw_output_panel(
             .collect()
     };
 
+    // Compute wrapped line count for proper scroll bounds
+    let total_lines = compute_wrapped_line_count(&lines, inner_width);
+    let max_scroll = total_lines.saturating_sub(visible_height);
+
+    let scroll_pos = if session.output_follow_mode {
+        max_scroll
+    } else {
+        session.scroll_position.min(max_scroll)
+    };
+
     let paragraph = Paragraph::new(lines)
         .block(output_block)
-        .wrap(Wrap { trim: false });
+        .wrap(Wrap { trim: false })
+        .scroll((scroll_pos as u16, 0));
     frame.render_widget(paragraph, area);
 
     if total_lines > visible_height {
-        let mut scrollbar_state = ScrollbarState::new(total_lines).position(start);
+        let mut scrollbar_state = ScrollbarState::new(total_lines).position(scroll_pos);
         frame.render_stateful_widget(
             Scrollbar::new(ScrollbarOrientation::VerticalRight)
                 .begin_symbol(Some("↑"))
