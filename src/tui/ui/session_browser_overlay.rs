@@ -169,42 +169,42 @@ pub fn draw_session_browser_overlay(frame: &mut Frame, tab_manager: &TabManager)
         Span::styled(
             format!("{:<23}", "Feature"),
             Style::default()
-                .fg(Color::White)
+                .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(" │ ", Style::default().fg(Color::DarkGray)),
         Span::styled(
             format!("{:<10}", "Phase"),
             Style::default()
-                .fg(Color::White)
+                .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(" │ ", Style::default().fg(Color::DarkGray)),
         Span::styled(
             format!("{:<4}", "Iter"),
             Style::default()
-                .fg(Color::White)
+                .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(" │ ", Style::default().fg(Color::DarkGray)),
         Span::styled(
             format!("{:<10}", "Status"),
             Style::default()
-                .fg(Color::White)
+                .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(" │ ", Style::default().fg(Color::DarkGray)),
         Span::styled(
             format!("{:<12}", "Liveness"),
             Style::default()
-                .fg(Color::White)
+                .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(" │ ", Style::default().fg(Color::DarkGray)),
         Span::styled(
             "Last Seen",
             Style::default()
-                .fg(Color::White)
+                .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
         ),
     ]));
@@ -282,7 +282,7 @@ pub fn draw_session_browser_overlay(frame: &mut Frame, tab_manager: &TabManager)
                     .fg(Color::Yellow)
                     .add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(Color::White)
+                Style::default().fg(Color::DarkGray)
             };
 
             // Phase color
@@ -292,7 +292,7 @@ pub fn draw_session_browser_overlay(frame: &mut Frame, tab_manager: &TabManager)
                 "Implementation" | "Implementing" => Style::default().fg(Color::Blue),
                 "Reviewing" => Style::default().fg(Color::Magenta),
                 "Revising" => Style::default().fg(Color::Yellow),
-                _ => Style::default().fg(Color::White),
+                _ => Style::default().fg(Color::DarkGray),
             };
 
             // Workflow status color
@@ -303,7 +303,7 @@ pub fn draw_session_browser_overlay(frame: &mut Frame, tab_manager: &TabManager)
                 "Planning" | "Implementing" | "Reviewing" | "Revising" => {
                     Style::default().fg(Color::Cyan)
                 }
-                _ => Style::default().fg(Color::White),
+                _ => Style::default().fg(Color::DarkGray),
             };
 
             // Liveness style with color - show PID for running sessions

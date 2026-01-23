@@ -92,7 +92,7 @@ pub fn draw_mention_dropdown(
                     .bg(Color::Cyan)
                     .add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(Color::White)
+                Style::default().fg(Color::DarkGray)
             };
             Line::from(Span::styled(format!("{}{}", prefix, m.display_path), style))
         })
@@ -220,7 +220,7 @@ pub fn draw_slash_dropdown(
                     .bg(Color::Yellow)
                     .add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(Color::White)
+                Style::default().fg(Color::DarkGray)
             };
 
             let desc_style = if is_selected {

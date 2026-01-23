@@ -477,7 +477,7 @@ impl HostApp {
 
                         // Message with level-based color
                         let msg_color = match entry.level {
-                            LogLevel::Info => egui::Color32::WHITE,
+                            LogLevel::Info => egui::Color32::LIGHT_GRAY,
                             LogLevel::Warning => egui::Color32::from_rgb(255, 183, 77),
                         };
                         ui.colored_label(msg_color, &entry.message);

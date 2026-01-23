@@ -249,7 +249,6 @@ pub fn draw(frame: &mut Frame, tab_manager: &TabManager, scroll_regions: &mut Sc
 }
 
 fn draw_tab_bar(frame: &mut Frame, tab_manager: &TabManager, area: Rect) {
-    use ratatui::style::Color;
     use unicode_width::UnicodeWidthStr;
 
     let active_session = tab_manager.active();
@@ -341,11 +340,11 @@ fn draw_tab_bar(frame: &mut Frame, tab_manager: &TabManager, area: Rect) {
     // When padding > 0: total_width == available (right-aligned)
     // When padding == 0: total_width > available (content truncated at edge)
     let mut spans: Vec<Span> = Vec::new();
-    // Left: phase info with bold white text on phase background
+    // Left: phase info with bold theme text on phase background
     spans.push(Span::styled(
         left_section,
         Style::default()
-            .fg(Color::White)
+            .fg(theme.text)
             .add_modifier(Modifier::BOLD)
             .bg(bg_color),
     ));

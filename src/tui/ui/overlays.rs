@@ -726,7 +726,7 @@ fn render_command_line(tab_manager: &TabManager) -> ratatui::text::Text<'static>
                 } else {
                     Line::from(Span::styled(
                         format!(" {}", line),
-                        Style::default().fg(Color::White),
+                        Style::default().fg(Color::DarkGray),
                     ))
                 }
             })

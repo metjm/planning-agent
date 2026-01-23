@@ -82,7 +82,7 @@ pub(super) fn draw_chat_content(
                                 .add_modifier(Modifier::BOLD),
                         );
                         let content =
-                            Span::styled(msg.message.clone(), Style::default().fg(Color::White));
+                            Span::styled(msg.message.clone(), Style::default().fg(theme.text));
                         Line::from(vec![badge, content])
                     }
                     RunTabEntry::Tool(tool_entry) => {

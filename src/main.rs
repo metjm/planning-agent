@@ -384,7 +384,11 @@ async fn run_host(port: u16) -> Result<()> {
     let gui_result = eframe::run_native(
         "Planning Agent Host",
         native_options,
-        Box::new(move |_cc| Ok(Box::new(HostApp::new(state, event_rx, port)))),
+        Box::new(move |cc| {
+            // Force dark visuals for consistent appearance
+            cc.egui_ctx.set_visuals(egui::Visuals::dark());
+            Ok(Box::new(HostApp::new(state, event_rx, port)))
+        }),
     );
 
     // Cleanup
