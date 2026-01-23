@@ -55,9 +55,6 @@ pub(super) fn draw_chat_content(
     let visible_height = inner_area.height as usize;
     let inner_width = inner_area.width;
 
-    // Register scrollable region
-    regions.register(ScrollRegion::ChatContent, inner_area);
-
     let lines: Vec<Line> = if let Some(tab) = active_tab {
         if tab.entries.is_empty() {
             vec![Line::from(Span::styled(
@@ -167,6 +164,10 @@ pub(super) fn draw_chat_content(
     let wrapped_line_count = paragraph_for_count.line_count(inner_width);
 
     let max_scroll = wrapped_line_count.saturating_sub(visible_height);
+
+    // Register scrollable region with computed max_scroll
+    regions.register(ScrollRegion::ChatContent, inner_area, max_scroll);
+
     let scroll_offset = if session.chat_follow_mode {
         max_scroll as u16
     } else {
@@ -388,12 +389,13 @@ pub(super) fn draw_summary_panel(
     let visible_height = inner_area.height as usize;
     let inner_width = inner_area.width;
 
-    // Register scrollable region
-    regions.register(ScrollRegion::SummaryPanel, inner_area);
-
     // Compute wrapped line count using block-less paragraph
     let total_lines = compute_wrapped_line_count(&lines, inner_width);
     let max_scroll = total_lines.saturating_sub(visible_height);
+
+    // Register scrollable region with computed max_scroll
+    regions.register(ScrollRegion::SummaryPanel, inner_area, max_scroll);
+
     let scroll_pos = active_tab
         .map(|t| t.summary_scroll.min(max_scroll))
         .unwrap_or(0);
@@ -530,9 +532,6 @@ pub(super) fn draw_reviewer_history_panel(
     let inner_area = panel_block.inner(area);
     let visible_height = inner_area.height as usize;
 
-    // Register scrollable region
-    regions.register(ScrollRegion::ReviewHistory, inner_area);
-
     let mut lines: Vec<Line> = Vec::new();
 
     if session.review_history.is_empty() {
@@ -630,6 +629,10 @@ pub(super) fn draw_reviewer_history_panel(
     // Calculate max scroll position
     let content_height = lines.len();
     let max_scroll = content_height.saturating_sub(visible_height);
+
+    // Register scrollable region with computed max_scroll
+    regions.register(ScrollRegion::ReviewHistory, inner_area, max_scroll);
+
     let scroll_position = session.review_history_scroll.min(max_scroll);
 
     let paragraph = Paragraph::new(lines.clone())

@@ -491,9 +491,6 @@ pub fn draw_plan_modal(frame: &mut Frame, session: &Session, regions: &mut Scrol
     let visible_height = inner_area.height as usize;
     let inner_width = inner_area.width;
 
-    // Register scrollable region
-    regions.register(ScrollRegion::PlanModal, inner_area);
-
     let content_lines: Vec<Line> = session
         .plan_modal_content
         .lines()
@@ -502,6 +499,10 @@ pub fn draw_plan_modal(frame: &mut Frame, session: &Session, regions: &mut Scrol
 
     let total_lines = compute_wrapped_line_count(&content_lines, inner_width);
     let max_scroll = total_lines.saturating_sub(visible_height);
+
+    // Register scrollable region with computed max_scroll
+    regions.register(ScrollRegion::PlanModal, inner_area, max_scroll);
+
     let scroll_pos = session.plan_modal_scroll.min(max_scroll);
 
     let content = Paragraph::new(content_lines)
@@ -611,14 +612,15 @@ pub fn draw_review_modal(frame: &mut Frame, session: &Session, regions: &mut Scr
     let visible_height = inner_area.height as usize;
     let inner_width = inner_area.width;
 
-    // Register scrollable region
-    regions.register(ScrollRegion::ReviewModal, inner_area);
-
     let content_text = session.current_review_content();
     let content_lines: Vec<Line> = content_text.lines().map(parse_markdown_line).collect();
 
     let total_lines = compute_wrapped_line_count(&content_lines, inner_width);
     let max_scroll = total_lines.saturating_sub(visible_height);
+
+    // Register scrollable region with computed max_scroll
+    regions.register(ScrollRegion::ReviewModal, inner_area, max_scroll);
+
     let scroll_pos = session.review_modal_scroll.min(max_scroll);
 
     let content = Paragraph::new(content_lines)

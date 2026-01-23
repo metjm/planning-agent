@@ -122,9 +122,6 @@ fn draw_choice_popup(
     let inner_area = summary_block.inner(chunks[1]);
     let (visible_height, inner_width) = (inner_area.height as usize, inner_area.width);
 
-    // Register scrollable region
-    regions.register(ScrollRegion::ApprovalSummary, inner_area);
-
     let summary_lines: Vec<Line> = session
         .plan_summary
         .lines()
@@ -132,6 +129,10 @@ fn draw_choice_popup(
         .collect();
     let total_lines = compute_wrapped_line_count(&summary_lines, inner_width);
     let max_scroll = total_lines.saturating_sub(visible_height);
+
+    // Register scrollable region with computed max_scroll
+    regions.register(ScrollRegion::ApprovalSummary, inner_area, max_scroll);
+
     let scroll_pos = session.plan_summary_scroll.min(max_scroll);
 
     let summary = Paragraph::new(summary_lines)

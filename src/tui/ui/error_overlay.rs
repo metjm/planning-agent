@@ -56,12 +56,13 @@ pub fn draw_error_overlay(frame: &mut Frame, session: &Session, regions: &mut Sc
         let inner_area = error_block.inner(chunks[0]);
         let visible_height = inner_area.height as usize;
 
-        // Register scrollable region
-        regions.register(ScrollRegion::ErrorOverlay, inner_area);
-
         // Total lines = 1 (empty) + error lines + 1 (empty)
         let total_content_lines = wrapped_error_lines + 2;
         let max_scroll = total_content_lines.saturating_sub(visible_height);
+
+        // Register scrollable region with computed max_scroll
+        regions.register(ScrollRegion::ErrorOverlay, inner_area, max_scroll);
+
         let scroll_pos = session.error_scroll.min(max_scroll);
 
         let error_paragraph = Paragraph::new(vec![

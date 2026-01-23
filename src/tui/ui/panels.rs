@@ -133,9 +133,6 @@ fn draw_output_panel(
     let visible_height = inner_area.height as usize;
     let inner_width = inner_area.width;
 
-    // Register scrollable region
-    regions.register(ScrollRegion::OutputPanel, inner_area);
-
     // Build all lines (not sliced) for proper scroll handling with wrapping
     let lines: Vec<Line> = if session.output_lines.is_empty() {
         vec![Line::from(Span::styled(
@@ -174,6 +171,9 @@ fn draw_output_panel(
     // Compute wrapped line count for proper scroll bounds
     let total_lines = compute_wrapped_line_count(&lines, inner_width);
     let max_scroll = total_lines.saturating_sub(visible_height);
+
+    // Register scrollable region with computed max_scroll
+    regions.register(ScrollRegion::OutputPanel, inner_area, max_scroll);
 
     let scroll_pos = if session.output_follow_mode {
         max_scroll
@@ -218,9 +218,6 @@ fn draw_todos(frame: &mut Frame, session: &Session, area: Rect, regions: &mut Sc
     let inner_area = todos_block.inner(area);
     let visible_height = inner_area.height as usize;
     let inner_width = inner_area.width;
-
-    // Register scrollable region
-    regions.register(ScrollRegion::TodosPanel, inner_area);
 
     let todo_lines = session.get_todos_display();
 
@@ -284,6 +281,10 @@ fn draw_todos(frame: &mut Frame, session: &Session, area: Rect, regions: &mut Sc
     // Compute wrapped line count using block-less paragraph
     let total_lines = compute_wrapped_line_count(&lines, inner_width);
     let max_scroll = total_lines.saturating_sub(visible_height);
+
+    // Register scrollable region with computed max_scroll
+    regions.register(ScrollRegion::TodosPanel, inner_area, max_scroll);
+
     let scroll_pos = session.todo_scroll_position.min(max_scroll);
 
     let paragraph = Paragraph::new(lines)
