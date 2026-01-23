@@ -9,6 +9,7 @@ use tarpc::tokio_serde::formats::Bincode;
 use tokio::sync::mpsc;
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_subscription_receives_session_changed() {
     let server = TestServer::start().await;
 

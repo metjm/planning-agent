@@ -619,33 +619,4 @@ mod tests {
             );
         }
     }
-
-    #[test]
-    #[ignore]
-    fn test_fetch_gemini_usage_real() {
-        if !is_gemini_available() {
-            eprintln!("Gemini CLI not found, skipping");
-            return;
-        }
-
-        eprintln!("Fetching real Gemini usage...");
-        let usage = fetch_gemini_usage_sync();
-        eprintln!("Result: {:?}", usage);
-
-        assert!(usage.fetched_at.is_some());
-        if usage.error_message.is_none() {
-            assert!(
-                usage.daily.used_percent.is_some(),
-                "Should have daily usage data"
-            );
-            eprintln!("Daily used: {}%", usage.daily.used_percent.unwrap());
-            if let Some(remaining) = usage.daily.time_until_reset() {
-                eprintln!(
-                    "Resets in: {}h {}m",
-                    remaining.as_secs() / 3600,
-                    (remaining.as_secs() % 3600) / 60
-                );
-            }
-        }
-    }
 }

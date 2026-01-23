@@ -55,6 +55,9 @@ fn main() {
     enforce_formatting();
     enforce_line_limits();
     enforce_no_dead_code_allows();
+    enforce_no_test_skips();
+    enforce_no_nested_runtimes();
+    enforce_serial_for_env_mutations();
 }
 
 fn enforce_line_limits() {
@@ -343,6 +346,365 @@ fn enforce_no_dead_code_allows() {
         eprintln!("========================================\n");
         panic!(
             "Build failed: {} #[allow(dead_code)] occurrence(s) found. Remove the dead code.",
+            total_count
+        );
+    }
+}
+
+/// Bans tests that silently skip instead of failing.
+///
+/// Tests that return early without doing work hide failures and give false confidence.
+/// If a test can't run, it should FAIL, not silently pass.
+fn enforce_no_test_skips() {
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR must be set");
+    let root = PathBuf::from(&manifest_dir);
+
+    let rust_files: Vec<PathBuf> = collect_files_to_check(&root)
+        .into_iter()
+        .filter(|p| {
+            p.extension().and_then(|e| e.to_str()) == Some("rs")
+                && p.file_name().and_then(|n| n.to_str()) != Some("build.rs")
+        })
+        .collect();
+
+    // Patterns that indicate a test is silently skipping.
+    // These are checked only within test function bodies.
+    let skip_patterns = [
+        "Skipping test",
+        "skipping test",
+        "Test skipped",
+        "test skipped",
+        "daemon not available",
+        "not connected, skipping",
+    ];
+
+    let mut violations: Vec<(PathBuf, Vec<(usize, String)>)> = Vec::new();
+
+    for file in &rust_files {
+        if let Ok(content) = std::fs::read_to_string(file) {
+            let mut file_violations = Vec::new();
+            let lines: Vec<&str> = content.lines().collect();
+
+            // Track test function context
+            let mut in_test_fn = false;
+            let mut test_fn_start = 0;
+            let mut test_fn_name = String::new();
+            let mut brace_depth = 0;
+
+            for (i, line) in lines.iter().enumerate() {
+                let trimmed = line.trim();
+
+                // Check for #[test] or #[tokio::test]
+                if trimmed == "#[test]" || trimmed.starts_with("#[tokio::test") {
+                    // Look ahead for function name
+                    for j in (i + 1)..lines.len().min(i + 5) {
+                        if lines[j].contains("fn ") {
+                            test_fn_start = i + 1;
+                            if let Some(fn_pos) = lines[j].find("fn ") {
+                                let after_fn = &lines[j][fn_pos + 3..];
+                                if let Some(paren) = after_fn.find('(') {
+                                    test_fn_name = after_fn[..paren].trim().to_string();
+                                }
+                            }
+                            in_test_fn = true;
+                            brace_depth = 0;
+                            break;
+                        }
+                    }
+                }
+
+                // Track brace depth
+                if in_test_fn {
+                    for c in line.chars() {
+                        if c == '{' {
+                            brace_depth += 1;
+                        } else if c == '}' {
+                            brace_depth -= 1;
+                            if brace_depth == 0 {
+                                in_test_fn = false;
+                            }
+                        }
+                    }
+
+                    // Check for skip patterns (anywhere in test)
+                    for pattern in &skip_patterns {
+                        if line.contains(pattern) {
+                            file_violations.push((
+                                test_fn_start,
+                                format!(
+                                    "test `{}` contains skip pattern: {}",
+                                    test_fn_name, pattern
+                                ),
+                            ));
+                            in_test_fn = false; // Only report once per test
+                            break;
+                        }
+                    }
+
+                    // Check for bare "return;" which indicates early exit (silent skip)
+                    // This catches patterns like: if some_condition { return; }
+                    if in_test_fn && trimmed == "return;" && brace_depth > 1 {
+                        // brace_depth > 1 means we're inside a nested block (like an if)
+                        // This is the telltale sign of a conditional early return
+                        file_violations.push((
+                            test_fn_start,
+                            format!(
+                                "test `{}` has conditional early return (silent skip)",
+                                test_fn_name
+                            ),
+                        ));
+                        in_test_fn = false; // Only report once per test
+                    }
+                }
+            }
+
+            if !file_violations.is_empty() {
+                let rel_path = file.strip_prefix(&root).unwrap_or(file).to_path_buf();
+                violations.push((rel_path, file_violations));
+            }
+        }
+    }
+
+    if !violations.is_empty() {
+        let total_count: usize = violations.iter().map(|(_, v)| v.len()).sum();
+
+        eprintln!("\n========================================");
+        eprintln!("SILENT TEST SKIPS ARE NOT ALLOWED");
+        eprintln!("========================================");
+        eprintln!();
+        for (path, lines) in &violations {
+            for (line_num, line_content) in lines {
+                eprintln!("  {}:{}", path.display(), line_num);
+                eprintln!("    {}", line_content.trim());
+                eprintln!();
+            }
+        }
+        eprintln!("========================================");
+        eprintln!();
+        eprintln!("Tests must FAIL if they cannot run, not silently pass.");
+        eprintln!();
+        eprintln!("Instead of skipping:");
+        eprintln!("  - Spin up real test infrastructure (use TestServer)");
+        eprintln!("  - Use assert!() to verify preconditions");
+        eprintln!("  - If truly optional, use #[ignore] with a reason");
+        eprintln!();
+        eprintln!("========================================\n");
+        panic!(
+            "Build failed: {} silent test skip(s) found. Make tests fail instead of skip.",
+            total_count
+        );
+    }
+}
+
+/// Bans spawning threads that create their own tokio runtime.
+///
+/// This pattern causes subtle bugs: tarpc clients created in a nested runtime
+/// get dropped when that runtime is dropped, causing "connection already shutdown" errors.
+fn enforce_no_nested_runtimes() {
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR must be set");
+    let root = PathBuf::from(&manifest_dir);
+
+    let rust_files: Vec<PathBuf> = collect_files_to_check(&root)
+        .into_iter()
+        .filter(|p| {
+            p.extension().and_then(|e| e.to_str()) == Some("rs")
+                && p.file_name().and_then(|n| n.to_str()) != Some("build.rs")
+        })
+        .collect();
+
+    let mut violations: Vec<(PathBuf, Vec<(usize, String)>)> = Vec::new();
+
+    for file in &rust_files {
+        if let Ok(content) = std::fs::read_to_string(file) {
+            let lines: Vec<&str> = content.lines().collect();
+            let mut file_violations = Vec::new();
+
+            // Look for std::thread::spawn or thread::spawn
+            for (i, line) in lines.iter().enumerate() {
+                let trimmed = line.trim();
+                if (trimmed.contains("std::thread::spawn") || trimmed.contains("thread::spawn("))
+                    && !trimmed.starts_with("//")
+                {
+                    // Check surrounding context (next 20 lines) for runtime creation
+                    let end = (i + 20).min(lines.len());
+                    let context = lines[i..end].join("\n");
+
+                    if context.contains("Runtime::new()")
+                        || context.contains("runtime::Builder")
+                        || context.contains("tokio::runtime::Builder")
+                    {
+                        file_violations.push((i + 1, line.to_string()));
+                    }
+                }
+            }
+
+            if !file_violations.is_empty() {
+                let rel_path = file.strip_prefix(&root).unwrap_or(file).to_path_buf();
+                violations.push((rel_path, file_violations));
+            }
+        }
+    }
+
+    if !violations.is_empty() {
+        let total_count: usize = violations.iter().map(|(_, v)| v.len()).sum();
+
+        eprintln!("\n========================================");
+        eprintln!("NESTED TOKIO RUNTIMES ARE NOT ALLOWED");
+        eprintln!("========================================");
+        eprintln!();
+        for (path, lines) in &violations {
+            for (line_num, line_content) in lines {
+                eprintln!("  {}:{}", path.display(), line_num);
+                eprintln!("    {}", line_content.trim());
+                eprintln!();
+            }
+        }
+        eprintln!("========================================");
+        eprintln!();
+        eprintln!("Spawning a thread that creates its own tokio runtime");
+        eprintln!("causes async clients (tarpc, etc) to break when that");
+        eprintln!("thread exits and the runtime is dropped.");
+        eprintln!();
+        eprintln!("Instead:");
+        eprintln!("  - Make the function async and call it from the main runtime");
+        eprintln!("  - Use tokio::spawn() for concurrent async work");
+        eprintln!("  - Pass async clients from the parent runtime");
+        eprintln!();
+        eprintln!("========================================\n");
+        panic!(
+            "Build failed: {} nested runtime(s) found. Use async functions instead.",
+            total_count
+        );
+    }
+}
+
+/// Requires #[serial] for tests that mutate environment variables.
+///
+/// Environment variables are global state. Tests that modify them without
+/// #[serial] cause flaky failures when running in parallel.
+fn enforce_serial_for_env_mutations() {
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR must be set");
+    let root = PathBuf::from(&manifest_dir);
+
+    let rust_files: Vec<PathBuf> = collect_files_to_check(&root)
+        .into_iter()
+        .filter(|p| {
+            p.extension().and_then(|e| e.to_str()) == Some("rs")
+                && p.file_name().and_then(|n| n.to_str()) != Some("build.rs")
+        })
+        .collect();
+
+    let mut violations: Vec<(PathBuf, Vec<(usize, String)>)> = Vec::new();
+
+    for file in &rust_files {
+        if let Ok(content) = std::fs::read_to_string(file) {
+            let lines: Vec<&str> = content.lines().collect();
+            let mut file_violations = Vec::new();
+
+            // Find test functions that use set_var or remove_var
+            let mut in_test_fn = false;
+            let mut test_fn_start = 0;
+            let mut test_fn_name = String::new();
+            let mut has_serial = false;
+            let mut brace_depth = 0;
+
+            for (i, line) in lines.iter().enumerate() {
+                let trimmed = line.trim();
+
+                // Check for #[serial] or #[serial_test::serial] attribute
+                if trimmed == "#[serial]" || trimmed == "#[serial_test::serial]" {
+                    has_serial = true;
+                }
+
+                // Check for #[test] or #[tokio::test]
+                if trimmed == "#[test]" || trimmed.starts_with("#[tokio::test") {
+                    // Look ahead for function name
+                    for j in (i + 1)..lines.len().min(i + 5) {
+                        if lines[j].contains("fn ") {
+                            test_fn_start = i + 1;
+                            // Extract function name
+                            if let Some(fn_pos) = lines[j].find("fn ") {
+                                let after_fn = &lines[j][fn_pos + 3..];
+                                if let Some(paren) = after_fn.find('(') {
+                                    test_fn_name = after_fn[..paren].trim().to_string();
+                                }
+                            }
+                            in_test_fn = true;
+                            brace_depth = 0;
+                            break;
+                        }
+                    }
+                }
+
+                // Track brace depth to know when test function ends
+                if in_test_fn {
+                    for c in line.chars() {
+                        if c == '{' {
+                            brace_depth += 1;
+                        } else if c == '}' {
+                            brace_depth -= 1;
+                            if brace_depth == 0 {
+                                in_test_fn = false;
+                                has_serial = false;
+                            }
+                        }
+                    }
+
+                    // Check for env mutations
+                    if !has_serial
+                        && (trimmed.contains("std::env::set_var")
+                            || trimmed.contains("std::env::remove_var")
+                            || (trimmed.contains("env::set_var") && !trimmed.starts_with("//"))
+                            || (trimmed.contains("env::remove_var") && !trimmed.starts_with("//")))
+                    {
+                        file_violations.push((
+                            test_fn_start,
+                            format!("test `{}` mutates env without #[serial]", test_fn_name),
+                        ));
+                        // Only report once per test
+                        in_test_fn = false;
+                        has_serial = false;
+                    }
+                }
+            }
+
+            if !file_violations.is_empty() {
+                let rel_path = file.strip_prefix(&root).unwrap_or(file).to_path_buf();
+                violations.push((rel_path, file_violations));
+            }
+        }
+    }
+
+    if !violations.is_empty() {
+        let total_count: usize = violations.iter().map(|(_, v)| v.len()).sum();
+
+        eprintln!("\n========================================");
+        eprintln!("ENV MUTATIONS REQUIRE #[serial]");
+        eprintln!("========================================");
+        eprintln!();
+        for (path, issues) in &violations {
+            for (line_num, msg) in issues {
+                eprintln!("  {}:{}", path.display(), line_num);
+                eprintln!("    {}", msg);
+                eprintln!();
+            }
+        }
+        eprintln!("========================================");
+        eprintln!();
+        eprintln!("Tests that call std::env::set_var or std::env::remove_var");
+        eprintln!("modify global state and cause flaky failures in parallel.");
+        eprintln!();
+        eprintln!("Add #[serial] attribute from serial_test crate:");
+        eprintln!();
+        eprintln!("    use serial_test::serial;");
+        eprintln!();
+        eprintln!("    #[test]");
+        eprintln!("    #[serial]");
+        eprintln!("    fn test_with_env_var() {{ ... }}");
+        eprintln!();
+        eprintln!("========================================\n");
+        panic!(
+            "Build failed: {} test(s) mutate env vars without #[serial].",
             total_count
         );
     }

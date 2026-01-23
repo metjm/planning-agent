@@ -343,12 +343,15 @@ mod tests {
 ///
 /// These tests spin up REAL daemon servers - no mocking.
 /// Each test gets its own isolated daemon instance.
+/// Tests are serial because set_home_for_test uses thread-local storage
+/// and tokio tasks can migrate between threads.
 #[cfg(test)]
 #[cfg(unix)]
 mod integration_tests {
     use super::*;
     use crate::session_daemon::rpc_tests::TestServer;
     use crate::session_daemon::LivenessState;
+    use serial_test::serial;
     use std::time::Duration;
     use uuid::Uuid;
 
@@ -435,6 +438,7 @@ mod integration_tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_tracker_register_and_list() {
         let _env = TestEnv::new().await;
         let tracker = SessionTracker::new(false).await;
@@ -472,6 +476,7 @@ mod integration_tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_tracker_update() {
         let _env = TestEnv::new().await;
         let tracker = SessionTracker::new(false).await;
@@ -522,6 +527,7 @@ mod integration_tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_tracker_mark_stopped() {
         let _env = TestEnv::new().await;
         let tracker = SessionTracker::new(false).await;
@@ -564,6 +570,7 @@ mod integration_tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_tracker_force_stop() {
         let _env = TestEnv::new().await;
         let tracker = SessionTracker::new(false).await;
@@ -606,6 +613,7 @@ mod integration_tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_tracker_full_workflow_lifecycle() {
         // Simulates a complete workflow lifecycle through SessionTracker
         let _env = TestEnv::new().await;
@@ -716,6 +724,7 @@ mod integration_tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_tracker_reconnect() {
         let _env = TestEnv::new().await;
         let tracker = SessionTracker::new(false).await;
@@ -762,6 +771,7 @@ mod integration_tests {
     /// The fix was to make new() async so the tarpc client is created in the
     /// current runtime, keeping the connection alive.
     #[tokio::test]
+    #[serial]
     async fn test_tracker_connection_stays_alive() {
         let _env = TestEnv::new().await;
         let tracker = SessionTracker::new(false).await;

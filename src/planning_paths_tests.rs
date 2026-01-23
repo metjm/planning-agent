@@ -1,9 +1,15 @@
 //! Tests for planning_paths module.
 
 use super::*;
-use std::env;
 use std::path::Path;
 use tempfile::tempdir;
+
+/// Helper to set up an isolated test home directory.
+fn test_env() -> (tempfile::TempDir, TestHomeGuard) {
+    let dir = tempdir().expect("Failed to create temp dir");
+    let guard = set_home_for_test(dir.path().to_path_buf());
+    (dir, guard)
+}
 
 #[test]
 fn test_working_dir_hash_consistency() {
@@ -39,21 +45,18 @@ fn test_hex_encode() {
 
 #[test]
 fn test_planning_agent_home_dir() {
-    if env::var("HOME").is_err() {
-        return;
-    }
+    let (temp_dir, _guard) = test_env();
 
     let result = planning_agent_home_dir();
     assert!(result.is_ok());
     let path = result.unwrap();
-    assert!(path.ends_with(".planning-agent"));
+    // With test override, the path IS the temp dir (no .planning-agent suffix)
+    assert_eq!(path, temp_dir.path());
 }
 
 #[test]
 fn test_sessions_dir() {
-    if env::var("HOME").is_err() {
-        return;
-    }
+    let (_temp_dir, _guard) = test_env();
 
     let result = sessions_dir();
     assert!(result.is_ok());
@@ -63,9 +66,7 @@ fn test_sessions_dir() {
 
 #[test]
 fn test_state_path() {
-    if env::var("HOME").is_err() {
-        return;
-    }
+    let (_temp_dir, _guard) = test_env();
 
     let dir = tempdir().unwrap();
     let result = state_path(dir.path(), "my-feature");
@@ -77,9 +78,7 @@ fn test_state_path() {
 
 #[test]
 fn test_debug_log_path() {
-    if env::var("HOME").is_err() {
-        return;
-    }
+    let (_temp_dir, _guard) = test_env();
 
     let result = debug_log_path();
     assert!(result.is_ok());
@@ -90,9 +89,7 @@ fn test_debug_log_path() {
 
 #[test]
 fn test_update_marker_path() {
-    if env::var("HOME").is_err() {
-        return;
-    }
+    let (_temp_dir, _guard) = test_env();
 
     let result = update_marker_path();
     assert!(result.is_ok());
@@ -102,9 +99,7 @@ fn test_update_marker_path() {
 
 #[test]
 fn test_session_dir() {
-    if env::var("HOME").is_err() {
-        return;
-    }
+    let (_temp_dir, _guard) = test_env();
 
     let session_id = format!("test-session-{}", uuid::Uuid::new_v4());
     let result = session_dir(&session_id);
@@ -117,9 +112,7 @@ fn test_session_dir() {
 
 #[test]
 fn test_session_state_path() {
-    if env::var("HOME").is_err() {
-        return;
-    }
+    let (_temp_dir, _guard) = test_env();
 
     let session_id = format!("test-session-{}", uuid::Uuid::new_v4());
     let result = session_state_path(&session_id);
@@ -131,9 +124,7 @@ fn test_session_state_path() {
 
 #[test]
 fn test_session_plan_path() {
-    if env::var("HOME").is_err() {
-        return;
-    }
+    let (_temp_dir, _guard) = test_env();
 
     let session_id = format!("test-session-{}", uuid::Uuid::new_v4());
     let result = session_plan_path(&session_id);
@@ -145,9 +136,7 @@ fn test_session_plan_path() {
 
 #[test]
 fn test_session_feedback_path() {
-    if env::var("HOME").is_err() {
-        return;
-    }
+    let (_temp_dir, _guard) = test_env();
 
     let session_id = format!("test-session-{}", uuid::Uuid::new_v4());
     let result = session_feedback_path(&session_id, 1);
@@ -163,9 +152,7 @@ fn test_session_feedback_path() {
 
 #[test]
 fn test_session_snapshot_path() {
-    if env::var("HOME").is_err() {
-        return;
-    }
+    let (_temp_dir, _guard) = test_env();
 
     let session_id = format!("test-session-{}", uuid::Uuid::new_v4());
     let result = session_snapshot_path(&session_id);
@@ -177,9 +164,7 @@ fn test_session_snapshot_path() {
 
 #[test]
 fn test_session_logs_dir() {
-    if env::var("HOME").is_err() {
-        return;
-    }
+    let (_temp_dir, _guard) = test_env();
 
     let session_id = format!("test-session-{}", uuid::Uuid::new_v4());
     let result = session_logs_dir(&session_id);
@@ -192,9 +177,7 @@ fn test_session_logs_dir() {
 
 #[test]
 fn test_session_info_path() {
-    if env::var("HOME").is_err() {
-        return;
-    }
+    let (_temp_dir, _guard) = test_env();
 
     let session_id = format!("test-session-{}", uuid::Uuid::new_v4());
     let result = session_info_path(&session_id);
@@ -205,9 +188,7 @@ fn test_session_info_path() {
 
 #[test]
 fn test_session_info_save_and_load() {
-    if env::var("HOME").is_err() {
-        return;
-    }
+    let (_temp_dir, _guard) = test_env();
 
     let session_id = format!("test-session-{}", uuid::Uuid::new_v4());
     let info = SessionInfo::new(
@@ -249,9 +230,7 @@ fn test_convert_rfc3339_to_timestamp() {
 
 #[test]
 fn test_session_implementation_log_path() {
-    if env::var("HOME").is_err() {
-        return;
-    }
+    let (_temp_dir, _guard) = test_env();
 
     let session_id = format!("test-session-{}", uuid::Uuid::new_v4());
     let result = session_implementation_log_path(&session_id, 1);
@@ -268,9 +247,7 @@ fn test_session_implementation_log_path() {
 
 #[test]
 fn test_session_implementation_review_path() {
-    if env::var("HOME").is_err() {
-        return;
-    }
+    let (_temp_dir, _guard) = test_env();
 
     let session_id = format!("test-session-{}", uuid::Uuid::new_v4());
     let result = session_implementation_review_path(&session_id, 1);

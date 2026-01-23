@@ -300,7 +300,15 @@ pub fn create_session_logger(session_id: &str) -> Result<Arc<SessionLogger>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::env;
+    use crate::planning_paths::{set_home_for_test, TestHomeGuard};
+    use tempfile::tempdir;
+
+    /// Helper to set up an isolated test home directory.
+    fn test_env() -> (tempfile::TempDir, TestHomeGuard) {
+        let dir = tempdir().expect("Failed to create temp dir");
+        let guard = set_home_for_test(dir.path().to_path_buf());
+        (dir, guard)
+    }
 
     #[test]
     fn test_log_category_as_str() {
@@ -323,9 +331,7 @@ mod tests {
 
     #[test]
     fn test_session_logger_creation() {
-        if env::var("HOME").is_err() {
-            return; // Skip if HOME is not set
-        }
+        let (_temp_dir, _guard) = test_env();
 
         let session_id = format!("test-{}", uuid::Uuid::new_v4());
         let result = SessionLogger::new(&session_id);
@@ -334,9 +340,7 @@ mod tests {
 
     #[test]
     fn test_session_logger_logging() {
-        if env::var("HOME").is_err() {
-            return;
-        }
+        let (_temp_dir, _guard) = test_env();
 
         let session_id = format!("test-{}", uuid::Uuid::new_v4());
         let logger = SessionLogger::new(&session_id).unwrap();
@@ -352,9 +356,7 @@ mod tests {
 
     #[test]
     fn test_create_session_logger_arc() {
-        if env::var("HOME").is_err() {
-            return;
-        }
+        let (_temp_dir, _guard) = test_env();
 
         let session_id = format!("test-{}", uuid::Uuid::new_v4());
         let result = create_session_logger(&session_id);
@@ -391,9 +393,7 @@ mod tests {
 
     #[test]
     fn test_should_log() {
-        if env::var("HOME").is_err() {
-            return;
-        }
+        let (_temp_dir, _guard) = test_env();
 
         // With Warn level, only Error and Warn should be logged
         let session_id = format!("test-{}", uuid::Uuid::new_v4());

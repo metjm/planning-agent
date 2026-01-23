@@ -1,6 +1,15 @@
 //! Tests for session_store module.
 
 use super::*;
+use crate::planning_paths::{set_home_for_test, TestHomeGuard};
+use tempfile::tempdir;
+
+/// Helper to set up an isolated test home directory.
+fn test_env() -> (tempfile::TempDir, TestHomeGuard) {
+    let dir = tempdir().expect("Failed to create temp dir");
+    let guard = set_home_for_test(dir.path().to_path_buf());
+    (dir, guard)
+}
 
 fn create_test_state() -> State {
     State::new("test-feature", "Test objective", 3).unwrap()
@@ -187,23 +196,20 @@ fn test_conflict_detection_with_conflict() {
 
 #[test]
 fn test_session_centric_snapshot_path() {
-    if std::env::var("HOME").is_err() {
-        return;
-    }
+    let (_temp_dir, _guard) = test_env();
 
     let session_id = format!("test-session-{}", uuid::Uuid::new_v4());
     let path = get_snapshot_path(&session_id).unwrap();
 
-    assert!(path.to_string_lossy().contains(".planning-agent/sessions/"));
+    // With test override, path is: temp_dir/sessions/<session_id>/session.json
+    assert!(path.to_string_lossy().contains("/sessions/"));
     assert!(path.to_string_lossy().contains(&session_id));
     assert!(path.to_string_lossy().ends_with("/session.json"));
 }
 
 #[test]
 fn test_save_and_load_session_centric_snapshot() {
-    if std::env::var("HOME").is_err() {
-        return;
-    }
+    let (_temp_dir, _guard) = test_env();
 
     let state = create_test_state();
     let ui_state = create_test_ui_state();

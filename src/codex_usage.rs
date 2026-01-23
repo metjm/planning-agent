@@ -272,22 +272,4 @@ mod tests {
         assert!(usage.fetched_at.is_some());
         assert_eq!(usage.error_message, Some("CLI not found".to_string()));
     }
-
-    #[test]
-    #[ignore]
-    fn test_fetch_codex_usage_real() {
-        if !is_codex_available() {
-            eprintln!("Codex CLI not found, skipping");
-            return;
-        }
-        eprintln!("Fetching real Codex usage...");
-        let usage = fetch_codex_usage_sync();
-        eprintln!("Result: {:?}", usage);
-        assert!(usage.fetched_at.is_some());
-        if usage.error_message.is_none() {
-            eprintln!("5h used: {:?}%", usage.session.used_percent);
-            eprintln!("Weekly used: {:?}%", usage.weekly.used_percent);
-            eprintln!("Plan: {:?}", usage.plan_type);
-        }
-    }
 }

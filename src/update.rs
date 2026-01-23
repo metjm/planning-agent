@@ -388,6 +388,15 @@ pub fn perform_update() -> UpdateResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::planning_paths::{set_home_for_test, TestHomeGuard};
+    use tempfile::tempdir;
+
+    /// Helper to set up an isolated test home directory.
+    fn test_env() -> (tempfile::TempDir, TestHomeGuard) {
+        let dir = tempdir().expect("Failed to create temp dir");
+        let guard = set_home_for_test(dir.path().to_path_buf());
+        (dir, guard)
+    }
 
     #[test]
     fn test_format_commit_date() {
@@ -424,11 +433,7 @@ mod tests {
     #[test]
     fn test_write_and_consume_update_marker() {
         // This test uses home-based storage (~/.planning-agent/update-installed)
-
-        // Skip if HOME is not set
-        if std::env::var("HOME").is_err() {
-            return;
-        }
+        let (_temp_dir, _guard) = test_env();
 
         // First consume to ensure we start clean
         let _ = consume_update_marker();

@@ -388,6 +388,7 @@ async fn test_upstream_client_session_gone() {
 /// Integration test: RpcUpstream connects to host and syncs sessions.
 /// This tests the actual RpcUpstream implementation, not just the raw client.
 #[tokio::test]
+#[serial_test::serial]
 async fn test_rpc_upstream_connects_and_syncs() {
     use crate::session_daemon::rpc_upstream::{RpcUpstream, UpstreamEvent};
     use crate::session_daemon::server::DaemonState;
@@ -466,6 +467,7 @@ async fn test_rpc_upstream_connects_and_syncs() {
 /// 2. Daemon receives client registrations and forwards to host
 /// 3. Client can register sessions with the daemon
 #[tokio::test]
+#[serial_test::serial]
 async fn test_full_stack_client_to_daemon_to_host() {
     use super::find_test_port;
     use crate::rpc::daemon_service::DaemonServiceClient;

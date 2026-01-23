@@ -141,6 +141,23 @@ The build enforces a 750-line limit per file (see `build.rs`). When a file excee
 
 Proper extraction maintains readability and creates logical module boundaries.
 
+### Build Enforcement Checks
+
+The build script (`build.rs`) enforces several code quality rules. Violations fail the build:
+
+1. **No Silent Test Skips**: Tests cannot silently skip with early returns like `if !available { return; }`. Tests must either:
+   - Run and verify behavior (use `set_home_for_test()` for isolated test environments)
+   - Fail explicitly if prerequisites aren't met
+   - Be deleted if they can't run reliably
+
+2. **No Nested Tokio Runtimes**: Cannot use `std::thread::spawn` + `Runtime::new()` pattern. This causes async clients (tarpc) to break when the spawned thread's runtime is dropped. Make functions async instead.
+
+3. **Serial Tests for Env Mutations**: Tests calling `std::env::set_var` or `std::env::remove_var` must have `#[serial]` or `#[serial_test::serial]` attribute to prevent parallel test interference.
+
+4. **No #[allow(dead_code)]**: Delete unused code instead of silencing warnings.
+
+5. **Code Formatting**: All code must pass `cargo fmt --check`.
+
 ### Refactoring is Encouraged
 
 **Never be afraid to change a lot of code if it improves things.**
@@ -166,7 +183,7 @@ This is non-negotiable. Every problem must be properly investigated and fixed. W
 - Dismiss failures as "flaky" or "pre-existing" without investigation
 - Claim something is an "environment issue" to avoid doing the work
 - Create wrapper functions or shims to avoid proper refactoring
-- Mark tests as ignored instead of fixing them
+- Mark tests as `#[ignore]` instead of fixing them or deleting them
 - Add `#[allow(...)]` attributes to silence legitimate warnings
 - Hand-wave problems away with vague explanations
 
