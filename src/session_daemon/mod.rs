@@ -26,7 +26,7 @@ pub mod server;
 mod server_tests;
 
 #[cfg(test)]
-mod rpc_integration_tests;
+mod rpc_tests;
 
 pub use protocol::{LivenessState, SessionRecord};
 pub use rpc_client::RpcClient;
