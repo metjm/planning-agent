@@ -404,8 +404,10 @@ impl Session {
         self.scroll_position = self.scroll_position.saturating_sub(1);
     }
 
-    pub fn scroll_down(&mut self) {
-        self.scroll_position = self.scroll_position.saturating_add(1);
+    pub fn scroll_down(&mut self, max_scroll: usize) {
+        if self.scroll_position < max_scroll {
+            self.scroll_position = self.scroll_position.saturating_add(1);
+        }
     }
 
     pub fn scroll_to_top(&mut self) {

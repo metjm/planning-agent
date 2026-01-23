@@ -1,6 +1,7 @@
 use super::theme::Theme;
 use super::util::{compute_wrapped_line_count, parse_markdown_line, wrap_text_at_width};
 use super::SPINNER_CHARS;
+use crate::tui::scroll_regions::{ScrollRegion, ScrollableRegions};
 use crate::tui::session::ReviewerStatus;
 use crate::tui::{
     FocusedPanel, RunTab, RunTabEntry, Session, SummaryState, ToolResultSummary, ToolTimelineEntry,
@@ -19,6 +20,7 @@ pub(super) fn draw_chat_content(
     session: &Session,
     active_tab: Option<&RunTab>,
     area: Rect,
+    regions: &mut ScrollableRegions,
 ) {
     let theme = Theme::for_session(session);
     let is_focused = session.focused_panel == FocusedPanel::Chat;
@@ -52,6 +54,9 @@ pub(super) fn draw_chat_content(
     let inner_area = chat_block.inner(area);
     let visible_height = inner_area.height as usize;
     let inner_width = inner_area.width;
+
+    // Register scrollable region
+    regions.register(ScrollRegion::ChatContent, inner_area);
 
     let lines: Vec<Line> = if let Some(tab) = active_tab {
         if tab.entries.is_empty() {
@@ -287,6 +292,7 @@ pub(super) fn draw_summary_panel(
     session: &Session,
     active_tab: Option<&RunTab>,
     area: Rect,
+    regions: &mut ScrollableRegions,
 ) {
     let is_focused = session.focused_panel == FocusedPanel::Summary;
     let border_color = if is_focused {
@@ -381,6 +387,9 @@ pub(super) fn draw_summary_panel(
     let inner_area = summary_block.inner(area);
     let visible_height = inner_area.height as usize;
     let inner_width = inner_area.width;
+
+    // Register scrollable region
+    regions.register(ScrollRegion::SummaryPanel, inner_area);
 
     // Compute wrapped line count using block-less paragraph
     let total_lines = compute_wrapped_line_count(&lines, inner_width);
@@ -498,7 +507,12 @@ fn format_duration_secs(duration_ms: u64) -> String {
     }
 }
 
-pub(super) fn draw_reviewer_history_panel(frame: &mut Frame, session: &Session, area: Rect) {
+pub(super) fn draw_reviewer_history_panel(
+    frame: &mut Frame,
+    session: &Session,
+    area: Rect,
+    regions: &mut ScrollableRegions,
+) {
     let theme = Theme::for_session(session);
     let spinner_idx = (session.review_history_spinner_frame as usize) % SPINNER_CHARS.len();
 
@@ -515,6 +529,9 @@ pub(super) fn draw_reviewer_history_panel(frame: &mut Frame, session: &Session, 
 
     let inner_area = panel_block.inner(area);
     let visible_height = inner_area.height as usize;
+
+    // Register scrollable region
+    regions.register(ScrollRegion::ReviewHistory, inner_area);
 
     let mut lines: Vec<Line> = Vec::new();
 

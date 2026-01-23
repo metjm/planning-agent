@@ -12,6 +12,7 @@ mod success_overlay;
 pub mod theme;
 pub mod util;
 
+use crate::tui::scroll_regions::ScrollableRegions;
 use crate::tui::{ApprovalMode, InputMode, Session, SessionStatus, TabManager};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
@@ -196,7 +197,10 @@ fn get_session_status_icon(session: &Session) -> &'static str {
     }
 }
 
-pub fn draw(frame: &mut Frame, tab_manager: &TabManager) {
+pub fn draw(frame: &mut Frame, tab_manager: &TabManager, scroll_regions: &mut ScrollableRegions) {
+    // Clear scroll regions at start of each frame
+    scroll_regions.clear();
+
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -209,33 +213,38 @@ pub fn draw(frame: &mut Frame, tab_manager: &TabManager) {
     draw_tab_bar(frame, tab_manager, chunks[0]);
 
     let session = tab_manager.active();
-    panels::draw_main(frame, session, chunks[1]);
+    panels::draw_main(frame, session, chunks[1], scroll_regions);
     overlays::draw_footer(frame, session, tab_manager, chunks[2]);
 
+    let session = tab_manager.active();
     if session.approval_mode != ApprovalMode::None {
-        overlays::draw_approval_overlay(frame, session);
+        overlays::draw_approval_overlay(frame, session, scroll_regions);
     }
     if session.input_mode == InputMode::NamingTab {
         overlays::draw_tab_input_overlay(frame, session, tab_manager);
     }
     // Render plan modal BEFORE error overlay so errors always take precedence
+    let session = tab_manager.active();
     if session.plan_modal_open {
-        overlays::draw_plan_modal(frame, session);
+        overlays::draw_plan_modal(frame, session, scroll_regions);
     }
     // Render review modal BEFORE error overlay so errors always take precedence
+    let session = tab_manager.active();
     if session.review_modal_open {
-        overlays::draw_review_modal(frame, session);
+        overlays::draw_review_modal(frame, session, scroll_regions);
     }
     // Render session browser overlay
     if tab_manager.session_browser.open {
         session_browser_overlay::draw_session_browser_overlay(frame, tab_manager);
     }
     // Render implementation success modal after session browser, before error overlay
+    let session = tab_manager.active();
     if session.implementation_success_modal.is_some() {
         success_overlay::draw_implementation_success_overlay(frame, session);
     }
+    let session = tab_manager.active();
     if session.error_state.is_some() {
-        error_overlay::draw_error_overlay(frame, session);
+        error_overlay::draw_error_overlay(frame, session, scroll_regions);
     }
 }
 

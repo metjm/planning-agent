@@ -24,7 +24,7 @@ use super::InitHandle;
 use crate::tui::ui::util::{compute_plan_modal_inner_size, parse_markdown_line};
 
 /// Compute the max scroll for the run-tab summary panel based on wrapped lines and terminal size.
-fn compute_run_tab_summary_max_scroll(summary_text: &str) -> usize {
+pub(crate) fn compute_run_tab_summary_max_scroll(summary_text: &str) -> usize {
     let (term_width, term_height) = crossterm::terminal::size().unwrap_or((80, 24));
     let (inner_width, visible_height) = compute_summary_panel_inner_size(term_width, term_height);
 
@@ -75,7 +75,7 @@ fn compute_todo_panel_inner_size(
 }
 
 /// Compute the max scroll for the Todo panel based on wrapped lines and terminal size.
-fn compute_todo_panel_max_scroll(session: &Session) -> usize {
+pub(crate) fn compute_todo_panel_max_scroll(session: &Session) -> usize {
     let (term_width, term_height) = crossterm::terminal::size().unwrap_or((80, 24));
     let has_todos = !session.todos.is_empty();
     let (inner_width, inner_height, visible) =
@@ -101,7 +101,7 @@ fn is_todo_panel_visible(session: &Session) -> bool {
 }
 
 /// Compute the max scroll for the plan modal based on wrapped lines and terminal size.
-fn compute_plan_modal_max_scroll(content: &str) -> usize {
+pub(crate) fn compute_plan_modal_max_scroll(content: &str) -> usize {
     let (term_width, term_height) = crossterm::terminal::size().unwrap_or((80, 24));
     let (inner_width, visible_height) = compute_plan_modal_inner_size(term_width, term_height);
 
@@ -119,7 +119,7 @@ fn compute_plan_modal_visible_height() -> usize {
 }
 
 /// Compute the max scroll for the review modal based on wrapped lines and terminal size.
-fn compute_review_modal_max_scroll(content: &str) -> usize {
+pub(crate) fn compute_review_modal_max_scroll(content: &str) -> usize {
     let (term_width, term_height) = crossterm::terminal::size().unwrap_or((80, 24));
     let (inner_width, visible_height) = compute_review_modal_inner_size(term_width, term_height);
 
@@ -156,7 +156,7 @@ fn compute_review_modal_inner_size(term_width: u16, term_height: u16) -> (u16, u
 
 /// Compute the max scroll for the review history panel.
 /// The panel is shown when terminal width >= 100, taking up 30% of the chat area.
-fn compute_review_history_max_scroll(
+pub(crate) fn compute_review_history_max_scroll(
     session: &Session,
     term_width: u16,
     term_height: u16,
@@ -194,7 +194,7 @@ fn compute_review_history_max_scroll(
 }
 
 /// Compute the max scroll for the error overlay based on wrapped lines and terminal size.
-fn compute_error_overlay_max_scroll(error: &str) -> usize {
+pub(crate) fn compute_error_overlay_max_scroll(error: &str) -> usize {
     let (term_width, term_height) = crossterm::terminal::size().unwrap_or((80, 24));
 
     // Match draw_error_overlay: 60% width, max 70
@@ -217,6 +217,72 @@ fn compute_error_overlay_max_scroll(error: &str) -> usize {
     let total_content_lines = wrapped_error_lines + 2;
 
     total_content_lines.saturating_sub(visible_height)
+}
+
+/// Compute the max scroll for the output panel based on content and terminal size.
+pub(crate) fn compute_output_panel_max_scroll(session: &Session) -> usize {
+    let (term_width, term_height) = crossterm::terminal::size().unwrap_or((80, 24));
+
+    // Main layout: header (2) + footer (3) = 5
+    // Main content split: 70% left
+    // Output area: 40% of main content height
+    let main_height = term_height.saturating_sub(5);
+    let left_width = (term_width as f32 * 0.70) as u16;
+    let output_height = (main_height as f32 * 0.40) as u16;
+
+    // Todos visible when width >= 80 and todos exist
+    let todos_visible = left_width >= 80 && !session.todos.is_empty();
+    let output_width = if todos_visible {
+        (left_width as f32 * 0.65) as u16
+    } else {
+        left_width
+    };
+
+    let inner_height = output_height.saturating_sub(2) as usize; // borders
+    let inner_width = output_width.saturating_sub(2);
+
+    let lines: Vec<Line> = session
+        .output_lines
+        .iter()
+        .map(|s| Line::from(s.as_str()))
+        .collect();
+    let total_lines = compute_wrapped_line_count(&lines, inner_width);
+
+    total_lines.saturating_sub(inner_height)
+}
+
+/// Compute the max scroll for chat content panel.
+pub(crate) fn compute_chat_content_max_scroll(session: &Session) -> usize {
+    let Some(tab) = session.run_tabs.get(session.active_run_tab) else {
+        return 0;
+    };
+
+    let (term_width, term_height) = crossterm::terminal::size().unwrap_or((80, 24));
+
+    // Main layout: header (2) + footer (3) = 5
+    // Main content split: 70% left
+    // Chat area: 60% of main content height
+    let main_height = term_height.saturating_sub(5);
+    let left_width = (term_width as f32 * 0.70) as u16;
+    let chat_height = (main_height as f32 * 0.60) as u16;
+
+    // Chat splits: tabs (1) + content (variable) + input (3)
+    // Content also splits 70%/30% for chat/summary when width >= 100
+    let content_height = chat_height.saturating_sub(4); // tabs + input
+    let chat_width = if term_width >= 100 {
+        (left_width as f32 * 0.70) as u16
+    } else {
+        left_width
+    };
+
+    let inner_height = content_height.saturating_sub(2) as usize; // borders
+    let _inner_width = chat_width.saturating_sub(2);
+
+    // Count entries from tab
+    let entry_count = tab.entries.len();
+    let total_lines = entry_count.max(1);
+
+    total_lines.saturating_sub(inner_height)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -656,14 +722,27 @@ fn handle_none_mode_input(key: crossterm::event::KeyEvent, session: &mut Session
         }
         KeyCode::Char('j') | KeyCode::Down => {
             match session.focused_panel {
-                FocusedPanel::Output => session.scroll_down(),
+                FocusedPanel::Output => {
+                    let max_scroll = compute_output_panel_max_scroll(session);
+                    session.scroll_down(max_scroll);
+                }
                 FocusedPanel::Todos => {
                     let max_scroll = compute_todo_panel_max_scroll(session);
                     session.todo_scroll_down(max_scroll);
                 }
-                FocusedPanel::Chat => session.chat_scroll_down(),
+                FocusedPanel::Chat => {
+                    let max_scroll = compute_chat_content_max_scroll(session);
+                    session.chat_scroll_down(max_scroll);
+                }
                 FocusedPanel::ChatInput => {}
-                FocusedPanel::Summary => session.summary_scroll_down(),
+                FocusedPanel::Summary => {
+                    let max_scroll = session
+                        .run_tabs
+                        .get(session.active_run_tab)
+                        .map(|tab| compute_run_tab_summary_max_scroll(&tab.summary_text))
+                        .unwrap_or(0);
+                    session.summary_scroll_down(max_scroll);
+                }
             }
             // Fallback: scroll review history panel if visible
             let (term_width, term_height) = crossterm::terminal::size().unwrap_or((80, 24));

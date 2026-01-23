@@ -4,6 +4,7 @@
 
 use super::dropdowns::draw_mention_dropdown;
 use super::util::{compute_wrapped_line_count, parse_markdown_line, wrap_text_at_width};
+use crate::tui::scroll_regions::{ScrollRegion, ScrollableRegions};
 use crate::tui::{ApprovalContext, ApprovalMode, FeedbackTarget, Session};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
@@ -15,7 +16,11 @@ use ratatui::{
     Frame,
 };
 
-pub fn draw_approval_overlay(frame: &mut Frame, session: &Session) {
+pub fn draw_approval_overlay(
+    frame: &mut Frame,
+    session: &Session,
+    regions: &mut ScrollableRegions,
+) {
     let area = frame.area();
     let popup_width = (area.width as f32 * 0.8) as u16;
     let popup_height = (area.height as f32 * 0.8) as u16;
@@ -24,13 +29,18 @@ pub fn draw_approval_overlay(frame: &mut Frame, session: &Session) {
     let popup_area = Rect::new(popup_x, popup_y, popup_width, popup_height);
     frame.render_widget(Clear, popup_area);
     match session.approval_mode {
-        ApprovalMode::AwaitingChoice => draw_choice_popup(frame, session, popup_area),
+        ApprovalMode::AwaitingChoice => draw_choice_popup(frame, session, popup_area, regions),
         ApprovalMode::EnteringFeedback => draw_feedback_popup(frame, session, popup_area),
         ApprovalMode::None => {}
     }
 }
 
-fn draw_choice_popup(frame: &mut Frame, session: &Session, area: Rect) {
+fn draw_choice_popup(
+    frame: &mut Frame,
+    session: &Session,
+    area: Rect,
+    regions: &mut ScrollableRegions,
+) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -111,6 +121,10 @@ fn draw_choice_popup(frame: &mut Frame, session: &Session, area: Rect) {
         .title(summary_title);
     let inner_area = summary_block.inner(chunks[1]);
     let (visible_height, inner_width) = (inner_area.height as usize, inner_area.width);
+
+    // Register scrollable region
+    regions.register(ScrollRegion::ApprovalSummary, inner_area);
+
     let summary_lines: Vec<Line> = session
         .plan_summary
         .lines()

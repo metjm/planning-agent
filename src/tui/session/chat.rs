@@ -79,9 +79,11 @@ impl Session {
         }
     }
 
-    pub fn chat_scroll_down(&mut self) {
+    pub fn chat_scroll_down(&mut self, max_scroll: usize) {
         if let Some(tab) = self.run_tabs.get_mut(self.active_run_tab) {
-            tab.scroll_position = tab.scroll_position.saturating_add(1);
+            if tab.scroll_position < max_scroll {
+                tab.scroll_position = tab.scroll_position.saturating_add(1);
+            }
         }
     }
 
@@ -95,9 +97,11 @@ impl Session {
         }
     }
 
-    pub fn summary_scroll_down(&mut self) {
+    pub fn summary_scroll_down(&mut self, max_scroll: usize) {
         if let Some(tab) = self.run_tabs.get_mut(self.active_run_tab) {
-            tab.summary_scroll = tab.summary_scroll.saturating_add(1);
+            if tab.summary_scroll < max_scroll {
+                tab.summary_scroll = tab.summary_scroll.saturating_add(1);
+            }
         }
     }
 

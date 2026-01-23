@@ -2,6 +2,7 @@ mod approval_input;
 mod events;
 mod input;
 mod input_naming;
+mod mouse_input;
 mod session_browser_input;
 mod session_events;
 pub mod slash_commands;
@@ -103,6 +104,7 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
     debug_log(start, "title manager initialized");
 
     let mut tab_manager = TabManager::new();
+    let mut scroll_regions = crate::tui::ScrollableRegions::new();
     debug_log(start, "tab manager created");
     let mut event_handler = EventHandler::new(Duration::from_millis(100));
     debug_log(start, "event handler created");
@@ -594,7 +596,7 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
     const MAX_EVENTS_PER_FRAME: usize = 50;
 
     loop {
-        terminal.draw(|frame| crate::tui::ui::draw(frame, &tab_manager))?;
+        terminal.draw(|frame| crate::tui::ui::draw(frame, &tab_manager, &mut scroll_regions))?;
 
         let first_event = event_handler.next().await?;
         let mut events_to_process = vec![first_event];
@@ -610,6 +612,7 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
             if process_event(
                 event,
                 &mut tab_manager,
+                &scroll_regions,
                 &mut terminal,
                 &output_tx,
                 &working_dir,

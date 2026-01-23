@@ -3,6 +3,7 @@ use super::theme::Theme;
 use super::util::{compute_wrapped_line_count, parse_markdown_line, wrap_text_at_width};
 use super::SPINNER_CHARS;
 use crate::state::{ImplementationPhase, Phase, UiMode};
+use crate::tui::scroll_regions::{ScrollRegion, ScrollableRegions};
 use crate::tui::{ApprovalMode, FocusedPanel, Session, TabManager};
 use crate::update::UpdateStatus;
 use ratatui::{
@@ -440,7 +441,7 @@ fn render_update_line(tab_manager: &TabManager) -> Line<'static> {
 /// Draw the plan modal overlay showing the full plan file contents.
 ///
 /// The modal is 80% of the terminal size with scrollable content and a scrollbar.
-pub fn draw_plan_modal(frame: &mut Frame, session: &Session) {
+pub fn draw_plan_modal(frame: &mut Frame, session: &Session, regions: &mut ScrollableRegions) {
     let area = frame.area();
 
     let popup_width = (area.width as f32 * 0.8) as u16;
@@ -489,6 +490,9 @@ pub fn draw_plan_modal(frame: &mut Frame, session: &Session) {
     let inner_area = content_block.inner(chunks[1]);
     let visible_height = inner_area.height as usize;
     let inner_width = inner_area.width;
+
+    // Register scrollable region
+    regions.register(ScrollRegion::PlanModal, inner_area);
 
     let content_lines: Vec<Line> = session
         .plan_modal_content
@@ -540,7 +544,7 @@ pub fn draw_plan_modal(frame: &mut Frame, session: &Session) {
 /// Draw the review modal overlay showing review feedback with tabs.
 ///
 /// The modal is 80% of the terminal size with a tab bar for switching reviews.
-pub fn draw_review_modal(frame: &mut Frame, session: &Session) {
+pub fn draw_review_modal(frame: &mut Frame, session: &Session, regions: &mut ScrollableRegions) {
     let area = frame.area();
 
     let popup_width = (area.width as f32 * 0.8) as u16;
@@ -606,6 +610,9 @@ pub fn draw_review_modal(frame: &mut Frame, session: &Session) {
     let inner_area = content_block.inner(chunks[1]);
     let visible_height = inner_area.height as usize;
     let inner_width = inner_area.width;
+
+    // Register scrollable region
+    regions.register(ScrollRegion::ReviewModal, inner_area);
 
     let content_text = session.current_review_content();
     let content_lines: Vec<Line> = content_text.lines().map(parse_markdown_line).collect();

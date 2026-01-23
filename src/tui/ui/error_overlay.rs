@@ -1,6 +1,7 @@
 //! Error overlay rendering.
 
 use super::util::compute_wrapped_line_count_text;
+use crate::tui::scroll_regions::{ScrollRegion, ScrollableRegions};
 use crate::tui::Session;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
@@ -12,7 +13,7 @@ use ratatui::{
     Frame,
 };
 
-pub fn draw_error_overlay(frame: &mut Frame, session: &Session) {
+pub fn draw_error_overlay(frame: &mut Frame, session: &Session, regions: &mut ScrollableRegions) {
     if let Some(ref error) = session.error_state {
         let area = frame.area();
 
@@ -54,6 +55,9 @@ pub fn draw_error_overlay(frame: &mut Frame, session: &Session) {
 
         let inner_area = error_block.inner(chunks[0]);
         let visible_height = inner_area.height as usize;
+
+        // Register scrollable region
+        regions.register(ScrollRegion::ErrorOverlay, inner_area);
 
         // Total lines = 1 (empty) + error lines + 1 (empty)
         let total_content_lines = wrapped_error_lines + 2;

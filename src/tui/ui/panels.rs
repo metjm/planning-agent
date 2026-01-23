@@ -9,6 +9,7 @@ use super::objective::{
 use super::stats::draw_stats;
 use super::theme::Theme;
 use super::util::compute_wrapped_line_count;
+use crate::tui::scroll_regions::{ScrollRegion, ScrollableRegions};
 use crate::tui::{FocusedPanel, Session, SummaryState};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
@@ -18,7 +19,12 @@ use ratatui::{
     Frame,
 };
 
-pub fn draw_main(frame: &mut Frame, session: &Session, area: Rect) {
+pub fn draw_main(
+    frame: &mut Frame,
+    session: &Session,
+    area: Rect,
+    regions: &mut ScrollableRegions,
+) {
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(70), Constraint::Percentage(30)])
@@ -33,8 +39,8 @@ pub fn draw_main(frame: &mut Frame, session: &Session, area: Rect) {
     // Compute tool panel visibility based on chat area width
     let show_tool_panel = left_chunks[1].width >= 70;
 
-    draw_output(frame, session, left_chunks[0]);
-    draw_chat(frame, session, left_chunks[1], show_tool_panel);
+    draw_output(frame, session, left_chunks[0], regions);
+    draw_chat(frame, session, left_chunks[1], show_tool_panel, regions);
 
     // Split right column into Objective (top), CLI Instances (middle), and Stats (bottom)
     let right_area = chunks[1];
@@ -76,7 +82,7 @@ pub fn draw_main(frame: &mut Frame, session: &Session, area: Rect) {
     draw_stats(frame, session, right_chunks[2], true);
 }
 
-fn draw_output(frame: &mut Frame, session: &Session, area: Rect) {
+fn draw_output(frame: &mut Frame, session: &Session, area: Rect, regions: &mut ScrollableRegions) {
     let show_todos = area.width >= 80 && !session.todos.is_empty();
 
     if show_todos {
@@ -85,14 +91,19 @@ fn draw_output(frame: &mut Frame, session: &Session, area: Rect) {
             .constraints([Constraint::Percentage(65), Constraint::Percentage(35)])
             .split(area);
 
-        draw_output_panel(frame, session, chunks[0]);
-        draw_todos(frame, session, chunks[1]);
+        draw_output_panel(frame, session, chunks[0], regions);
+        draw_todos(frame, session, chunks[1], regions);
     } else {
-        draw_output_panel(frame, session, area);
+        draw_output_panel(frame, session, area, regions);
     }
 }
 
-fn draw_output_panel(frame: &mut Frame, session: &Session, area: Rect) {
+fn draw_output_panel(
+    frame: &mut Frame,
+    session: &Session,
+    area: Rect,
+    regions: &mut ScrollableRegions,
+) {
     let theme = Theme::for_session(session);
     let is_focused = session.focused_panel == FocusedPanel::Output;
     let title = if session.output_follow_mode {
@@ -120,6 +131,9 @@ fn draw_output_panel(frame: &mut Frame, session: &Session, area: Rect) {
 
     let inner_area = output_block.inner(area);
     let visible_height = inner_area.height as usize;
+
+    // Register scrollable region
+    regions.register(ScrollRegion::OutputPanel, inner_area);
 
     let total_lines = session.output_lines.len();
     let max_scroll = total_lines.saturating_sub(visible_height);
@@ -182,7 +196,7 @@ fn draw_output_panel(frame: &mut Frame, session: &Session, area: Rect) {
     }
 }
 
-fn draw_todos(frame: &mut Frame, session: &Session, area: Rect) {
+fn draw_todos(frame: &mut Frame, session: &Session, area: Rect, regions: &mut ScrollableRegions) {
     let theme = Theme::for_session(session);
     let is_focused = session.focused_panel == FocusedPanel::Todos;
     let border_color = if is_focused {
@@ -201,6 +215,9 @@ fn draw_todos(frame: &mut Frame, session: &Session, area: Rect) {
     let inner_area = todos_block.inner(area);
     let visible_height = inner_area.height as usize;
     let inner_width = inner_area.width;
+
+    // Register scrollable region
+    regions.register(ScrollRegion::TodosPanel, inner_area);
 
     let todo_lines = session.get_todos_display();
 
@@ -368,7 +385,13 @@ pub fn draw_streaming(frame: &mut Frame, session: &Session, area: Rect) {
     }
 }
 
-pub fn draw_chat(frame: &mut Frame, session: &Session, area: Rect, show_tool_panel: bool) {
+pub fn draw_chat(
+    frame: &mut Frame,
+    session: &Session,
+    area: Rect,
+    show_tool_panel: bool,
+    regions: &mut ScrollableRegions,
+) {
     let can_interact = session.can_interact_with_implementation();
 
     // First, apply the tool-calls split at the outermost level
@@ -383,7 +406,7 @@ pub fn draw_chat(frame: &mut Frame, session: &Session, area: Rect, show_tool_pan
     };
 
     if let Some(tool_area) = tool_area {
-        draw_reviewer_history_panel(frame, session, tool_area);
+        draw_reviewer_history_panel(frame, session, tool_area, regions);
     }
 
     // Now render the content in content_area
@@ -421,10 +444,10 @@ pub fn draw_chat(frame: &mut Frame, session: &Session, area: Rect, show_tool_pan
             .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
             .split(content_area);
 
-        draw_chat_content(frame, session, active_tab, split_chunks[0]);
-        draw_summary_panel(frame, session, active_tab, split_chunks[1]);
+        draw_chat_content(frame, session, active_tab, split_chunks[0], regions);
+        draw_summary_panel(frame, session, active_tab, split_chunks[1], regions);
     } else {
-        draw_chat_content(frame, session, active_tab, content_area);
+        draw_chat_content(frame, session, active_tab, content_area, regions);
     }
 
     if let Some(input_area) = input_area {

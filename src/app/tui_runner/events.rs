@@ -1,10 +1,12 @@
 use crate::config::WorkflowConfig;
+use crate::tui::scroll_regions::ScrollableRegions;
 use crate::tui::{ApprovalMode, Event, FocusedPanel, SessionStatus, TabManager};
 use anyhow::Result;
 use std::path::Path;
 use tokio::sync::mpsc;
 
 use super::input::handle_key_event;
+use super::mouse_input::handle_mouse_scroll;
 use super::session_events::handle_session_event;
 use super::snapshot_helper::create_and_save_snapshot;
 use super::InitHandle;
@@ -13,6 +15,7 @@ use super::InitHandle;
 pub async fn process_event(
     event: Event,
     tab_manager: &mut TabManager,
+    scroll_regions: &ScrollableRegions,
     terminal: &mut ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io::Stdout>>,
     output_tx: &mpsc::UnboundedSender<Event>,
     working_dir: &Path,
@@ -36,6 +39,10 @@ pub async fn process_event(
                 init_handle,
             )
             .await?;
+        }
+        Event::Mouse(mouse) => {
+            let session = tab_manager.active_mut();
+            handle_mouse_scroll(mouse, session, scroll_regions);
         }
         Event::Tick => {
             handle_tick_event(tab_manager, output_tx, working_dir);

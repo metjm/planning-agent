@@ -1,5 +1,5 @@
 use anyhow::Result;
-use crossterm::event::{Event as CrosstermEvent, KeyEvent, KeyEventKind};
+use crossterm::event::{Event as CrosstermEvent, KeyEvent, KeyEventKind, MouseEvent};
 use futures::StreamExt;
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -51,6 +51,7 @@ pub struct TokenUsage {
 #[derive(Debug, Clone)]
 pub enum Event {
     Key(KeyEvent),
+    Mouse(MouseEvent),
     Paste(String),
     Tick,
     Resize,
@@ -366,6 +367,15 @@ impl EventHandler {
                             }
                             Some(Ok(CrosstermEvent::Resize(_, _))) => {
                                 if event_tx.send(Event::Resize).is_err() {
+                                    break;
+                                }
+                            }
+                            Some(Ok(CrosstermEvent::Mouse(mouse))) => {
+                                // Only capture scroll events, ignore move/click for now
+                                use crossterm::event::MouseEventKind;
+                                if matches!(mouse.kind, MouseEventKind::ScrollUp | MouseEventKind::ScrollDown)
+                                    && event_tx.send(Event::Mouse(mouse)).is_err()
+                                {
                                     break;
                                 }
                             }
