@@ -87,22 +87,27 @@ impl UpstreamConnection {
     /// This function runs indefinitely, reconnecting on disconnect.
     pub async fn run(self, mut session_rx: mpsc::UnboundedReceiver<UpstreamEvent>) {
         let mut attempt = 0u32;
+        let mut logged_failure = false;
 
         loop {
             match self.connect_and_run(&mut session_rx).await {
                 Ok(()) => {
                     // Clean disconnect, reset backoff
                     attempt = 0;
+                    logged_failure = false;
                 }
                 Err(e) => {
-                    daemon_log(&format!("Connection error: {}", e));
+                    // Only log first failure to avoid spam when no host is available
+                    if !logged_failure {
+                        daemon_log(&format!("Connection error: {} (will retry silently)", e));
+                        logged_failure = true;
+                    }
                 }
             }
 
             // Backoff before reconnect
             let delay = backoff_delay(attempt);
             attempt = attempt.saturating_add(1).min(10);
-            daemon_log(&format!("Reconnecting in {:?}...", delay));
             tokio::time::sleep(delay).await;
         }
     }
@@ -119,11 +124,10 @@ impl UpstreamConnection {
         match tokio::time::timeout(Duration::from_millis(500), TcpStream::connect(&localhost)).await
         {
             Ok(Ok(stream)) => {
-                daemon_log("Connected via localhost");
                 return Ok(stream);
             }
             _ => {
-                daemon_log("localhost failed, trying host.docker.internal...");
+                // localhost failed, try docker host
             }
         }
 
@@ -253,13 +257,25 @@ fn backoff_delay(attempt: u32) -> Duration {
     Duration::from_secs(delay_secs)
 }
 
+/// Default port for host connection.
+const DEFAULT_HOST_PORT: u16 = 17717;
+
 /// Get the host port from environment or default.
+/// Always returns a port - upstream connection is enabled by default.
+/// Set PLANNING_AGENT_HOST_PORT to override the default port.
+/// Set PLANNING_AGENT_HOST_PORT=0 to disable upstream connection.
 pub fn host_port() -> Option<u16> {
-    // Only enable upstream if PLANNING_AGENT_HOST_PORT is set
-    // (to avoid connecting when not in a container)
-    std::env::var("PLANNING_AGENT_HOST_PORT")
-        .ok()
-        .and_then(|s| s.parse().ok())
+    match std::env::var("PLANNING_AGENT_HOST_PORT") {
+        Ok(s) => {
+            let port: u16 = s.parse().unwrap_or(DEFAULT_HOST_PORT);
+            if port == 0 {
+                None // Explicitly disabled
+            } else {
+                Some(port)
+            }
+        }
+        Err(_) => Some(DEFAULT_HOST_PORT), // Default enabled
+    }
 }
 
 #[cfg(test)]
