@@ -356,6 +356,41 @@ mod integration_tests {
     use std::time::Duration;
     use uuid::Uuid;
 
+    /// Test environment with isolated daemon.
+    /// Each test gets its own PLANNING_AGENT_HOME so daemons don't interfere.
+    struct TestEnv {
+        _temp_dir: tempfile::TempDir,
+        original_home: Option<String>,
+    }
+
+    impl TestEnv {
+        fn new() -> Self {
+            // Save original value
+            let original_home = std::env::var("PLANNING_AGENT_HOME").ok();
+
+            // Create temp directory for this test
+            let temp_dir = tempfile::TempDir::new().expect("Failed to create temp dir");
+
+            // Set env var to isolate this test's daemon
+            std::env::set_var("PLANNING_AGENT_HOME", temp_dir.path());
+
+            Self {
+                _temp_dir: temp_dir,
+                original_home,
+            }
+        }
+    }
+
+    impl Drop for TestEnv {
+        fn drop(&mut self) {
+            // Restore original value
+            match &self.original_home {
+                Some(val) => std::env::set_var("PLANNING_AGENT_HOME", val),
+                None => std::env::remove_var("PLANNING_AGENT_HOME"),
+            }
+        }
+    }
+
     /// Generate a unique session ID for this test run.
     fn unique_session_id(prefix: &str) -> String {
         format!("{}-{}", prefix, Uuid::new_v4())
@@ -408,6 +443,7 @@ mod integration_tests {
 
     #[tokio::test]
     async fn test_tracker_register_and_list() {
+        let _env = TestEnv::new();
         let tracker = SessionTracker::new(false);
         tokio::time::sleep(Duration::from_millis(500)).await;
 
@@ -445,6 +481,7 @@ mod integration_tests {
 
     #[tokio::test]
     async fn test_tracker_update() {
+        let _env = TestEnv::new();
         let tracker = SessionTracker::new(false);
         tokio::time::sleep(Duration::from_millis(500)).await;
 
@@ -495,6 +532,7 @@ mod integration_tests {
 
     #[tokio::test]
     async fn test_tracker_mark_stopped() {
+        let _env = TestEnv::new();
         let tracker = SessionTracker::new(false);
         tokio::time::sleep(Duration::from_millis(500)).await;
 
@@ -537,6 +575,7 @@ mod integration_tests {
 
     #[tokio::test]
     async fn test_tracker_force_stop() {
+        let _env = TestEnv::new();
         let tracker = SessionTracker::new(false);
         tokio::time::sleep(Duration::from_millis(500)).await;
 
@@ -580,6 +619,7 @@ mod integration_tests {
     #[tokio::test]
     async fn test_tracker_full_workflow_lifecycle() {
         // Simulates a complete workflow lifecycle through SessionTracker
+        let _env = TestEnv::new();
         let tracker = SessionTracker::new(false);
         tokio::time::sleep(Duration::from_millis(500)).await;
 
@@ -689,6 +729,7 @@ mod integration_tests {
 
     #[tokio::test]
     async fn test_tracker_reconnect() {
+        let _env = TestEnv::new();
         let tracker = SessionTracker::new(false);
         tokio::time::sleep(Duration::from_millis(500)).await;
 

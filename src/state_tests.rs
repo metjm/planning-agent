@@ -8,10 +8,11 @@ fn test_new_state() {
     assert_eq!(state.phase, Phase::Planning);
     assert_eq!(state.iteration, 1);
 
-    // Plan file should be in session directory: ~/.planning-agent/sessions/<session-id>/plan.md
+    // Plan file should be in session directory: <home>/sessions/<session-id>/plan.md
+    // Note: home can be ~/.planning-agent or PLANNING_AGENT_HOME if set
     let plan_file_str = state.plan_file.to_string_lossy();
     assert!(
-        plan_file_str.contains(".planning-agent/sessions/"),
+        plan_file_str.contains("/sessions/"),
         "got: {}",
         plan_file_str
     );
@@ -32,10 +33,11 @@ fn test_new_state() {
 fn test_new_state_feedback_file_has_round_number() {
     let state = State::new("user-auth", "Implement authentication", 3).unwrap();
 
-    // Feedback file should be in session directory: ~/.planning-agent/sessions/<session-id>/feedback_1.md
+    // Feedback file should be in session directory: <home>/sessions/<session-id>/feedback_1.md
+    // Note: home can be ~/.planning-agent or PLANNING_AGENT_HOME if set
     let feedback_file_str = state.feedback_file.to_string_lossy();
     assert!(
-        feedback_file_str.contains(".planning-agent/sessions/"),
+        feedback_file_str.contains("/sessions/"),
         "got: {}",
         feedback_file_str
     );
