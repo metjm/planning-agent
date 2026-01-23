@@ -45,13 +45,13 @@ echo "  All files within line limit"
 echo "Checking code formatting..."
 cargo fmt -- --check
 
-# Build (this also runs the build.rs line limit check)
-echo "Building (dev)..."
-cargo build
+# Build with all features (catches issues in optional feature code like host-gui)
+echo "Building (dev, all features)..."
+cargo build --all-features
 
-# Check release build (catches dead code that only shows in release)
+# Check release build with all features
 echo "Checking release build..."
-cargo check --release
+cargo check --release --all-features
 
 # Run clippy
 echo "Running clippy..."

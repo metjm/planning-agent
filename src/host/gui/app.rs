@@ -109,14 +109,15 @@ impl HostApp {
     fn sync_display_data(&mut self) {
         // Use try_lock to avoid blocking GUI
         if let Ok(mut state) = self.state.try_lock() {
+            // Get container count before sessions() to avoid borrow conflict
+            let container_count = state.containers.len();
             let sessions = state.sessions();
             // Log session count for debugging (only when it changes)
             let new_count = sessions.len();
             if new_count != self.display_data.sessions.len() {
                 eprintln!(
                     "[host-gui] sync_display_data: {} sessions from {} containers",
-                    new_count,
-                    state.containers.len()
+                    new_count, container_count
                 );
             }
             self.display_data.sessions = sessions
