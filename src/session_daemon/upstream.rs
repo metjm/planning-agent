@@ -42,7 +42,8 @@ impl UpstreamConnection {
     pub fn new(port: u16) -> Self {
         // Host address: "auto" tries localhost then host.docker.internal
         // Can be overridden with PLANNING_AGENT_HOST_ADDRESS
-        let host = std::env::var("PLANNING_AGENT_HOST_ADDRESS").unwrap_or_else(|_| "auto".to_string());
+        let host =
+            std::env::var("PLANNING_AGENT_HOST_ADDRESS").unwrap_or_else(|_| "auto".to_string());
 
         let container_id = std::env::var("PLANNING_AGENT_CONTAINER_ID")
             .unwrap_or_else(|_| gethostname::gethostname().to_string_lossy().to_string());
@@ -98,11 +99,7 @@ impl UpstreamConnection {
 
         // Try localhost first (for running on host machine)
         let localhost = format!("127.0.0.1:{}", self.port);
-        match tokio::time::timeout(
-            Duration::from_millis(500),
-            TcpStream::connect(&localhost),
-        )
-        .await
+        match tokio::time::timeout(Duration::from_millis(500), TcpStream::connect(&localhost)).await
         {
             Ok(Ok(stream)) => {
                 eprintln!("[upstream] Connected via localhost");
@@ -172,7 +169,10 @@ impl UpstreamConnection {
             }
         }
 
-        eprintln!("[upstream] Connected to host at {}:{}", self.host, self.port);
+        eprintln!(
+            "[upstream] Connected to host at {}:{}",
+            self.host, self.port
+        );
 
         // Main loop: forward session events
         let heartbeat_interval = Duration::from_secs(30);
