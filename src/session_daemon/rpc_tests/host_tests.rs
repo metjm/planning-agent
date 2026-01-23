@@ -7,9 +7,12 @@ use crate::session_daemon::LivenessState;
 use tarpc::client;
 use tarpc::tokio_serde::formats::Bincode;
 
+use crate::host::rpc_server::HostEvent;
+use std::time::Duration;
+
 #[tokio::test]
 async fn test_upstream_handshake_and_session_sync() {
-    let host = TestHostServer::start().await;
+    let mut host = TestHostServer::start().await;
 
     let addr = format!("127.0.0.1:{}", host.port);
     let transport = tarpc::serde_transport::tcp::connect(&addr, Bincode::default)
@@ -28,6 +31,22 @@ async fn test_upstream_handshake_and_session_sync() {
         .unwrap();
 
     assert!(result.is_ok(), "Hello should succeed");
+
+    // Verify ContainerConnected event was sent
+    let event = tokio::time::timeout(Duration::from_secs(1), host.event_rx.recv())
+        .await
+        .expect("Event timeout")
+        .expect("Event channel closed");
+    match event {
+        HostEvent::ContainerConnected {
+            container_id,
+            container_name,
+        } => {
+            assert_eq!(container_id, "test-container");
+            assert_eq!(container_name, "Test Container");
+        }
+        _ => panic!("Expected ContainerConnected event, got {:?}", event),
+    }
 
     let state = host.state.lock().await;
     assert!(state.containers.contains_key("test-container"));
@@ -343,4 +362,70 @@ async fn test_upstream_client_session_gone() {
     let state = host.state.lock().await;
     let container = state.containers.get("gone-test").unwrap();
     assert!(!container.sessions.contains_key("to-be-removed"));
+}
+
+/// Integration test: RpcUpstream connects to host and syncs sessions.
+/// This tests the actual RpcUpstream implementation, not just the raw client.
+#[tokio::test]
+async fn test_rpc_upstream_connects_and_syncs() {
+    use crate::session_daemon::rpc_upstream::{RpcUpstream, UpstreamEvent};
+    use std::time::Duration;
+    use tokio::sync::mpsc;
+
+    let host = TestHostServer::start().await;
+
+    // Create channel for upstream events
+    let (tx, rx) = mpsc::unbounded_channel();
+
+    // Create RpcUpstream pointing to test host
+    // We need to set the PLANNING_AGENT_HOST_ADDRESS env var to point to our test server
+    std::env::set_var("PLANNING_AGENT_HOST_ADDRESS", "127.0.0.1");
+    std::env::set_var("PLANNING_AGENT_HOST_PORT", host.port.to_string());
+    std::env::set_var("PLANNING_AGENT_CONTAINER_ID", "test-upstream-container");
+    std::env::set_var("PLANNING_AGENT_CONTAINER_NAME", "Test Upstream Container");
+
+    let upstream = RpcUpstream::new(host.port);
+
+    // Spawn upstream in background
+    let upstream_handle = tokio::spawn(async move {
+        upstream.run(rx).await;
+    });
+
+    // Send a sync event
+    let session = crate::rpc::SessionRecord::new(
+        "upstream-test-session".to_string(),
+        "upstream-feature".to_string(),
+        std::path::PathBuf::from("/work"),
+        std::path::PathBuf::from("/work/state.json"),
+        "Planning".to_string(),
+        1,
+        "Running".to_string(),
+        12345,
+    );
+    tx.send(UpstreamEvent::SyncSessions(vec![session])).unwrap();
+
+    // Wait for connection and sync to happen
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    // Verify container was registered in host state
+    let state = host.state.lock().await;
+    assert!(
+        state.containers.contains_key("test-upstream-container"),
+        "Container should be registered in host state. Got containers: {:?}",
+        state.containers.keys().collect::<Vec<_>>()
+    );
+
+    // Verify session was synced
+    let container = state.containers.get("test-upstream-container").unwrap();
+    assert!(
+        container.sessions.contains_key("upstream-test-session"),
+        "Session should be synced to host"
+    );
+
+    // Cleanup
+    upstream_handle.abort();
+    std::env::remove_var("PLANNING_AGENT_HOST_ADDRESS");
+    std::env::remove_var("PLANNING_AGENT_HOST_PORT");
+    std::env::remove_var("PLANNING_AGENT_CONTAINER_ID");
+    std::env::remove_var("PLANNING_AGENT_CONTAINER_NAME");
 }

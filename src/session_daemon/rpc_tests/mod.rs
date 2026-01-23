@@ -14,10 +14,9 @@ mod subscription_tests;
 mod upgrade_tests;
 
 use crate::rpc::daemon_service::DaemonServiceClient;
-use crate::rpc::{HostError, PortFileContent, SessionRecord};
+use crate::rpc::{PortFileContent, SessionRecord};
 use crate::session_daemon::rpc_server::{run_daemon_server, run_subscriber_listener};
 use crate::session_daemon::server::DaemonState;
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -140,102 +139,29 @@ impl Drop for TestServer {
     }
 }
 
-// Host server test infrastructure
-use crate::rpc::host_service::{HostService, SessionInfo};
+// Re-export the real HostState for tests
+pub use crate::host::state::HostState;
 
-/// Session info stored per container.
-#[derive(Default)]
-pub struct ContainerState {
-    pub sessions: HashMap<String, SessionInfo>,
-}
-
-/// Shared state for host server tests.
-pub struct HostState {
-    pub containers: HashMap<String, ContainerState>,
-}
-
-impl HostState {
-    pub fn new() -> Self {
-        Self {
-            containers: HashMap::new(),
-        }
-    }
-}
-
-/// Test implementation of HostService.
-#[derive(Clone)]
-pub struct TestHostService {
-    pub state: Arc<Mutex<HostState>>,
-}
-
-impl HostService for TestHostService {
-    async fn hello(
-        self,
-        _: tarpc::context::Context,
-        info: crate::rpc::host_service::ContainerInfo,
-        protocol_version: u32,
-    ) -> Result<String, HostError> {
-        if protocol_version != crate::rpc::host_service::PROTOCOL_VERSION {
-            return Err(HostError::ProtocolMismatch {
-                got: protocol_version,
-                expected: crate::rpc::host_service::PROTOCOL_VERSION,
-            });
-        }
-        let mut state = self.state.lock().await;
-        state
-            .containers
-            .insert(info.container_id, ContainerState::default());
-        Ok("test-version".to_string())
-    }
-
-    async fn heartbeat(self, _: tarpc::context::Context) {
-        // No-op for tests
-    }
-
-    async fn session_update(self, _: tarpc::context::Context, session: SessionInfo) {
-        let mut state = self.state.lock().await;
-        // Find the container (we don't have container_id in SessionInfo, use first container)
-        if let Some(container) = state.containers.values_mut().next() {
-            container
-                .sessions
-                .insert(session.session_id.clone(), session);
-        }
-    }
-
-    async fn session_gone(self, _: tarpc::context::Context, session_id: String) {
-        let mut state = self.state.lock().await;
-        for container in state.containers.values_mut() {
-            container.sessions.remove(&session_id);
-        }
-    }
-
-    async fn sync_sessions(self, _: tarpc::context::Context, sessions: Vec<SessionInfo>) {
-        let mut state = self.state.lock().await;
-        if let Some(container) = state.containers.values_mut().next() {
-            for session in sessions {
-                container
-                    .sessions
-                    .insert(session.session_id.clone(), session);
-            }
-        }
-    }
-}
-
-/// Test host server for upstream connection tests.
+/// Test host server using the REAL HostServer implementation.
+/// No mocks - this is the actual production code.
 pub struct TestHostServer {
     pub port: u16,
     pub state: Arc<Mutex<HostState>>,
+    pub event_rx: tokio::sync::mpsc::UnboundedReceiver<crate::host::rpc_server::HostEvent>,
     _server_handle: tokio::task::JoinHandle<()>,
 }
 
 impl TestHostServer {
     pub async fn start() -> Self {
+        use crate::host::rpc_server::HostServer;
+        use crate::rpc::host_service::HostService;
         use futures::StreamExt;
         use tarpc::serde_transport::tcp;
         use tarpc::server::{self, Channel};
 
         let port = find_test_port();
         let state = Arc::new(Mutex::new(HostState::new()));
+        let (event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
 
         let server_state = state.clone();
         let server_handle = tokio::spawn(async move {
@@ -244,17 +170,37 @@ impl TestHostServer {
 
             while let Some(result) = listener.next().await {
                 if let Ok(transport) = result {
-                    let service = TestHostService {
-                        state: server_state.clone(),
-                    };
+                    // Use the REAL HostServer, not a mock
+                    let server = HostServer::new(server_state.clone(), event_tx.clone());
                     let channel = server::BaseChannel::with_defaults(transport);
+
+                    let cleanup_state = server_state.clone();
+                    let cleanup_event_tx = event_tx.clone();
+                    let cleanup_container_id = server.container_id.clone();
+
                     tokio::spawn(async move {
                         channel
-                            .execute(service.serve())
+                            .execute(server.serve())
                             .for_each(|response| async {
                                 tokio::spawn(response);
                             })
                             .await;
+
+                        // Cleanup on disconnect (same as production code)
+                        let container_id = {
+                            let id = cleanup_container_id.lock().await;
+                            id.clone()
+                        };
+
+                        if let Some(container_id) = container_id {
+                            let mut state = cleanup_state.lock().await;
+                            state.remove_container(&container_id);
+                            let _ = cleanup_event_tx.send(
+                                crate::host::rpc_server::HostEvent::ContainerDisconnected {
+                                    container_id,
+                                },
+                            );
+                        }
                     });
                 }
             }
@@ -266,6 +212,7 @@ impl TestHostServer {
         Self {
             port,
             state,
+            event_rx,
             _server_handle: server_handle,
         }
     }

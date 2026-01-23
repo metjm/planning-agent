@@ -154,6 +154,43 @@ This is non-negotiable. Every problem must be properly investigated and fixed. W
 - Add `#[allow(...)]` attributes to silence legitimate warnings
 - Hand-wave problems away with vague explanations
 
+### No Mocking in Tests
+
+**Tests must use real implementations. Mocking is never allowed.**
+
+This is absolute. Tests must exercise the actual production code, not fake implementations:
+
+- **NEVER** create mock/fake/stub implementations of traits
+- **NEVER** create "TestFoo" versions of production types with simplified behavior
+- **NEVER** use mocking frameworks or libraries
+- **ALWAYS** spin up real servers, real connections, real state
+
+**Why this matters:**
+- Mocks hide bugs by testing fake behavior instead of real behavior
+- Mocks drift from production code and provide false confidence
+- Integration issues only appear when real components interact
+- If something is hard to test without mocks, that's a design smell to fix
+
+**What to do instead:**
+- Use test harnesses that wrap real implementations (e.g., `TestServer` that starts a real RPC server)
+- Use in-memory databases or temporary files for persistence
+- Use actual network connections on localhost with dynamic ports
+- Accept slower tests in exchange for correctness
+
+### No Flaky Tests
+
+**If a test fails, it is a real bug. Fix it.**
+
+Never dismiss test failures as "flaky" or "intermittent":
+
+- **NEVER** assume a failing test is flaky without investigation
+- **NEVER** re-run tests hoping they pass the second time
+- **NEVER** mark tests as `#[ignore]` because they "sometimes fail"
+- **ALWAYS** investigate the root cause of every test failure
+- **ALWAYS** fix the underlying bug, not the test
+
+If a test fails inconsistently, that indicates a real bug - likely a race condition, timing issue, or resource leak. These are serious bugs that must be fixed.
+
 ### No Backwards Compatibility Code
 
 **Delete old code. Never keep deprecated features around.**

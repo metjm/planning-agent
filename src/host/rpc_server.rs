@@ -36,7 +36,8 @@ pub struct HostServer {
     state: Arc<Mutex<HostState>>,
     event_tx: mpsc::UnboundedSender<HostEvent>,
     /// Container ID for this connection (set after hello).
-    container_id: Arc<Mutex<Option<String>>>,
+    /// Public for test infrastructure to access during cleanup.
+    pub container_id: Arc<Mutex<Option<String>>>,
 }
 
 #[cfg(any(feature = "host-gui", test))]
