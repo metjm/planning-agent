@@ -56,12 +56,10 @@ fs2 = "0.4"
 rand = "0.8"
 
 # Host mode GUI (optional - requires system GUI libraries)
-eframe = { version = "0.33", default-features = false, features = ["glow", "persistence"], optional = true }
+eframe = { version = "0.33", default-features = false, features = ["glow", "persistence", "x11"], optional = true }
 egui_extras = { version = "0.33", features = ["all_loaders"], optional = true }
 
-# System tray and notifications (optional - requires system GUI libraries)
-tray-icon = { version = "0.21", optional = true }
-muda = { version = "0.17", optional = true }
+# Desktop notifications (optional)
 notify-rust = { version = "4", optional = true }
 
 # Image loading for tray icon (optional)
@@ -70,9 +68,15 @@ image = { version = "0.25", default-features = false, features = ["png"], option
 # Container identification
 gethostname = "0.5"
 
+# System tray (macOS/Windows only - gtk3-rs on Linux is deprecated and doesn't compile with Rust 1.92+)
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+tray-icon = { version = "0.21", optional = true }
+muda = { version = "0.17", optional = true }
+
 [features]
 default = []
-host-gui = ["eframe", "egui_extras", "tray-icon", "muda", "notify-rust", "image"]
+host-gui = ["eframe", "egui_extras", "notify-rust", "image"]
+host-gui-tray = ["host-gui", "tray-icon", "muda"]
 
 [lints.rust]
 warnings = "deny"

@@ -196,6 +196,10 @@ cargo install --git https://github.com/metjm/planning-agent.git --features host-
 
 Then run `planning --host` to start the dashboard. Container daemons connect via `PLANNING_AGENT_HOST_PORT=17717`.
 
+**Platform notes:**
+- **macOS/Windows**: Full support with system tray icon and desktop notifications
+- **Linux**: GUI and notifications work, but system tray is not available (gtk3-rs deprecated)
+
 ## Skills
 
 On startup, planning-agent auto-installs Claude Code skills to:

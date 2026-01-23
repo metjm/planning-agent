@@ -1,10 +1,9 @@
 //! System tray icon support.
 //!
 //! Provides a menu bar tray icon with session count and notifications.
+//! Only available on macOS and Windows (gtk3-rs on Linux is deprecated).
 
-use muda::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
-use std::sync::mpsc;
-use tray_icon::{TrayIcon, TrayIconBuilder};
+#![cfg(not(target_os = "linux"))]
 
 /// Commands from the tray menu.
 #[derive(Debug, Clone)]
@@ -15,14 +14,18 @@ pub enum TrayCommand {
 
 /// Tray icon state and handler.
 pub struct HostTray {
-    _tray_icon: TrayIcon,
-    command_rx: mpsc::Receiver<TrayCommand>,
+    _tray_icon: tray_icon::TrayIcon,
+    command_rx: std::sync::mpsc::Receiver<TrayCommand>,
 }
 
 impl HostTray {
     /// Create a new tray icon.
     /// Must be called on the main thread (macOS requirement).
     pub fn new() -> anyhow::Result<Self> {
+        use muda::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
+        use std::sync::mpsc;
+        use tray_icon::TrayIconBuilder;
+
         let (command_tx, command_rx) = mpsc::channel();
 
         // Create menu
