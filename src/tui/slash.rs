@@ -45,6 +45,18 @@ pub const SLASH_COMMANDS: &[SlashCommandInfo] = &[
         command: "/aggregation",
         description: "Set aggregation: any-rejects, all-reject, majority",
     },
+    SlashCommandInfo {
+        command: "/workflow",
+        description: "Select workflow configuration",
+    },
+];
+
+/// Commands that support dynamic argument completion.
+/// Each entry is (command, max_parts) where max_parts limits how many
+/// whitespace-separated tokens are valid (e.g., 2 means "command arg").
+pub const COMMANDS_WITH_DYNAMIC_ARGS: &[(&str, usize)] = &[
+    ("/config", 2),   // /config dangerous
+    ("/workflow", 2), // /workflow <name>
 ];
 
 /// A match result for slash command autocomplete.
@@ -127,13 +139,15 @@ pub enum SlashContext {
         /// The partial command text including the leading `/`
         query: String,
     },
-    /// Cursor is in the argument position after `/config ` (for `/config dangerous`)
-    ConfigArg {
-        /// Start of the whole command including `/config`
+    /// Cursor is in the argument position after a command that supports dynamic args
+    DynamicArg {
+        /// The command that triggered this context (e.g., "/config", "/workflow")
+        command: String,
+        /// Start of the whole command including the slash
         command_start: usize,
         /// End of the current token (cursor position)
         end_byte: usize,
-        /// The argument text being typed (e.g., "dang")
+        /// The argument text being typed (e.g., "dang", "claude")
         arg_query: String,
     },
 }
@@ -184,31 +198,33 @@ pub fn detect_slash_at_cursor(input: &str, cursor: usize) -> Option<SlashContext
         });
     }
 
-    // Case 2: Check for `/config` with argument
+    // Case 2: Check for commands with dynamic argument completion
     let first_token_lower = first_token.to_lowercase();
-    if first_token_lower == "/config" && parts.len() <= 2 {
-        // Find where the second token starts (if any)
-        let after_first = text.get(first_token_end..).unwrap_or("");
-        let arg_text_start = after_first.len() - after_first.trim_start().len();
-        let arg_start_in_text = first_token_end + arg_text_start;
+    for &(cmd, max_parts) in COMMANDS_WITH_DYNAMIC_ARGS {
+        if first_token_lower == cmd && parts.len() <= max_parts {
+            // Find where the second token starts (if any)
+            let after_first = text.get(first_token_end..).unwrap_or("");
+            let arg_text_start = after_first.len() - after_first.trim_start().len();
+            let arg_start_in_text = first_token_end + arg_text_start;
 
-        // The argument query is from arg_start_in_text to cursor_in_trimmed
-        let arg_query = if cursor_in_trimmed > arg_start_in_text {
-            text.get(arg_start_in_text..cursor_in_trimmed)
-                .unwrap_or("")
-                .to_string()
-        } else {
-            String::new()
-        };
+            // The argument query is from arg_start_in_text to cursor_in_trimmed
+            let arg_query = if cursor_in_trimmed > arg_start_in_text {
+                text.get(arg_start_in_text..cursor_in_trimmed)
+                    .unwrap_or("")
+                    .to_string()
+            } else {
+                String::new()
+            };
 
-        // Only show autocomplete if we're actually in the argument position
-        // (i.e., there's a space after /config)
-        if cursor_in_trimmed > first_token_end {
-            return Some(SlashContext::ConfigArg {
-                command_start: trimmed_start,
-                end_byte: cursor,
-                arg_query,
-            });
+            // Only show autocomplete if we're actually in the argument position
+            if cursor_in_trimmed > first_token_end {
+                return Some(SlashContext::DynamicArg {
+                    command: cmd.to_string(),
+                    command_start: trimmed_start,
+                    end_byte: cursor,
+                    arg_query,
+                });
+            }
         }
     }
 
@@ -242,30 +258,59 @@ pub fn find_slash_matches(context: &SlashContext, limit: usize) -> Vec<SlashMatc
                 }
             }
         }
-        SlashContext::ConfigArg { arg_query, .. } => {
-            // Only suggest "dangerous" when typing after `/config `
+        SlashContext::DynamicArg {
+            command, arg_query, ..
+        } => {
             let arg_lower = arg_query.to_lowercase().trim().to_string();
 
-            // Check if "dangerous" matches the query
-            if arg_lower.is_empty() || "dangerous".starts_with(&arg_lower) {
-                let score = if arg_lower.is_empty() {
-                    50 // Default suggestion
-                } else if "dangerous" == arg_lower {
-                    100 // Exact match
-                } else if "dangerous".starts_with(&arg_lower) {
-                    80 // Prefix match
-                } else {
-                    0
-                };
-
-                if score > 0 {
-                    matches.push(SlashMatch {
-                        display: "/config dangerous".to_string(),
-                        insert: "/config dangerous".to_string(),
-                        description: "Configure CLI tools to bypass approvals".to_string(),
-                        score,
-                    });
+            match command.as_str() {
+                "/config" => {
+                    // Provide "dangerous" as the only option
+                    if arg_lower.is_empty() || "dangerous".starts_with(&arg_lower) {
+                        let score = if arg_lower.is_empty() {
+                            50
+                        } else if "dangerous" == arg_lower {
+                            100
+                        } else {
+                            80
+                        };
+                        matches.push(SlashMatch {
+                            display: "/config dangerous".to_string(),
+                            insert: "/config dangerous".to_string(),
+                            description: "Configure CLI tools to bypass approvals".to_string(),
+                            score,
+                        });
+                    }
                 }
+                "/workflow" => {
+                    // Dynamically discover available workflows
+                    let workflows =
+                        crate::workflow_selection::list_available_workflows_for_display()
+                            .unwrap_or_default();
+
+                    for wf in workflows {
+                        let name_lower = wf.name.to_lowercase();
+                        let score = if arg_lower.is_empty() {
+                            50
+                        } else if name_lower == arg_lower {
+                            100
+                        } else if name_lower.starts_with(&arg_lower) {
+                            80
+                        } else if name_lower.contains(&arg_lower) {
+                            50
+                        } else {
+                            continue;
+                        };
+
+                        matches.push(SlashMatch {
+                            display: format!("/workflow {}", wf.name),
+                            insert: format!("/workflow {}", wf.name),
+                            description: wf.source.clone(),
+                            score,
+                        });
+                    }
+                }
+                _ => {}
             }
         }
     }
@@ -320,7 +365,7 @@ pub fn update_slash_state(slash_state: &mut SlashState, input: &str, cursor: usi
                     end_byte,
                     ..
                 } => (*start_byte, *end_byte),
-                SlashContext::ConfigArg {
+                SlashContext::DynamicArg {
                     command_start,
                     end_byte,
                     ..
@@ -374,20 +419,38 @@ mod tests {
     }
 
     #[test]
-    fn test_detect_config_arg() {
+    fn test_detect_dynamic_arg_config() {
         let result = detect_slash_at_cursor("/config d", 9);
         assert!(matches!(
             result,
-            Some(SlashContext::ConfigArg { arg_query, .. }) if arg_query == "d"
+            Some(SlashContext::DynamicArg { command, arg_query, .. }) if command == "/config" && arg_query == "d"
         ));
     }
 
     #[test]
-    fn test_detect_config_arg_empty() {
+    fn test_detect_dynamic_arg_config_empty() {
         let result = detect_slash_at_cursor("/config ", 8);
         assert!(matches!(
             result,
-            Some(SlashContext::ConfigArg { arg_query, .. }) if arg_query.is_empty()
+            Some(SlashContext::DynamicArg { command, arg_query, .. }) if command == "/config" && arg_query.is_empty()
+        ));
+    }
+
+    #[test]
+    fn test_detect_dynamic_arg_workflow() {
+        let result = detect_slash_at_cursor("/workflow cl", 12);
+        assert!(matches!(
+            result,
+            Some(SlashContext::DynamicArg { command, arg_query, .. }) if command == "/workflow" && arg_query == "cl"
+        ));
+    }
+
+    #[test]
+    fn test_detect_dynamic_arg_workflow_empty() {
+        let result = detect_slash_at_cursor("/workflow ", 10);
+        assert!(matches!(
+            result,
+            Some(SlashContext::DynamicArg { command, arg_query, .. }) if command == "/workflow" && arg_query.is_empty()
         ));
     }
 
@@ -428,8 +491,9 @@ mod tests {
     }
 
     #[test]
-    fn test_find_matches_config_arg() {
-        let context = SlashContext::ConfigArg {
+    fn test_find_matches_dynamic_arg_config() {
+        let context = SlashContext::DynamicArg {
+            command: "/config".to_string(),
             command_start: 0,
             end_byte: 9,
             arg_query: "d".to_string(),

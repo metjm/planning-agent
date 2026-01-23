@@ -25,6 +25,7 @@ mod tui;
 mod update;
 mod usage_reset;
 mod verification_state;
+mod workflow_selection;
 
 use anyhow::Result;
 use app::{cli::Cli, tui_runner::run_tui, verify::run_headless_verification};

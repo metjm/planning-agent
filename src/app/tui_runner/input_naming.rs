@@ -267,6 +267,102 @@ pub(crate) async fn handle_naming_tab_input(
                                     Some("No active workflow config".to_string());
                             }
                         }
+                        SlashCommand::Workflow(name_opt) => {
+                            // Get working directory from session context.
+                            // We use base_working_dir (not effective_working_dir) because:
+                            // 1. base_working_dir represents the user's original project directory
+                            // 2. effective_working_dir may point to an ephemeral worktree
+                            // 3. The user's requirement was "in one environment I can choose one
+                            //    workflow, in another I can choose a different one"
+                            let base_working_dir = session
+                                .context
+                                .as_ref()
+                                .map(|ctx| ctx.base_working_dir.clone())
+                                .unwrap_or_else(|| working_dir.to_path_buf());
+
+                            match name_opt {
+                                None => {
+                                    // Show current workflow and list available
+                                    let current =
+                                        crate::workflow_selection::WorkflowSelection::load(
+                                            &base_working_dir,
+                                        )
+                                        .map(|s| s.workflow)
+                                        .unwrap_or_else(|_| "claude-only".to_string());
+                                    let workflows =
+                                        crate::workflow_selection::list_available_workflows(
+                                            &base_working_dir,
+                                        )
+                                        .unwrap_or_default();
+
+                                    let list: String = workflows
+                                        .iter()
+                                        .map(|w| {
+                                            let marker = if w.is_selected { " ✓" } else { "" };
+                                            format!("  {}{} ({})", w.name, marker, w.source)
+                                        })
+                                        .collect::<Vec<_>>()
+                                        .join("\n");
+
+                                    tab_manager.command_notice = Some(format!(
+                                        "Current workflow: {}\nWorking directory: {}\n\nAvailable workflows:\n{}",
+                                        current,
+                                        base_working_dir.display(),
+                                        list
+                                    ));
+                                }
+                                Some(name) => {
+                                    // Select the specified workflow
+                                    let workflows =
+                                        crate::workflow_selection::list_available_workflows_for_display()
+                                            .unwrap_or_default();
+
+                                    if let Some(found) = workflows.iter().find(|w| w.name == name) {
+                                        let selection =
+                                            crate::workflow_selection::WorkflowSelection {
+                                                workflow: name.clone(),
+                                            };
+                                        if let Err(e) = selection.save(&base_working_dir) {
+                                            tab_manager.command_error =
+                                                Some(format!("Failed to save selection: {}", e));
+                                        } else {
+                                            // Also update the active session's workflow config
+                                            if let Some(ref mut ctx) = session.context {
+                                                match crate::workflow_selection::load_workflow_by_name(&name) {
+                                                    Ok(config) => {
+                                                        ctx.workflow_config = config;
+                                                        tab_manager.command_notice = Some(format!(
+                                                            "Workflow set to: {} ({})\nFor directory: {}",
+                                                            name,
+                                                            found.source,
+                                                            base_working_dir.display()
+                                                        ));
+                                                    }
+                                                    Err(e) => {
+                                                        tab_manager.command_error = Some(format!(
+                                                            "Selected '{}' but failed to load config: {}",
+                                                            name, e
+                                                        ));
+                                                    }
+                                                }
+                                            } else {
+                                                tab_manager.command_notice = Some(format!(
+                                                    "Workflow set to: {} ({})\nFor directory: {}",
+                                                    name,
+                                                    found.source,
+                                                    base_working_dir.display()
+                                                ));
+                                            }
+                                        }
+                                    } else {
+                                        tab_manager.command_error = Some(format!(
+                                            "Unknown workflow: '{}'\nUse /workflow to list available workflows",
+                                            name
+                                        ));
+                                    }
+                                }
+                            }
+                        }
                     }
                     return Ok(false);
                 }

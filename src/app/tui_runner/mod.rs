@@ -8,6 +8,7 @@ mod session_events;
 pub mod slash_commands;
 pub mod snapshot_helper;
 mod workflow_lifecycle;
+mod workflow_loading;
 
 use crate::app::cli::Cli;
 use crate::app::util::{
@@ -16,7 +17,6 @@ use crate::app::util::{
 use crate::app::workflow::run_workflow_with_config;
 use crate::app::workflow_common::pre_create_session_folder_with_working_dir;
 use crate::cli_usage;
-use crate::config::WorkflowConfig;
 use crate::planning_paths;
 use crate::state::State;
 use crate::tui::{
@@ -25,42 +25,18 @@ use crate::tui::{
 };
 use crate::update;
 use anyhow::{Context, Result};
-use crossterm::event::{
-    KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
-};
-use std::path::{Path, PathBuf};
+use crossterm::event::{KeyboardEnhancementFlags, PushKeyboardEnhancementFlags};
+use std::path::PathBuf;
 use std::time::Duration;
 
 pub use events::process_event;
 pub use workflow_lifecycle::{check_workflow_completions, handle_init_completion};
+pub use workflow_loading::{restore_terminal, ResumableSession};
 
 pub type InitHandle = Option<(
     usize,
     tokio::task::JoinHandle<Result<(State, PathBuf, String, PathBuf)>>,
 )>;
-
-/// Information about a session that was successfully stopped and can be resumed.
-#[derive(Clone)]
-pub struct ResumableSession {
-    pub feature_name: String,
-    pub session_id: String,
-    pub working_dir: PathBuf,
-}
-
-pub fn restore_terminal(
-    terminal: &mut ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io::Stdout>>,
-) -> Result<()> {
-    crossterm::terminal::disable_raw_mode()?;
-    crossterm::execute!(
-        terminal.backend_mut(),
-        PopKeyboardEnhancementFlags,
-        crossterm::event::DisableBracketedPaste,
-        crossterm::terminal::LeaveAlternateScreen,
-        crossterm::event::DisableMouseCapture
-    )?;
-    terminal.show_cursor()?;
-    Ok(())
-}
 
 pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
     debug_log(start, "run_tui starting");
@@ -305,7 +281,7 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
         debug_log(start, "update-installed marker consumed");
     }
 
-    let workflow_config = load_workflow_config(&cli, &working_dir, start);
+    let workflow_config = workflow_loading::load_workflow_config(&cli, &working_dir, start);
 
     let objective = cli.objective.join(" ").trim().to_string();
 
@@ -759,60 +735,4 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
 
     debug_log(start, "run_tui complete");
     Ok(())
-}
-
-fn load_workflow_config(
-    cli: &Cli,
-    working_dir: &Path,
-    start: std::time::Instant,
-) -> WorkflowConfig {
-    // --claude flag takes priority over any config file
-    if cli.claude {
-        debug_log(start, "Using Claude-only workflow config (--claude)");
-        return WorkflowConfig::claude_only_config();
-    }
-
-    if let Some(config_path) = &cli.config {
-        let full_path = if config_path.is_absolute() {
-            config_path.clone()
-        } else {
-            working_dir.join(config_path)
-        };
-        match WorkflowConfig::load(&full_path) {
-            Ok(cfg) => {
-                debug_log(start, &format!("Loaded config from {:?}", full_path));
-                return cfg;
-            }
-            Err(e) => {
-                eprintln!("[planning-agent] Warning: Failed to load config: {}", e);
-                debug_log(
-                    start,
-                    "Falling back to built-in multi-agent workflow config",
-                );
-            }
-        }
-    } else {
-        let default_config_path = working_dir.join("workflow.yaml");
-        if default_config_path.exists() {
-            match WorkflowConfig::load(&default_config_path) {
-                Ok(cfg) => {
-                    debug_log(start, "Loaded default workflow.yaml");
-                    return cfg;
-                }
-                Err(e) => {
-                    eprintln!(
-                        "[planning-agent] Warning: Failed to load workflow.yaml: {}",
-                        e
-                    );
-                    debug_log(
-                        start,
-                        "Falling back to built-in multi-agent workflow config",
-                    );
-                }
-            }
-        } else {
-            debug_log(start, "Using built-in multi-agent workflow config");
-        }
-    }
-    WorkflowConfig::default_config()
 }
