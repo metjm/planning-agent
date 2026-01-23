@@ -139,7 +139,7 @@ pub async fn run_workflow_with_config(
     }
 
     // Create session tracker for daemon integration
-    let tracker = Arc::new(SessionTracker::new(no_daemon));
+    let tracker = Arc::new(SessionTracker::new(no_daemon).await);
 
     // Register session with daemon
     if let Err(e) = tracker

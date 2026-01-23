@@ -69,46 +69,6 @@ impl RpcClient {
         }
     }
 
-    /// Creates a new RPC client synchronously (blocking).
-    ///
-    /// This is provided for compatibility with code that needs synchronous initialization.
-    pub fn new_blocking(no_daemon: bool) -> Self {
-        if no_daemon {
-            return Self {
-                inner: Arc::new(Mutex::new(None)),
-                degraded: true,
-            };
-        }
-
-        // Run async connect in a blocking context
-        let result = std::thread::spawn(|| {
-            let rt = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .expect("Failed to create tokio runtime");
-            rt.block_on(Self::connect_or_spawn())
-        })
-        .join();
-
-        match result {
-            Ok(Ok(state)) => Self {
-                inner: Arc::new(Mutex::new(Some(state))),
-                degraded: false,
-            },
-            Ok(Err(e)) => {
-                daemon_log("rpc_client", &format!("Failed to connect: {}", e));
-                Self {
-                    inner: Arc::new(Mutex::new(None)),
-                    degraded: true,
-                }
-            }
-            Err(_) => Self {
-                inner: Arc::new(Mutex::new(None)),
-                degraded: true,
-            },
-        }
-    }
-
     /// Returns true if connected to daemon.
     pub fn is_connected(&self) -> bool {
         !self.degraded

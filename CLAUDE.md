@@ -141,6 +141,22 @@ The build enforces a 750-line limit per file (see `build.rs`). When a file excee
 
 Proper extraction maintains readability and creates logical module boundaries.
 
+### Refactoring is Encouraged
+
+**Never be afraid to change a lot of code if it improves things.**
+
+When fixing a bug or adding a feature reveals a design problem, fix the design. Don't work around it:
+
+- **DO** change function signatures and update all callers
+- **DO** rename types/functions across the entire codebase for clarity
+- **DO** move code between modules to improve organization
+- **DO** delete and rewrite code that's fundamentally broken
+- **DO** make sweeping changes if the current approach is wrong
+
+The number of files or lines changed is irrelevant. What matters is that the code is correct and clean when you're done. A 50-file refactor that fixes a systemic issue is better than a 2-line hack that papers over it.
+
+Never choose a "minimal change" that leaves the codebase worse. Never add a workaround because "refactoring would touch too many files." If the right fix requires updating 100 call sites, update 100 call sites.
+
 ### Code Quality Standards
 
 **No shortcuts. No laziness. No excuses.**

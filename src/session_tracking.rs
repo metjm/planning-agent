@@ -47,20 +47,17 @@ impl SessionTracker {
     /// Creates a new session tracker.
     ///
     /// If `no_daemon` is true, creates a disabled tracker that does nothing.
-    pub fn new(no_daemon: bool) -> Self {
+    pub async fn new(no_daemon: bool) -> Self {
         if no_daemon {
-            // For disabled mode, we use new_blocking with no_daemon=true
-            // which immediately returns a degraded client
             return Self {
-                client: Arc::new(Mutex::new(RpcClient::new_blocking(true))),
+                client: Arc::new(Mutex::new(RpcClient::new(true).await)),
                 active_sessions: Arc::new(Mutex::new(SessionMap::new())),
                 _heartbeat_stop_tx: None,
                 disabled: true,
             };
         }
 
-        // Create client using blocking initializer
-        let client = Arc::new(Mutex::new(RpcClient::new_blocking(false)));
+        let client = Arc::new(Mutex::new(RpcClient::new(false).await));
         let active_sessions: Arc<Mutex<SessionMap>> = Arc::new(Mutex::new(SessionMap::new()));
 
         // Start heartbeat task
@@ -322,7 +319,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_tracker_disabled() {
-        let tracker = SessionTracker::new(true);
+        let tracker = SessionTracker::new(true).await;
         assert!(tracker.is_disabled());
         assert!(!tracker.is_connected().await);
 
@@ -344,27 +341,27 @@ mod tests {
 
 /// Integration tests for SessionTracker with real daemon communication.
 ///
-/// Each test uses unique session IDs (UUIDs) to avoid conflicts with:
-/// - Other tests running in parallel
-/// - Other planning-agent instances on the same system
-/// - Leftover sessions from previous test runs
+/// These tests spin up REAL daemon servers - no mocking.
+/// Each test gets its own isolated daemon instance.
 #[cfg(test)]
 #[cfg(unix)]
 mod integration_tests {
     use super::*;
+    use crate::session_daemon::rpc_tests::TestServer;
     use crate::session_daemon::LivenessState;
     use std::time::Duration;
     use uuid::Uuid;
 
     /// Test environment with isolated daemon.
-    /// Each test gets its own planning agent home directory so daemons don't interfere.
+    /// Each test gets its own planning agent home directory AND its own daemon server.
     struct TestEnv {
         _temp_dir: tempfile::TempDir,
         _home_guard: crate::planning_paths::TestHomeGuard,
+        _server: TestServer,
     }
 
     impl TestEnv {
-        fn new() -> Self {
+        async fn new() -> Self {
             // Create temp directory for this test
             let temp_dir = tempfile::TempDir::new().expect("Failed to create temp dir");
 
@@ -372,9 +369,17 @@ mod integration_tests {
             let home_guard =
                 crate::planning_paths::set_home_for_test(temp_dir.path().to_path_buf());
 
+            // Start a real daemon server
+            let server = TestServer::start().await;
+
+            // Write port file so RpcClient can find our test daemon
+            let port_path = temp_dir.path().join("sessiond.port");
+            server.write_port_file(&port_path);
+
             Self {
                 _temp_dir: temp_dir,
                 _home_guard: home_guard,
+                _server: server,
             }
         }
     }
@@ -431,14 +436,13 @@ mod integration_tests {
 
     #[tokio::test]
     async fn test_tracker_register_and_list() {
-        let _env = TestEnv::new();
-        let tracker = SessionTracker::new(false);
-        tokio::time::sleep(Duration::from_millis(500)).await;
-
-        if !tracker.is_connected().await {
-            println!("Skipping test - daemon not available");
-            return;
-        }
+        let _env = TestEnv::new().await;
+        let tracker = SessionTracker::new(false).await;
+        // Daemon is guaranteed to be running via TestEnv
+        assert!(
+            tracker.is_connected().await,
+            "SessionTracker should be connected to test daemon"
+        );
 
         let session_id = unique_session_id("tracker-register");
 
@@ -469,14 +473,13 @@ mod integration_tests {
 
     #[tokio::test]
     async fn test_tracker_update() {
-        let _env = TestEnv::new();
-        let tracker = SessionTracker::new(false);
-        tokio::time::sleep(Duration::from_millis(500)).await;
-
-        if !tracker.is_connected().await {
-            println!("Skipping test - daemon not available");
-            return;
-        }
+        let _env = TestEnv::new().await;
+        let tracker = SessionTracker::new(false).await;
+        // Daemon is guaranteed to be running via TestEnv
+        assert!(
+            tracker.is_connected().await,
+            "SessionTracker should be connected to test daemon"
+        );
 
         let session_id = unique_session_id("tracker-update");
 
@@ -520,14 +523,13 @@ mod integration_tests {
 
     #[tokio::test]
     async fn test_tracker_mark_stopped() {
-        let _env = TestEnv::new();
-        let tracker = SessionTracker::new(false);
-        tokio::time::sleep(Duration::from_millis(500)).await;
-
-        if !tracker.is_connected().await {
-            println!("Skipping test - daemon not available");
-            return;
-        }
+        let _env = TestEnv::new().await;
+        let tracker = SessionTracker::new(false).await;
+        // Daemon is guaranteed to be running via TestEnv
+        assert!(
+            tracker.is_connected().await,
+            "SessionTracker should be connected to test daemon"
+        );
 
         let session_id = unique_session_id("tracker-mark-stopped");
 
@@ -563,14 +565,13 @@ mod integration_tests {
 
     #[tokio::test]
     async fn test_tracker_force_stop() {
-        let _env = TestEnv::new();
-        let tracker = SessionTracker::new(false);
-        tokio::time::sleep(Duration::from_millis(500)).await;
-
-        if !tracker.is_connected().await {
-            println!("Skipping test - daemon not available");
-            return;
-        }
+        let _env = TestEnv::new().await;
+        let tracker = SessionTracker::new(false).await;
+        // Daemon is guaranteed to be running via TestEnv
+        assert!(
+            tracker.is_connected().await,
+            "SessionTracker should be connected to test daemon"
+        );
 
         let session_id = unique_session_id("tracker-force-stop");
 
@@ -607,14 +608,13 @@ mod integration_tests {
     #[tokio::test]
     async fn test_tracker_full_workflow_lifecycle() {
         // Simulates a complete workflow lifecycle through SessionTracker
-        let _env = TestEnv::new();
-        let tracker = SessionTracker::new(false);
-        tokio::time::sleep(Duration::from_millis(500)).await;
-
-        if !tracker.is_connected().await {
-            println!("Skipping test - daemon not available");
-            return;
-        }
+        let _env = TestEnv::new().await;
+        let tracker = SessionTracker::new(false).await;
+        // Daemon is guaranteed to be running via TestEnv
+        assert!(
+            tracker.is_connected().await,
+            "SessionTracker should be connected to test daemon"
+        );
 
         let session_id = unique_session_id("tracker-lifecycle");
 
@@ -717,14 +717,13 @@ mod integration_tests {
 
     #[tokio::test]
     async fn test_tracker_reconnect() {
-        let _env = TestEnv::new();
-        let tracker = SessionTracker::new(false);
-        tokio::time::sleep(Duration::from_millis(500)).await;
-
-        if !tracker.is_connected().await {
-            println!("Skipping test - daemon not available");
-            return;
-        }
+        let _env = TestEnv::new().await;
+        let tracker = SessionTracker::new(false).await;
+        // Daemon is guaranteed to be running via TestEnv
+        assert!(
+            tracker.is_connected().await,
+            "SessionTracker should be connected to test daemon"
+        );
 
         let session_id = unique_session_id("tracker-reconnect");
 
@@ -752,5 +751,94 @@ mod integration_tests {
         assert!(found, "Session not found after reconnect");
 
         cleanup_session(&tracker, &session_id).await;
+    }
+
+    /// Test that the async SessionTracker::new() creates a connection that stays alive.
+    ///
+    /// This test verifies the fix for a bug where RpcClient::new_blocking() created
+    /// a tarpc client in a separate tokio runtime. When that runtime was dropped,
+    /// the connection would die with "connection already shutdown" errors.
+    ///
+    /// The fix was to make new() async so the tarpc client is created in the
+    /// current runtime, keeping the connection alive.
+    #[tokio::test]
+    async fn test_tracker_connection_stays_alive() {
+        let _env = TestEnv::new().await;
+        let tracker = SessionTracker::new(false).await;
+
+        // Small delay to let the daemon start (if spawned)
+        // Daemon is guaranteed to be running via TestEnv
+        assert!(
+            tracker.is_connected().await,
+            "SessionTracker should be connected to test daemon"
+        );
+
+        let session_id = unique_session_id("connection-alive");
+
+        // Step 1: Register a session
+        let result = tracker
+            .register(
+                session_id.clone(),
+                "test-feature".to_string(),
+                PathBuf::from("/tmp/test"),
+                PathBuf::from("/tmp/test/state.json"),
+                "Planning".to_string(),
+                1,
+                "Running".to_string(),
+            )
+            .await;
+        assert!(
+            result.is_ok(),
+            "Register failed (connection may have died): {:?}",
+            result.err()
+        );
+
+        // Step 2: Simulate some work happening (this is where the old bug would manifest)
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Step 3: Update the session - this would fail with "connection already shutdown"
+        // if the connection was created in a separate runtime
+        let result = tracker
+            .update(
+                &session_id,
+                "Reviewing".to_string(),
+                2,
+                "Running".to_string(),
+            )
+            .await;
+        assert!(
+            result.is_ok(),
+            "Update failed (connection may have died): {:?}",
+            result.err()
+        );
+
+        // Step 4: Another delay to ensure connection is still alive
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Step 5: List sessions - another operation that requires live connection
+        let sessions = tracker.list().await;
+        assert!(
+            sessions.is_ok(),
+            "List failed (connection may have died): {:?}",
+            sessions.err()
+        );
+
+        let sessions = sessions.unwrap();
+        let session = sessions
+            .iter()
+            .find(|s| s.workflow_session_id == session_id);
+        assert!(session.is_some(), "Session not found in list");
+        assert_eq!(session.unwrap().phase, "Reviewing");
+        assert_eq!(session.unwrap().iteration, 2);
+
+        // Step 6: Final operation - mark stopped
+        let result = tracker.mark_stopped(&session_id).await;
+        assert!(
+            result.is_ok(),
+            "Mark stopped failed (connection may have died): {:?}",
+            result.err()
+        );
+
+        println!("Connection stayed alive through all operations");
     }
 }
