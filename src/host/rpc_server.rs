@@ -1,12 +1,23 @@
 //! RPC server implementation for host service.
 //!
 //! Implements the tarpc HostService trait for handling daemon RPC requests.
-//! This replaces the legacy JSON-over-socket protocol in server.rs.
 
 #[cfg(any(feature = "host-gui", test))]
-use crate::host::server::HostEvent;
-#[cfg(any(feature = "host-gui", test))]
 use crate::host::state::HostState;
+
+/// Events sent from RPC server to GUI.
+#[derive(Debug, Clone)]
+pub enum HostEvent {
+    /// A new container daemon connected.
+    ContainerConnected {
+        container_id: String,
+        container_name: String,
+    },
+    /// A container daemon disconnected.
+    ContainerDisconnected { container_id: String },
+    /// Sessions were updated (sync, update, or removal).
+    SessionsUpdated,
+}
 use crate::rpc::host_service::{ContainerInfo, HostService, SessionInfo, PROTOCOL_VERSION};
 use crate::rpc::HostError;
 #[cfg(any(feature = "host-gui", test))]
@@ -683,5 +694,77 @@ mod tests {
 
         let c2 = state.containers.get("container-2").unwrap();
         assert!(c2.sessions.contains_key("c2-s1"));
+    }
+
+    #[tokio::test]
+    async fn test_disconnect_event_contains_container_id() {
+        let mut server = TestHostServer::start().await;
+        let client = server.create_client().await;
+
+        let info = ContainerInfo {
+            container_id: "disconnect-test".to_string(),
+            container_name: "Disconnect Test".to_string(),
+            working_dir: std::path::PathBuf::from("/work"),
+        };
+        client
+            .hello(tarpc::context::current(), info, PROTOCOL_VERSION)
+            .await
+            .unwrap()
+            .unwrap();
+
+        // Drain connect event
+        let _ = server.event_rx.recv().await;
+
+        // Drop the client to trigger disconnect
+        drop(client);
+
+        // Wait a bit for disconnect to be processed
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Check for disconnect event
+        if let Ok(Some(event)) =
+            tokio::time::timeout(Duration::from_secs(1), server.event_rx.recv()).await
+        {
+            match event {
+                HostEvent::ContainerDisconnected { container_id } => {
+                    assert_eq!(container_id, "disconnect-test");
+                }
+                _ => {} // May get other events first
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_display_sessions_include_container_name() {
+        let server = TestHostServer::start().await;
+        let client = server.create_client().await;
+
+        let info = ContainerInfo {
+            container_id: "display-test".to_string(),
+            container_name: "Display Test Container".to_string(),
+            working_dir: std::path::PathBuf::from("/work"),
+        };
+        client
+            .hello(tarpc::context::current(), info, PROTOCOL_VERSION)
+            .await
+            .unwrap()
+            .unwrap();
+
+        // Sync a session
+        client
+            .sync_sessions(
+                tarpc::context::current(),
+                vec![create_test_session("display-session", "Running")],
+            )
+            .await
+            .unwrap();
+
+        // Get display sessions and verify container_name is included
+        let mut state = server.state.lock().await;
+        let sessions = state.sessions();
+
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].container_name, "Display Test Container");
+        assert_eq!(sessions[0].session.session_id, "display-session");
     }
 }

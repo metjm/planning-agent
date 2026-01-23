@@ -2,7 +2,7 @@
 
 #[cfg(feature = "tray-icon")]
 use crate::host::gui::tray::{HostTray, TrayCommand};
-use crate::host::server::HostEvent;
+use crate::host::rpc_server::HostEvent;
 use crate::host::state::HostState;
 use eframe::egui;
 use egui_extras::{Column, TableBuilder};

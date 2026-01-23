@@ -350,11 +350,11 @@ fn truncate_string(s: &str, max_len: usize) -> String {
     }
 }
 
-/// Run the host application with GUI and TCP server.
+/// Run the host application with GUI and RPC server.
 #[cfg(feature = "host-gui")]
 async fn run_host(port: u16) -> Result<()> {
     use crate::host::gui::app::HostApp;
-    use crate::host::server::run_server;
+    use crate::host::rpc_server::run_host_rpc_server;
     use crate::host::state::HostState;
     use eframe::egui;
     use std::sync::Arc;
@@ -363,10 +363,10 @@ async fn run_host(port: u16) -> Result<()> {
     let state = Arc::new(Mutex::new(HostState::new()));
     let (event_tx, event_rx) = mpsc::unbounded_channel();
 
-    // Spawn TCP server in background
+    // Spawn RPC server in background
     let server_state = state.clone();
     let server_handle = tokio::spawn(async move {
-        if let Err(e) = run_server(port, server_state, event_tx).await {
+        if let Err(e) = run_host_rpc_server(port, server_state, event_tx).await {
             eprintln!("[host] Server error: {}", e);
         }
     });

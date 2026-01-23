@@ -1,56 +1,14 @@
 //! Protocol types for communication between container daemons and host application.
 //!
-//! This module is being migrated from JSON-over-socket to tarpc RPC.
-//! The JSON message types are retained for the host-gui feature which
-//! still uses the old protocol.
+//! This module contains types shared between the daemon and host RPC services.
 
 use serde::{Deserialize, Serialize};
-#[cfg(any(feature = "host-gui", test))]
-use std::path::PathBuf;
 
 // Reuse LivenessState from existing daemon protocol to avoid duplication
 pub use crate::session_daemon::LivenessState;
 
 /// Current protocol version.
 pub const PROTOCOL_VERSION: u32 = 1;
-
-/// Messages sent from container daemon to host application (JSON protocol).
-/// Used by the host-gui feature only. The daemon-side now uses tarpc RPC.
-#[cfg(any(feature = "host-gui", test))]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type")]
-pub enum DaemonToHost {
-    /// Initial handshake from container daemon.
-    Hello {
-        container_id: String,
-        container_name: String,
-        working_dir: PathBuf,
-        protocol_version: u32,
-    },
-    /// Full sync of all sessions (sent on connect and after reconnect).
-    SyncSessions { sessions: Vec<SessionInfo> },
-    /// Single session update.
-    SessionUpdate { session: SessionInfo },
-    /// Session removed from daemon.
-    SessionGone { session_id: String },
-    /// Keep-alive heartbeat.
-    Heartbeat,
-}
-
-/// Messages sent from host to container daemon (JSON protocol).
-/// Used by the host-gui feature only. The daemon-side now uses tarpc RPC.
-#[cfg(any(feature = "host-gui", test))]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type")]
-pub enum HostToDaemon {
-    /// Response to Hello.
-    Welcome {
-        host_version: String,
-        protocol_version: u32,
-    },
-    /// Acknowledgment of received message.
-    Ack,
-}
 
 /// Session information for wire transmission.
 /// Uses string fields for phase/status like existing SessionRecord,
@@ -89,49 +47,6 @@ impl SessionInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_daemon_to_host_serialization() {
-        let msg = DaemonToHost::Hello {
-            container_id: "test-id".to_string(),
-            container_name: "Test Container".to_string(),
-            working_dir: PathBuf::from("/test"),
-            protocol_version: PROTOCOL_VERSION,
-        };
-
-        let json = serde_json::to_string(&msg).unwrap();
-        assert!(json.contains("\"type\":\"Hello\""));
-        assert!(json.contains("\"container_id\":\"test-id\""));
-
-        let parsed: DaemonToHost = serde_json::from_str(&json).unwrap();
-        match parsed {
-            DaemonToHost::Hello { container_id, .. } => {
-                assert_eq!(container_id, "test-id");
-            }
-            _ => panic!("Expected Hello"),
-        }
-    }
-
-    #[test]
-    fn test_host_to_daemon_serialization() {
-        let msg = HostToDaemon::Welcome {
-            host_version: "0.1.0".to_string(),
-            protocol_version: PROTOCOL_VERSION,
-        };
-
-        let json = serde_json::to_string(&msg).unwrap();
-        assert!(json.contains("\"type\":\"Welcome\""));
-
-        let parsed: HostToDaemon = serde_json::from_str(&json).unwrap();
-        match parsed {
-            HostToDaemon::Welcome {
-                protocol_version, ..
-            } => {
-                assert_eq!(protocol_version, PROTOCOL_VERSION);
-            }
-            _ => panic!("Expected Welcome"),
-        }
-    }
 
     #[test]
     fn test_session_info_serialization() {
