@@ -2,8 +2,9 @@
 //!
 //! Provides a menu bar tray icon with session count and notifications.
 //! Only available on macOS and Windows (gtk3-rs on Linux is deprecated).
+//! Requires the `host-gui-tray` feature.
 
-#![cfg(not(target_os = "linux"))]
+#![cfg(feature = "tray-icon")]
 
 /// Commands from the tray menu.
 #[derive(Debug, Clone)]

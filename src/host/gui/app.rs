@@ -1,6 +1,6 @@
 //! Main host application using egui/eframe.
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(feature = "tray-icon")]
 use crate::host::gui::tray::{HostTray, TrayCommand};
 use crate::host::server::HostEvent;
 use crate::host::state::HostState;
@@ -21,8 +21,8 @@ pub struct HostApp {
     last_sync: Instant,
     /// Server port for display
     port: u16,
-    /// System tray icon (only on platforms with tray support)
-    #[cfg(not(target_os = "linux"))]
+    /// System tray icon (requires host-gui-tray feature)
+    #[cfg(feature = "tray-icon")]
     tray: Option<HostTray>,
     /// Sessions we've already notified about (for deduplication)
     notified_sessions: HashSet<String>,
@@ -49,8 +49,8 @@ struct DisplaySessionRow {
 }
 
 impl HostApp {
-    /// Create a new host application.
-    #[cfg(not(target_os = "linux"))]
+    /// Create a new host application (with tray support).
+    #[cfg(feature = "tray-icon")]
     pub fn new(
         state: Arc<Mutex<HostState>>,
         event_rx: mpsc::UnboundedReceiver<HostEvent>,
@@ -79,15 +79,13 @@ impl HostApp {
         }
     }
 
-    /// Create a new host application (Linux - no tray support).
-    #[cfg(target_os = "linux")]
+    /// Create a new host application (without tray support).
+    #[cfg(not(feature = "tray-icon"))]
     pub fn new(
         state: Arc<Mutex<HostState>>,
         event_rx: mpsc::UnboundedReceiver<HostEvent>,
         port: u16,
     ) -> Self {
-        eprintln!("[host] System tray not available on Linux (gtk3-rs deprecated)");
-
         Self {
             state,
             event_rx,
@@ -170,8 +168,8 @@ impl HostApp {
             .retain(|id| current_awaiting.contains(id));
     }
 
-    /// Handle tray icon commands (only on platforms with tray support).
-    #[cfg(not(target_os = "linux"))]
+    /// Handle tray icon commands (requires host-gui-tray feature).
+    #[cfg(feature = "tray-icon")]
     fn handle_tray_commands(&mut self, ctx: &egui::Context) {
         if let Some(ref tray) = self.tray {
             while let Some(cmd) = tray.try_recv_command() {
@@ -188,11 +186,9 @@ impl HostApp {
         }
     }
 
-    /// No-op on Linux (tray not supported).
-    #[cfg(target_os = "linux")]
-    fn handle_tray_commands(&mut self, _ctx: &egui::Context) {
-        // Tray not available on Linux
-    }
+    /// No-op without tray-icon feature.
+    #[cfg(not(feature = "tray-icon"))]
+    fn handle_tray_commands(&mut self, _ctx: &egui::Context) {}
 }
 
 impl eframe::App for HostApp {

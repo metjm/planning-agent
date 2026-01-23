@@ -4,5 +4,5 @@
 
 pub mod app;
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(feature = "tray-icon")]
 pub mod tray;
