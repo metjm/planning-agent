@@ -177,10 +177,25 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
             use crate::session_daemon::rpc_subscription::{RpcSubscription, SubscriptionEvent};
 
             crate::daemon_log::daemon_log("tui_runner", "subscription task started");
+            let mut consecutive_failures: u32 = 0;
             loop {
                 crate::daemon_log::daemon_log("tui_runner", "attempting to connect...");
+
+                // After 3 consecutive failures, try to spawn the daemon
+                // This handles the case where daemon died after initial startup
+                if consecutive_failures >= 3 {
+                    crate::daemon_log::daemon_log(
+                        "tui_runner",
+                        "3+ consecutive failures, attempting to spawn daemon",
+                    );
+                    // RpcClient::new will spawn daemon if not running
+                    let _ = crate::session_daemon::RpcClient::new(false).await;
+                    consecutive_failures = 0;
+                }
+
                 // Try to connect and subscribe via tarpc
                 if let Some(mut subscription) = RpcSubscription::connect().await {
+                    consecutive_failures = 0;
                     crate::daemon_log::daemon_log(
                         "tui_runner",
                         "connected! sending DaemonReconnected event",
@@ -217,7 +232,14 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                     );
                     let _ = daemon_tx.send(Event::DaemonDisconnected);
                 } else {
-                    crate::daemon_log::daemon_log("tui_runner", "connect() returned None");
+                    consecutive_failures += 1;
+                    crate::daemon_log::daemon_log(
+                        "tui_runner",
+                        &format!(
+                            "connect() returned None (failure #{})",
+                            consecutive_failures
+                        ),
+                    );
                 }
 
                 crate::daemon_log::daemon_log("tui_runner", "waiting 500ms before retry...");
