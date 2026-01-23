@@ -11,12 +11,29 @@
 //! PLANNING_AGENT_HOST_PORT is set.
 
 use crate::host_protocol::{DaemonToHost, HostToDaemon, SessionInfo, PROTOCOL_VERSION};
+use crate::planning_paths;
 use crate::session_daemon::SessionRecord;
 use std::path::PathBuf;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
+
+/// Log an upstream connection event to ~/.planning-agent/daemon-debug.log
+fn daemon_log(msg: &str) {
+    use std::io::Write;
+    if let Ok(home) = planning_paths::planning_agent_home_dir() {
+        let log_path = home.join("daemon-debug.log");
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_path)
+        {
+            let now = chrono::Local::now().format("%H:%M:%S%.3f");
+            let _ = writeln!(f, "[{}] [upstream] {}", now, msg);
+        }
+    }
+}
 
 /// Events to send upstream to host.
 #[derive(Debug, Clone)]
@@ -78,14 +95,14 @@ impl UpstreamConnection {
                     attempt = 0;
                 }
                 Err(e) => {
-                    eprintln!("[upstream] Connection error: {}", e);
+                    daemon_log(&format!("Connection error: {}", e));
                 }
             }
 
             // Backoff before reconnect
             let delay = backoff_delay(attempt);
             attempt = attempt.saturating_add(1).min(10);
-            eprintln!("[upstream] Reconnecting in {:?}...", delay);
+            daemon_log(&format!("Reconnecting in {:?}...", delay));
             tokio::time::sleep(delay).await;
         }
     }
@@ -102,11 +119,11 @@ impl UpstreamConnection {
         match tokio::time::timeout(Duration::from_millis(500), TcpStream::connect(&localhost)).await
         {
             Ok(Ok(stream)) => {
-                eprintln!("[upstream] Connected via localhost");
+                daemon_log("Connected via localhost");
                 return Ok(stream);
             }
             _ => {
-                eprintln!("[upstream] localhost failed, trying host.docker.internal...");
+                daemon_log("localhost failed, trying host.docker.internal...");
             }
         }
 
@@ -114,7 +131,7 @@ impl UpstreamConnection {
         let docker_host = format!("host.docker.internal:{}", self.port);
         match TcpStream::connect(&docker_host).await {
             Ok(stream) => {
-                eprintln!("[upstream] Connected via host.docker.internal");
+                daemon_log("Connected via host.docker.internal");
                 Ok(stream)
             }
             Err(e) => {
@@ -169,10 +186,7 @@ impl UpstreamConnection {
             }
         }
 
-        eprintln!(
-            "[upstream] Connected to host at {}:{}",
-            self.host, self.port
-        );
+        daemon_log(&format!("Connected to host at {}:{}", self.host, self.port));
 
         // Main loop: forward session events
         let heartbeat_interval = Duration::from_secs(30);

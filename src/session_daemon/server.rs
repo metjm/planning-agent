@@ -161,11 +161,17 @@ pub async fn run_daemon() -> Result<()> {
     let (events_tx, _) = broadcast::channel::<SessionRecord>(64);
 
     // Spawn upstream connection to host if PLANNING_AGENT_HOST_PORT is set
+    let host_port_env = std::env::var("PLANNING_AGENT_HOST_PORT").ok();
+    daemon_log(&format!(
+        "PLANNING_AGENT_HOST_PORT env: {:?}",
+        host_port_env
+    ));
+
     if let Some(port) = host_port() {
-        eprintln!(
-            "[sessiond] Upstream host connection enabled on port {}",
+        daemon_log(&format!(
+            "Upstream host connection enabled on port {}",
             port
-        );
+        ));
 
         let (upstream_tx, upstream_rx) = mpsc::unbounded_channel::<UpstreamEvent>();
         let upstream_conn = UpstreamConnection::new(port);
