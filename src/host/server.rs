@@ -76,9 +76,14 @@ pub(crate) async fn handle_connection(
         DaemonToHost::Hello {
             container_id,
             container_name,
-            working_dir: _,
+            working_dir,
             protocol_version,
         } => {
+            eprintln!(
+                "[host] Received Hello from container_id={}, name={}, working_dir={:?}, protocol_version={}",
+                container_id, container_name, working_dir, protocol_version
+            );
+
             // Check protocol version
             if protocol_version != PROTOCOL_VERSION {
                 eprintln!(
@@ -92,6 +97,10 @@ pub(crate) async fn handle_connection(
             {
                 let mut state_guard = state.lock().await;
                 state_guard.add_container(container_id.clone(), container_name.clone());
+                eprintln!(
+                    "[host] Registered container, total containers: {}",
+                    state_guard.containers.len()
+                );
             }
 
             // Send Welcome
@@ -100,6 +109,7 @@ pub(crate) async fn handle_connection(
                 protocol_version: PROTOCOL_VERSION,
             };
             let welcome_json = serde_json::to_string(&welcome)?;
+            eprintln!("[host] Sending Welcome: {}", welcome_json);
             writer
                 .write_all(format!("{}\n", welcome_json).as_bytes())
                 .await?;
@@ -110,6 +120,7 @@ pub(crate) async fn handle_connection(
                 container_name,
             });
 
+            eprintln!("[host] Handshake complete for container {}", container_id);
             container_id
         }
         _ => {
@@ -134,21 +145,43 @@ pub(crate) async fn handle_connection(
 
                 match message {
                     DaemonToHost::SyncSessions { sessions } => {
+                        eprintln!(
+                            "[host] Received SyncSessions from {} with {} sessions",
+                            container_id,
+                            sessions.len()
+                        );
+                        for (i, s) in sessions.iter().enumerate() {
+                            eprintln!(
+                                "[host]   Session {}: id={}, feature={}, phase={}, status={}",
+                                i, s.session_id, s.feature_name, s.phase, s.status
+                            );
+                        }
                         let mut state_guard = state.lock().await;
                         state_guard.sync_sessions(&container_id, sessions);
                         let _ = event_tx.send(HostEvent::SessionsUpdated);
+                        eprintln!("[host] SyncSessions processed, notified GUI");
                     }
                     DaemonToHost::SessionUpdate { session } => {
+                        eprintln!(
+                            "[host] Received SessionUpdate from {}: id={}, feature={}, phase={}, status={}",
+                            container_id, session.session_id, session.feature_name, session.phase, session.status
+                        );
                         let mut state_guard = state.lock().await;
                         state_guard.update_session(&container_id, session);
                         let _ = event_tx.send(HostEvent::SessionsUpdated);
+                        eprintln!("[host] SessionUpdate processed, notified GUI");
                     }
                     DaemonToHost::SessionGone { session_id } => {
+                        eprintln!(
+                            "[host] Received SessionGone from {}: session_id={}",
+                            container_id, session_id
+                        );
                         let mut state_guard = state.lock().await;
                         state_guard.remove_session(&container_id, &session_id);
                         let _ = event_tx.send(HostEvent::SessionsUpdated);
                     }
                     DaemonToHost::Heartbeat => {
+                        eprintln!("[host] Received Heartbeat from {}", container_id);
                         let mut state_guard = state.lock().await;
                         state_guard.heartbeat(&container_id);
                     }

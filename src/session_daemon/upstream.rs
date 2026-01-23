@@ -93,6 +93,7 @@ impl UpstreamConnection {
             match self.connect_and_run(&mut session_rx).await {
                 Ok(()) => {
                     // Clean disconnect, reset backoff
+                    daemon_log("Host disconnected, will reconnect");
                     attempt = 0;
                     logged_failure = false;
                 }
@@ -201,6 +202,7 @@ impl UpstreamConnection {
                 event = session_rx.recv() => {
                     match event {
                         Some(UpstreamEvent::SyncSessions(records)) => {
+                            daemon_log(&format!("Sending SyncSessions with {} sessions", records.len()));
                             let msg = DaemonToHost::SyncSessions {
                                 sessions: records.iter().map(SessionInfo::from_session_record).collect(),
                             };

@@ -185,11 +185,16 @@ pub async fn run_daemon() -> Result<()> {
         let mut events_rx = events_tx.subscribe();
         let forwarder_state = state.clone();
         tokio::spawn(async move {
+            daemon_log("Forwarder task started");
             // Send initial sync on startup
             {
                 let state_guard = forwarder_state.lock().await;
                 let all_sessions: Vec<SessionRecord> =
                     state_guard.sessions.values().cloned().collect();
+                daemon_log(&format!(
+                    "Forwarder sending initial SyncSessions with {} sessions to channel",
+                    all_sessions.len()
+                ));
                 let _ = upstream_tx.send(UpstreamEvent::SyncSessions(all_sessions));
             }
 
