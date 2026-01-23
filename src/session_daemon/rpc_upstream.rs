@@ -135,22 +135,57 @@ impl RpcUpstream {
             return Ok(client);
         }
 
-        // Race localhost and host.docker.internal in parallel - first to connect wins.
-        // This avoids the 500ms delay when running in a container where localhost fails.
+        // Try both localhost and host.docker.internal in parallel.
+        // Return the first SUCCESSFUL connection.
         let localhost = format!("127.0.0.1:{}", self.port);
         let docker_host = format!("host.docker.internal:{}", self.port);
 
-        let localhost_fut = tcp::connect(&localhost, Bincode::default);
-        let docker_fut = tcp::connect(&docker_host, Bincode::default);
+        // Spawn both connection attempts as tasks
+        let localhost_clone = localhost.clone();
+        let docker_host_clone = docker_host.clone();
 
-        // Use select to race both connections with a combined timeout
-        let result = tokio::time::timeout(Duration::from_millis(500), async {
-            tokio::select! {
-                result = localhost_fut => {
-                    result.map(|t| (t, "localhost"))
+        let mut localhost_task = tokio::spawn(async move {
+            tcp::connect(&localhost_clone, Bincode::default)
+                .await
+                .map(|t| (t, "localhost"))
+        });
+
+        let mut docker_task = tokio::spawn(async move {
+            tcp::connect(&docker_host_clone, Bincode::default)
+                .await
+                .map(|t| (t, "host.docker.internal"))
+        });
+
+        // Wait for both with timeout, take first success
+        #[allow(unused_assignments)] // last_error is used after the loop
+        let result = tokio::time::timeout(Duration::from_millis(2000), async {
+            let mut localhost_done = false;
+            let mut docker_done = false;
+            let mut last_error: Option<std::io::Error> = None;
+
+            loop {
+                tokio::select! {
+                    result = &mut localhost_task, if !localhost_done => {
+                        localhost_done = true;
+                        match result {
+                            Ok(Ok(transport)) => return Ok(transport),
+                            Ok(Err(e)) => last_error = Some(e),
+                            Err(e) => last_error = Some(std::io::Error::other(e)),
+                        }
+                    }
+                    result = &mut docker_task, if !docker_done => {
+                        docker_done = true;
+                        match result {
+                            Ok(Ok(transport)) => return Ok(transport),
+                            Ok(Err(e)) => last_error = Some(e),
+                            Err(e) => last_error = Some(std::io::Error::other(e)),
+                        }
+                    }
                 }
-                result = docker_fut => {
-                    result.map(|t| (t, "host.docker.internal"))
+
+                if localhost_done && docker_done {
+                    return Err(last_error
+                        .unwrap_or_else(|| std::io::Error::other("Both connections failed")));
                 }
             }
         })
@@ -158,9 +193,7 @@ impl RpcUpstream {
 
         match result {
             Ok(Ok((transport, source))) => {
-                if source == "host.docker.internal" {
-                    daemon_log("rpc_upstream", "Connected via host.docker.internal");
-                }
+                daemon_log("rpc_upstream", &format!("Connected via {}", source));
                 let client = HostServiceClient::new(client::Config::default(), transport).spawn();
                 Ok(client)
             }
