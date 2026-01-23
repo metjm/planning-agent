@@ -29,6 +29,7 @@ pub enum UpstreamEvent {
 
 /// Manages upstream connection to host application.
 pub struct UpstreamConnection {
+    host: String,
     port: u16,
     container_id: String,
     container_name: String,
@@ -39,6 +40,10 @@ impl UpstreamConnection {
     /// Create a new upstream connection manager.
     /// Reads container identification from environment variables.
     pub fn new(port: u16) -> Self {
+        // Host address: "auto" tries localhost then host.docker.internal
+        // Can be overridden with PLANNING_AGENT_HOST_ADDRESS
+        let host = std::env::var("PLANNING_AGENT_HOST_ADDRESS").unwrap_or_else(|_| "auto".to_string());
+
         let container_id = std::env::var("PLANNING_AGENT_CONTAINER_ID")
             .unwrap_or_else(|_| gethostname::gethostname().to_string_lossy().to_string());
 
@@ -52,6 +57,7 @@ impl UpstreamConnection {
         });
 
         Self {
+            host,
             port,
             container_id,
             container_name,
@@ -83,11 +89,52 @@ impl UpstreamConnection {
         }
     }
 
+    /// Try to connect to the host, attempting multiple addresses if needed.
+    async fn connect_to_host(&self) -> anyhow::Result<TcpStream> {
+        // If explicit host is set, only try that
+        if self.host != "auto" {
+            return Ok(TcpStream::connect(format!("{}:{}", self.host, self.port)).await?);
+        }
+
+        // Try localhost first (for running on host machine)
+        let localhost = format!("127.0.0.1:{}", self.port);
+        match tokio::time::timeout(
+            Duration::from_millis(500),
+            TcpStream::connect(&localhost),
+        )
+        .await
+        {
+            Ok(Ok(stream)) => {
+                eprintln!("[upstream] Connected via localhost");
+                return Ok(stream);
+            }
+            _ => {
+                eprintln!("[upstream] localhost failed, trying host.docker.internal...");
+            }
+        }
+
+        // Try host.docker.internal (for running in container)
+        let docker_host = format!("host.docker.internal:{}", self.port);
+        match TcpStream::connect(&docker_host).await {
+            Ok(stream) => {
+                eprintln!("[upstream] Connected via host.docker.internal");
+                Ok(stream)
+            }
+            Err(e) => {
+                anyhow::bail!(
+                    "Failed to connect to host on port {} (tried localhost and host.docker.internal): {}",
+                    self.port,
+                    e
+                )
+            }
+        }
+    }
+
     async fn connect_and_run(
         &self,
         session_rx: &mut mpsc::UnboundedReceiver<UpstreamEvent>,
     ) -> anyhow::Result<()> {
-        let stream = TcpStream::connect(format!("127.0.0.1:{}", self.port)).await?;
+        let stream = self.connect_to_host().await?;
         let (reader, mut writer) = stream.into_split();
         let mut reader = BufReader::new(reader);
 
@@ -125,7 +172,7 @@ impl UpstreamConnection {
             }
         }
 
-        eprintln!("[upstream] Connected to host on port {}", self.port);
+        eprintln!("[upstream] Connected to host at {}:{}", self.host, self.port);
 
         // Main loop: forward session events
         let heartbeat_interval = Duration::from_secs(30);
@@ -222,6 +269,7 @@ mod tests {
     /// Create a test UpstreamConnection with custom settings.
     fn test_upstream(port: u16) -> UpstreamConnection {
         UpstreamConnection {
+            host: "127.0.0.1".to_string(), // Use explicit localhost for tests
             port,
             container_id: "test-container".to_string(),
             container_name: "Test Container".to_string(),
