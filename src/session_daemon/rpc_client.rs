@@ -391,52 +391,51 @@ impl RpcClient {
     }
 
     /// Spawn daemon and wait for it to be ready.
+    ///
+    /// This is only called when connection to existing daemon failed,
+    /// so we aggressively kill any old process and start fresh.
     async fn spawn_daemon_and_wait() -> Result<()> {
         let pid_path = planning_paths::sessiond_pid_path()?;
         let port_path = planning_paths::sessiond_port_path()?;
 
-        // Check if daemon is already running
-        if pid_path.exists() && port_path.exists() {
-            if let Ok(pid_str) = std::fs::read_to_string(&pid_path) {
-                if let Ok(pid) = pid_str.trim().parse::<u32>() {
-                    // Check if process is alive
-                    #[cfg(unix)]
-                    {
-                        if unsafe { nix::libc::kill(pid as i32, 0) } == 0 {
-                            // Process is alive, wait for port file to be ready
-                            if Self::wait_for_port_file(&port_path).await.is_ok() {
-                                return Ok(());
-                            }
-                        }
+        // Kill any existing daemon process (may be zombie or unresponsive)
+        if let Ok(pid_str) = std::fs::read_to_string(&pid_path) {
+            if let Ok(pid) = pid_str.trim().parse::<i32>() {
+                daemon_log("rpc_client", &format!("Killing old daemon process {}", pid));
+                #[cfg(unix)]
+                {
+                    // SIGKILL to ensure it dies (SIGTERM might be ignored by zombie)
+                    unsafe {
+                        nix::libc::kill(pid, nix::libc::SIGKILL);
                     }
-
-                    #[cfg(windows)]
-                    {
-                        // On Windows, check if process exists
-                        use std::os::windows::io::AsRawHandle;
-                        use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
-                        use windows_sys::Win32::System::Threading::{
-                            OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
-                        };
-
-                        unsafe {
-                            let handle =
-                                OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid as u32);
-                            if handle != 0 {
-                                CloseHandle(handle);
-                                if Self::wait_for_port_file(&port_path).await.is_ok() {
-                                    return Ok(());
-                                }
-                            }
+                }
+                #[cfg(windows)]
+                {
+                    use windows_sys::Win32::Foundation::CloseHandle;
+                    use windows_sys::Win32::System::Threading::{
+                        OpenProcess, TerminateProcess, PROCESS_TERMINATE,
+                    };
+                    unsafe {
+                        let handle = OpenProcess(PROCESS_TERMINATE, 0, pid as u32);
+                        if handle != 0 {
+                            TerminateProcess(handle, 1);
+                            CloseHandle(handle);
                         }
                     }
                 }
+                // Give OS time to clean up
+                tokio::time::sleep(Duration::from_millis(100)).await;
             }
         }
 
         // Clean up stale files
         let _ = std::fs::remove_file(&pid_path);
         let _ = std::fs::remove_file(&port_path);
+        if let Ok(sha_path) = planning_paths::sessiond_build_sha_path() {
+            let _ = std::fs::remove_file(&sha_path);
+        }
+
+        daemon_log("rpc_client", "Spawning new daemon");
 
         // Spawn daemon
         let exe = std::env::current_exe()
