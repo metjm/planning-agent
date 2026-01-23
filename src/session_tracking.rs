@@ -357,36 +357,24 @@ mod integration_tests {
     use uuid::Uuid;
 
     /// Test environment with isolated daemon.
-    /// Each test gets its own PLANNING_AGENT_HOME so daemons don't interfere.
+    /// Each test gets its own planning agent home directory so daemons don't interfere.
     struct TestEnv {
         _temp_dir: tempfile::TempDir,
-        original_home: Option<String>,
+        _home_guard: crate::planning_paths::TestHomeGuard,
     }
 
     impl TestEnv {
         fn new() -> Self {
-            // Save original value
-            let original_home = std::env::var("PLANNING_AGENT_HOME").ok();
-
             // Create temp directory for this test
             let temp_dir = tempfile::TempDir::new().expect("Failed to create temp dir");
 
-            // Set env var to isolate this test's daemon
-            std::env::set_var("PLANNING_AGENT_HOME", temp_dir.path());
+            // Use the clean test API to set the home directory
+            let home_guard =
+                crate::planning_paths::set_home_for_test(temp_dir.path().to_path_buf());
 
             Self {
                 _temp_dir: temp_dir,
-                original_home,
-            }
-        }
-    }
-
-    impl Drop for TestEnv {
-        fn drop(&mut self) {
-            // Restore original value
-            match &self.original_home {
-                Some(val) => std::env::set_var("PLANNING_AGENT_HOME", val),
-                None => std::env::remove_var("PLANNING_AGENT_HOME"),
+                _home_guard: home_guard,
             }
         }
     }

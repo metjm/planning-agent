@@ -7,6 +7,15 @@
 //! - `logs/<wd-hash>/` - Workflow and agent logs (qualified by working directory)
 //! - `logs/debug.log` - Debug log
 //! - `update-installed` - Update marker
+//!
+//! # Configuration
+//!
+//! The home directory can be configured via:
+//! 1. `PLANNING_AGENT_HOME` environment variable (for production/container use)
+//! 2. `set_home_for_test()` (for test isolation - test-only API)
+//!
+//! All path functions in this module use `planning_agent_home_dir()` as the
+//! single source of truth.
 
 use anyhow::{Context, Result};
 use sha2::{Digest, Sha256};
@@ -16,9 +25,43 @@ use std::path::{Path, PathBuf};
 /// The name of the planning agent directory.
 const PLANNING_AGENT_DIR: &str = ".planning-agent";
 
+// Thread-local override for testing. Takes precedence over env var.
+#[cfg(test)]
+std::thread_local! {
+    static TEST_HOME_OVERRIDE: std::cell::RefCell<Option<PathBuf>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Set the planning agent home directory for the current test.
+/// This is the ONLY way tests should override the home directory.
+/// Returns a guard that restores the previous value when dropped.
+#[cfg(test)]
+pub fn set_home_for_test(path: PathBuf) -> TestHomeGuard {
+    let previous = TEST_HOME_OVERRIDE.with(|cell| cell.borrow_mut().replace(path));
+    TestHomeGuard { previous }
+}
+
+/// Guard that restores the previous home override when dropped.
+#[cfg(test)]
+pub struct TestHomeGuard {
+    previous: Option<PathBuf>,
+}
+
+#[cfg(test)]
+impl Drop for TestHomeGuard {
+    fn drop(&mut self) {
+        TEST_HOME_OVERRIDE.with(|cell| {
+            *cell.borrow_mut() = self.previous.take();
+        });
+    }
+}
+
 /// Returns the home-based planning agent directory: `~/.planning-agent/`
 ///
-/// If the `PLANNING_AGENT_HOME` environment variable is set, uses that path instead.
+/// Resolution order:
+/// 1. Test override (if set via `set_home_for_test()`)
+/// 2. `PLANNING_AGENT_HOME` environment variable
+/// 3. Default: `~/.planning-agent/`
+///
 /// Creates the directory if it doesn't exist.
 ///
 /// # Errors
@@ -27,6 +70,20 @@ const PLANNING_AGENT_DIR: &str = ".planning-agent";
 /// - Home directory cannot be determined (when env var not set)
 /// - Directory creation fails
 pub fn planning_agent_home_dir() -> Result<PathBuf> {
+    // Check test override first (only in test builds)
+    #[cfg(test)]
+    {
+        if let Some(path) = TEST_HOME_OVERRIDE.with(|cell| cell.borrow().clone()) {
+            fs::create_dir_all(&path).with_context(|| {
+                format!(
+                    "Failed to create test planning directory: {}",
+                    path.display()
+                )
+            })?;
+            return Ok(path);
+        }
+    }
+
     let planning_dir = if let Ok(custom_home) = std::env::var("PLANNING_AGENT_HOME") {
         PathBuf::from(custom_home)
     } else {
