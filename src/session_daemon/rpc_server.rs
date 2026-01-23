@@ -130,6 +130,17 @@ impl DaemonServer {
         shutdown_tx: broadcast::Sender<()>,
         upstream_tx: Option<mpsc::UnboundedSender<UpstreamEvent>>,
     ) -> Self {
+        daemon_log(
+            "rpc_server",
+            &format!(
+                "Creating DaemonServer with upstream_tx: {}",
+                if upstream_tx.is_some() {
+                    "configured"
+                } else {
+                    "NOT configured"
+                }
+            ),
+        );
         Self {
             state,
             subscribers,
@@ -226,6 +237,14 @@ impl DaemonService for DaemonServer {
     ) -> DaemonResult<String> {
         self.check_authenticated().await?;
 
+        daemon_log(
+            "rpc_server",
+            &format!(
+                "Registering session: {} (feature: {}, pid: {})",
+                record.workflow_session_id, record.feature_name, record.pid
+            ),
+        );
+
         let record_clone = record.clone();
 
         {
@@ -245,6 +264,10 @@ impl DaemonService for DaemonServer {
             state
                 .sessions
                 .insert(record.workflow_session_id.clone(), record);
+            daemon_log(
+                "rpc_server",
+                &format!("Session stored, total sessions: {}", state.sessions.len()),
+            );
         }
 
         // Notify subscribers outside the state lock

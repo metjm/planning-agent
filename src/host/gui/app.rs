@@ -155,14 +155,27 @@ impl HostApp {
         if let Ok(mut state) = self.state.try_lock() {
             // Get container count before sessions() to avoid borrow conflict
             let container_count = state.containers.len();
+            // Debug: collect session counts per container before mutable borrow
+            let total_sessions_in_containers: usize =
+                state.containers.values().map(|c| c.sessions.len()).sum();
+            let container_session_counts: Vec<(String, usize)> = state
+                .containers
+                .iter()
+                .filter(|(_, c)| !c.sessions.is_empty())
+                .map(|(id, c)| (id.clone(), c.sessions.len()))
+                .collect();
             let sessions = state.sessions();
             // Log session count for debugging (only when it changes)
             let new_count = sessions.len();
             if new_count != self.display_data.sessions.len() {
                 eprintln!(
-                    "[host-gui] sync_display_data: {} sessions from {} containers",
-                    new_count, container_count
+                    "[host-gui] sync_display_data: {} sessions (raw: {}) from {} containers",
+                    new_count, total_sessions_in_containers, container_count
                 );
+                // Log per-container session counts for debugging
+                for (id, count) in &container_session_counts {
+                    eprintln!("[host-gui]   container '{}': {} sessions", id, count);
+                }
             }
             self.display_data.sessions = sessions
                 .iter()
