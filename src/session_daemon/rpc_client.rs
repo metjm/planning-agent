@@ -443,10 +443,15 @@ impl RpcClient {
             .or_else(|_| which::which("planning"))
             .context("Failed to find planning binary")?;
 
+        // Get current home directory and pass to daemon so it uses the same path.
+        // This is essential for test isolation where tests set a custom home dir.
+        let home_dir = planning_paths::planning_agent_home_dir()?;
+
         #[cfg(unix)]
         {
             std::process::Command::new(&exe)
                 .arg("--session-daemon")
+                .env("PLANNING_AGENT_HOME", &home_dir)
                 .stdin(std::process::Stdio::null())
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
@@ -459,6 +464,7 @@ impl RpcClient {
             use std::os::windows::process::CommandExt;
             std::process::Command::new(&exe)
                 .arg("--session-daemon")
+                .env("PLANNING_AGENT_HOME", &home_dir)
                 .creation_flags(0x00000008) // DETACHED_PROCESS
                 .spawn()
                 .context("Failed to spawn daemon")?;

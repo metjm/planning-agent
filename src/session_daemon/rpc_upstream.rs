@@ -151,18 +151,30 @@ impl RpcUpstream {
         }
 
         // Try host.docker.internal (for running in container)
+        // Use timeout to avoid hanging on DNS lookup when not in Docker
         let docker_host = format!("host.docker.internal:{}", self.port);
-        match tcp::connect(&docker_host, Bincode::default).await {
-            Ok(transport) => {
+        match tokio::time::timeout(
+            Duration::from_millis(500),
+            tcp::connect(&docker_host, Bincode::default),
+        )
+        .await
+        {
+            Ok(Ok(transport)) => {
                 daemon_log("rpc_upstream", "Connected via host.docker.internal");
                 let client = HostServiceClient::new(client::Config::default(), transport).spawn();
                 Ok(client)
             }
-            Err(e) => {
+            Ok(Err(e)) => {
                 anyhow::bail!(
                     "Failed to connect to host on port {} (tried localhost and host.docker.internal): {}",
                     self.port,
                     e
+                )
+            }
+            Err(_) => {
+                anyhow::bail!(
+                    "Failed to connect to host on port {} (connection timed out)",
+                    self.port
                 )
             }
         }
