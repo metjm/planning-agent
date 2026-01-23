@@ -566,6 +566,12 @@ pub async fn find_available_port() -> anyhow::Result<u16> {
 pub async fn run_daemon_rpc() -> anyhow::Result<()> {
     use anyhow::Context;
 
+    // Ignore SIGHUP so daemon survives when spawning process exits
+    #[cfg(unix)]
+    unsafe {
+        nix::libc::signal(nix::libc::SIGHUP, nix::libc::SIG_IGN);
+    }
+
     // Write PID file for process management
     let pid = std::process::id();
     let pid_path = planning_paths::sessiond_pid_path()?;
