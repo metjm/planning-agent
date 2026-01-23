@@ -153,7 +153,9 @@ impl UpstreamConnection {
         &self,
         session_rx: &mut mpsc::UnboundedReceiver<UpstreamEvent>,
     ) -> anyhow::Result<()> {
+        daemon_log("connect_and_run: starting");
         let stream = self.connect_to_host().await?;
+        daemon_log("connect_and_run: TCP connected, starting handshake");
         let (reader, mut writer) = stream.into_split();
         let mut reader = BufReader::new(reader);
 
@@ -165,13 +167,20 @@ impl UpstreamConnection {
             protocol_version: PROTOCOL_VERSION,
         };
         let hello_json = serde_json::to_string(&hello)?;
+        daemon_log(&format!("connect_and_run: sending Hello: {}", hello_json));
         writer
             .write_all(format!("{}\n", hello_json).as_bytes())
             .await?;
+        daemon_log("connect_and_run: Hello sent, waiting for Welcome");
 
         // Wait for Welcome
         let mut line = String::new();
-        reader.read_line(&mut line).await?;
+        let bytes_read = reader.read_line(&mut line).await?;
+        daemon_log(&format!(
+            "connect_and_run: read {} bytes: {:?}",
+            bytes_read,
+            line.trim()
+        ));
         let welcome: HostToDaemon = serde_json::from_str(line.trim())?;
 
         match welcome {
@@ -470,5 +479,152 @@ mod tests {
         assert!(result.is_err());
         let err_msg = result.unwrap_err().to_string();
         assert!(err_msg.contains("Protocol version mismatch"));
+    }
+
+    /// Test that SyncSessions sent before connection is established are received.
+    /// This tests the race condition where forwarder sends before upstream connects.
+    #[tokio::test]
+    async fn test_sync_sessions_sent_before_connect() {
+        // Start a mock host server
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        // Channel for upstream events
+        let (event_tx, event_rx) = mpsc::unbounded_channel();
+
+        // Send SyncSessions BEFORE starting upstream (simulating forwarder race)
+        let sessions = vec![
+            test_session_record("pre-connect-1", "Feature Pre", "Running"),
+            test_session_record("pre-connect-2", "Feature Pre 2", "Planning"),
+        ];
+        event_tx
+            .send(UpstreamEvent::SyncSessions(sessions))
+            .unwrap();
+
+        // Now spawn upstream connection task
+        let upstream = test_upstream(port);
+        let upstream_handle = tokio::spawn(async move {
+            let mut rx = event_rx;
+            upstream.connect_and_run(&mut rx).await
+        });
+
+        // Accept connection as mock host
+        let (stream, _) = listener.accept().await.unwrap();
+        let (reader, mut writer) = stream.into_split();
+        let mut reader = BufReader::new(reader);
+        let mut line = String::new();
+
+        // Receive Hello
+        reader.read_line(&mut line).await.unwrap();
+        let _hello: DaemonToHost = serde_json::from_str(line.trim()).unwrap();
+        line.clear();
+
+        // Send Welcome
+        let welcome = HostToDaemon::Welcome {
+            host_version: "1.0.0".to_string(),
+            protocol_version: PROTOCOL_VERSION,
+        };
+        writer
+            .write_all(format!("{}\n", serde_json::to_string(&welcome).unwrap()).as_bytes())
+            .await
+            .unwrap();
+
+        // Now we should receive the SyncSessions that was queued before connect
+        reader.read_line(&mut line).await.unwrap();
+        let sync: DaemonToHost = serde_json::from_str(line.trim()).unwrap();
+        match sync {
+            DaemonToHost::SyncSessions { sessions } => {
+                assert_eq!(sessions.len(), 2, "Should receive 2 pre-queued sessions");
+                assert_eq!(sessions[0].session_id, "pre-connect-1");
+                assert_eq!(sessions[1].session_id, "pre-connect-2");
+            }
+            other => panic!("Expected SyncSessions, got {:?}", other),
+        }
+
+        // Close channel to signal shutdown
+        drop(event_tx);
+
+        // Wait for upstream to finish
+        let _ = upstream_handle.await;
+    }
+
+    /// Integration test with real host server code.
+    #[cfg(feature = "host-gui")]
+    #[tokio::test]
+    async fn test_upstream_with_real_host_server() {
+        use crate::host::server::handle_connection;
+        use crate::host::state::HostState;
+        use std::sync::Arc;
+        use tokio::sync::Mutex;
+
+        // Start real host server
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let host_state = Arc::new(Mutex::new(HostState::new()));
+        let host_state_clone = host_state.clone();
+        let (host_event_tx, mut host_event_rx) = mpsc::unbounded_channel();
+
+        // Spawn host server
+        tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let _ = handle_connection(stream, host_state_clone, host_event_tx).await;
+        });
+
+        // Create upstream connection
+        let (event_tx, event_rx) = mpsc::unbounded_channel();
+        let upstream = test_upstream(port);
+
+        // Spawn upstream
+        let upstream_handle = tokio::spawn(async move {
+            let mut rx = event_rx;
+            upstream.connect_and_run(&mut rx).await
+        });
+
+        // Wait for ContainerConnected event on host
+        let event = tokio::time::timeout(Duration::from_secs(5), host_event_rx.recv())
+            .await
+            .expect("Timeout waiting for ContainerConnected")
+            .expect("Channel closed");
+        match event {
+            crate::host::server::HostEvent::ContainerConnected {
+                container_id,
+                container_name,
+            } => {
+                assert_eq!(container_id, "test-container");
+                assert_eq!(container_name, "Test Container");
+            }
+            _ => panic!("Expected ContainerConnected"),
+        }
+
+        // Send SyncSessions from daemon
+        let sessions = vec![
+            test_session_record("e2e-sess-1", "E2E Feature", "Running"),
+            test_session_record("e2e-sess-2", "E2E Feature 2", "AwaitingApproval"),
+        ];
+        event_tx
+            .send(UpstreamEvent::SyncSessions(sessions))
+            .unwrap();
+
+        // Wait for SessionsUpdated event on host
+        let event = tokio::time::timeout(Duration::from_secs(5), host_event_rx.recv())
+            .await
+            .expect("Timeout waiting for SessionsUpdated")
+            .expect("Channel closed");
+        assert!(matches!(
+            event,
+            crate::host::server::HostEvent::SessionsUpdated
+        ));
+
+        // Verify host state has the sessions
+        {
+            let state = host_state.lock().await;
+            assert_eq!(state.active_count(), 2);
+            assert_eq!(state.approval_count(), 1);
+        }
+
+        // Cleanup
+        drop(event_tx);
+        let _ = upstream_handle.await;
     }
 }
