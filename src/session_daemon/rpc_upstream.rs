@@ -121,7 +121,7 @@ impl RpcUpstream {
         }
     }
 
-    /// Try to connect to the host, attempting multiple addresses if needed.
+    /// Try to connect to the host, racing localhost and host.docker.internal in parallel.
     async fn connect_to_host(&self) -> Result<HostServiceClient> {
         use tarpc::serde_transport::tcp;
 
@@ -133,34 +133,32 @@ impl RpcUpstream {
             return Ok(client);
         }
 
-        // Try localhost first (for running on host machine)
+        // Race localhost and host.docker.internal in parallel - first to connect wins.
+        // This avoids the 500ms delay when running in a container where localhost fails.
         let localhost = format!("127.0.0.1:{}", self.port);
-        match tokio::time::timeout(
-            Duration::from_millis(500),
-            tcp::connect(&localhost, Bincode::default),
-        )
-        .await
-        {
-            Ok(Ok(transport)) => {
-                let client = HostServiceClient::new(client::Config::default(), transport).spawn();
-                return Ok(client);
-            }
-            _ => {
-                // localhost failed, try docker host
-            }
-        }
-
-        // Try host.docker.internal (for running in container)
-        // Use timeout to avoid hanging on DNS lookup when not in Docker
         let docker_host = format!("host.docker.internal:{}", self.port);
-        match tokio::time::timeout(
-            Duration::from_millis(500),
-            tcp::connect(&docker_host, Bincode::default),
-        )
-        .await
-        {
-            Ok(Ok(transport)) => {
-                daemon_log("rpc_upstream", "Connected via host.docker.internal");
+
+        let localhost_fut = tcp::connect(&localhost, Bincode::default);
+        let docker_fut = tcp::connect(&docker_host, Bincode::default);
+
+        // Use select to race both connections with a combined timeout
+        let result = tokio::time::timeout(Duration::from_millis(500), async {
+            tokio::select! {
+                result = localhost_fut => {
+                    result.map(|t| (t, "localhost"))
+                }
+                result = docker_fut => {
+                    result.map(|t| (t, "host.docker.internal"))
+                }
+            }
+        })
+        .await;
+
+        match result {
+            Ok(Ok((transport, source))) => {
+                if source == "host.docker.internal" {
+                    daemon_log("rpc_upstream", "Connected via host.docker.internal");
+                }
                 let client = HostServiceClient::new(client::Config::default(), transport).spawn();
                 Ok(client)
             }
