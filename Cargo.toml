@@ -56,7 +56,7 @@ fs2 = "0.4"
 rand = "0.8"
 
 # Host mode GUI (optional - requires system GUI libraries)
-eframe = { version = "0.33", default-features = false, features = ["glow", "persistence", "x11"], optional = true }
+eframe = { version = "0.33", default-features = false, features = ["default_fonts", "glow", "persistence", "x11"], optional = true }
 egui_extras = { version = "0.33", features = ["all_loaders"], optional = true }
 
 # Desktop notifications (optional)
