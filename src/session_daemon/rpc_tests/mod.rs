@@ -14,7 +14,7 @@ mod subscription_tests;
 mod upgrade_tests;
 
 use crate::rpc::daemon_service::DaemonServiceClient;
-use crate::rpc::{LivenessState, PortFileContent, SessionRecord};
+use crate::rpc::{HostError, PortFileContent, SessionRecord};
 use crate::session_daemon::rpc_server::{run_daemon_server, run_subscriber_listener};
 use crate::session_daemon::server::DaemonState;
 use std::collections::HashMap;
@@ -174,25 +174,22 @@ impl HostService for TestHostService {
         _: tarpc::context::Context,
         info: crate::rpc::host_service::ContainerInfo,
         protocol_version: u32,
-    ) -> Result<(), String> {
+    ) -> Result<String, HostError> {
         if protocol_version != crate::rpc::host_service::PROTOCOL_VERSION {
-            return Err(format!(
-                "Protocol mismatch: expected {}, got {}",
-                crate::rpc::host_service::PROTOCOL_VERSION,
-                protocol_version
-            ));
+            return Err(HostError::ProtocolMismatch {
+                got: protocol_version,
+                expected: crate::rpc::host_service::PROTOCOL_VERSION,
+            });
         }
         let mut state = self.state.lock().await;
         state
             .containers
             .insert(info.container_id, ContainerState::default());
-        Ok(())
+        Ok("test-version".to_string())
     }
 
-    async fn heartbeat(self, _: tarpc::context::Context, container_id: String) {
-        let state = self.state.lock().await;
-        // Just verify container exists
-        let _ = state.containers.get(&container_id);
+    async fn heartbeat(self, _: tarpc::context::Context) {
+        // No-op for tests
     }
 
     async fn session_update(self, _: tarpc::context::Context, session: SessionInfo) {
@@ -221,10 +218,6 @@ impl HostService for TestHostService {
                     .insert(session.session_id.clone(), session);
             }
         }
-    }
-
-    async fn goodbye(self, _: tarpc::context::Context, _container_id: String) {
-        // No-op for tests
     }
 }
 

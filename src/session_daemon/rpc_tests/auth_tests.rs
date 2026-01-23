@@ -1,6 +1,6 @@
 //! Authentication tests for the RPC daemon.
 
-use super::{create_test_record, TestServer};
+use super::TestServer;
 use crate::rpc::DaemonError;
 
 #[tokio::test]

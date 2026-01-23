@@ -3,17 +3,23 @@
 //! Implements the tarpc HostService trait for handling daemon RPC requests.
 //! This replaces the legacy JSON-over-socket protocol in server.rs.
 
+#[cfg(any(feature = "host-gui", test))]
 use crate::host::server::HostEvent;
+#[cfg(any(feature = "host-gui", test))]
 use crate::host::state::HostState;
 use crate::rpc::host_service::{ContainerInfo, HostService, SessionInfo, PROTOCOL_VERSION};
 use crate::rpc::HostError;
+#[cfg(any(feature = "host-gui", test))]
 use futures::StreamExt;
 use std::sync::Arc;
+#[cfg(any(feature = "host-gui", test))]
 use tarpc::server::{self, Channel};
+#[cfg(any(feature = "host-gui", test))]
 use tarpc::tokio_serde::formats::Bincode;
 use tokio::sync::{mpsc, Mutex};
 
 /// Server implementation for HostService.
+#[cfg(any(feature = "host-gui", test))]
 #[derive(Clone)]
 pub struct HostServer {
     state: Arc<Mutex<HostState>>,
@@ -22,6 +28,7 @@ pub struct HostServer {
     container_id: Arc<Mutex<Option<String>>>,
 }
 
+#[cfg(any(feature = "host-gui", test))]
 impl HostServer {
     pub fn new(state: Arc<Mutex<HostState>>, event_tx: mpsc::UnboundedSender<HostEvent>) -> Self {
         Self {
@@ -32,6 +39,7 @@ impl HostServer {
     }
 }
 
+#[cfg(any(feature = "host-gui", test))]
 impl HostService for HostServer {
     async fn hello(
         self,
