@@ -5,6 +5,7 @@ mod claude_usage;
 mod cli_usage;
 mod codex_usage;
 mod config;
+mod daemon_log;
 mod diagnostics;
 mod gemini_usage;
 mod git_worktree;
@@ -13,6 +14,7 @@ mod host_protocol;
 mod phases;
 mod planning_paths;
 pub mod prompt_format;
+mod rpc;
 mod session_daemon;
 mod session_logger;
 mod session_store;
@@ -66,7 +68,7 @@ async fn async_main() -> Result<()> {
 
     // Handle session daemon mode (internal, used by connect-or-spawn)
     if cli.session_daemon {
-        return session_daemon::run_daemon().await;
+        return session_daemon::run_daemon_rpc().await;
     }
 
     // Handle host mode (desktop GUI aggregating container sessions)
@@ -231,8 +233,8 @@ async fn list_sessions(_working_dir: &Path) -> Result<()> {
     let mut entries: Vec<SessionDisplayEntry> = Vec::new();
     let mut seen_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
 
-    // Try to get live sessions from daemon
-    let daemon_client = session_daemon::client::SessionDaemonClient::new(false);
+    // Try to get live sessions from daemon using new RPC client
+    let daemon_client = session_daemon::RpcClient::new(false).await;
     let daemon_connected = daemon_client.is_connected();
 
     if daemon_connected {

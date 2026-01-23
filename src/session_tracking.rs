@@ -3,7 +3,7 @@
 //! This module provides a high-level interface for registering and updating
 //! sessions with the session daemon, including background heartbeat tasks.
 
-use crate::session_daemon::{LivenessState, SessionDaemonClient, SessionRecord};
+use crate::session_daemon::{LivenessState, RpcClient, SessionRecord};
 use anyhow::Result;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -33,8 +33,8 @@ type SessionMap = HashMap<String, SessionInfo>;
 ///
 /// Manages registration, updates, and heartbeats for all sessions in this process.
 pub struct SessionTracker {
-    /// The daemon client
-    client: Arc<Mutex<SessionDaemonClient>>,
+    /// The RPC daemon client
+    client: Arc<Mutex<RpcClient>>,
     /// Active sessions in this process
     active_sessions: Arc<Mutex<SessionMap>>,
     /// Channel to stop the heartbeat task
@@ -49,15 +49,18 @@ impl SessionTracker {
     /// If `no_daemon` is true, creates a disabled tracker that does nothing.
     pub fn new(no_daemon: bool) -> Self {
         if no_daemon {
+            // For disabled mode, we use new_blocking with no_daemon=true
+            // which immediately returns a degraded client
             return Self {
-                client: Arc::new(Mutex::new(SessionDaemonClient::new(true))),
+                client: Arc::new(Mutex::new(RpcClient::new_blocking(true))),
                 active_sessions: Arc::new(Mutex::new(SessionMap::new())),
                 _heartbeat_stop_tx: None,
                 disabled: true,
             };
         }
 
-        let client = Arc::new(Mutex::new(SessionDaemonClient::new(false)));
+        // Create client using blocking initializer
+        let client = Arc::new(Mutex::new(RpcClient::new_blocking(false)));
         let active_sessions: Arc<Mutex<SessionMap>> = Arc::new(Mutex::new(SessionMap::new()));
 
         // Start heartbeat task

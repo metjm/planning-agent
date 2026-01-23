@@ -1,0 +1,679 @@
+//! RPC server implementation for host service.
+//!
+//! Implements the tarpc HostService trait for handling daemon RPC requests.
+//! This replaces the legacy JSON-over-socket protocol in server.rs.
+
+use crate::host::server::HostEvent;
+use crate::host::state::HostState;
+use crate::rpc::host_service::{ContainerInfo, HostService, SessionInfo, PROTOCOL_VERSION};
+use crate::rpc::HostError;
+use futures::StreamExt;
+use std::sync::Arc;
+use tarpc::server::{self, Channel};
+use tarpc::tokio_serde::formats::Bincode;
+use tokio::sync::{mpsc, Mutex};
+
+/// Server implementation for HostService.
+#[derive(Clone)]
+pub struct HostServer {
+    state: Arc<Mutex<HostState>>,
+    event_tx: mpsc::UnboundedSender<HostEvent>,
+    /// Container ID for this connection (set after hello).
+    container_id: Arc<Mutex<Option<String>>>,
+}
+
+impl HostServer {
+    pub fn new(state: Arc<Mutex<HostState>>, event_tx: mpsc::UnboundedSender<HostEvent>) -> Self {
+        Self {
+            state,
+            event_tx,
+            container_id: Arc::new(Mutex::new(None)),
+        }
+    }
+}
+
+impl HostService for HostServer {
+    async fn hello(
+        self,
+        _: tarpc::context::Context,
+        info: ContainerInfo,
+        protocol_version: u32,
+    ) -> Result<String, HostError> {
+        // Check protocol version
+        if protocol_version != PROTOCOL_VERSION {
+            return Err(HostError::ProtocolMismatch {
+                got: protocol_version,
+                expected: PROTOCOL_VERSION,
+            });
+        }
+
+        // Register container
+        {
+            let mut state = self.state.lock().await;
+            state.add_container(info.container_id.clone(), info.container_name.clone());
+        }
+
+        // Store container ID for this connection
+        {
+            let mut id = self.container_id.lock().await;
+            *id = Some(info.container_id.clone());
+        }
+
+        // Notify event listeners
+        let _ = self.event_tx.send(HostEvent::ContainerConnected {
+            container_id: info.container_id,
+            container_name: info.container_name,
+        });
+
+        Ok(env!("CARGO_PKG_VERSION").to_string())
+    }
+
+    async fn sync_sessions(self, _: tarpc::context::Context, sessions: Vec<SessionInfo>) {
+        let container_id = {
+            let id = self.container_id.lock().await;
+            id.clone()
+        };
+
+        if let Some(container_id) = container_id {
+            let mut state = self.state.lock().await;
+            state.sync_sessions(&container_id, sessions);
+            let _ = self.event_tx.send(HostEvent::SessionsUpdated);
+        }
+    }
+
+    async fn session_update(self, _: tarpc::context::Context, session: SessionInfo) {
+        let container_id = {
+            let id = self.container_id.lock().await;
+            id.clone()
+        };
+
+        if let Some(container_id) = container_id {
+            let mut state = self.state.lock().await;
+            state.update_session(&container_id, session);
+            let _ = self.event_tx.send(HostEvent::SessionsUpdated);
+        }
+    }
+
+    async fn session_gone(self, _: tarpc::context::Context, session_id: String) {
+        let container_id = {
+            let id = self.container_id.lock().await;
+            id.clone()
+        };
+
+        if let Some(container_id) = container_id {
+            let mut state = self.state.lock().await;
+            state.remove_session(&container_id, &session_id);
+            let _ = self.event_tx.send(HostEvent::SessionsUpdated);
+        }
+    }
+
+    async fn heartbeat(self, _: tarpc::context::Context) {
+        let container_id = {
+            let id = self.container_id.lock().await;
+            id.clone()
+        };
+
+        if let Some(container_id) = container_id {
+            let mut state = self.state.lock().await;
+            state.heartbeat(&container_id);
+        }
+    }
+}
+
+/// Run the host RPC server.
+#[cfg(feature = "host-gui")]
+pub async fn run_host_rpc_server(
+    port: u16,
+    state: Arc<Mutex<HostState>>,
+    event_tx: mpsc::UnboundedSender<HostEvent>,
+) -> anyhow::Result<()> {
+    use tarpc::serde_transport::tcp;
+
+    let addr = format!("0.0.0.0:{}", port);
+    let mut listener = tcp::listen(&addr, Bincode::default).await?;
+
+    eprintln!("[host-rpc] Listening on {}", addr);
+
+    while let Some(result) = listener.next().await {
+        match result {
+            Ok(transport) => {
+                let server = HostServer::new(state.clone(), event_tx.clone());
+                let channel = server::BaseChannel::with_defaults(transport);
+
+                // Clone for cleanup on disconnect
+                let cleanup_state = state.clone();
+                let cleanup_event_tx = event_tx.clone();
+                let cleanup_container_id = server.container_id.clone();
+
+                tokio::spawn(async move {
+                    channel
+                        .execute(server.serve())
+                        .for_each(|response| async {
+                            tokio::spawn(response);
+                        })
+                        .await;
+
+                    // Cleanup on disconnect
+                    let container_id = {
+                        let id = cleanup_container_id.lock().await;
+                        id.clone()
+                    };
+
+                    if let Some(container_id) = container_id {
+                        let mut state = cleanup_state.lock().await;
+                        state.remove_container(&container_id);
+                        let _ = cleanup_event_tx.send(HostEvent::ContainerDisconnected {
+                            container_id: container_id.clone(),
+                        });
+                        eprintln!("[host-rpc] Container {} disconnected", container_id);
+                    }
+                });
+            }
+            Err(e) => {
+                eprintln!("[host-rpc] Accept error: {}", e);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::rpc::host_service::HostServiceClient;
+    use crate::session_daemon::LivenessState;
+    use std::time::Duration;
+    use tarpc::client;
+
+    /// Create a test SessionInfo.
+    fn create_test_session(id: &str, status: &str) -> SessionInfo {
+        SessionInfo {
+            session_id: id.to_string(),
+            feature_name: format!("feature-{}", id),
+            phase: "Planning".to_string(),
+            iteration: 1,
+            status: status.to_string(),
+            liveness: LivenessState::Running,
+            started_at: "2024-01-01T00:00:00Z".to_string(),
+            updated_at: "2024-01-01T00:00:00Z".to_string(),
+        }
+    }
+
+    /// Test harness for host RPC server.
+    struct TestHostServer {
+        port: u16,
+        state: Arc<Mutex<HostState>>,
+        event_rx: mpsc::UnboundedReceiver<HostEvent>,
+        _server_handle: tokio::task::JoinHandle<()>,
+    }
+
+    impl TestHostServer {
+        async fn start() -> Self {
+            use tarpc::serde_transport::tcp;
+
+            // Bind to port 0 to get an available port, extract the port, then use that listener
+            let state = Arc::new(Mutex::new(HostState::new()));
+            let (event_tx, event_rx) = mpsc::unbounded_channel();
+
+            // Use port 0 to let OS assign an available port, avoiding race conditions
+            let listener = tcp::listen("127.0.0.1:0", Bincode::default).await.unwrap();
+            let port = listener.local_addr().port();
+
+            let server_state = state.clone();
+            let server_handle = tokio::spawn(async move {
+                let mut listener = listener;
+                while let Some(result) = listener.next().await {
+                    if let Ok(transport) = result {
+                        let server = HostServer::new(server_state.clone(), event_tx.clone());
+                        let channel = server::BaseChannel::with_defaults(transport);
+
+                        let cleanup_state = server_state.clone();
+                        let cleanup_event_tx = event_tx.clone();
+                        let cleanup_container_id = server.container_id.clone();
+
+                        tokio::spawn(async move {
+                            channel
+                                .execute(server.serve())
+                                .for_each(|response| async {
+                                    tokio::spawn(response);
+                                })
+                                .await;
+
+                            // Cleanup on disconnect
+                            let container_id = {
+                                let id = cleanup_container_id.lock().await;
+                                id.clone()
+                            };
+
+                            if let Some(container_id) = container_id {
+                                let mut state = cleanup_state.lock().await;
+                                state.remove_container(&container_id);
+                                let _ = cleanup_event_tx
+                                    .send(HostEvent::ContainerDisconnected { container_id });
+                            }
+                        });
+                    }
+                }
+            });
+
+            // Give server time to start
+            tokio::time::sleep(Duration::from_millis(50)).await;
+
+            Self {
+                port,
+                state,
+                event_rx,
+                _server_handle: server_handle,
+            }
+        }
+
+        async fn create_client(&self) -> HostServiceClient {
+            use tarpc::serde_transport::tcp;
+
+            let addr = format!("127.0.0.1:{}", self.port);
+            let transport = tcp::connect(&addr, Bincode::default).await.unwrap();
+            HostServiceClient::new(client::Config::default(), transport).spawn()
+        }
+    }
+
+    // ============================================================================
+    // Hello/Handshake Tests
+    // ============================================================================
+
+    #[tokio::test]
+    async fn test_hello_success() {
+        let server = TestHostServer::start().await;
+        let client = server.create_client().await;
+
+        let info = ContainerInfo {
+            container_id: "container-1".to_string(),
+            container_name: "Test Container".to_string(),
+            working_dir: std::path::PathBuf::from("/work"),
+        };
+
+        let result = client
+            .hello(tarpc::context::current(), info, PROTOCOL_VERSION)
+            .await
+            .unwrap();
+
+        assert!(result.is_ok(), "Hello should succeed");
+        assert!(!result.unwrap().is_empty(), "Should return host version");
+
+        // Verify container was registered
+        let state = server.state.lock().await;
+        assert_eq!(state.containers.len(), 1);
+        assert!(state.containers.contains_key("container-1"));
+    }
+
+    #[tokio::test]
+    async fn test_hello_protocol_mismatch() {
+        let server = TestHostServer::start().await;
+        let client = server.create_client().await;
+
+        let info = ContainerInfo {
+            container_id: "container-1".to_string(),
+            container_name: "Test Container".to_string(),
+            working_dir: std::path::PathBuf::from("/work"),
+        };
+
+        // Use wrong protocol version
+        let result = client
+            .hello(tarpc::context::current(), info, PROTOCOL_VERSION + 1)
+            .await
+            .unwrap();
+
+        match result {
+            Err(HostError::ProtocolMismatch { got, expected }) => {
+                assert_eq!(got, PROTOCOL_VERSION + 1);
+                assert_eq!(expected, PROTOCOL_VERSION);
+            }
+            _ => panic!("Expected ProtocolMismatch error"),
+        }
+
+        // Verify container was NOT registered
+        let state = server.state.lock().await;
+        assert_eq!(state.containers.len(), 0);
+    }
+
+    // ============================================================================
+    // Session Sync Tests
+    // ============================================================================
+
+    #[tokio::test]
+    async fn test_sync_sessions() {
+        let server = TestHostServer::start().await;
+        let client = server.create_client().await;
+
+        // First, do hello
+        let info = ContainerInfo {
+            container_id: "container-1".to_string(),
+            container_name: "Test Container".to_string(),
+            working_dir: std::path::PathBuf::from("/work"),
+        };
+        client
+            .hello(tarpc::context::current(), info, PROTOCOL_VERSION)
+            .await
+            .unwrap()
+            .unwrap();
+
+        // Sync sessions
+        let sessions = vec![
+            create_test_session("session-1", "Running"),
+            create_test_session("session-2", "Planning"),
+        ];
+        client
+            .sync_sessions(tarpc::context::current(), sessions)
+            .await
+            .unwrap();
+
+        // Verify sessions were stored
+        let state = server.state.lock().await;
+        let container = state.containers.get("container-1").unwrap();
+        assert_eq!(container.sessions.len(), 2);
+        assert!(container.sessions.contains_key("session-1"));
+        assert!(container.sessions.contains_key("session-2"));
+    }
+
+    #[tokio::test]
+    async fn test_sync_sessions_replaces_existing() {
+        let server = TestHostServer::start().await;
+        let client = server.create_client().await;
+
+        let info = ContainerInfo {
+            container_id: "container-1".to_string(),
+            container_name: "Test Container".to_string(),
+            working_dir: std::path::PathBuf::from("/work"),
+        };
+        client
+            .hello(tarpc::context::current(), info, PROTOCOL_VERSION)
+            .await
+            .unwrap()
+            .unwrap();
+
+        // First sync
+        let sessions1 = vec![
+            create_test_session("session-1", "Running"),
+            create_test_session("session-2", "Planning"),
+        ];
+        client
+            .sync_sessions(tarpc::context::current(), sessions1)
+            .await
+            .unwrap();
+
+        // Second sync with different sessions
+        let sessions2 = vec![create_test_session("session-3", "Reviewing")];
+        client
+            .sync_sessions(tarpc::context::current(), sessions2)
+            .await
+            .unwrap();
+
+        // Verify only new sessions exist
+        let state = server.state.lock().await;
+        let container = state.containers.get("container-1").unwrap();
+        assert_eq!(container.sessions.len(), 1);
+        assert!(container.sessions.contains_key("session-3"));
+        assert!(!container.sessions.contains_key("session-1"));
+    }
+
+    // ============================================================================
+    // Session Update Tests
+    // ============================================================================
+
+    #[tokio::test]
+    async fn test_session_update() {
+        let server = TestHostServer::start().await;
+        let client = server.create_client().await;
+
+        let info = ContainerInfo {
+            container_id: "container-1".to_string(),
+            container_name: "Test Container".to_string(),
+            working_dir: std::path::PathBuf::from("/work"),
+        };
+        client
+            .hello(tarpc::context::current(), info, PROTOCOL_VERSION)
+            .await
+            .unwrap()
+            .unwrap();
+
+        // Sync initial session
+        let sessions = vec![create_test_session("session-1", "Planning")];
+        client
+            .sync_sessions(tarpc::context::current(), sessions)
+            .await
+            .unwrap();
+
+        // Update session
+        let updated = create_test_session("session-1", "Reviewing");
+        client
+            .session_update(tarpc::context::current(), updated)
+            .await
+            .unwrap();
+
+        // Verify update
+        let state = server.state.lock().await;
+        let container = state.containers.get("container-1").unwrap();
+        let session = container.sessions.get("session-1").unwrap();
+        assert_eq!(session.status, "Reviewing");
+    }
+
+    // ============================================================================
+    // Session Gone Tests
+    // ============================================================================
+
+    #[tokio::test]
+    async fn test_session_gone() {
+        let server = TestHostServer::start().await;
+        let client = server.create_client().await;
+
+        let info = ContainerInfo {
+            container_id: "container-1".to_string(),
+            container_name: "Test Container".to_string(),
+            working_dir: std::path::PathBuf::from("/work"),
+        };
+        client
+            .hello(tarpc::context::current(), info, PROTOCOL_VERSION)
+            .await
+            .unwrap()
+            .unwrap();
+
+        // Sync sessions
+        let sessions = vec![
+            create_test_session("session-1", "Running"),
+            create_test_session("session-2", "Planning"),
+        ];
+        client
+            .sync_sessions(tarpc::context::current(), sessions)
+            .await
+            .unwrap();
+
+        // Remove one session
+        client
+            .session_gone(tarpc::context::current(), "session-1".to_string())
+            .await
+            .unwrap();
+
+        // Verify session was removed
+        let state = server.state.lock().await;
+        let container = state.containers.get("container-1").unwrap();
+        assert_eq!(container.sessions.len(), 1);
+        assert!(!container.sessions.contains_key("session-1"));
+        assert!(container.sessions.contains_key("session-2"));
+    }
+
+    // ============================================================================
+    // Heartbeat Tests
+    // ============================================================================
+
+    #[tokio::test]
+    async fn test_heartbeat() {
+        let server = TestHostServer::start().await;
+        let client = server.create_client().await;
+
+        let info = ContainerInfo {
+            container_id: "container-1".to_string(),
+            container_name: "Test Container".to_string(),
+            working_dir: std::path::PathBuf::from("/work"),
+        };
+        client
+            .hello(tarpc::context::current(), info, PROTOCOL_VERSION)
+            .await
+            .unwrap()
+            .unwrap();
+
+        // Get initial heartbeat time
+        let initial_time = {
+            let state = server.state.lock().await;
+            state.containers.get("container-1").unwrap().last_message_at
+        };
+
+        // Small delay
+        tokio::time::sleep(Duration::from_millis(10)).await;
+
+        // Send heartbeat
+        client.heartbeat(tarpc::context::current()).await.unwrap();
+
+        // Verify heartbeat updated
+        let state = server.state.lock().await;
+        let container = state.containers.get("container-1").unwrap();
+        assert!(container.last_message_at > initial_time);
+    }
+
+    // ============================================================================
+    // Event Notification Tests
+    // ============================================================================
+
+    #[tokio::test]
+    async fn test_events_on_connect() {
+        let mut server = TestHostServer::start().await;
+        let client = server.create_client().await;
+
+        let info = ContainerInfo {
+            container_id: "container-1".to_string(),
+            container_name: "Test Container".to_string(),
+            working_dir: std::path::PathBuf::from("/work"),
+        };
+        client
+            .hello(tarpc::context::current(), info, PROTOCOL_VERSION)
+            .await
+            .unwrap()
+            .unwrap();
+
+        // Check event was sent
+        let event = tokio::time::timeout(Duration::from_secs(1), server.event_rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+
+        match event {
+            HostEvent::ContainerConnected {
+                container_id,
+                container_name,
+            } => {
+                assert_eq!(container_id, "container-1");
+                assert_eq!(container_name, "Test Container");
+            }
+            _ => panic!("Expected ContainerConnected event"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_events_on_sessions_updated() {
+        let mut server = TestHostServer::start().await;
+        let client = server.create_client().await;
+
+        let info = ContainerInfo {
+            container_id: "container-1".to_string(),
+            container_name: "Test Container".to_string(),
+            working_dir: std::path::PathBuf::from("/work"),
+        };
+        client
+            .hello(tarpc::context::current(), info, PROTOCOL_VERSION)
+            .await
+            .unwrap()
+            .unwrap();
+
+        // Drain connect event
+        let _ = server.event_rx.recv().await;
+
+        // Sync sessions
+        client
+            .sync_sessions(
+                tarpc::context::current(),
+                vec![create_test_session("s1", "Running")],
+            )
+            .await
+            .unwrap();
+
+        // Check SessionsUpdated event
+        let event = tokio::time::timeout(Duration::from_secs(1), server.event_rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert!(matches!(event, HostEvent::SessionsUpdated));
+    }
+
+    // ============================================================================
+    // Multiple Containers Tests
+    // ============================================================================
+
+    #[tokio::test]
+    async fn test_multiple_containers() {
+        let server = TestHostServer::start().await;
+
+        // Connect two clients
+        let client1 = server.create_client().await;
+        let client2 = server.create_client().await;
+
+        // Hello from both
+        let info1 = ContainerInfo {
+            container_id: "container-1".to_string(),
+            container_name: "Container One".to_string(),
+            working_dir: std::path::PathBuf::from("/work1"),
+        };
+        client1
+            .hello(tarpc::context::current(), info1, PROTOCOL_VERSION)
+            .await
+            .unwrap()
+            .unwrap();
+
+        let info2 = ContainerInfo {
+            container_id: "container-2".to_string(),
+            container_name: "Container Two".to_string(),
+            working_dir: std::path::PathBuf::from("/work2"),
+        };
+        client2
+            .hello(tarpc::context::current(), info2, PROTOCOL_VERSION)
+            .await
+            .unwrap()
+            .unwrap();
+
+        // Each syncs their sessions
+        client1
+            .sync_sessions(
+                tarpc::context::current(),
+                vec![create_test_session("c1-s1", "Running")],
+            )
+            .await
+            .unwrap();
+
+        client2
+            .sync_sessions(
+                tarpc::context::current(),
+                vec![create_test_session("c2-s1", "Planning")],
+            )
+            .await
+            .unwrap();
+
+        // Verify both containers and sessions exist
+        let state = server.state.lock().await;
+        assert_eq!(state.containers.len(), 2);
+
+        let c1 = state.containers.get("container-1").unwrap();
+        assert!(c1.sessions.contains_key("c1-s1"));
+
+        let c2 = state.containers.get("container-2").unwrap();
+        assert!(c2.sessions.contains_key("c2-s1"));
+    }
+}

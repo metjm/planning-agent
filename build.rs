@@ -31,6 +31,27 @@ fn main() {
 
     println!("cargo:rustc-env=PLANNING_AGENT_GIT_SHA={}", sha);
 
+    // Get commit timestamp (Unix epoch seconds) for version comparison
+    let timestamp = Command::new("git")
+        .args(["show", "-s", "--format=%ct", "HEAD"])
+        .output()
+        .ok()
+        .and_then(|output| {
+            if output.status.success() {
+                String::from_utf8(output.stdout)
+                    .ok()
+                    .and_then(|s| s.trim().parse::<u64>().ok())
+            } else {
+                None
+            }
+        })
+        .unwrap_or(0);
+
+    println!(
+        "cargo:rustc-env=PLANNING_AGENT_BUILD_TIMESTAMP={}",
+        timestamp
+    );
+
     enforce_formatting();
     enforce_line_limits();
     enforce_no_dead_code_allows();

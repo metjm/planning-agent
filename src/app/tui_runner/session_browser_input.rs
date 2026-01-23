@@ -146,8 +146,8 @@ async fn execute_force_stop(
     working_dir: &Path,
     output_tx: &mpsc::UnboundedSender<Event>,
 ) {
-    // Use the session daemon client to force-stop
-    let client = crate::session_daemon::client::SessionDaemonClient::new(false);
+    // Use the new RPC client to force-stop
+    let client = crate::session_daemon::RpcClient::new(false).await;
     if client.is_connected() {
         match client.force_stop(session_id).await {
             Ok(_) => {

@@ -457,7 +457,7 @@ async fn handle_update_install_finished(
             let _ = update::write_update_marker();
 
             // Shutdown the session daemon before exec'ing new binary
-            let client = session_daemon::client::SessionDaemonClient::new(false);
+            let client = session_daemon::RpcClient::new(false).await;
             if client.is_connected() {
                 let _ = client.shutdown().await;
                 tokio::time::sleep(std::time::Duration::from_millis(100)).await;

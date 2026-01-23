@@ -264,8 +264,8 @@ impl SessionBrowserState {
             Err(_) => HashSet::new(),
         };
 
-        // Try to get live sessions from daemon
-        let daemon_client = session_daemon::client::SessionDaemonClient::new(false);
+        // Try to get live sessions from daemon using RPC client
+        let daemon_client = session_daemon::RpcClient::new(false).await;
         if daemon_client.is_connected() {
             daemon_connected = true;
             if let Ok(live_sessions) = daemon_client.list().await {

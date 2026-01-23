@@ -18,16 +18,22 @@ const PLANNING_AGENT_DIR: &str = ".planning-agent";
 
 /// Returns the home-based planning agent directory: `~/.planning-agent/`
 ///
+/// If the `PLANNING_AGENT_HOME` environment variable is set, uses that path instead.
 /// Creates the directory if it doesn't exist.
 ///
 /// # Errors
 ///
 /// Returns an error if:
-/// - Home directory cannot be determined
+/// - Home directory cannot be determined (when env var not set)
 /// - Directory creation fails
 pub fn planning_agent_home_dir() -> Result<PathBuf> {
-    let home = dirs::home_dir().context("Could not determine home directory for plan storage")?;
-    let planning_dir = home.join(PLANNING_AGENT_DIR);
+    let planning_dir = if let Ok(custom_home) = std::env::var("PLANNING_AGENT_HOME") {
+        PathBuf::from(custom_home)
+    } else {
+        let home =
+            dirs::home_dir().context("Could not determine home directory for plan storage")?;
+        home.join(PLANNING_AGENT_DIR)
+    };
     fs::create_dir_all(&planning_dir).with_context(|| {
         format!(
             "Failed to create planning directory: {}",
@@ -232,12 +238,6 @@ pub fn session_info_path(session_id: &str) -> Result<PathBuf> {
 // Session Daemon Paths
 // ============================================================================
 
-/// Returns the session daemon socket path: `~/.planning-agent/sessiond.sock` (Unix only)
-#[cfg(unix)]
-pub fn sessiond_socket_path() -> Result<PathBuf> {
-    Ok(planning_agent_home_dir()?.join("sessiond.sock"))
-}
-
 /// Returns the session daemon PID file path: `~/.planning-agent/sessiond.pid`
 pub fn sessiond_pid_path() -> Result<PathBuf> {
     Ok(planning_agent_home_dir()?.join("sessiond.pid"))
@@ -255,10 +255,9 @@ pub fn sessiond_build_sha_path() -> Result<PathBuf> {
     Ok(planning_agent_home_dir()?.join("sessiond.sha"))
 }
 
-/// Returns the session daemon port file path: `~/.planning-agent/sessiond.port` (Windows)
+/// Returns the session daemon port file path: `~/.planning-agent/sessiond.port`
 ///
-/// Contains JSON with port number and authentication token.
-#[cfg(windows)]
+/// Contains JSON with port number, subscriber port, and authentication token.
 pub fn sessiond_port_path() -> Result<PathBuf> {
     Ok(planning_agent_home_dir()?.join("sessiond.port"))
 }

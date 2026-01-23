@@ -6,6 +6,25 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub const BUILD_SHA: &str = env!("PLANNING_AGENT_GIT_SHA");
 
+/// Build timestamp (Unix epoch seconds from git commit).
+/// Used for version comparison to determine if a client is newer than a daemon.
+/// A value of 0 means the timestamp couldn't be determined (e.g., not a git repo).
+pub const BUILD_TIMESTAMP: u64 = {
+    // Parse at compile time - this is a const context so we can't use .parse()
+    // The env var is set by build.rs as a decimal string
+    let bytes = env!("PLANNING_AGENT_BUILD_TIMESTAMP").as_bytes();
+    let mut result: u64 = 0;
+    let mut i = 0;
+    while i < bytes.len() {
+        let digit = bytes[i];
+        if digit >= b'0' && digit <= b'9' {
+            result = result * 10 + (digit - b'0') as u64;
+        }
+        i += 1;
+    }
+    result
+};
+
 /// Cache TTL for version info (24 hours)
 const VERSION_CACHE_TTL_SECS: u64 = 86_400;
 

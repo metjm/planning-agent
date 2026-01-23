@@ -13,6 +13,8 @@
 pub mod gui;
 
 #[cfg(any(feature = "host-gui", test))]
+pub mod rpc_server;
+#[cfg(any(feature = "host-gui", test))]
 pub mod server;
 #[cfg(any(feature = "host-gui", test))]
 pub mod state;

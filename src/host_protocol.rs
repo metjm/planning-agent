@@ -1,9 +1,11 @@
 //! Protocol types for communication between container daemons and host application.
 //!
-//! This defines the wire format for the upstream connection from container daemons
-//! to the host aggregation app. Uses newline-delimited JSON like the local daemon protocol.
+//! This module is being migrated from JSON-over-socket to tarpc RPC.
+//! The JSON message types are retained for the host-gui feature which
+//! still uses the old protocol.
 
 use serde::{Deserialize, Serialize};
+#[cfg(any(feature = "host-gui", test))]
 use std::path::PathBuf;
 
 // Reuse LivenessState from existing daemon protocol to avoid duplication
@@ -12,8 +14,9 @@ pub use crate::session_daemon::LivenessState;
 /// Current protocol version.
 pub const PROTOCOL_VERSION: u32 = 1;
 
-/// Messages sent from container daemon to host application.
-/// Uses internally tagged enum like ClientMessage in session_daemon.
+/// Messages sent from container daemon to host application (JSON protocol).
+/// Used by the host-gui feature only. The daemon-side now uses tarpc RPC.
+#[cfg(any(feature = "host-gui", test))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum DaemonToHost {
@@ -34,8 +37,9 @@ pub enum DaemonToHost {
     Heartbeat,
 }
 
-/// Messages sent from host to container daemon.
-/// Uses internally tagged enum for consistency.
+/// Messages sent from host to container daemon (JSON protocol).
+/// Used by the host-gui feature only. The daemon-side now uses tarpc RPC.
+#[cfg(any(feature = "host-gui", test))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum HostToDaemon {
@@ -146,5 +150,34 @@ mod tests {
         let parsed: SessionInfo = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.session_id, "sess-123");
         assert_eq!(parsed.phase, "Planning");
+    }
+
+    #[test]
+    fn test_session_info_from_session_record() {
+        use crate::session_daemon::protocol::SessionRecord;
+        use std::path::PathBuf;
+
+        let record = SessionRecord::new(
+            "session-456".to_string(),
+            "my-feature".to_string(),
+            PathBuf::from("/work/dir"),
+            PathBuf::from("/work/state.json"),
+            "Reviewing".to_string(),
+            2,
+            "Under Review".to_string(),
+            9999,
+        );
+
+        let session_info = SessionInfo::from_session_record(&record);
+
+        assert_eq!(session_info.session_id, "session-456");
+        assert_eq!(session_info.feature_name, "my-feature");
+        assert_eq!(session_info.phase, "Reviewing");
+        assert_eq!(session_info.iteration, 2);
+        assert_eq!(session_info.status, "Under Review");
+        assert_eq!(session_info.liveness, LivenessState::Running);
+        // Both started_at and updated_at are set from record.updated_at
+        assert_eq!(session_info.started_at, record.updated_at);
+        assert_eq!(session_info.updated_at, record.updated_at);
     }
 }

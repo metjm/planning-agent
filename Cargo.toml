@@ -55,6 +55,9 @@ fs2 = "0.4"
 # Random token generation for Windows session daemon auth
 rand = "0.8"
 
+# RPC framework for session daemon and host communication
+tarpc = { version = "0.37", features = ["serde1", "tokio1", "serde-transport", "serde-transport-bincode", "tcp"] }
+
 # Host mode GUI (optional - requires system GUI libraries)
 eframe = { version = "0.33", default-features = false, features = ["default_fonts", "glow", "persistence", "x11"], optional = true }
 egui_extras = { version = "0.33", features = ["all_loaders"], optional = true }
@@ -88,3 +91,4 @@ string_slice = "deny"
 [dev-dependencies]
 tempfile = "3"
 proptest = "1"
+serial_test = "3"

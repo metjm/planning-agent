@@ -1,7 +1,7 @@
 //! Protocol types for session daemon IPC.
 //!
-//! All communication uses newline-delimited JSON (one JSON object per line).
-//! Connections are persistent with multiple request/response exchanges per connection.
+//! Types in this module are shared between the tarpc RPC services and client code.
+//! The actual RPC service definitions are in the `crate::rpc` module.
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -106,53 +106,15 @@ impl SessionRecord {
     }
 }
 
-/// Messages sent from client to daemon.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type")]
-pub enum ClientMessage {
-    /// Register a new session
-    Register(SessionRecord),
-    /// Update an existing session's state
-    Update(SessionRecord),
-    /// Send a heartbeat for a session
-    Heartbeat { session_id: String },
-    /// Request list of all sessions
-    List,
-    /// Request daemon shutdown (for updates)
-    Shutdown,
-    /// Force-stop a session (mark as stopped immediately)
-    ForceStop { session_id: String },
-    /// Subscribe to push notifications for session changes
-    Subscribe,
-    /// Unsubscribe from push notifications
-    Unsubscribe,
-}
-
-/// Messages sent from daemon to client.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", content = "data")]
-pub enum DaemonMessage {
-    /// Acknowledgement with daemon's build SHA
-    Ack { build_sha: String },
-    /// List of all sessions
-    Sessions(Vec<SessionRecord>),
-    /// Daemon is restarting (sent before shutdown)
-    Restarting { new_sha: String },
-    /// Error response
-    Error(String),
-    /// Subscription confirmed
-    Subscribed,
-    /// Unsubscription confirmed
-    Unsubscribed,
-    /// Push notification: session state changed
-    SessionChanged(SessionRecord),
-}
-
-/// Windows-only: Port file content with authentication token.
-#[cfg(windows)]
+/// Port file content with authentication token.
+/// Used on all platforms for TCP-based RPC communication.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PortFileContent {
+    /// Main RPC port
     pub port: u16,
+    /// Subscriber callback port
+    pub subscriber_port: u16,
+    /// Authentication token
     pub token: String,
 }
 
@@ -199,42 +161,6 @@ mod tests {
     }
 
     #[test]
-    fn test_client_message_serialization() {
-        let msg = ClientMessage::Heartbeat {
-            session_id: "test-123".to_string(),
-        };
-        let json = serde_json::to_string(&msg).unwrap();
-        assert!(json.contains("Heartbeat"));
-        assert!(json.contains("test-123"));
-
-        let parsed: ClientMessage = serde_json::from_str(&json).unwrap();
-        match parsed {
-            ClientMessage::Heartbeat { session_id } => {
-                assert_eq!(session_id, "test-123");
-            }
-            _ => panic!("Wrong variant"),
-        }
-    }
-
-    #[test]
-    fn test_daemon_message_serialization() {
-        let msg = DaemonMessage::Ack {
-            build_sha: "abc123".to_string(),
-        };
-        let json = serde_json::to_string(&msg).unwrap();
-        assert!(json.contains("Ack"));
-        assert!(json.contains("abc123"));
-
-        let parsed: DaemonMessage = serde_json::from_str(&json).unwrap();
-        match parsed {
-            DaemonMessage::Ack { build_sha } => {
-                assert_eq!(build_sha, "abc123");
-            }
-            _ => panic!("Wrong variant"),
-        }
-    }
-
-    #[test]
     fn test_liveness_state_display() {
         assert_eq!(format!("{}", LivenessState::Running), "Running");
         assert_eq!(format!("{}", LivenessState::Unresponsive), "Unresponsive");
@@ -242,68 +168,71 @@ mod tests {
     }
 
     #[test]
-    fn test_register_message_roundtrip() {
-        let record = SessionRecord::new(
-            "session-456".to_string(),
-            "my-feature".to_string(),
-            PathBuf::from("/workspace"),
-            PathBuf::from("/state.json"),
-            "Implementation".to_string(),
-            2,
-            "Planning".to_string(),
-            9999,
-        );
+    fn test_port_file_content_serialization() {
+        let content = PortFileContent {
+            port: 12345,
+            subscriber_port: 12346,
+            token: "secret-token".to_string(),
+        };
 
-        let msg = ClientMessage::Register(record);
-        let json = serde_json::to_string(&msg).unwrap();
-        let parsed: ClientMessage = serde_json::from_str(&json).unwrap();
+        let json = serde_json::to_string(&content).unwrap();
+        let parsed: PortFileContent = serde_json::from_str(&json).unwrap();
 
-        match parsed {
-            ClientMessage::Register(rec) => {
-                assert_eq!(rec.workflow_session_id, "session-456");
-                assert_eq!(rec.feature_name, "my-feature");
-                assert_eq!(rec.iteration, 2);
-            }
-            _ => panic!("Wrong variant"),
-        }
+        assert_eq!(parsed.port, 12345);
+        assert_eq!(parsed.subscriber_port, 12346);
+        assert_eq!(parsed.token, "secret-token");
     }
 
     #[test]
-    fn test_sessions_message_roundtrip() {
-        let records = vec![
-            SessionRecord::new(
-                "s1".to_string(),
-                "f1".to_string(),
-                PathBuf::from("/d1"),
-                PathBuf::from("/s1.json"),
-                "Planning".to_string(),
-                1,
-                "Planning".to_string(),
-                100,
-            ),
-            SessionRecord::new(
-                "s2".to_string(),
-                "f2".to_string(),
-                PathBuf::from("/d2"),
-                PathBuf::from("/s2.json"),
-                "Complete".to_string(),
-                3,
-                "Complete".to_string(),
-                200,
-            ),
-        ];
+    fn test_session_record_update_state() {
+        let mut record = SessionRecord::new(
+            "session-123".to_string(),
+            "test-feature".to_string(),
+            PathBuf::from("/test/dir"),
+            PathBuf::from("/test/state.json"),
+            "Planning".to_string(),
+            1,
+            "Planning".to_string(),
+            12345,
+        );
 
-        let msg = DaemonMessage::Sessions(records);
-        let json = serde_json::to_string(&msg).unwrap();
-        let parsed: DaemonMessage = serde_json::from_str(&json).unwrap();
+        let old_updated_at = record.updated_at.clone();
 
-        match parsed {
-            DaemonMessage::Sessions(recs) => {
-                assert_eq!(recs.len(), 2);
-                assert_eq!(recs[0].workflow_session_id, "s1");
-                assert_eq!(recs[1].workflow_session_id, "s2");
-            }
-            _ => panic!("Wrong variant"),
-        }
+        // Small delay to ensure timestamp changes
+        std::thread::sleep(std::time::Duration::from_millis(10));
+
+        record.update_state("Reviewing".to_string(), 2, "In Review".to_string());
+
+        assert_eq!(record.phase, "Reviewing");
+        assert_eq!(record.iteration, 2);
+        assert_eq!(record.workflow_status, "In Review");
+        assert_ne!(
+            record.updated_at, old_updated_at,
+            "updated_at should change"
+        );
+    }
+
+    #[test]
+    fn test_session_record_serialization() {
+        let record = SessionRecord::new(
+            "session-123".to_string(),
+            "test-feature".to_string(),
+            PathBuf::from("/test/dir"),
+            PathBuf::from("/test/state.json"),
+            "Planning".to_string(),
+            1,
+            "Planning".to_string(),
+            12345,
+        );
+
+        let json = serde_json::to_string(&record).unwrap();
+        let parsed: SessionRecord = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(parsed.workflow_session_id, "session-123");
+        assert_eq!(parsed.feature_name, "test-feature");
+        assert_eq!(parsed.phase, "Planning");
+        assert_eq!(parsed.iteration, 1);
+        assert_eq!(parsed.pid, 12345);
+        assert_eq!(parsed.liveness, LivenessState::Running);
     }
 }

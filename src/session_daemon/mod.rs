@@ -8,31 +8,26 @@
 //!
 //! ## Architecture
 //!
-//! - **Daemon (`server.rs`)**: Unix socket (or TCP on Windows) server that maintains
+//! - **Daemon (`rpc_server.rs`)**: tarpc-based RPC server that maintains
 //!   an in-memory registry of active sessions.
-//! - **Client (`client.rs`)**: Connect-or-spawn client that registers sessions and
-//!   sends heartbeats.
-//! - **Protocol (`protocol.rs`)**: Newline-delimited JSON messages for IPC.
+//! - **Client (`rpc_client.rs`)**: Connect-or-spawn client that registers sessions and
+//!   sends heartbeats using tarpc RPC.
+//! - **Subscription (`rpc_subscription.rs`)**: tarpc-based push notification subscriber.
+//! - **Protocol (`protocol.rs`)**: Message types and session records.
 
-pub mod client;
 pub mod protocol;
+pub mod rpc_client;
+pub mod rpc_server;
+pub mod rpc_subscription;
+pub mod rpc_upstream;
 pub mod server;
-pub mod subscription;
-pub mod upstream;
 
 #[cfg(test)]
 mod server_tests;
 
 #[cfg(test)]
-#[cfg(unix)]
-mod client_tests;
+mod rpc_integration_tests;
 
-#[cfg(test)]
-#[cfg(unix)]
-mod subscription_tests;
-
-pub use client::SessionDaemonClient;
 pub use protocol::{LivenessState, SessionRecord};
-pub use server::run_daemon;
-#[allow(unused_imports)]
-pub use subscription::DaemonSubscription;
+pub use rpc_client::RpcClient;
+pub use rpc_server::run_daemon_rpc;
