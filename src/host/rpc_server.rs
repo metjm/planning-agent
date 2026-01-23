@@ -59,6 +59,11 @@ impl HostService for HostServer {
         info: ContainerInfo,
         protocol_version: u32,
     ) -> Result<String, HostError> {
+        eprintln!(
+            "[host-rpc] Hello received from {} (protocol v{})",
+            info.container_id, protocol_version
+        );
+
         // Check protocol version
         if protocol_version != PROTOCOL_VERSION {
             return Err(HostError::ProtocolMismatch {
@@ -150,6 +155,18 @@ pub async fn run_host_rpc_server(
     use tarpc::serde_transport::tcp;
 
     let addr = format!("0.0.0.0:{}", port);
+
+    // Check if localhost:port is already taken (e.g., by VS Code port forwarding)
+    // This can cause silent failures where we bind to 0.0.0.0 but localhost traffic
+    // goes to the other listener
+    if let Ok(stream) = std::net::TcpStream::connect(format!("127.0.0.1:{}", port)) {
+        drop(stream);
+        anyhow::bail!(
+            "Port {} is already in use on localhost (possibly VS Code port forwarding). \
+             Use --port to specify a different port.",
+            port
+        );
+    }
     let mut listener = tcp::listen(&addr, Bincode::default).await?;
 
     eprintln!("[host-rpc] Listening on {}", addr);
@@ -157,6 +174,7 @@ pub async fn run_host_rpc_server(
     while let Some(result) = listener.next().await {
         match result {
             Ok(transport) => {
+                eprintln!("[host-rpc] New connection accepted");
                 let server = HostServer::new(state.clone(), event_tx.clone());
                 let channel = server::BaseChannel::with_defaults(transport);
 
