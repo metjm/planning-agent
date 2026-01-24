@@ -11,6 +11,7 @@ mod stats;
 mod success_overlay;
 pub mod theme;
 pub mod util;
+mod workflow_browser_overlay;
 
 use crate::tui::scroll_regions::ScrollableRegions;
 use crate::tui::{ApprovalMode, InputMode, Session, SessionStatus, TabManager};
@@ -236,6 +237,10 @@ pub fn draw(frame: &mut Frame, tab_manager: &TabManager, scroll_regions: &mut Sc
     // Render session browser overlay
     if tab_manager.session_browser.open {
         session_browser_overlay::draw_session_browser_overlay(frame, tab_manager);
+    }
+    // Render workflow browser overlay
+    if tab_manager.workflow_browser.open {
+        workflow_browser_overlay::draw_workflow_browser_overlay(frame, tab_manager);
     }
     // Render implementation success modal after session browser, before error overlay
     let session = tab_manager.active();

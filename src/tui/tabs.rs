@@ -1,6 +1,7 @@
 use super::file_index::FileIndex;
 use super::session::Session;
 use super::session_browser::SessionBrowserState;
+use super::workflow_browser::WorkflowBrowserState;
 use crate::update::{UpdateStatus, VersionInfo};
 
 pub struct TabManager {
@@ -36,6 +37,9 @@ pub struct TabManager {
     /// Session browser overlay state
     pub session_browser: SessionBrowserState,
 
+    /// Workflow browser overlay state
+    pub workflow_browser: WorkflowBrowserState,
+
     /// Whether the session daemon is connected (for footer status indicator)
     pub daemon_connected: bool,
 }
@@ -59,6 +63,7 @@ impl TabManager {
             command_in_progress: false,
             version_info: None,
             session_browser: SessionBrowserState::new(),
+            workflow_browser: WorkflowBrowserState::new(),
             daemon_connected: false,
         };
 

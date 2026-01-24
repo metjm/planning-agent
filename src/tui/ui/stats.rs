@@ -77,6 +77,19 @@ pub fn draw_stats(frame: &mut Frame, session: &Session, area: Rect, show_live_to
     ]));
     stats_text.push(Line::from(format!(" Time: {}m {:02}s", minutes, seconds)));
 
+    // Show workflow indicator when session context is available
+    if let Some(ref ctx) = session.context {
+        let workflow_name =
+            crate::workflow_selection::WorkflowSelection::load(&ctx.base_working_dir)
+                .map(|s| s.workflow)
+                .unwrap_or_else(|_| "claude-only".to_string());
+
+        stats_text.push(Line::from(vec![
+            Span::styled(" Workflow: ", Style::default().fg(theme.muted)),
+            Span::styled(workflow_name, Style::default().fg(theme.accent)),
+        ]));
+    }
+
     if session.status == SessionStatus::GeneratingSummary {
         stats_text.push(Line::from(""));
         stats_text.push(Line::from(vec![Span::styled(

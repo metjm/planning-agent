@@ -282,34 +282,8 @@ pub(crate) async fn handle_naming_tab_input(
 
                             match name_opt {
                                 None => {
-                                    // Show current workflow and list available
-                                    let current =
-                                        crate::workflow_selection::WorkflowSelection::load(
-                                            &base_working_dir,
-                                        )
-                                        .map(|s| s.workflow)
-                                        .unwrap_or_else(|_| "claude-only".to_string());
-                                    let workflows =
-                                        crate::workflow_selection::list_available_workflows(
-                                            &base_working_dir,
-                                        )
-                                        .unwrap_or_default();
-
-                                    let list: String = workflows
-                                        .iter()
-                                        .map(|w| {
-                                            let marker = if w.is_selected { " ✓" } else { "" };
-                                            format!("  {}{} ({})", w.name, marker, w.source)
-                                        })
-                                        .collect::<Vec<_>>()
-                                        .join("\n");
-
-                                    tab_manager.command_notice = Some(format!(
-                                        "Current workflow: {}\nWorking directory: {}\n\nAvailable workflows:\n{}",
-                                        current,
-                                        base_working_dir.display(),
-                                        list
-                                    ));
+                                    // Open workflow browser overlay instead of printing text
+                                    tab_manager.workflow_browser.open(&base_working_dir);
                                 }
                                 Some(name) => {
                                     // Select the specified workflow

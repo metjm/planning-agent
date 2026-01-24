@@ -318,6 +318,17 @@ pub async fn handle_key_event(
         return Ok(should_quit);
     }
 
+    // Handle workflow browser overlay input when it's open
+    if tab_manager.workflow_browser.open {
+        should_quit = super::workflow_browser_input::handle_workflow_browser_input(
+            key,
+            tab_manager,
+            output_tx,
+        )
+        .await?;
+        return Ok(should_quit);
+    }
+
     let session = tab_manager.active_mut();
 
     if let Some(ref error) = session.error_state.clone() {

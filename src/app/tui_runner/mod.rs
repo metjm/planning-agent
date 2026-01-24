@@ -7,6 +7,7 @@ mod session_browser_input;
 mod session_events;
 pub mod slash_commands;
 pub mod snapshot_helper;
+mod workflow_browser_input;
 mod workflow_lifecycle;
 mod workflow_loading;
 

@@ -9,6 +9,7 @@ pub mod slash;
 mod tabs;
 mod title;
 pub mod ui;
+pub mod workflow_browser;
 
 pub use event::{
     CancellationError, Event, EventHandler, SessionEventSender, TokenUsage, UserApprovalResponse,
