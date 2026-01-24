@@ -171,7 +171,7 @@ mod tests {
 
     fn make_usage_state(email: &str, provider: &str) -> AccountUsageState {
         AccountUsageState {
-            account_id: AccountId::new(email),
+            account_id: AccountId::new(provider, email),
             provider: provider.to_string(),
             email: email.to_string(),
             plan_type: None,

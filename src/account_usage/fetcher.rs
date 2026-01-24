@@ -42,7 +42,7 @@ pub fn fetch_usage_with_credentials(
             // Create an error record
             let email = extract_email_from_creds(&creds).unwrap_or_else(|| "unknown".to_string());
             let usage = AccountUsageState {
-                account_id: AccountId::new(&email),
+                account_id: AccountId::new(&provider, &email),
                 provider: provider.clone(),
                 email,
                 plan_type: None,

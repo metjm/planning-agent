@@ -3,13 +3,17 @@
 use crate::usage_reset::UsageWindow;
 use serde::{Deserialize, Serialize};
 
-/// Unique account identifier using email address.
+/// Unique account identifier using provider and email.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct AccountId(pub String);
 
 impl AccountId {
-    pub fn new(email: &str) -> Self {
-        Self(email.to_lowercase())
+    pub fn new(provider: &str, email: &str) -> Self {
+        Self(format!(
+            "{}:{}",
+            provider.to_lowercase(),
+            email.to_lowercase()
+        ))
     }
 }
 
@@ -86,7 +90,7 @@ mod tests {
 
     #[test]
     fn test_account_id_new_lowercases() {
-        let id = AccountId::new("User@Example.COM");
-        assert_eq!(id.0, "user@example.com");
+        let id = AccountId::new("Claude", "User@Example.COM");
+        assert_eq!(id.0, "claude:user@example.com");
     }
 }

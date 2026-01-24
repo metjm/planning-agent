@@ -132,7 +132,7 @@ mod tests {
     fn test_provider_usage_from_account_state() {
         let ts = ResetTimestamp::from_epoch_seconds(1700000000);
         let state = AccountUsageState {
-            account_id: crate::account_usage::types::AccountId::new("test@example.com"),
+            account_id: crate::account_usage::types::AccountId::new("test", "test@example.com"),
             provider: "claude".to_string(),
             email: "test@example.com".to_string(),
             plan_type: Some("Max".to_string()),

@@ -83,7 +83,7 @@ fn fetch_claude_usage_inner(access_token: &str) -> Result<AccountUsageState> {
     let weekly_window = parse_claude_window(&usage["seven_day"], UsageWindowSpan::Days(7));
 
     Ok(AccountUsageState {
-        account_id: AccountId::new(&email),
+        account_id: AccountId::new("claude", &email),
         provider: "claude".to_string(),
         email,
         plan_type,
@@ -193,7 +193,7 @@ fn fetch_gemini_usage_inner(access_token: &str) -> Result<AccountUsageState> {
     };
 
     Ok(AccountUsageState {
-        account_id: AccountId::new(&email),
+        account_id: AccountId::new("gemini", &email),
         provider: "gemini".to_string(),
         email,
         plan_type: None, // Gemini doesn't expose plan type in quota API
@@ -318,7 +318,7 @@ fn fetch_codex_usage_inner(access_token: &str, account_id: &str) -> Result<Accou
     });
 
     Ok(AccountUsageState {
-        account_id: AccountId::new(&email),
+        account_id: AccountId::new("codex", &email),
         provider: "codex".to_string(),
         email,
         plan_type,
