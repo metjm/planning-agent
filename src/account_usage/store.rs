@@ -70,6 +70,14 @@ impl UsageStore {
     pub fn update_account(&mut self, usage: AccountUsageState, container_id: Option<&str>) {
         let now = chrono::Utc::now().to_rfc3339();
 
+        // Remove any existing entries for the same provider with different account_id.
+        // This handles the case where an error record was created with "unknown" email,
+        // and we now have a successful fetch with the real email.
+        let provider = usage.provider.clone();
+        let new_account_id = usage.account_id.clone();
+        self.accounts
+            .retain(|id, record| record.provider != provider || *id == new_account_id);
+
         let record = self
             .accounts
             .entry(usage.account_id.clone())
