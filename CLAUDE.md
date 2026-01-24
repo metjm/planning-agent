@@ -24,6 +24,12 @@ cargo clippy
 cargo install --path .
 ```
 
+## Preferences
+
+- Prefer event-driven updates over polling; avoid long-polling.
+- Prefer push-based mechanisms (webhooks/pub-sub, server push via SSE/WebSocket) and file/DB change notifications.
+- Prefer user-initiated refresh with cache validation (ETag/If-Modified-Since) over background polling.
+
 ## Architecture Overview
 
 Planning-agent is a TUI/headless tool for iterative AI-powered implementation planning. It orchestrates multiple AI agents (Claude, Codex, Gemini) through a structured workflow.
