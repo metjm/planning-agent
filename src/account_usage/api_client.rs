@@ -3,7 +3,6 @@
 use super::types::{AccountId, AccountUsageState, ProviderCredentials};
 use crate::usage_reset::{ResetTimestamp, UsageWindow, UsageWindowSpan};
 use anyhow::{Context, Result};
-use std::path::PathBuf;
 use std::time::Duration;
 
 const API_TIMEOUT: Duration = Duration::from_secs(15);
@@ -62,7 +61,7 @@ fn fetch_claude_usage_inner(access_token: &str) -> Result<AccountUsageState> {
     let plan_type = profile["organization"]["organization_type"]
         .as_str()
         .map(String::from);
-    let rate_limit_tier = profile["account"]["rate_limit_tier"]
+    let rate_limit_tier = profile["organization"]["rate_limit_tier"]
         .as_str()
         .map(String::from);
 
@@ -102,7 +101,10 @@ fn parse_claude_window(value: &serde_json::Value, span: UsageWindowSpan) -> Usag
         return UsageWindow::default();
     }
 
-    let used_percent = value["utilization"].as_u64().map(|u| u.min(100) as u8);
+    // utilization can be float (74.0) or int (74), use as_f64 which handles both
+    let used_percent = value["utilization"]
+        .as_f64()
+        .map(|u| u.round().clamp(0.0, 100.0) as u8);
     let reset_at = value["resets_at"]
         .as_str()
         .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
@@ -245,42 +247,75 @@ fn parse_gemini_buckets(
     (used_percent.map(|p| p.min(100)), reset_time)
 }
 
-/// Fetches Codex usage by parsing session files.
-/// This is the primary approach - doesn't consume API quota.
-pub fn fetch_codex_usage_from_sessions() -> FetchResult {
-    match fetch_codex_usage_from_sessions_inner() {
+/// Fetches Codex usage via API call.
+/// Makes a minimal API request to get usage from response headers.
+pub fn fetch_codex_usage(access_token: &str, account_id: &str) -> FetchResult {
+    match fetch_codex_usage_inner(access_token, account_id) {
         Ok(usage) => FetchResult {
             usage: Some(usage),
             token_valid: true,
             error: None,
         },
-        Err(e) => FetchResult {
-            usage: None,
-            token_valid: true, // Session parse failure doesn't indicate token issue
-            error: Some(e.to_string()),
-        },
+        Err(e) => {
+            let error_str = format!("{:#}", e); // anyhow alternate format for error chain
+            let token_valid = !error_str.contains("401")
+                && !error_str.contains("403")
+                && !error_str.contains("unauthorized")
+                && !error_str.contains("Unauthorized");
+            FetchResult {
+                usage: None,
+                token_valid,
+                error: Some(error_str),
+            }
+        }
     }
 }
 
-fn fetch_codex_usage_from_sessions_inner() -> Result<AccountUsageState> {
-    let creds =
-        super::credentials::read_codex_credentials()?.context("No Codex credentials found")?;
-
-    let ProviderCredentials::Codex {
-        access_token,
-        account_id: _,
-    } = creds
-    else {
-        anyhow::bail!("Invalid credential type");
-    };
-
-    // Extract email from JWT access_token
-    let email = super::credentials::extract_email_from_jwt(&access_token)
+fn fetch_codex_usage_inner(access_token: &str, account_id: &str) -> Result<AccountUsageState> {
+    // Extract email and plan from JWT
+    let email = super::credentials::extract_email_from_jwt(access_token)
         .context("Failed to extract email from Codex token")?;
+    let plan_type = extract_codex_plan_from_jwt(access_token);
 
-    // Parse session files for usage data
-    let sessions_dir = codex_sessions_dir()?;
-    let (session_window, weekly_window, plan_type) = parse_codex_session_files(&sessions_dir)?;
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .timeout_global(Some(API_TIMEOUT))
+        .build()
+        .into();
+
+    // Minimal API request using mini model to get usage headers
+    // Note: stream=true is required, API returns 400 without it
+    let request_body = serde_json::json!({
+        "model": "gpt-5.1-codex-mini",
+        "instructions": ".",
+        "input": [{"role": "user", "content": [{"type": "input_text", "text": "."}]}],
+        "store": false,
+        "stream": true
+    });
+    let request_body_str =
+        serde_json::to_string(&request_body).context("Failed to serialize request body")?;
+
+    let response = agent
+        .post("https://chatgpt.com/backend-api/codex/responses")
+        .header("Authorization", &format!("Bearer {}", access_token))
+        .header("chatgpt-account-id", account_id)
+        .header("Content-Type", "application/json")
+        .header("user-agent", "codex_exec/0.89.0 (Linux)")
+        .header("originator", "codex_exec")
+        .send(&request_body_str)
+        .context("Failed to fetch Codex usage")?;
+
+    // Parse usage from response headers
+    let session_window = parse_codex_usage_headers(&response, "primary", UsageWindowSpan::Hours(5));
+    let weekly_window = parse_codex_usage_headers(&response, "secondary", UsageWindowSpan::Days(7));
+
+    // Get plan type from header if not in JWT
+    let plan_type = plan_type.or_else(|| {
+        response
+            .headers()
+            .get("x-codex-plan-type")
+            .and_then(|v: &ureq::http::HeaderValue| v.to_str().ok())
+            .map(String::from)
+    });
 
     Ok(AccountUsageState {
         account_id: AccountId::new(&email),
@@ -296,117 +331,47 @@ fn fetch_codex_usage_from_sessions_inner() -> Result<AccountUsageState> {
     })
 }
 
-fn codex_sessions_dir() -> Result<PathBuf> {
-    let config_dir = std::env::var("CODEX_HOME")
-        .map(PathBuf::from)
-        .ok()
-        .or_else(|| dirs::home_dir().map(|h| h.join(".codex")))
-        .context("Cannot determine Codex config directory")?;
-    Ok(config_dir.join("sessions"))
-}
-
-/// Parses Codex session JSONL files for the most recent usage data.
-fn parse_codex_session_files(
-    sessions_dir: &PathBuf,
-) -> Result<(UsageWindow, UsageWindow, Option<String>)> {
-    if !sessions_dir.exists() {
-        return Ok((UsageWindow::default(), UsageWindow::default(), None));
+/// Extracts plan type from Codex JWT token.
+fn extract_codex_plan_from_jwt(token: &str) -> Option<String> {
+    let parts: Vec<&str> = token.split('.').collect();
+    if parts.len() != 3 {
+        return None;
     }
 
-    // Find all .jsonl files
-    let mut session_files: Vec<_> = std::fs::read_dir(sessions_dir)?
-        .filter_map(|e| e.ok())
-        .map(|e| e.path())
-        .filter(|p| p.extension().is_some_and(|e| e == "jsonl"))
-        .collect();
+    use base64::Engine;
+    let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(parts[1])
+        .ok()?;
+    let json: serde_json::Value = serde_json::from_slice(&payload).ok()?;
 
-    // Sort by modification time (most recent first)
-    session_files.sort_by(|a, b| {
-        let a_time = std::fs::metadata(a)
-            .and_then(|m| m.modified())
-            .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
-        let b_time = std::fs::metadata(b)
-            .and_then(|m| m.modified())
-            .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
-        b_time.cmp(&a_time)
-    });
-
-    // Try to find rate limit data in the most recent files
-    for path in session_files.iter().take(10) {
-        if let Ok(result) = parse_single_session_file(path) {
-            return Ok(result);
-        }
-    }
-
-    Ok((UsageWindow::default(), UsageWindow::default(), None))
+    json["https://api.openai.com/auth"]["chatgpt_plan_type"]
+        .as_str()
+        .map(String::from)
 }
 
-fn parse_single_session_file(path: &PathBuf) -> Result<(UsageWindow, UsageWindow, Option<String>)> {
-    let content = std::fs::read_to_string(path)?;
-
-    for line in content.lines().rev() {
-        // Each line is a JSON object
-        let entry: serde_json::Value = match serde_json::from_str(line) {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
-
-        // Look for event_msg with rate_limits
-        if entry["type"].as_str() != Some("event_msg") {
-            continue;
-        }
-
-        let payload = &entry["payload"];
-        if payload["payload_type"].as_str() != Some("token_count") {
-            continue;
-        }
-
-        let rate_limits = &payload["rate_limits"];
-        if rate_limits.is_null() {
-            continue;
-        }
-
-        // Parse primary (5h) window
-        let primary = &rate_limits["primary"];
-        let session_window = parse_codex_rate_limit(primary, 300, UsageWindowSpan::Hours(5));
-
-        // Parse secondary (7d) window
-        let secondary = &rate_limits["secondary"];
-        let weekly_window = parse_codex_rate_limit(secondary, 10080, UsageWindowSpan::Days(7));
-
-        return Ok((session_window, weekly_window, None));
-    }
-
-    anyhow::bail!("No rate limit data found in session file")
-}
-
-fn parse_codex_rate_limit(
-    limit: &serde_json::Value,
-    expected_window_minutes: u32,
+/// Parses usage from Codex response headers.
+fn parse_codex_usage_headers(
+    response: &ureq::http::Response<ureq::Body>,
+    window: &str,
     span: UsageWindowSpan,
 ) -> UsageWindow {
-    if limit.is_null() {
-        return UsageWindow::default();
-    }
+    let used_percent = response
+        .headers()
+        .get(format!("x-codex-{}-used-percent", window))
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse::<f64>().ok())
+        .map(|p: f64| p.round().clamp(0.0, 100.0) as u8);
 
-    let used_percent = limit["used_percent"]
-        .as_f64()
-        .map(|p| (p * 100.0).round() as u8);
-
-    let window_minutes = limit["window_minutes"].as_u64().unwrap_or(0) as u32;
-
-    // Only capture reset_at if window matches expected
-    let reset_at = if window_minutes == expected_window_minutes {
-        limit["resets_at"]
-            .as_i64()
-            .map(ResetTimestamp::from_epoch_seconds)
-    } else {
-        None
-    };
+    let reset_at = response
+        .headers()
+        .get(format!("x-codex-{}-reset-at", window))
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse::<i64>().ok())
+        .map(ResetTimestamp::from_epoch_seconds);
 
     match (used_percent, reset_at) {
-        (Some(p), Some(t)) => UsageWindow::with_percent_reset_and_span(p.min(100), t, span),
-        (Some(p), None) => UsageWindow::with_percent_and_span(p.min(100), span),
+        (Some(p), Some(t)) => UsageWindow::with_percent_reset_and_span(p, t, span),
+        (Some(p), None) => UsageWindow::with_percent_and_span(p, span),
         _ => UsageWindow::default(),
     }
 }
@@ -420,7 +385,13 @@ pub fn fetch_usage_for_provider(provider: &str, creds: &ProviderCredentials) -> 
         ("gemini", ProviderCredentials::Gemini { access_token, .. }) => {
             fetch_gemini_usage(access_token)
         }
-        ("codex", ProviderCredentials::Codex { .. }) => fetch_codex_usage_from_sessions(),
+        (
+            "codex",
+            ProviderCredentials::Codex {
+                access_token,
+                account_id,
+            },
+        ) => fetch_codex_usage(access_token, account_id),
         _ => FetchResult {
             usage: None,
             token_valid: false,
@@ -476,36 +447,126 @@ mod tests {
         assert_eq!(pct, Some(50));
         assert!(ts.is_some());
     }
+}
+
+/// Integration tests that run against real APIs with real credentials.
+/// These tests require actual credential files to be present.
+#[cfg(test)]
+mod integration_tests {
+    use super::*;
+    use crate::account_usage::credentials::{
+        read_claude_credentials, read_codex_credentials, read_gemini_credentials,
+    };
 
     #[test]
-    fn test_parse_codex_rate_limit_null() {
-        let limit = serde_json::Value::Null;
-        let window = parse_codex_rate_limit(&limit, 300, UsageWindowSpan::Hours(5));
-        assert_eq!(window.used_percent, None);
+    fn test_real_claude_api() {
+        let creds = read_claude_credentials()
+            .expect("Failed to read Claude credentials")
+            .expect("Claude credentials file not found");
+
+        eprintln!("Testing Claude API with real credentials...");
+        let result = fetch_usage_for_provider("claude", &creds);
+
+        eprintln!("Result:");
+        eprintln!("  token_valid: {}", result.token_valid);
+        if let Some(err) = &result.error {
+            eprintln!("  error: {}", err);
+        }
+        if let Some(usage) = &result.usage {
+            eprintln!("  email: {}", usage.email);
+            eprintln!("  plan_type: {:?}", usage.plan_type);
+            eprintln!("  rate_limit_tier: {:?}", usage.rate_limit_tier);
+            eprintln!("  session: {:?}%", usage.session_window.used_percent);
+            eprintln!("  weekly: {:?}%", usage.weekly_window.used_percent);
+        }
+
+        assert!(result.token_valid, "Token should be valid");
+        assert!(result.usage.is_some(), "Should have usage data");
+
+        let usage = result.usage.unwrap();
+        assert!(!usage.email.is_empty(), "Should have email");
+        assert!(
+            usage.session_window.used_percent.is_some(),
+            "Should have session usage"
+        );
     }
 
     #[test]
-    fn test_parse_codex_rate_limit_valid() {
-        let limit = serde_json::json!({
-            "used_percent": 0.25,
-            "window_minutes": 300,
-            "resets_at": 1769283296
-        });
-        let window = parse_codex_rate_limit(&limit, 300, UsageWindowSpan::Hours(5));
-        assert_eq!(window.used_percent, Some(25));
-        assert!(window.reset_at.is_some());
+    fn test_real_gemini_api() {
+        let creds = read_gemini_credentials()
+            .expect("Failed to read Gemini credentials")
+            .expect("Gemini credentials file not found");
+
+        eprintln!("Testing Gemini API with real credentials...");
+        let result = fetch_usage_for_provider("gemini", &creds);
+
+        eprintln!("Result:");
+        eprintln!("  token_valid: {}", result.token_valid);
+        if let Some(err) = &result.error {
+            eprintln!("  error: {}", err);
+        }
+        if let Some(usage) = &result.usage {
+            eprintln!("  email: {}", usage.email);
+            eprintln!("  session: {:?}%", usage.session_window.used_percent);
+        }
+
+        assert!(result.token_valid, "Token should be valid");
+        assert!(result.usage.is_some(), "Should have usage data");
+
+        let usage = result.usage.unwrap();
+        assert!(!usage.email.is_empty(), "Should have email");
     }
 
     #[test]
-    fn test_parse_codex_rate_limit_wrong_window() {
-        let limit = serde_json::json!({
-            "used_percent": 0.50,
-            "window_minutes": 600,  // Wrong window
-            "resets_at": 1769283296
-        });
-        let window = parse_codex_rate_limit(&limit, 300, UsageWindowSpan::Hours(5));
-        // Should have percent but no reset_at due to window mismatch
-        assert_eq!(window.used_percent, Some(50));
-        assert!(window.reset_at.is_none());
+    fn test_real_codex_api() {
+        let creds = read_codex_credentials()
+            .expect("Failed to read Codex credentials")
+            .expect("Codex credentials file not found");
+
+        eprintln!("Testing Codex API fetch...");
+        let result = fetch_usage_for_provider("codex", &creds);
+
+        eprintln!("Result:");
+        eprintln!("  token_valid: {}", result.token_valid);
+        if let Some(err) = &result.error {
+            eprintln!("  error: {}", err);
+        }
+        if let Some(usage) = &result.usage {
+            eprintln!("  email: {}", usage.email);
+            eprintln!("  session: {:?}%", usage.session_window.used_percent);
+            eprintln!("  weekly: {:?}%", usage.weekly_window.used_percent);
+        }
+
+        // Codex may not have usage data if no recent sessions
+        // Just verify we got a result without panicking
+        assert!(result.token_valid, "Token should be valid");
+    }
+
+    #[test]
+    fn test_real_fetch_all() {
+        use crate::account_usage::credentials::read_all_credentials;
+
+        let all_creds = read_all_credentials();
+        assert!(
+            !all_creds.is_empty(),
+            "No credentials found - need at least one provider"
+        );
+
+        eprintln!("Testing all providers with real credentials...");
+        for (provider, creds) in &all_creds {
+            eprintln!("\n=== {} ===", provider);
+            let result = fetch_usage_for_provider(provider, creds);
+
+            eprintln!("  token_valid: {}", result.token_valid);
+            if let Some(err) = &result.error {
+                eprintln!("  error: {}", err);
+            }
+            if let Some(usage) = &result.usage {
+                eprintln!("  email: {}", usage.email);
+                eprintln!("  session: {:?}%", usage.session_window.used_percent);
+            }
+
+            assert!(result.token_valid, "{} token should be valid", provider);
+        }
     }
 }

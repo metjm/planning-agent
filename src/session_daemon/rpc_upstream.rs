@@ -4,23 +4,30 @@
 //! application using tarpc RPC. It:
 //! - Connects to the host on port 17717 (or PLANNING_AGENT_HOST_PORT)
 //! - Sends session updates via RPC calls
+//! - Reports credentials on connect/reconnect
+//! - Watches credential files for changes (30-second polling)
 //! - Handles disconnection and reconnection with exponential backoff
 //! - Sends periodic heartbeats
 
+use crate::account_usage::credentials::{credential_file_paths, read_all_credential_info};
 use crate::daemon_log::daemon_log;
 use crate::rpc::host_service::{ContainerInfo, HostServiceClient, SessionInfo, PROTOCOL_VERSION};
 use crate::rpc::SessionRecord;
 use crate::session_daemon::server::DaemonState;
 use anyhow::Result;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 use tarpc::client;
 use tarpc::tokio_serde::formats::Bincode;
 use tokio::sync::{mpsc, Mutex};
 
 /// Default port for host connection.
 const DEFAULT_HOST_PORT: u16 = 17717;
+
+/// Interval for checking credential file changes (30 seconds per plan).
+const CREDENTIAL_CHECK_INTERVAL_SECS: u64 = 30;
 
 /// Events to send upstream to host.
 #[derive(Debug, Clone)]
@@ -278,9 +285,36 @@ impl RpcUpstream {
             }
         }
 
+        // Report credentials on connect
+        let credentials = read_all_credential_info();
+        if !credentials.is_empty() {
+            daemon_log(
+                "rpc_upstream",
+                &format!("Reporting {} credentials to host", credentials.len()),
+            );
+            client
+                .report_credentials(tarpc::context::current(), credentials)
+                .await?;
+        } else {
+            daemon_log("rpc_upstream", "No credentials available to report");
+        }
+
+        // Track credential file modification times for change detection
+        let mut credential_mtimes: HashMap<PathBuf, SystemTime> = HashMap::new();
+        for path in credential_file_paths() {
+            if let Ok(meta) = std::fs::metadata(&path) {
+                if let Ok(mtime) = meta.modified() {
+                    credential_mtimes.insert(path, mtime);
+                }
+            }
+        }
+
         // Main loop: forward session events
         let heartbeat_interval = Duration::from_secs(30);
         let mut heartbeat_timer = tokio::time::interval(heartbeat_interval);
+
+        let credential_check_interval = Duration::from_secs(CREDENTIAL_CHECK_INTERVAL_SECS);
+        let mut credential_timer = tokio::time::interval(credential_check_interval);
 
         loop {
             tokio::select! {
@@ -309,6 +343,40 @@ impl RpcUpstream {
                 }
                 _ = heartbeat_timer.tick() => {
                     client.heartbeat(tarpc::context::current()).await?;
+                }
+                _ = credential_timer.tick() => {
+                    // Check for credential file changes
+                    let mut changed = false;
+                    for path in credential_file_paths() {
+                        if let Ok(meta) = std::fs::metadata(&path) {
+                            if let Ok(mtime) = meta.modified() {
+                                let prev_mtime = credential_mtimes.get(&path);
+                                if prev_mtime != Some(&mtime) {
+                                    changed = true;
+                                    credential_mtimes.insert(path, mtime);
+                                }
+                            }
+                        } else {
+                            // File was deleted - check if we were tracking it
+                            if credential_mtimes.remove(&path).is_some() {
+                                changed = true;
+                            }
+                        }
+                    }
+
+                    if changed {
+                        let credentials = read_all_credential_info();
+                        daemon_log(
+                            "rpc_upstream",
+                            &format!(
+                                "Credential files changed, reporting {} credentials",
+                                credentials.len()
+                            ),
+                        );
+                        client
+                            .report_credentials(tarpc::context::current(), credentials)
+                            .await?;
+                    }
                 }
             }
         }

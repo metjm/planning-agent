@@ -15,8 +15,11 @@ use tokio::sync::{mpsc, Mutex};
 /// Maximum number of log entries to keep.
 const MAX_LOG_ENTRIES: usize = 200;
 
-/// Interval between automatic usage fetches (5 minutes).
-const USAGE_FETCH_INTERVAL_SECS: u64 = 300;
+/// Usage fetch interval when sessions are active (2 minutes).
+const ACTIVE_FETCH_INTERVAL_SECS: u64 = 120;
+
+/// Usage fetch interval when no sessions are active (10 minutes).
+const IDLE_FETCH_INTERVAL_SECS: u64 = 600;
 
 /// Main host application.
 pub struct HostApp {
@@ -464,15 +467,40 @@ impl HostApp {
         }
     }
 
-    /// Check if we need to fetch usage (on startup or after interval elapsed).
+    /// Check if we need to fetch usage (on startup or after activity-based interval).
+    ///
+    /// Polling intervals follow the plan:
+    /// - Active sessions (Planning/Reviewing/Revising): Poll every 2 minutes
+    /// - Idle (no active sessions): Poll every 10 minutes
     fn maybe_fetch_usage(&mut self) {
+        // Determine if we have active sessions
+        let has_active_sessions = self.display_data.sessions.iter().any(|s| {
+            let phase_lower = s.phase.to_lowercase();
+            phase_lower == "planning" || phase_lower == "reviewing" || phase_lower == "revising"
+        });
+
+        // Choose interval based on activity
+        let interval = if has_active_sessions {
+            ACTIVE_FETCH_INTERVAL_SECS
+        } else {
+            IDLE_FETCH_INTERVAL_SECS
+        };
+
         let should_fetch = match self.last_usage_fetch {
             None => true, // Never fetched - fetch on startup
-            Some(last) => last.elapsed().as_secs() >= USAGE_FETCH_INTERVAL_SECS,
+            Some(last) => last.elapsed().as_secs() >= interval,
         };
 
         if should_fetch {
-            eprintln!("[host-gui] Triggering usage fetch (startup or periodic)");
+            let mode = if has_active_sessions {
+                "active"
+            } else {
+                "idle"
+            };
+            eprintln!(
+                "[host-gui] Triggering usage fetch ({} mode, {}s interval)",
+                mode, interval
+            );
             self.last_usage_fetch = Some(Instant::now());
             self.trigger_usage_fetch();
         }
@@ -554,8 +582,19 @@ impl HostApp {
     }
 
     /// Render the usage sidebar panel.
-    fn render_usage_panel(&self, ui: &mut egui::Ui) {
-        ui.heading("Account Usage");
+    fn render_usage_panel(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            ui.heading("Account Usage");
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui
+                    .small_button("↻")
+                    .on_hover_text("Refresh all accounts")
+                    .clicked()
+                {
+                    self.last_usage_fetch = None; // Force immediate refresh
+                }
+            });
+        });
         ui.separator();
 
         egui::ScrollArea::vertical().show(ui, |ui| {
