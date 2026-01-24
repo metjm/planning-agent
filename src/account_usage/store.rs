@@ -70,14 +70,35 @@ impl UsageStore {
     pub fn update_account(&mut self, usage: AccountUsageState, container_id: Option<&str>) {
         let now = chrono::Utc::now().to_rfc3339();
 
+        eprintln!(
+            "[store] update_account: {} ({}) - before: {} accounts",
+            usage.provider,
+            usage.email,
+            self.accounts.len()
+        );
+
         // Remove placeholder email records for the same provider when we get a real email.
         // This cleans up temporary error records but preserves other accounts for the provider.
         if !usage.email.is_empty() && usage.email != "unknown" {
             let provider = usage.provider.clone();
+            let before = self.accounts.len();
             self.accounts.retain(|_id, record| {
-                record.provider != provider
-                    || (record.email != "unknown" && !record.email.is_empty())
+                let keep = record.provider != provider
+                    || (record.email != "unknown" && !record.email.is_empty());
+                if !keep {
+                    eprintln!(
+                        "[store]   removing placeholder: {} ({})",
+                        record.provider, record.email
+                    );
+                }
+                keep
             });
+            if self.accounts.len() != before {
+                eprintln!(
+                    "[store]   removed {} placeholder records",
+                    before - self.accounts.len()
+                );
+            }
         }
 
         let record = self
@@ -122,6 +143,11 @@ impl UsageStore {
         record.current_usage = Some(usage);
         record.credentials_available = true;
         self.dirty = true;
+
+        eprintln!(
+            "[store] update_account: after: {} accounts",
+            self.accounts.len()
+        );
     }
 
     /// Gets all account records.
