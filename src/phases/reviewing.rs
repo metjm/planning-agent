@@ -253,7 +253,6 @@ pub async fn run_multi_agent_review_with_context(
                     &feedback_path,
                     &working_dir,
                     &session_folder,
-                    require_tags,
                     custom_prompt.as_deref(),
                 );
 
@@ -311,10 +310,8 @@ pub async fn run_multi_agent_review_with_context(
                         let recovery_prompt = build_review_recovery_prompt_for_agent(
                             &plan_path_abs,
                             &feedback_path,
-                            &session_folder,
                             &parse_failure.error,
                             &initial_output,
-                            require_tags,
                         );
 
                         // Execute retry attempt

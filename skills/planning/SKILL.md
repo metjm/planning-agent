@@ -43,6 +43,8 @@ For ANY new functionality, the plan MUST include a code example showing:
 - The function/method signature
 - Key implementation logic (not full implementation, but the critical parts)
 - How it integrates with existing code
+- **No placeholders**: code examples may not use "..." or "similar to X" in required snippets
+- **No phantom helpers**: any function referenced in an example must already exist or be fully defined elsewhere in the plan with its own code example
 
 **Template for code examples:**
 

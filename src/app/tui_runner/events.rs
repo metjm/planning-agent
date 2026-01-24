@@ -97,10 +97,7 @@ fn handle_tick_event(
         if session.running
             || matches!(
                 session.status,
-                SessionStatus::Planning
-                    | SessionStatus::GeneratingSummary
-                    | SessionStatus::Verifying
-                    | SessionStatus::Fixing
+                SessionStatus::Planning | SessionStatus::GeneratingSummary
             )
         {
             session.spinner_frame = session.spinner_frame.wrapping_add(1);

@@ -20,7 +20,6 @@ pub fn build_review_prompt_for_agent(
     feedback_path_abs: &Path,
     working_dir: &Path,
     session_folder_abs: &Path,
-    _require_tags: bool, // Kept for API compatibility, skill handles format
     custom_focus: Option<&str>,
 ) -> String {
     let focus_section = match custom_focus {
@@ -59,10 +58,8 @@ Run the "plan-review" skill to perform the review."#,
 pub fn build_review_recovery_prompt_for_agent(
     plan_path_abs: &Path,
     feedback_path_abs: &Path,
-    _session_folder_abs: &Path, // Kept for API compatibility
     failure_reason: &str,
     previous_output: &str,
-    _require_tags: bool, // Kept for API compatibility
 ) -> String {
     let truncated_output = truncate_for_recovery_prompt(previous_output);
 
@@ -100,7 +97,6 @@ mod tests {
             Path::new("/home/user/feedback.md"),
             Path::new("/home/user/project"),
             Path::new("/home/user/.planning-agent/sessions/abc123"),
-            false,
             None,
         );
 
@@ -118,7 +114,6 @@ mod tests {
             Path::new("/home/user/feedback.md"),
             Path::new("/home/user/project"),
             Path::new("/home/user/.planning-agent/sessions/abc123"),
-            false,
             None,
         );
 
@@ -134,7 +129,6 @@ mod tests {
             Path::new("/home/user/feedback.md"),
             Path::new("/home/user/project"),
             Path::new("/home/user/.planning-agent/sessions/abc123"),
-            false,
             None,
         );
 
@@ -150,7 +144,6 @@ mod tests {
             Path::new("/home/user/feedback.md"),
             Path::new("/home/user/project"),
             Path::new("/home/user/.planning-agent/sessions/abc123"),
-            false,
             Some("Focus on security and performance."),
         );
 
@@ -165,10 +158,8 @@ mod tests {
         let prompt = build_review_recovery_prompt_for_agent(
             Path::new("/home/user/plan.md"),
             Path::new("/home/user/feedback.md"),
-            Path::new("/home/user/.planning-agent/sessions/abc123"),
             "Missing Overall Assessment",
             "Some previous output",
-            false,
         );
 
         assert!(prompt.contains("Missing Overall Assessment"));
@@ -182,10 +173,8 @@ mod tests {
         let prompt = build_review_recovery_prompt_for_agent(
             Path::new("/home/user/plan.md"),
             Path::new("/home/user/feedback.md"),
-            Path::new("/home/user/.planning-agent/sessions/abc123"),
             "Parse failure",
             "Previous output",
-            false,
         );
 
         assert!(prompt.contains("Summary"));
@@ -199,10 +188,8 @@ mod tests {
         let prompt = build_review_recovery_prompt_for_agent(
             Path::new("/home/user/plan.md"),
             Path::new("/home/user/feedback.md"),
-            Path::new("/home/user/.planning-agent/sessions/abc123"),
             "Parse failure",
             "Previous output",
-            false,
         );
 
         assert!(prompt.ends_with(r#"Run the "plan-review" skill to complete the review."#));
@@ -214,10 +201,8 @@ mod tests {
         let prompt = build_review_recovery_prompt_for_agent(
             Path::new("/home/user/plan.md"),
             Path::new("/home/user/feedback.md"),
-            Path::new("/home/user/.planning-agent/sessions/abc123"),
             "Parse failure",
             &long_output,
-            false,
         );
 
         // Should be truncated
@@ -239,7 +224,6 @@ mod tests {
             Path::new("/home/user/feedback.md"),
             Path::new("/home/user/project"),
             Path::new("/home/user/.planning-agent/sessions/abc123"),
-            false,
             None,
         );
 

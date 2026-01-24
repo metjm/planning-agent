@@ -1,4 +1,3 @@
-pub mod fixing;
 pub mod implementation;
 pub mod implementation_review;
 pub mod planning;
@@ -9,9 +8,7 @@ pub mod reviewing;
 pub mod revising;
 pub mod summary;
 pub mod verdict;
-pub mod verification;
 
-pub use fixing::run_fixing_phase;
 pub use planning::run_planning_phase_with_context;
 pub use reviewing::{
     aggregate_reviews, merge_feedback, run_multi_agent_review_with_context, write_feedback_files,
@@ -22,13 +19,11 @@ pub use summary::spawn_summary_generation;
 // Re-export review schema types for potential external use
 #[allow(unused_imports)]
 pub use review_schema::{ReviewVerdict, SubmittedReview};
-// Re-export verdict types for use by verification and implementation phases
+// Re-export verdict types for use by implementation phases
 #[allow(unused_imports)]
 pub use verdict::{
-    extract_implementation_feedback, extract_verification_feedback, parse_verification_verdict,
-    VerificationVerdictResult,
+    extract_implementation_feedback, parse_verification_verdict, VerificationVerdictResult,
 };
-pub use verification::run_verification_phase;
 // Re-export implementation phase types
 #[allow(unused_imports)]
 pub use implementation::{run_implementation_phase, ImplementationResult};

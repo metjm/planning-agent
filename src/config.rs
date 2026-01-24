@@ -9,10 +9,6 @@ use std::path::Path;
 pub struct WorkflowConfig {
     pub agents: HashMap<String, AgentConfig>,
     pub workflow: PhaseConfigs,
-    /// Optional verification workflow configuration.
-    /// When present and enabled, allows post-implementation verification.
-    #[serde(default)]
-    pub verification: VerificationConfig,
     /// Failure handling policy for transient failures and recovery.
     #[serde(default)]
     pub failure_policy: FailurePolicy,
@@ -23,39 +19,6 @@ pub struct WorkflowConfig {
     /// Claude-mode configuration for --claude flag transformation.
     #[serde(default)]
     pub claude_mode: ClaudeModeConfig,
-}
-
-/// Configuration for the post-implementation verification workflow.
-/// All fields have defaults to ensure backward compatibility with existing configs.
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct VerificationConfig {
-    /// Whether verification is enabled. Default: false (opt-in feature)
-    #[serde(default)]
-    pub enabled: bool,
-    /// Maximum verification/fix iterations before stopping. Default: 3
-    #[serde(default = "default_max_verification_iterations")]
-    pub max_iterations: u32,
-    /// Configuration for the verifying phase agent
-    #[serde(default)]
-    pub verifying: Option<SingleAgentPhase>,
-    /// Configuration for the fixing phase agent
-    #[serde(default)]
-    pub fixing: Option<SingleAgentPhase>,
-}
-
-impl Default for VerificationConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            max_iterations: default_max_verification_iterations(),
-            verifying: None,
-            fixing: None,
-        }
-    }
-}
-
-fn default_max_verification_iterations() -> u32 {
-    3
 }
 
 /// Configuration for the JSON-mode implementation workflow.
@@ -364,7 +327,7 @@ impl WorkflowConfig {
     /// 2. Merges claude_mode.agents into the main agents map
     /// 3. Applies substitutions to planning phase
     /// 4. Replaces reviewing phase if claude_mode.reviewing is specified, otherwise applies substitutions
-    /// 5. Applies substitutions to implementation and verification configs
+    /// 5. Applies substitutions to implementation config
     /// 6. Resolves implementation reviewer conflicts (uses claude-reviewer if available)
     ///
     /// Returns an error if a substitution target doesn't exist.
@@ -435,18 +398,6 @@ impl WorkflowConfig {
                 review_phase.agent = "claude-reviewer".to_string();
             } else {
                 review_phase.agent = substituted;
-            }
-        }
-
-        // Apply to verification config
-        if let Some(ref mut verify_phase) = self.verification.verifying {
-            if let Some(target) = substitutions.get(&verify_phase.agent) {
-                verify_phase.agent = target.clone();
-            }
-        }
-        if let Some(ref mut fix_phase) = self.verification.fixing {
-            if let Some(target) = substitutions.get(&fix_phase.agent) {
-                fix_phase.agent = target.clone();
             }
         }
 
@@ -530,26 +481,6 @@ impl WorkflowConfig {
                      - agent: claude\n  id: {}-2  # or a descriptive name like '{}-completeness'\n  prompt: ...",
                     display_id, display_id, display_id, display_id
                 );
-            }
-        }
-
-        // Only validate verification agents if verification is enabled
-        if self.verification.enabled {
-            if let Some(ref verifying) = self.verification.verifying {
-                if !self.agents.contains_key(&verifying.agent) {
-                    anyhow::bail!(
-                        "Verifying agent '{}' not found in agents configuration",
-                        verifying.agent
-                    );
-                }
-            }
-            if let Some(ref fixing) = self.verification.fixing {
-                if !self.agents.contains_key(&fixing.agent) {
-                    anyhow::bail!(
-                        "Fixing agent '{}' not found in agents configuration",
-                        fixing.agent
-                    );
-                }
             }
         }
 

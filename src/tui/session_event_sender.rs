@@ -283,44 +283,6 @@ impl SessionEventSender {
         });
     }
 
-    // Verification workflow event helpers
-
-    pub fn send_verification_started(&self, iteration: u32) {
-        let _ = self.inner.send(Event::SessionVerificationStarted {
-            session_id: self.session_id,
-            iteration,
-        });
-    }
-
-    pub fn send_verification_completed(&self, verdict: String, report: String) {
-        let _ = self.inner.send(Event::SessionVerificationCompleted {
-            session_id: self.session_id,
-            verdict,
-            report,
-        });
-    }
-
-    pub fn send_fixing_started(&self, iteration: u32) {
-        let _ = self.inner.send(Event::SessionFixingStarted {
-            session_id: self.session_id,
-            iteration,
-        });
-    }
-
-    pub fn send_fixing_completed(&self) {
-        let _ = self.inner.send(Event::SessionFixingCompleted {
-            session_id: self.session_id,
-        });
-    }
-
-    pub fn send_verification_result(&self, approved: bool, iterations_used: u32) {
-        let _ = self.inner.send(Event::SessionVerificationResult {
-            session_id: self.session_id,
-            approved,
-            iterations_used,
-        });
-    }
-
     // CLI instance lifecycle event helpers
 
     /// Allocates a new unique CLI instance ID for this session.

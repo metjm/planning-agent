@@ -44,16 +44,6 @@ pub struct Cli {
     #[arg(long)]
     pub older_than: Option<u32>,
 
-    /// Verify implementation against an approved plan.
-    /// Accepts either a plan folder path, plan.md file path, or a plan name pattern.
-    /// Use "latest" to verify against the most recent plan.
-    #[arg(long, value_name = "PLAN_PATH_OR_NAME")]
-    pub verify: Option<String>,
-
-    /// List all available plans
-    #[arg(long)]
-    pub list_plans: bool,
-
     /// Internal: Run as session daemon (used by connect-or-spawn)
     #[arg(long, hide = true)]
     pub session_daemon: bool,

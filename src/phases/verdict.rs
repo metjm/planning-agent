@@ -1,7 +1,6 @@
-//! Shared verdict parsing for verification and implementation-review phases.
+//! Verdict parsing for implementation-review phase.
 //!
-//! This module provides a unified verdict parsing API used by both the verification
-//! workflow and the implementation-review phase.
+//! This module provides verdict parsing used by the implementation-review phase.
 
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -87,13 +86,6 @@ pub fn extract_feedback_tag(tag: &str, report: &str) -> Option<String> {
     None
 }
 
-/// Extracts feedback content from `<verification-feedback>` tags.
-///
-/// Convenience wrapper around `extract_feedback_tag` for verification reports.
-pub fn extract_verification_feedback(report: &str) -> Option<String> {
-    extract_feedback_tag("verification-feedback", report)
-}
-
 /// Extracts feedback content from `<implementation-feedback>` tags.
 ///
 /// Convenience wrapper around `extract_feedback_tag` for implementation-review reports.
@@ -157,28 +149,6 @@ mod tests {
             parse_verification_verdict(report),
             VerificationVerdictResult::ParseFailure { .. }
         ));
-    }
-
-    #[test]
-    fn test_extract_verification_feedback() {
-        let report = r#"
-## Verdict
-NEEDS REVISION
-
-<verification-feedback>
-1. Fix the authentication logic in src/auth.rs
-2. Add missing test cases
-</verification-feedback>
-"#;
-        let feedback = extract_verification_feedback(report).unwrap();
-        assert!(feedback.contains("authentication logic"));
-        assert!(feedback.contains("test cases"));
-    }
-
-    #[test]
-    fn test_extract_verification_feedback_missing() {
-        let report = "## Verdict: APPROVED\nAll good!";
-        assert!(extract_verification_feedback(report).is_none());
     }
 
     #[test]

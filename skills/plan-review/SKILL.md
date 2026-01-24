@@ -45,6 +45,8 @@ For each new function, method, type, or component, verify:
 - [ ] The example shows the actual signature and key logic
 - [ ] The example uses the project's real types and patterns
 - [ ] The example specifies the file path and location
+- [ ] No placeholders like "..." or "similar to X" are used in required snippets
+- [ ] Every function referenced in examples exists in the codebase or is fully defined elsewhere in the plan
 
 **Red flags requiring rejection:**
 
@@ -52,6 +54,7 @@ For each new function, method, type, or component, verify:
 - "Implement Y algorithm" without showing the algorithm
 - "Create a new type for Z" without showing the type definition
 - "Integrate with W" without showing the integration code
+- Any required snippet that uses "..." or "similar to X" instead of concrete code
 
 ### Formula Check
 

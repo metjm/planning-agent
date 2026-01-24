@@ -3,7 +3,7 @@
 //! Provides distinct color palettes based on workflow phase:
 //! - Planning phase (blue tones): Planning, Reviewing, Revising
 //! - Implementation phase (orange/red tones): Implementing, ImplementationReview
-//! - Complete phase (green tones): Complete, VerificationComplete
+//! - Complete phase (green tones): Complete
 //!
 //! Semantic colors (success=green, error=red) remain consistent across all themes.
 
@@ -18,7 +18,7 @@ pub enum ThemePhase {
     Planning,
     /// Implementation workflow: Implementing, ImplementationReview
     Implementation,
-    /// Workflow complete: Complete, VerificationComplete
+    /// Workflow complete: Complete
     Complete,
 }
 
@@ -331,10 +331,7 @@ impl Theme {
     /// Determines the theme phase from a session's current state.
     pub fn phase_for_session(session: &Session) -> ThemePhase {
         // Check for complete states first
-        if matches!(
-            session.status,
-            SessionStatus::Complete | SessionStatus::VerificationComplete
-        ) {
+        if matches!(session.status, SessionStatus::Complete) {
             return ThemePhase::Complete;
         }
 

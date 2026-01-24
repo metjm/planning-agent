@@ -534,61 +534,7 @@ impl Session {
                     Phase::Complete => "Complete",
                 }
             }
-            None => match self.status {
-                SessionStatus::Verifying => "Verifying",
-                SessionStatus::Fixing => "Fixing",
-                SessionStatus::VerificationComplete => "Verified",
-                _ => "Initializing",
-            },
-        }
-    }
-
-    /// Starts the verification phase
-    pub fn start_verification(&mut self, iteration: u32) {
-        self.status = SessionStatus::Verifying;
-        self.add_output(format!(
-            "[verification] Starting verification round {}",
-            iteration
-        ));
-    }
-
-    /// Handles verification completion with a verdict
-    pub fn handle_verification_completed(&mut self, verdict: &str, report: &str) {
-        self.add_output(format!("[verification] Verdict: {}", verdict));
-        if !report.is_empty() {
-            // Show a preview of the report
-            let preview: String = report.lines().take(5).collect::<Vec<_>>().join("\n");
-            self.add_output(format!("[verification] Report preview:\n{}", preview));
-        }
-    }
-
-    /// Starts the fixing phase
-    pub fn start_fixing(&mut self, iteration: u32) {
-        self.status = SessionStatus::Fixing;
-        self.add_output(format!("[fixing] Starting fix round {}", iteration));
-    }
-
-    /// Handles fixing completion
-    pub fn handle_fixing_completed(&mut self) {
-        self.add_output("[fixing] Fix round complete".to_string());
-    }
-
-    /// Handles verification workflow result
-    pub fn handle_verification_result(&mut self, approved: bool, iterations_used: u32) {
-        if approved {
-            self.status = SessionStatus::VerificationComplete;
-            self.running = false;
-            self.add_output(format!(
-                "[verification] Implementation APPROVED after {} iteration(s)",
-                iterations_used
-            ));
-        } else {
-            self.status = SessionStatus::Error;
-            self.running = false;
-            self.error_state = Some(format!(
-                "Verification FAILED after {} iteration(s)",
-                iterations_used
-            ));
+            None => "Initializing",
         }
     }
 

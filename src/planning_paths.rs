@@ -350,19 +350,6 @@ pub fn review_bundle_path(
     Ok(diagnostics_dir(working_dir)?.join(filename))
 }
 
-/// Metadata about a plan folder for listing purposes.
-#[derive(Debug, Clone)]
-pub struct PlanInfo {
-    /// Full path to the plan folder
-    pub path: PathBuf,
-    /// Feature name extracted from the folder name
-    pub feature_name: String,
-    /// Timestamp string from the folder name (YYYYMMDD-HHMMSS)
-    pub timestamp: String,
-    /// Full folder name (timestamp_feature-name)
-    pub folder_name: String,
-}
-
 /// Lightweight session info for fast listing without loading full snapshots.
 ///
 /// This struct is stored in `session_info.json` within each session directory
@@ -428,114 +415,6 @@ impl SessionInfo {
             .with_context(|| format!("Failed to read session info: {}", path.display()))?;
         serde_json::from_str(&content).with_context(|| "Failed to parse session info")
     }
-}
-
-/// Lists all plan folders in session directories.
-///
-/// Returns a vector of PlanInfo, sorted by timestamp descending (most recent first).
-/// Scans `~/.planning-agent/sessions/` directories.
-pub fn list_plans() -> Result<Vec<PlanInfo>> {
-    let mut plans = Vec::new();
-
-    // Scan session directories: ~/.planning-agent/sessions/<session-id>/plan.md
-    let sessions_directory = sessions_dir()?;
-    if sessions_directory.exists() {
-        for entry in fs::read_dir(&sessions_directory)? {
-            let entry = entry?;
-            let path = entry.path();
-
-            if !path.is_dir() {
-                continue;
-            }
-
-            // Check if plan.md exists in this session folder
-            let plan_file = path.join("plan.md");
-            if !plan_file.exists() {
-                continue;
-            }
-
-            let session_id = entry.file_name().to_string_lossy().to_string();
-
-            // Try to read session_info.json for metadata
-            let info_path = path.join("session_info.json");
-            let (feature_name, timestamp) = if info_path.exists() {
-                if let Ok(content) = fs::read_to_string(&info_path) {
-                    if let Ok(info) = serde_json::from_str::<SessionInfo>(&content) {
-                        // Convert RFC3339 timestamp to YYYYMMDD-HHMMSS format
-                        let ts = convert_rfc3339_to_timestamp(&info.created_at)
-                            .unwrap_or_else(|| info.created_at.clone());
-                        (info.feature_name, ts)
-                    } else {
-                        (session_id.clone(), String::new())
-                    }
-                } else {
-                    (session_id.clone(), String::new())
-                }
-            } else {
-                // Fallback: use session_id as feature name
-                (session_id.clone(), String::new())
-            };
-
-            plans.push(PlanInfo {
-                path,
-                feature_name,
-                timestamp,
-                folder_name: session_id,
-            });
-        }
-    }
-
-    // Sort by timestamp descending (most recent first)
-    plans.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
-
-    Ok(plans)
-}
-
-/// Converts an RFC3339 timestamp to YYYYMMDD-HHMMSS format.
-pub fn convert_rfc3339_to_timestamp(rfc3339: &str) -> Option<String> {
-    chrono::DateTime::parse_from_rfc3339(rfc3339)
-        .ok()
-        .map(|dt| dt.format("%Y%m%d-%H%M%S").to_string())
-}
-
-/// Finds a plan folder by partial match on feature name or folder name.
-///
-/// Returns the most recent matching plan if multiple matches are found.
-pub fn find_plan(pattern: &str) -> Result<Option<PlanInfo>> {
-    let plans = list_plans()?;
-
-    let pattern_lower = pattern.to_lowercase();
-
-    // First try exact match on folder name
-    for plan in &plans {
-        if plan.folder_name.to_lowercase() == pattern_lower {
-            return Ok(Some(plan.clone()));
-        }
-    }
-
-    // Then try exact match on feature name
-    for plan in &plans {
-        if plan.feature_name.to_lowercase() == pattern_lower {
-            return Ok(Some(plan.clone()));
-        }
-    }
-
-    // Then try partial match on feature name or folder name
-    for plan in &plans {
-        if plan.feature_name.to_lowercase().contains(&pattern_lower)
-            || plan.folder_name.to_lowercase().contains(&pattern_lower)
-        {
-            return Ok(Some(plan.clone()));
-        }
-    }
-
-    Ok(None)
-}
-
-/// Returns the most recently created plan folder.
-pub fn latest_plan() -> Result<Option<PlanInfo>> {
-    let plans = list_plans()?;
-    Ok(plans.into_iter().next())
 }
 
 #[cfg(test)]

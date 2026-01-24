@@ -60,10 +60,7 @@ impl HeaderStatusIcon {
 /// Handles ALL SessionStatus variants explicitly.
 fn determine_header_status(session: &Session, spinner_frame: u8) -> HeaderStatusIcon {
     // Completion states - show checkmark
-    if matches!(
-        session.status,
-        SessionStatus::Complete | SessionStatus::VerificationComplete
-    ) {
+    if matches!(session.status, SessionStatus::Complete) {
         return HeaderStatusIcon::Complete;
     }
 
@@ -82,15 +79,10 @@ fn determine_header_status(session: &Session, spinner_frame: u8) -> HeaderStatus
     // - session.running flag being true (agent actively working)
     // - SessionStatus::Planning (AI is planning)
     // - SessionStatus::GeneratingSummary (AI generating summary)
-    // - SessionStatus::Verifying (verification in progress)
-    // - SessionStatus::Fixing (fixing in progress)
     if session.running
         || matches!(
             session.status,
-            SessionStatus::Planning
-                | SessionStatus::GeneratingSummary
-                | SessionStatus::Verifying
-                | SessionStatus::Fixing
+            SessionStatus::Planning | SessionStatus::GeneratingSummary
         )
     {
         return HeaderStatusIcon::Spinner(spinner_frame);
@@ -192,9 +184,6 @@ fn get_session_status_icon(session: &Session) -> &'static str {
         SessionStatus::Stopped => "⏸",
         SessionStatus::Complete => "+",
         SessionStatus::Error => "!",
-        SessionStatus::Verifying => "⚡",
-        SessionStatus::Fixing => "🔧",
-        SessionStatus::VerificationComplete => "✓",
     }
 }
 

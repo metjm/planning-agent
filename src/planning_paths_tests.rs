@@ -215,20 +215,6 @@ fn test_session_info_save_and_load() {
 }
 
 #[test]
-fn test_convert_rfc3339_to_timestamp() {
-    let result = convert_rfc3339_to_timestamp("2026-01-15T14:30:00.123Z");
-    assert!(result.is_some());
-    assert_eq!(result.unwrap(), "20260115-143000");
-
-    let result_with_tz = convert_rfc3339_to_timestamp("2026-01-15T14:30:00+00:00");
-    assert!(result_with_tz.is_some());
-    assert_eq!(result_with_tz.unwrap(), "20260115-143000");
-
-    let invalid = convert_rfc3339_to_timestamp("not-a-timestamp");
-    assert!(invalid.is_none());
-}
-
-#[test]
 fn test_session_implementation_log_path() {
     let (_temp_dir, _guard) = test_env();
 

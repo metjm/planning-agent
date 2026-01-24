@@ -227,34 +227,6 @@ pub enum Event {
 
     UpdateInstallFinished(UpdateResult),
 
-    // Verification workflow events
-    /// Verification phase started
-    SessionVerificationStarted {
-        session_id: usize,
-        iteration: u32,
-    },
-    /// Verification phase completed with verdict
-    SessionVerificationCompleted {
-        session_id: usize,
-        verdict: String,
-        report: String,
-    },
-    /// Fixing phase started
-    SessionFixingStarted {
-        session_id: usize,
-        iteration: u32,
-    },
-    /// Fixing phase completed
-    SessionFixingCompleted {
-        session_id: usize,
-    },
-    /// Verification workflow result
-    SessionVerificationResult {
-        session_id: usize,
-        approved: bool,
-        iterations_used: u32,
-    },
-
     /// CLI instance lifecycle events
     SessionCliInstanceStarted {
         session_id: usize,
