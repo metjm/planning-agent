@@ -7,9 +7,18 @@ use super::types::{AccountId, AccountUsageState, ProviderCredentials};
 use crate::usage_reset::UsageWindow;
 
 /// Fetches usage for all available credentials and updates the store.
+/// Reads credentials from local files.
 pub fn fetch_all_usage(store: &mut UsageStore, container_id: Option<&str>) {
     let credentials = read_all_credentials();
+    fetch_usage_with_credentials(store, credentials, container_id);
+}
 
+/// Fetches usage using provided credentials (from daemon RPC or elsewhere).
+pub fn fetch_usage_with_credentials(
+    store: &mut UsageStore,
+    credentials: Vec<(String, ProviderCredentials)>,
+    container_id: Option<&str>,
+) {
     for (provider, creds) in credentials {
         let result = fetch_usage_for_provider(&provider, &creds);
         if let Some(usage) = result.usage {

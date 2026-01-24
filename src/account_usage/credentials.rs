@@ -174,7 +174,7 @@ pub fn credential_file_paths() -> Vec<PathBuf> {
 }
 
 /// Reads all credentials and converts to CredentialInfo for RPC reporting.
-/// This extracts email from tokens where possible.
+/// This extracts email from tokens where possible and includes tokens for API calls.
 pub fn read_all_credential_info() -> Vec<crate::rpc::host_service::CredentialInfo> {
     use crate::rpc::host_service::CredentialInfo;
 
@@ -182,7 +182,7 @@ pub fn read_all_credential_info() -> Vec<crate::rpc::host_service::CredentialInf
 
     // Claude: We don't have email without API call, use placeholder
     if let Ok(Some(ProviderCredentials::Claude {
-        access_token: _,
+        access_token,
         expires_at,
     })) = read_claude_credentials()
     {
@@ -198,6 +198,8 @@ pub fn read_all_credential_info() -> Vec<crate::rpc::host_service::CredentialInf
             email: "".to_string(), // Email fetched by host via API
             token_valid,
             expires_at,
+            access_token,
+            account_id: None,
         });
     }
 
@@ -225,13 +227,15 @@ pub fn read_all_credential_info() -> Vec<crate::rpc::host_service::CredentialInf
             email,
             token_valid,
             expires_at,
+            access_token,
+            account_id: None,
         });
     }
 
     // Codex: Email available from JWT access_token
     if let Ok(Some(ProviderCredentials::Codex {
         access_token,
-        account_id: _,
+        account_id,
     })) = read_codex_credentials()
     {
         let email = extract_email_from_jwt(&access_token).unwrap_or_default();
@@ -244,6 +248,8 @@ pub fn read_all_credential_info() -> Vec<crate::rpc::host_service::CredentialInf
             email,
             token_valid,
             expires_at,
+            access_token,
+            account_id: Some(account_id),
         });
     }
 

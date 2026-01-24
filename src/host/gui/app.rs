@@ -2,6 +2,7 @@
 
 #[cfg(feature = "tray-icon")]
 use crate::host::gui::tray::{HostTray, TrayCommand};
+use crate::host::gui::usage_panel::{self, DisplayAccountRow};
 use crate::host::rpc_server::HostEvent;
 use crate::host::state::HostState;
 use crate::session_daemon::LivenessState;
@@ -51,18 +52,6 @@ struct DisplayData {
     approval_count: usize,
     container_count: usize,
     last_update_elapsed_secs: u64,
-}
-
-#[derive(Clone)]
-struct DisplayAccountRow {
-    provider: String,
-    email: String,
-    session_percent: Option<u8>,
-    session_reset: String,
-    weekly_percent: Option<u8>,
-    weekly_reset: String,
-    token_valid: bool,
-    error: Option<String>,
 }
 
 #[derive(Clone)]
@@ -506,14 +495,24 @@ impl HostApp {
         }
     }
 
-    /// Trigger background usage fetch for all available credentials.
+    /// Trigger background usage fetch using credentials from daemon.
     /// Uses blocking HTTP calls via ureq, so it's safe to call from async context.
     fn trigger_usage_fetch(&mut self) {
         let state = self.state.clone();
         // Spawn tokio task to fetch usage (ureq is blocking but tokio handles this)
         tokio::spawn(async move {
             let mut state = state.lock().await;
-            crate::account_usage::fetcher::fetch_all_usage(&mut state.usage_store, None);
+            // Get credentials from daemon (stored via RPC)
+            let credentials = state.get_credentials();
+            if credentials.is_empty() {
+                eprintln!("[host-gui] No credentials available from daemon");
+                return;
+            }
+            crate::account_usage::fetcher::fetch_usage_with_credentials(
+                &mut state.usage_store,
+                credentials,
+                None,
+            );
             if let Err(e) = state.usage_store.save() {
                 eprintln!("[host-gui] Failed to save usage store: {}", e);
             }
@@ -598,77 +597,8 @@ impl HostApp {
         ui.separator();
 
         egui::ScrollArea::vertical().show(ui, |ui| {
-            if self.display_data.accounts.is_empty() {
-                ui.label("No accounts tracked");
-                ui.small("Usage data appears when");
-                ui.small("credentials are detected");
-                return;
-            }
-
-            for account in &self.display_data.accounts {
-                ui.push_id(&account.email, |ui| {
-                    // Provider badge and email
-                    ui.horizontal(|ui| {
-                        let badge_color = match account.provider.as_str() {
-                            "claude" => egui::Color32::from_rgb(216, 152, 96),
-                            "gemini" => egui::Color32::from_rgb(66, 133, 244),
-                            "codex" => egui::Color32::from_rgb(16, 163, 127),
-                            _ => egui::Color32::GRAY,
-                        };
-                        ui.colored_label(badge_color, &account.provider);
-                        if !account.token_valid {
-                            ui.colored_label(egui::Color32::RED, "⚠");
-                        }
-                    });
-                    ui.small(&account.email);
-
-                    // Error display
-                    if let Some(err) = &account.error {
-                        ui.colored_label(egui::Color32::from_rgb(255, 100, 100), "Error:");
-                        ui.small(truncate_path(err, 30));
-                    } else {
-                        // Session usage bar
-                        if let Some(pct) = account.session_percent {
-                            ui.horizontal(|ui| {
-                                ui.small("Session:");
-                                self.render_usage_bar(ui, pct);
-                                if !account.session_reset.is_empty() {
-                                    ui.small(&account.session_reset);
-                                }
-                            });
-                        }
-                        // Weekly usage bar
-                        if let Some(pct) = account.weekly_percent {
-                            ui.horizontal(|ui| {
-                                ui.small("Weekly:");
-                                self.render_usage_bar(ui, pct);
-                                if !account.weekly_reset.is_empty() {
-                                    ui.small(&account.weekly_reset);
-                                }
-                            });
-                        }
-                    }
-
-                    ui.add_space(8.0);
-                });
-            }
+            usage_panel::render_usage_panel_content(ui, &self.display_data.accounts);
         });
-    }
-
-    /// Render a small usage progress bar.
-    fn render_usage_bar(&self, ui: &mut egui::Ui, percent: u8) {
-        let (rect, _) = ui.allocate_exact_size(egui::vec2(50.0, 8.0), egui::Sense::hover());
-        ui.painter()
-            .rect_filled(rect, 2.0, egui::Color32::from_rgb(60, 60, 60));
-        let fill_color = match percent {
-            90..=100 => egui::Color32::from_rgb(244, 67, 54),
-            70..=89 => egui::Color32::from_rgb(255, 152, 0),
-            _ => egui::Color32::from_rgb(76, 175, 80),
-        };
-        let fill_rect =
-            egui::Rect::from_min_size(rect.min, egui::vec2(50.0 * percent as f32 / 100.0, 8.0));
-        ui.painter().rect_filled(fill_rect, 2.0, fill_color);
-        ui.small(format!("{}%", percent));
     }
 
     /// Render the log panel at the bottom.

@@ -4,8 +4,9 @@
 //! session data for display in the GUI.
 
 use crate::account_usage::store::UsageStore;
+use crate::account_usage::types::ProviderCredentials;
 use crate::host_protocol::SessionInfo;
-use crate::rpc::host_service::AccountUsageInfo;
+use crate::rpc::host_service::{AccountUsageInfo, CredentialInfo};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Instant;
@@ -40,6 +41,9 @@ pub struct HostState {
     pub last_update: Instant,
     /// Account usage tracking store
     pub usage_store: UsageStore,
+    /// Credentials received from daemons, keyed by provider name.
+    /// Contains the actual tokens needed to make API calls.
+    daemon_credentials: HashMap<String, ProviderCredentials>,
 }
 
 impl Default for HostState {
@@ -68,7 +72,41 @@ impl HostState {
             cached_sessions: None,
             last_update: Instant::now(),
             usage_store,
+            daemon_credentials: HashMap::new(),
         }
+    }
+
+    /// Store credentials received from a daemon.
+    /// Converts CredentialInfo to ProviderCredentials for API calls.
+    pub fn store_credentials(&mut self, credentials: Vec<CredentialInfo>) {
+        for cred in credentials {
+            let provider_creds = match cred.provider.as_str() {
+                "claude" => ProviderCredentials::Claude {
+                    access_token: cred.access_token,
+                    expires_at: cred.expires_at,
+                },
+                "gemini" => ProviderCredentials::Gemini {
+                    access_token: cred.access_token,
+                    expires_at: cred.expires_at,
+                },
+                "codex" => ProviderCredentials::Codex {
+                    access_token: cred.access_token,
+                    account_id: cred.account_id.unwrap_or_default(),
+                },
+                _ => continue,
+            };
+            self.daemon_credentials
+                .insert(cred.provider, provider_creds);
+        }
+    }
+
+    /// Get all stored credentials for fetching usage.
+    #[cfg_attr(not(feature = "host-gui"), allow(dead_code))]
+    pub fn get_credentials(&self) -> Vec<(String, ProviderCredentials)> {
+        self.daemon_credentials
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect()
     }
 
     /// Register a new container connection.

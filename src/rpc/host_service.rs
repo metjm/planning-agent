@@ -21,13 +21,17 @@ pub struct ContainerInfo {
     pub build_timestamp: u64,
 }
 
-/// Credential availability info sent from daemon to host.
+/// Credential info sent from daemon to host (includes tokens for API calls).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CredentialInfo {
     pub provider: String,
     pub email: String,
     pub token_valid: bool,
     pub expires_at: Option<i64>,
+    /// Access token for API calls (OAuth token or JWT).
+    pub access_token: String,
+    /// Account ID (only for Codex, None for others).
+    pub account_id: Option<String>,
 }
 
 /// Usage info returned from host to daemon/GUI.

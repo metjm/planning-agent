@@ -4,6 +4,7 @@
 
 pub mod app;
 mod helpers;
+mod usage_panel;
 
 #[cfg(feature = "tray-icon")]
 pub mod tray;

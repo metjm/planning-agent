@@ -203,9 +203,18 @@ impl HostService for HostServer {
             );
             for cred in &credentials {
                 eprintln!(
-                    "[host-rpc]   - {} ({}, valid={})",
-                    cred.provider, cred.email, cred.token_valid
+                    "[host-rpc]   - {} ({}, valid={}, token_len={})",
+                    cred.provider,
+                    cred.email,
+                    cred.token_valid,
+                    cred.access_token.len()
                 );
+            }
+
+            // Store credentials in state for later API calls
+            {
+                let mut state = self.state.lock().await;
+                state.store_credentials(credentials);
             }
 
             // Send event to trigger usage fetching
