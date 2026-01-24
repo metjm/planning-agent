@@ -44,7 +44,16 @@ pub fn render_usage_panel_content(ui: &mut egui::Ui, accounts: &[DisplayAccountR
 
             // Error display
             if let Some(err) = &account.error {
-                ui.colored_label(egui::Color32::from_rgb(255, 100, 100), "Error:");
+                ui.horizontal(|ui| {
+                    ui.colored_label(egui::Color32::from_rgb(255, 100, 100), "Error:");
+                    if ui
+                        .small_button("📋")
+                        .on_hover_text("Copy full error")
+                        .clicked()
+                    {
+                        ui.ctx().copy_text(err.clone());
+                    }
+                });
                 ui.small(truncate_path(err, 30));
             } else {
                 // Session usage bar
