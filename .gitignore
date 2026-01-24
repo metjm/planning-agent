@@ -3,3 +3,11 @@ docs
 .planning-agent
 .gemini
 log.txt
+claude-usage-api.md
+claude-usage.sh
+codex-usage-api.md
+filter-usage-requests.py
+gemini-usage-api.md
+gemini-usage.sh
+intercept-cli.sh
+notes.md
