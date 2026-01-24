@@ -5,7 +5,8 @@ use std::path::Path;
 use tokio::sync::mpsc;
 
 use super::input::handle_key_event;
-use super::mouse_input::handle_mouse_scroll;
+use super::input::{is_summary_panel_visible, is_todo_panel_visible};
+use super::mouse_input::{handle_mouse_click, handle_mouse_scroll};
 use super::session_events::handle_session_event;
 use super::snapshot_helper::create_and_save_snapshot;
 use super::InitHandle;
@@ -38,7 +39,36 @@ pub async fn process_event(
             .await?;
         }
         Event::Mouse(mouse) => {
+            // Check browser overlay states first (on TabManager, not Session)
+            let browser_overlay_active =
+                tab_manager.session_browser.open || tab_manager.workflow_browser.open;
+
             let session = tab_manager.active_mut();
+
+            // Skip click handling when any overlay/modal is active (they capture input)
+            let modal_active = browser_overlay_active
+                || session.error_state.is_some()
+                || session.plan_modal_open
+                || session.review_modal_open
+                || session.implementation_success_modal.is_some()
+                || session.approval_mode != ApprovalMode::None;
+
+            if !modal_active {
+                use crossterm::event::{MouseButton, MouseEventKind};
+                if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
+                    let todos_visible = is_todo_panel_visible(session);
+                    let summary_visible = is_summary_panel_visible(session);
+                    handle_mouse_click(
+                        mouse,
+                        session,
+                        scroll_regions,
+                        todos_visible,
+                        summary_visible,
+                    );
+                }
+            }
+
+            // Scroll handling works even with modals (scroll within modal)
             handle_mouse_scroll(mouse, session, scroll_regions);
         }
         Event::Tick => {

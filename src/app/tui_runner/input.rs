@@ -8,7 +8,7 @@ use crate::tui::ui::util::{
 };
 use crate::tui::{
     ApprovalMode, Event, FeedbackTarget, FocusedPanel, InputMode, Session, SessionEventSender,
-    TabManager, WorkflowCommand,
+    SummaryState, TabManager, WorkflowCommand,
 };
 use anyhow::Result;
 
@@ -92,11 +92,24 @@ pub(crate) fn compute_todo_panel_max_scroll(session: &Session) -> usize {
 }
 
 /// Check if the Todo panel is currently visible based on terminal size and todos.
-fn is_todo_panel_visible(session: &Session) -> bool {
+/// Todos panel requires: terminal width >= 80 AND todos exist.
+pub(crate) fn is_todo_panel_visible(session: &Session) -> bool {
     let (term_width, term_height) = crossterm::terminal::size().unwrap_or((80, 24));
     let has_todos = !session.todos.is_empty();
     let (_, _, visible) = compute_todo_panel_inner_size(term_width, term_height, has_todos);
     visible
+}
+
+/// Check if the Summary panel is currently visible based on summary state.
+/// Note: Unlike todos, summary has NO terminal width requirement.
+/// Summary is visible when summary_state != None for the active run tab.
+/// This mirrors the logic in src/tui/ui/panels.rs:441-443.
+pub(crate) fn is_summary_panel_visible(session: &Session) -> bool {
+    session
+        .run_tabs
+        .get(session.active_run_tab)
+        .map(|tab| tab.summary_state != SummaryState::None)
+        .unwrap_or(false)
 }
 
 /// Compute the max scroll for the plan modal based on wrapped lines and terminal size.

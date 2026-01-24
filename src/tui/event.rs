@@ -343,10 +343,14 @@ impl EventHandler {
                                 }
                             }
                             Some(Ok(CrosstermEvent::Mouse(mouse))) => {
-                                // Only capture scroll events, ignore move/click for now
-                                use crossterm::event::MouseEventKind;
-                                if matches!(mouse.kind, MouseEventKind::ScrollUp | MouseEventKind::ScrollDown)
-                                    && event_tx.send(Event::Mouse(mouse)).is_err()
+                                use crossterm::event::{MouseButton, MouseEventKind};
+                                // Forward scroll and left-click events, ignore move/drag/right-click
+                                if matches!(
+                                    mouse.kind,
+                                    MouseEventKind::ScrollUp
+                                        | MouseEventKind::ScrollDown
+                                        | MouseEventKind::Down(MouseButton::Left)
+                                ) && event_tx.send(Event::Mouse(mouse)).is_err()
                                 {
                                     break;
                                 }
