@@ -41,9 +41,9 @@ pub struct HostState {
     pub last_update: Instant,
     /// Account usage tracking store
     pub usage_store: UsageStore,
-    /// Credentials received from daemons, keyed by provider name.
-    /// Contains the actual tokens needed to make API calls.
-    daemon_credentials: HashMap<String, ProviderCredentials>,
+    /// Credentials received from daemons, keyed by (provider, email).
+    /// Supports multiple accounts per provider.
+    daemon_credentials: HashMap<(String, String), ProviderCredentials>,
 }
 
 impl Default for HostState {
@@ -78,6 +78,7 @@ impl HostState {
 
     /// Store credentials received from a daemon.
     /// Converts CredentialInfo to ProviderCredentials for API calls.
+    /// Keys by (provider, email) to support multiple accounts per provider.
     pub fn store_credentials(&mut self, credentials: Vec<CredentialInfo>) {
         for cred in credentials {
             let provider_creds = match cred.provider.as_str() {
@@ -95,8 +96,9 @@ impl HostState {
                 },
                 _ => continue,
             };
-            self.daemon_credentials
-                .insert(cred.provider, provider_creds);
+            // Key by (provider, email) to support multiple accounts per provider
+            let key = (cred.provider, cred.email);
+            self.daemon_credentials.insert(key, provider_creds);
         }
     }
 
@@ -105,7 +107,7 @@ impl HostState {
     pub fn get_credentials(&self) -> Vec<(String, ProviderCredentials)> {
         self.daemon_credentials
             .iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
+            .map(|((provider, _email), creds)| (provider.clone(), creds.clone()))
             .collect()
     }
 
