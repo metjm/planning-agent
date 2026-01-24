@@ -109,6 +109,49 @@ claude_mode:
     aggregation: any_rejects
     sequential: true
 
+# Codex-mode configuration (for codex-only workflow)
+# Defines Codex-specific agents, substitution rules, and phase overrides
+codex_mode:
+  # Codex agents for Codex-only mode (merge into agents map)
+  agents:
+    codex:
+      command: "codex"
+      args:
+        - "exec"
+        - "--json"
+        - "--dangerously-bypass-approvals-and-sandbox"
+        - "--skip-git-repo-check"
+      allowed_tools: []
+
+    codex-reviewer:
+      command: "codex"
+      args:
+        - "exec"
+        - "--json"
+        - "--dangerously-bypass-approvals-and-sandbox"
+        - "--skip-git-repo-check"
+      allowed_tools: []
+
+  # Agent name substitutions when codex-only mode is active
+  substitutions:
+    claude: codex
+    gemini: codex
+
+  # Override the reviewing phase to use only codex
+  reviewing:
+    agents:
+      - codex
+    aggregation: any_rejects
+    sequential: false
+
+  # Override implementation to use codex/codex-reviewer
+  implementation:
+    implementing:
+      agent: codex
+      max_turns: 100
+    reviewing:
+      agent: codex-reviewer
+
 workflow:
   planning:
     agent: codex

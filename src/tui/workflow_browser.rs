@@ -28,6 +28,10 @@ pub struct WorkflowEntry {
     pub sequential_review: bool,
     /// Aggregation mode description
     pub aggregation: String,
+    /// Implementation agent name (or "disabled" if implementation not enabled)
+    pub implementing_agent: String,
+    /// Implementation review agent name (or "disabled" if implementation not enabled)
+    pub implementation_reviewing_agent: String,
 }
 
 /// State for the workflow browser overlay.
@@ -84,41 +88,63 @@ impl WorkflowBrowserState {
         self.entries = workflows
             .into_iter()
             .map(|wf| {
-                // Load config to extract agent details
-                let (planning, reviewing, sequential, aggregation) =
-                    match load_workflow_by_name(&wf.name) {
-                        Ok(config) => {
-                            let planning = config.workflow.planning.agent.clone();
-                            let reviewing: Vec<_> = config
-                                .workflow
-                                .reviewing
-                                .agents
-                                .iter()
-                                .map(|a| a.display_id().to_string())
-                                .collect();
-                            let agg = match config.workflow.reviewing.aggregation {
-                                AggregationMode::AnyRejects => "any-rejects",
-                                AggregationMode::AllReject => "all-reject",
-                                AggregationMode::Majority => "majority",
-                            };
-                            (
-                                planning,
-                                reviewing.join(", "),
-                                config.workflow.reviewing.sequential,
-                                agg.to_string(),
-                            )
-                        }
-                        Err(_) => ("?".to_string(), "?".to_string(), false, "?".to_string()),
-                    };
+                match load_workflow_by_name(&wf.name) {
+                    Ok(config) => {
+                        let planning = config.workflow.planning.agent.clone();
+                        let reviewing: Vec<_> = config
+                            .workflow
+                            .reviewing
+                            .agents
+                            .iter()
+                            .map(|a| a.display_id().to_string())
+                            .collect();
+                        let agg = match config.workflow.reviewing.aggregation {
+                            AggregationMode::AnyRejects => "any-rejects",
+                            AggregationMode::AllReject => "all-reject",
+                            AggregationMode::Majority => "majority",
+                        };
 
-                WorkflowEntry {
-                    name: wf.name,
-                    source: wf.source,
-                    is_selected: wf.is_selected,
-                    planning_agent: planning,
-                    reviewing_agents: reviewing,
-                    sequential_review: sequential,
-                    aggregation,
+                        // Extract implementation phase agents
+                        let (implementing, impl_reviewing) = if config.implementation.enabled {
+                            (
+                                config
+                                    .implementation
+                                    .implementing_agent()
+                                    .unwrap_or("?")
+                                    .to_string(),
+                                config
+                                    .implementation
+                                    .reviewing_agent()
+                                    .unwrap_or("?")
+                                    .to_string(),
+                            )
+                        } else {
+                            ("disabled".to_string(), "disabled".to_string())
+                        };
+
+                        WorkflowEntry {
+                            name: wf.name,
+                            source: wf.source,
+                            is_selected: wf.is_selected,
+                            planning_agent: planning,
+                            reviewing_agents: reviewing.join(", "),
+                            sequential_review: config.workflow.reviewing.sequential,
+                            aggregation: agg.to_string(),
+                            implementing_agent: implementing,
+                            implementation_reviewing_agent: impl_reviewing,
+                        }
+                    }
+                    Err(_) => WorkflowEntry {
+                        name: wf.name,
+                        source: wf.source,
+                        is_selected: wf.is_selected,
+                        planning_agent: "?".to_string(),
+                        reviewing_agents: "?".to_string(),
+                        sequential_review: false,
+                        aggregation: "?".to_string(),
+                        implementing_agent: "?".to_string(),
+                        implementation_reviewing_agent: "?".to_string(),
+                    },
                 }
             })
             .collect();
@@ -192,6 +218,8 @@ mod tests {
             reviewing_agents: "claude".to_string(),
             sequential_review: false,
             aggregation: "any-rejects".to_string(),
+            implementing_agent: "codex".to_string(),
+            implementation_reviewing_agent: "claude".to_string(),
         });
 
         state.close();
@@ -211,6 +239,8 @@ mod tests {
                 reviewing_agents: "claude".to_string(),
                 sequential_review: false,
                 aggregation: "any-rejects".to_string(),
+                implementing_agent: "codex".to_string(),
+                implementation_reviewing_agent: "claude".to_string(),
             },
             WorkflowEntry {
                 name: "b".to_string(),
@@ -220,6 +250,8 @@ mod tests {
                 reviewing_agents: "claude".to_string(),
                 sequential_review: false,
                 aggregation: "any-rejects".to_string(),
+                implementing_agent: "codex".to_string(),
+                implementation_reviewing_agent: "claude".to_string(),
             },
             WorkflowEntry {
                 name: "c".to_string(),
@@ -229,6 +261,8 @@ mod tests {
                 reviewing_agents: "claude".to_string(),
                 sequential_review: false,
                 aggregation: "any-rejects".to_string(),
+                implementing_agent: "codex".to_string(),
+                implementation_reviewing_agent: "claude".to_string(),
             },
         ];
         state.selected_idx = 0;
@@ -249,6 +283,8 @@ mod tests {
                 reviewing_agents: "claude".to_string(),
                 sequential_review: false,
                 aggregation: "any-rejects".to_string(),
+                implementing_agent: "codex".to_string(),
+                implementation_reviewing_agent: "claude".to_string(),
             },
             WorkflowEntry {
                 name: "b".to_string(),
@@ -258,6 +294,8 @@ mod tests {
                 reviewing_agents: "claude".to_string(),
                 sequential_review: false,
                 aggregation: "any-rejects".to_string(),
+                implementing_agent: "codex".to_string(),
+                implementation_reviewing_agent: "claude".to_string(),
             },
             WorkflowEntry {
                 name: "c".to_string(),
@@ -267,6 +305,8 @@ mod tests {
                 reviewing_agents: "claude".to_string(),
                 sequential_review: false,
                 aggregation: "any-rejects".to_string(),
+                implementing_agent: "codex".to_string(),
+                implementation_reviewing_agent: "claude".to_string(),
             },
         ];
         state.selected_idx = 2;
@@ -288,6 +328,8 @@ mod tests {
             reviewing_agents: "claude".to_string(),
             sequential_review: false,
             aggregation: "any-rejects".to_string(),
+            implementing_agent: "codex".to_string(),
+            implementation_reviewing_agent: "claude".to_string(),
         });
         state.selected_idx = 0;
 
@@ -308,6 +350,8 @@ mod tests {
                 reviewing_agents: "claude".to_string(),
                 sequential_review: false,
                 aggregation: "any-rejects".to_string(),
+                implementing_agent: "codex".to_string(),
+                implementation_reviewing_agent: "claude".to_string(),
             });
         }
 
@@ -333,6 +377,8 @@ mod tests {
                 reviewing_agents: "claude".to_string(),
                 sequential_review: false,
                 aggregation: "any-rejects".to_string(),
+                implementing_agent: "codex".to_string(),
+                implementation_reviewing_agent: "claude".to_string(),
             });
         }
 
@@ -355,6 +401,7 @@ mod tests {
         // Should have at least the built-in workflows
         assert!(state.entries.iter().any(|e| e.name == "default"));
         assert!(state.entries.iter().any(|e| e.name == "claude-only"));
+        assert!(state.entries.iter().any(|e| e.name == "codex-only"));
     }
 
     #[test]
@@ -369,5 +416,37 @@ mod tests {
         if let Some(idx) = state.entries.iter().position(|e| e.is_selected) {
             assert_eq!(state.selected_idx, idx);
         }
+    }
+
+    #[test]
+    fn test_refresh_populates_implementation_agents_for_default() {
+        let mut state = WorkflowBrowserState::new();
+        let temp_dir = std::env::temp_dir();
+
+        state.refresh(&temp_dir);
+
+        // Find the default workflow
+        let default = state.entries.iter().find(|e| e.name == "default").unwrap();
+        // Default workflow should have codex for implementing and claude for review
+        assert_eq!(default.implementing_agent, "codex");
+        assert_eq!(default.implementation_reviewing_agent, "claude");
+    }
+
+    #[test]
+    fn test_refresh_populates_implementation_agents_for_codex_only() {
+        let mut state = WorkflowBrowserState::new();
+        let temp_dir = std::env::temp_dir();
+
+        state.refresh(&temp_dir);
+
+        // Find the codex-only workflow
+        let codex_only = state
+            .entries
+            .iter()
+            .find(|e| e.name == "codex-only")
+            .unwrap();
+        // Codex-only workflow should have codex for implementing and codex-reviewer for review
+        assert_eq!(codex_only.implementing_agent, "codex");
+        assert_eq!(codex_only.implementation_reviewing_agent, "codex-reviewer");
     }
 }

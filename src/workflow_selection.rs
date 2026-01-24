@@ -94,6 +94,10 @@ pub fn list_available_workflows_for_display() -> Result<Vec<WorkflowInfo>> {
         name: "claude-only".to_string(),
         source: "built-in".to_string(),
     });
+    workflows.push(WorkflowInfo {
+        name: "codex-only".to_string(),
+        source: "built-in".to_string(),
+    });
 
     // User workflows from ~/.planning-agent/workflows/
     let workflows_directory = workflows_dir()?;
@@ -105,7 +109,7 @@ pub fn list_available_workflows_for_display() -> Result<Vec<WorkflowInfo>> {
                 if let Some(stem) = path.file_stem() {
                     let name = stem.to_string_lossy().to_string();
                     // Skip if it conflicts with built-in names
-                    if name != "default" && name != "claude-only" {
+                    if name != "default" && name != "claude-only" && name != "codex-only" {
                         workflows.push(WorkflowInfo {
                             name: name.clone(),
                             source: path.display().to_string(),
@@ -150,6 +154,7 @@ pub fn load_workflow_by_name(name: &str) -> Result<crate::config::WorkflowConfig
     match name {
         "default" => Ok(crate::config::WorkflowConfig::default_config()),
         "claude-only" => Ok(crate::config::WorkflowConfig::claude_only_config()),
+        "codex-only" => Ok(crate::config::WorkflowConfig::codex_only_config()),
         _ => {
             let workflows_directory = workflows_dir()?;
             let yaml_path = workflows_directory.join(format!("{}.yaml", name));
@@ -252,6 +257,7 @@ mod tests {
         let workflows = list_available_workflows_for_display().unwrap();
         assert!(workflows.iter().any(|w| w.name == "default"));
         assert!(workflows.iter().any(|w| w.name == "claude-only"));
+        assert!(workflows.iter().any(|w| w.name == "codex-only"));
     }
 
     #[test]
@@ -262,11 +268,53 @@ mod tests {
 
         let claude_only = load_workflow_by_name("claude-only").unwrap();
         assert!(!claude_only.agents.is_empty());
+
+        let codex_only = load_workflow_by_name("codex-only").unwrap();
+        assert!(!codex_only.agents.is_empty());
     }
 
     #[test]
     fn test_load_nonexistent_workflow() {
         let result = load_workflow_by_name("nonexistent-workflow-xyz");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_codex_only_workflow_uses_codex_for_planning() {
+        let codex_only = load_workflow_by_name("codex-only").unwrap();
+        assert_eq!(codex_only.workflow.planning.agent, "codex");
+    }
+
+    #[test]
+    fn test_codex_only_workflow_has_implementation_enabled() {
+        let codex_only = load_workflow_by_name("codex-only").unwrap();
+        assert!(codex_only.implementation.enabled);
+    }
+
+    #[test]
+    fn test_codex_only_workflow_has_codex_reviewer() {
+        let codex_only = load_workflow_by_name("codex-only").unwrap();
+        assert!(codex_only.agents.contains_key("codex-reviewer"));
+    }
+
+    #[test]
+    fn test_codex_only_workflow_uses_correct_impl_agents() {
+        let codex_only = load_workflow_by_name("codex-only").unwrap();
+        assert_eq!(
+            codex_only.implementation.implementing_agent(),
+            Some("codex")
+        );
+        assert_eq!(
+            codex_only.implementation.reviewing_agent(),
+            Some("codex-reviewer")
+        );
+    }
+
+    #[test]
+    fn test_codex_reviewer_has_same_command_as_codex() {
+        let codex_only = load_workflow_by_name("codex-only").unwrap();
+        let codex = codex_only.agents.get("codex").unwrap();
+        let codex_reviewer = codex_only.agents.get("codex-reviewer").unwrap();
+        assert_eq!(codex.command, codex_reviewer.command);
     }
 }

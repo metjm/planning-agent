@@ -27,7 +27,7 @@ pub fn draw_workflow_browser_overlay(frame: &mut Frame, tab_manager: &TabManager
             Constraint::Length(3), // Title
             Constraint::Length(2), // Column headers
             Constraint::Min(0),    // Workflow list
-            Constraint::Length(3), // Selected workflow details
+            Constraint::Length(4), // Selected workflow details (2 lines)
             Constraint::Length(2), // Instructions
         ])
         .split(popup_area);
@@ -177,19 +177,30 @@ pub fn draw_workflow_browser_overlay(frame: &mut Frame, tab_manager: &TabManager
 
     // Selected workflow details panel
     if let Some(entry) = tab_manager.workflow_browser.selected_entry() {
-        let details = Paragraph::new(vec![Line::from(vec![
-            Span::styled(" Aggregation: ", Style::default().fg(Color::DarkGray)),
-            Span::styled(&entry.aggregation, Style::default().fg(Color::Yellow)),
-            Span::styled("  Sequential: ", Style::default().fg(Color::DarkGray)),
-            Span::styled(
-                if entry.sequential_review { "Yes" } else { "No" },
-                Style::default().fg(if entry.sequential_review {
-                    Color::Green
-                } else {
-                    Color::DarkGray
-                }),
-            ),
-        ])])
+        let details = Paragraph::new(vec![
+            Line::from(vec![
+                Span::styled(" Aggregation: ", Style::default().fg(Color::DarkGray)),
+                Span::styled(&entry.aggregation, Style::default().fg(Color::Yellow)),
+                Span::styled("  Sequential: ", Style::default().fg(Color::DarkGray)),
+                Span::styled(
+                    if entry.sequential_review { "Yes" } else { "No" },
+                    Style::default().fg(if entry.sequential_review {
+                        Color::Green
+                    } else {
+                        Color::DarkGray
+                    }),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled(" Implementing: ", Style::default().fg(Color::DarkGray)),
+                Span::styled(&entry.implementing_agent, Style::default().fg(Color::Cyan)),
+                Span::styled("  Impl Review: ", Style::default().fg(Color::DarkGray)),
+                Span::styled(
+                    &entry.implementation_reviewing_agent,
+                    Style::default().fg(Color::Cyan),
+                ),
+            ]),
+        ])
         .block(Block::default().borders(Borders::TOP));
         frame.render_widget(details, chunks[3]);
     }
