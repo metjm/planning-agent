@@ -114,6 +114,39 @@ const result = specific(input);
 // Expected output: { /* concrete result */ }
 ```
 
+### Plan Length Guidelines
+
+**Target: Keep the main plan file under ~1000 lines.**
+
+This is a guideline for readability, not a strict limit. For large changes:
+
+1. **Keep the main plan.md focused** on high-level architecture, key decisions, and overall flow
+2. **Create supplementary files** in the session folder for detailed content:
+   - `details_[component].md` - Detailed implementation specifics for major components
+   - `examples_[feature].[ext]` - Extended code examples
+   - `schema_[name].json` - Data schemas or type definitions
+   - `test_scenarios.md` - Detailed test case specifications
+3. **Reference supplementary files** in the main plan with absolute paths
+4. **State in the plan** how many supplementary files were created and what they contain
+
+**Why this matters:**
+- Long plans are harder to review and implement correctly
+- Breaking into files creates natural component boundaries
+- Reviewers can focus on high-level decisions first, then dive into details
+- Implementers can work on components in parallel
+
+**In the main plan, include a section like:**
+
+```markdown
+## Supplementary Files
+
+This plan uses supplementary files for detailed specifications:
+
+- `{session-folder}/details_auth.md` - Authentication flow implementation details
+- `{session-folder}/details_api.md` - API endpoint specifications
+- `{session-folder}/examples_handlers.rs` - Handler code examples
+```
+
 ### Supplementary Files
 
 You may create supplementary files in the session folder for:
@@ -122,9 +155,10 @@ You may create supplementary files in the session folder for:
 - Data schemas or type definitions
 - Configuration file examples
 - Test data fixtures
+- Detailed component specifications (for large plans)
 
 Use the `session-folder-path` input to determine where to place these files.
-Name files descriptively: `example_[feature].[ext]`, `schema_[name].json`, etc.
+Name files descriptively: `details_[component].md`, `example_[feature].[ext]`, `schema_[name].json`, etc.
 
 Reference supplementary files in the plan using absolute paths.
 

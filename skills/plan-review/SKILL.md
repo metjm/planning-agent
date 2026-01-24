@@ -135,6 +135,29 @@ Plans must focus on technical scope, sequencing, and verification—not scheduli
 
 If any timeline content is present, send the plan back for revision with instructions to remove all time-related content.
 
+### Plan Length Check
+
+**Guideline: Main plan file should target ~1000 lines.**
+
+This is a readability guideline, not a strict limit. However, very long plans (significantly over 1000 lines) indicate poor organization. Check:
+
+- **For plans over ~1000 lines:** Are supplementary files used appropriately?
+- **For large changes:** Is the plan split into logical supplementary files?
+- **Does the plan reference supplementary files** with a "Supplementary Files" section?
+
+**When to flag length issues:**
+
+- Plan is excessively long AND doesn't use supplementary files
+- Detailed component specs are inline when they should be extracted
+- Code examples are so extensive they obscure the plan structure
+
+**Do NOT reject for length alone** - this is a guideline. But DO recommend restructuring if:
+- The plan is hard to follow due to length
+- Natural component boundaries aren't being used
+- Supplementary files would improve clarity
+
+Note: Some plans legitimately need to be long. A plan touching many files with careful specifications may exceed 1000 lines even with good organization.
+
 ## Review Process
 
 ### Phase 1: Initial Read-Through
@@ -388,6 +411,18 @@ Write feedback to the `feedback-output-path` file in this structure:
 | Library/API | Import Shown? | Working Example? | Verified? | Assessment |
 |-------------|---------------|------------------|-----------|------------|
 | [Library X] | YES/NO | YES/NO | YES/NO | ADEQUATE / MISSING |
+
+### Plan Structure
+
+**Status:** [WELL ORGANIZED / COULD IMPROVE / NEEDS RESTRUCTURING]
+
+**Length Assessment:**
+- Main plan lines: [approximate count]
+- Supplementary files used: [YES/NO]
+- Files referenced: [list or "none"]
+
+**Organization Notes:**
+[Notes on plan structure, whether supplementary files would help, etc.]
 
 ### Code Quality Principles
 
