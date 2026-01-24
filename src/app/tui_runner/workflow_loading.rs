@@ -32,14 +32,74 @@ pub fn restore_terminal(
     Ok(())
 }
 
+/// Load workflow config from persisted selection or working directory.
+///
+/// This function handles the non-CLI loading priority:
+/// 1. Persisted workflow selection → `~/.planning-agent/state/<wd-hash>/workflow-selection.json`
+/// 2. `./workflow.yaml` in working directory → auto-discover
+/// 3. Fallback → claude_only_config()
+///
+/// Use this for dynamic workflow reloading where CLI flags should not apply
+/// (e.g., after user explicitly selects a workflow via `/workflow`).
+pub fn load_workflow_from_selection(working_dir: &Path) -> WorkflowConfig {
+    // Check for persisted workflow selection (per-working-directory)
+    if let Ok(selection) = crate::workflow_selection::WorkflowSelection::load(working_dir) {
+        match crate::workflow_selection::load_workflow_by_name(&selection.workflow) {
+            Ok(cfg) => {
+                return cfg;
+            }
+            Err(e) => {
+                eprintln!(
+                    "[planning-agent] Warning: Failed to load selected workflow '{}': {}",
+                    selection.workflow, e
+                );
+            }
+        }
+    }
+
+    // ./workflow.yaml in working directory
+    let default_config_path = working_dir.join("workflow.yaml");
+    if default_config_path.exists() {
+        match WorkflowConfig::load(&default_config_path) {
+            Ok(cfg) => {
+                return cfg;
+            }
+            Err(e) => {
+                eprintln!(
+                    "[planning-agent] Warning: Failed to load workflow.yaml: {}",
+                    e
+                );
+            }
+        }
+    }
+
+    WorkflowConfig::claude_only_config()
+}
+
+/// Get workflow config for a session, using context if available or loading from selection.
+///
+/// This is the primary way to get workflow config during TUI operation:
+/// - If session has context, use context.workflow_config (preserves session's original config)
+/// - Otherwise, load from current persisted selection
+pub fn get_workflow_config_for_session(
+    session: &crate::tui::Session,
+    working_dir: &Path,
+) -> WorkflowConfig {
+    session
+        .context
+        .as_ref()
+        .map(|ctx| ctx.workflow_config.clone())
+        .unwrap_or_else(|| load_workflow_from_selection(working_dir))
+}
+
 /// Load workflow config based on CLI flags and working directory.
 ///
 /// Priority order:
 /// 1. `--claude` flag → claude_only_config()
 /// 2. `--config <path>` → load from specified file
-/// 3. Persisted workflow selection → `~/.planning-agent/state/<wd-hash>/workflow-selection.json`
-/// 4. `./workflow.yaml` in working directory → auto-discover
-/// 5. Fallback → claude_only_config()
+/// 3. Persisted workflow selection
+/// 4. `./workflow.yaml` in working directory
+/// 5. Fallback to claude_only_config()
 pub fn load_workflow_config(
     cli: &Cli,
     working_dir: &Path,
@@ -69,46 +129,11 @@ pub fn load_workflow_config(
         }
     }
 
-    // Check for persisted workflow selection (per-working-directory)
-    if let Ok(selection) = crate::workflow_selection::WorkflowSelection::load(working_dir) {
-        match crate::workflow_selection::load_workflow_by_name(&selection.workflow) {
-            Ok(cfg) => {
-                debug_log(
-                    start,
-                    &format!(
-                        "Using selected workflow '{}' for {}",
-                        selection.workflow,
-                        working_dir.display()
-                    ),
-                );
-                return cfg;
-            }
-            Err(e) => {
-                eprintln!(
-                    "[planning-agent] Warning: Failed to load selected workflow '{}': {}",
-                    selection.workflow, e
-                );
-            }
-        }
-    }
-
-    // ./workflow.yaml in working directory
-    let default_config_path = working_dir.join("workflow.yaml");
-    if default_config_path.exists() {
-        match WorkflowConfig::load(&default_config_path) {
-            Ok(cfg) => {
-                debug_log(start, "Loaded default workflow.yaml");
-                return cfg;
-            }
-            Err(e) => {
-                eprintln!(
-                    "[planning-agent] Warning: Failed to load workflow.yaml: {}",
-                    e
-                );
-            }
-        }
-    }
-
-    debug_log(start, "Using built-in claude-only workflow config");
-    WorkflowConfig::claude_only_config()
+    // Delegate to the shared helper for selection/local/fallback logic
+    let cfg = load_workflow_from_selection(working_dir);
+    debug_log(
+        start,
+        &format!("Loaded workflow config for {}", working_dir.display()),
+    );
+    cfg
 }

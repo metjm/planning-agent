@@ -8,6 +8,7 @@ use crate::app::util::build_resume_command;
 use crate::app::workflow::{WorkflowResult, WorkflowRunConfig};
 use crate::config::WorkflowConfig;
 use crate::planning_paths;
+// Note: WorkflowConfig is still needed for start_resumed_workflow's parameter
 use crate::state::{Phase, State};
 use crate::tui::session::context::compute_effective_working_dir;
 use crate::tui::{Session, SessionStatus, TabManager, UserApprovalResponse, WorkflowCommand};
@@ -21,6 +22,11 @@ use super::{run_workflow_with_config, ResumableSession};
 ///
 /// This helper sets up the workflow channels and spawns the workflow task.
 /// Used by both CLI --resume and /sessions overlay resume.
+///
+/// **Note on workflow_config parameter:** Callers are responsible for providing
+/// the correct workflow_config based on their context:
+/// - `--resume` CLI: Use `load_workflow_config(cli, ...)` to respect CLI flags
+/// - `/sessions` browser: Use `load_workflow_from_selection(...)` to respect current selection
 ///
 /// The function uses session context if available:
 /// - `session.context.effective_working_dir` for workflow execution (worktree-aware)
@@ -88,17 +94,26 @@ pub fn start_resumed_workflow(
 ///
 /// This is called when an init task (loading state, extracting feature name, etc.)
 /// completes. It sets up the workflow channels, session context, and spawns the workflow task.
+///
+/// Note: Workflow configuration is loaded dynamically from the persisted selection
+/// for base_working_dir, ensuring that /workflow selections are always respected.
 pub async fn handle_init_completion(
     session_id: usize,
     handle: tokio::task::JoinHandle<anyhow::Result<(State, PathBuf, String, PathBuf)>>,
     tab_manager: &mut TabManager,
-    base_working_dir: &Path, // Base working directory for session context
-    workflow_config: &WorkflowConfig,
+    base_working_dir: &Path,
     output_tx: &mpsc::UnboundedSender<crate::tui::Event>,
 ) {
     match handle.await {
         Ok(Ok((state, state_path, feature_name, effective_working_dir))) => {
             if let Some(session) = tab_manager.session_by_id_mut(session_id) {
+                // Load workflow config from persisted selection for this working directory
+                // This ensures /workflow changes are respected for new sessions
+                let workflow_config =
+                    crate::app::tui_runner::workflow_loading::load_workflow_from_selection(
+                        base_working_dir,
+                    );
+
                 session.name = feature_name;
                 session.workflow_state = Some(state.clone());
 
@@ -141,7 +156,7 @@ pub async fn handle_init_completion(
 
                 let cfg = workflow_config.clone();
                 let workflow_handle = tokio::spawn({
-                    let working_dir = effective_working_dir; // Use worktree path if created
+                    let working_dir = effective_working_dir;
                     let tx = output_tx.clone();
                     let sid = session_id;
                     async move {
@@ -157,7 +172,7 @@ pub async fn handle_init_completion(
                                 session_id: sid,
                                 run_id,
                                 no_daemon: false,
-                                snapshot_tx: None, // Legacy mode - state updates via Event::SessionStateUpdate
+                                snapshot_tx: None,
                             },
                         )
                         .await
@@ -186,7 +201,6 @@ pub async fn handle_init_completion(
 pub async fn check_workflow_completions(
     tab_manager: &mut TabManager,
     working_dir: &Path,
-    workflow_config: &WorkflowConfig,
     output_tx: &mpsc::UnboundedSender<crate::tui::Event>,
 ) -> Vec<ResumableSession> {
     let mut resumable_sessions = Vec::new();
@@ -208,13 +222,8 @@ pub async fn check_workflow_completions(
                         session.workflow_control_tx = None;
                     }
                     Ok(Ok(WorkflowResult::NeedsRestart { user_feedback })) => {
-                        handle_workflow_restart(
-                            session,
-                            &user_feedback,
-                            working_dir,
-                            workflow_config,
-                            output_tx,
-                        );
+                        // handle_workflow_restart now loads config internally
+                        handle_workflow_restart(session, &user_feedback, working_dir, output_tx);
                     }
                     Ok(Ok(WorkflowResult::Stopped)) => {
                         if let Some(resumable) = handle_workflow_stopped(session, working_dir) {
@@ -222,8 +231,6 @@ pub async fn check_workflow_completions(
                         }
                     }
                     Ok(Ok(WorkflowResult::ImplementationRequested)) => {
-                        // This should not happen as it's handled inside run_workflow_with_config,
-                        // but if it does reach here, treat it as planning in progress
                         session.status = SessionStatus::Planning;
                     }
                     Ok(Err(e)) => {
@@ -248,12 +255,11 @@ pub async fn check_workflow_completions(
 /// - `context.base_working_dir` for state_path computation
 /// - `context.effective_working_dir` for workflow execution (worktree-aware)
 /// - `context.workflow_config` for workflow configuration
-/// - Falls back to global `working_dir`/`workflow_config` if context is not set
+/// - Falls back to loading from persisted selection if context is not set
 fn handle_workflow_restart(
     session: &mut crate::tui::Session,
     user_feedback: &str,
     global_working_dir: &Path,
-    global_workflow_config: &WorkflowConfig,
     output_tx: &mpsc::UnboundedSender<crate::tui::Event>,
 ) {
     session.add_output("".to_string());
@@ -267,9 +273,10 @@ fn handle_workflow_restart(
     session.chat_follow_mode = true;
     session.status = SessionStatus::Planning;
 
-    // Get working directories and config from session context or fall back to globals
+    // Get working directories and config from session context or load from selection
     let (base_working_dir, effective_working_dir, workflow_config) =
         if let Some(ref ctx) = session.context {
+            // Session has context - use stored values
             (
                 ctx.base_working_dir.clone(),
                 ctx.effective_working_dir.clone(),
@@ -277,18 +284,24 @@ fn handle_workflow_restart(
             )
         } else if let Some(ref state) = session.workflow_state {
             // No context but have state - compute effective_working_dir from worktree_info
+            // and load workflow config from current selection
             let effective =
                 compute_effective_working_dir(global_working_dir, state.worktree_info.as_ref());
-            (
-                global_working_dir.to_path_buf(),
-                effective,
-                global_workflow_config.clone(),
-            )
+            let workflow_config =
+                crate::app::tui_runner::workflow_loading::load_workflow_from_selection(
+                    global_working_dir,
+                );
+            (global_working_dir.to_path_buf(), effective, workflow_config)
         } else {
+            // No context and no state - use global working dir and load from selection
+            let workflow_config =
+                crate::app::tui_runner::workflow_loading::load_workflow_from_selection(
+                    global_working_dir,
+                );
             (
                 global_working_dir.to_path_buf(),
                 global_working_dir.to_path_buf(),
-                global_workflow_config.clone(),
+                workflow_config,
             )
         };
 

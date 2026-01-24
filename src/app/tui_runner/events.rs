@@ -1,4 +1,3 @@
-use crate::config::WorkflowConfig;
 use crate::tui::scroll_regions::ScrollableRegions;
 use crate::tui::{ApprovalMode, Event, FocusedPanel, SessionStatus, TabManager};
 use anyhow::Result;
@@ -20,7 +19,6 @@ pub async fn process_event(
     output_tx: &mpsc::UnboundedSender<Event>,
     working_dir: &Path,
     cli: &crate::app::cli::Cli,
-    workflow_config: &WorkflowConfig,
     init_handle: &mut InitHandle,
     first_session_id: usize,
 ) -> Result<bool> {
@@ -35,7 +33,6 @@ pub async fn process_event(
                 output_tx,
                 working_dir,
                 cli,
-                workflow_config,
                 init_handle,
             )
             .await?;

@@ -291,8 +291,6 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
         debug_log(start, "update-installed marker consumed");
     }
 
-    let workflow_config = workflow_loading::load_workflow_config(&cli, &working_dir, start);
-
     let objective = cli.objective.join(" ").trim().to_string();
 
     if cli.continue_workflow && cli.name.is_none() {
@@ -360,13 +358,18 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
 
         let _ = output_tx.send(Event::StateUpdate(state.clone()));
 
+        // Load workflow config from CLI args (--claude, --config) for resume.
+        // This respects CLI flags which take precedence over persisted selection.
+        let resume_workflow_config =
+            workflow_loading::load_workflow_config(&cli, &snapshot.working_dir, start);
+
         // Set up session context BEFORE starting the workflow
         // This enables proper working directory tracking for cross-directory resume
         let context = crate::tui::SessionContext::from_snapshot(
             snapshot.working_dir.clone(),
             state_path.clone(),
             state.worktree_info.as_ref(),
-            workflow_config.clone(),
+            resume_workflow_config.clone(),
         );
         first_session.context = Some(context);
 
@@ -376,7 +379,7 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
             state,
             state_path,
             &working_dir,
-            &workflow_config,
+            &resume_workflow_config,
             &output_tx,
         );
         debug_log(start, "resume workflow started via start_resumed_workflow");
@@ -603,7 +606,6 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                 &output_tx,
                 &working_dir,
                 &cli,
-                &workflow_config,
                 &mut init_handle,
                 first_session_id,
             )
@@ -692,7 +694,6 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                     handle,
                     &mut tab_manager,
                     &working_dir,
-                    &workflow_config,
                     &output_tx,
                 )
                 .await;
@@ -702,13 +703,8 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
         }
 
         // Check workflow completions and collect resumable sessions
-        let completed = check_workflow_completions(
-            &mut tab_manager,
-            &working_dir,
-            &workflow_config,
-            &output_tx,
-        )
-        .await;
+        let completed =
+            check_workflow_completions(&mut tab_manager, &working_dir, &output_tx).await;
         resumable_sessions.extend(completed);
     }
 

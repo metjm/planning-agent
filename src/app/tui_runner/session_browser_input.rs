@@ -3,7 +3,6 @@
 //! This module handles keyboard input for the session browser overlay,
 //! including navigation, resume, force-stop, and confirmation dialogs.
 
-use crate::config::WorkflowConfig;
 use crate::tui::session::context::{
     compute_effective_working_dir, validate_working_dir, SessionContext,
 };
@@ -18,19 +17,11 @@ pub async fn handle_session_browser_input(
     key: crossterm::event::KeyEvent,
     tab_manager: &mut TabManager,
     working_dir: &Path,
-    workflow_config: &WorkflowConfig,
     output_tx: &mpsc::UnboundedSender<Event>,
 ) -> Result<bool> {
     // Handle confirmation dialog input first
     if tab_manager.session_browser.confirmation_pending.is_some() {
-        return handle_confirmation_input(
-            key,
-            tab_manager,
-            working_dir,
-            workflow_config,
-            output_tx,
-        )
-        .await;
+        return handle_confirmation_input(key, tab_manager, working_dir, output_tx).await;
     }
 
     match key.code {
@@ -72,12 +63,7 @@ pub async fn handle_session_browser_input(
                         );
                 } else {
                     // Same directory - resume directly
-                    resume_session_in_current_process(
-                        tab_manager,
-                        &entry,
-                        workflow_config,
-                        output_tx,
-                    );
+                    resume_session_in_current_process(tab_manager, &entry, working_dir, output_tx);
                 }
             }
         }
@@ -98,7 +84,6 @@ async fn handle_confirmation_input(
     key: crossterm::event::KeyEvent,
     tab_manager: &mut TabManager,
     working_dir: &Path,
-    workflow_config: &WorkflowConfig,
     output_tx: &mpsc::UnboundedSender<Event>,
 ) -> Result<bool> {
     use crate::tui::session_browser::ConfirmationState;
@@ -122,7 +107,6 @@ async fn handle_confirmation_input(
                         tab_manager,
                         &session_id,
                         &target_dir,
-                        workflow_config,
                         output_tx,
                     );
                 }
@@ -171,7 +155,6 @@ fn execute_cross_directory_resume_in_process(
     tab_manager: &mut TabManager,
     session_id: &str,
     target_dir: &Path,
-    workflow_config: &WorkflowConfig,
     output_tx: &mpsc::UnboundedSender<Event>,
 ) {
     // Find the entry for this session to get full information
@@ -185,7 +168,7 @@ fn execute_cross_directory_resume_in_process(
     match entry {
         Some(entry) => {
             // Use the unified resume function which now handles cross-directory resume
-            resume_session_in_current_process(tab_manager, &entry, workflow_config, output_tx);
+            resume_session_in_current_process(tab_manager, &entry, target_dir, output_tx);
         }
         None => {
             // Entry not found - try to load directly
@@ -211,7 +194,7 @@ fn execute_cross_directory_resume_in_process(
                 pid: None,
                 is_live: false,
             };
-            resume_session_in_current_process(tab_manager, &entry, workflow_config, output_tx);
+            resume_session_in_current_process(tab_manager, &entry, target_dir, output_tx);
         }
     }
 }
@@ -220,10 +203,12 @@ fn execute_cross_directory_resume_in_process(
 ///
 /// This function now supports both same-directory and cross-directory resume
 /// by creating a SessionContext with the appropriate working directories.
+/// Workflow config is loaded from the current persisted selection for the session's
+/// working directory, ensuring /workflow changes are respected.
 fn resume_session_in_current_process(
     tab_manager: &mut TabManager,
     entry: &crate::tui::session_browser::SessionEntry,
-    workflow_config: &WorkflowConfig,
+    _global_working_dir: &Path,
     output_tx: &mpsc::UnboundedSender<Event>,
 ) {
     tab_manager.session_browser.resuming = true;
@@ -240,6 +225,13 @@ fn resume_session_in_current_process(
 
     match load_result {
         Ok(snapshot) => {
+            // Load workflow config from persisted selection for the SESSION's working directory
+            // This ensures /workflow changes are respected when resuming
+            let workflow_config =
+                crate::app::tui_runner::workflow_loading::load_workflow_from_selection(
+                    &snapshot.working_dir,
+                );
+
             // Close the browser first to release the borrow
             tab_manager.session_browser.close();
 
@@ -253,7 +245,7 @@ fn resume_session_in_current_process(
                 snapshot.ui_state.clone(),
                 Some(restored_state.clone()),
             );
-            session.id = session_id; // Preserve the new session ID
+            session.id = session_id;
             session.adjust_start_time_for_previous_elapsed(snapshot.total_elapsed_before_resume_ms);
 
             // Compute effective_working_dir from worktree_info if present
@@ -296,13 +288,13 @@ fn resume_session_in_current_process(
             session.input_mode = InputMode::Normal;
             session.total_cost = snapshot.ui_state.total_cost;
 
-            // Start the actual workflow - context is already set so it will use it
+            // Start the actual workflow
             super::workflow_lifecycle::start_resumed_workflow(
                 session,
                 restored_state,
                 snapshot.state_path,
-                &snapshot.working_dir, // Pass base_working_dir as fallback
-                workflow_config,
+                &snapshot.working_dir,
+                &workflow_config,
                 output_tx,
             );
         }
