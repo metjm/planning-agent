@@ -2,7 +2,11 @@
 
 use super::types::ProviderCredentials;
 use anyhow::{Context, Result};
+use std::collections::HashMap;
 use std::path::PathBuf;
+use std::time::Duration;
+
+const CLAUDE_EMAIL_CACHE_FILE: &str = "claude_email_cache.json";
 
 /// Reads Claude credentials from ~/.claude/.credentials.json
 pub fn read_claude_credentials() -> Result<Option<ProviderCredentials>> {
@@ -180,7 +184,7 @@ pub fn read_all_credential_info() -> Vec<crate::rpc::host_service::CredentialInf
 
     let mut results = Vec::new();
 
-    // Claude: We don't have email without API call, use placeholder
+    // Claude: Fetch email from profile API
     if let Ok(Some(ProviderCredentials::Claude {
         access_token,
         expires_at,
@@ -193,9 +197,16 @@ pub fn read_all_credential_info() -> Vec<crate::rpc::host_service::CredentialInf
             .unwrap_or(0);
         let token_valid = expires_at.map(|exp| exp > now_ms).unwrap_or(true);
 
+        // Fetch email from Claude profile API
+        let email = if token_valid {
+            fetch_claude_email(&access_token).unwrap_or_default()
+        } else {
+            String::new()
+        };
+
         results.push(CredentialInfo {
             provider: "claude".to_string(),
-            email: "".to_string(), // Email fetched by host via API
+            email,
             token_valid,
             expires_at,
             access_token,
@@ -263,6 +274,96 @@ fn get_gemini_id_token_email() -> Option<String> {
     let json: serde_json::Value = serde_json::from_str(&content).ok()?;
     let id_token = json["id_token"].as_str()?;
     extract_email_from_jwt(id_token)
+}
+
+/// Fetches Claude email, using cache to avoid repeated API calls.
+/// Cache is keyed by refresh token hash (more stable than access token).
+fn fetch_claude_email(access_token: &str) -> Option<String> {
+    // Use refresh token hash as cache key (survives access token refreshes)
+    let cache_key = get_claude_refresh_token_hash().unwrap_or_else(|| hash_token(access_token));
+
+    // Try cache first
+    if let Some(email) = get_cached_claude_email(&cache_key) {
+        return Some(email);
+    }
+
+    // Fetch from API
+    let email = fetch_claude_email_from_api(access_token)?;
+
+    // Cache for future use
+    cache_claude_email(&cache_key, &email);
+
+    Some(email)
+}
+
+/// Get hash of Claude refresh token (more stable cache key).
+fn get_claude_refresh_token_hash() -> Option<String> {
+    let creds_path = claude_credentials_path().ok()?;
+    let content = std::fs::read_to_string(&creds_path).ok()?;
+    let json: serde_json::Value = serde_json::from_str(&content).ok()?;
+    let refresh_token = json["claudeAiOauth"]["refreshToken"].as_str()?;
+    Some(hash_token(refresh_token))
+}
+
+/// Hash a token for use as cache key.
+fn hash_token(token: &str) -> String {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut hasher = DefaultHasher::new();
+    token.hash(&mut hasher);
+    format!("{:x}", hasher.finish())
+}
+
+/// Get cached Claude email by token hash.
+fn get_cached_claude_email(token_hash: &str) -> Option<String> {
+    let cache_path = crate::planning_paths::planning_agent_home_dir()
+        .ok()?
+        .join(CLAUDE_EMAIL_CACHE_FILE);
+
+    let content = std::fs::read_to_string(&cache_path).ok()?;
+    let cache: HashMap<String, String> = serde_json::from_str(&content).ok()?;
+    cache.get(token_hash).cloned()
+}
+
+/// Cache Claude email by token hash.
+fn cache_claude_email(token_hash: &str, email: &str) {
+    let Ok(home) = crate::planning_paths::planning_agent_home_dir() else {
+        return;
+    };
+    let cache_path = home.join(CLAUDE_EMAIL_CACHE_FILE);
+
+    // Load existing cache or create new
+    let mut cache: HashMap<String, String> = std::fs::read_to_string(&cache_path)
+        .ok()
+        .and_then(|c| serde_json::from_str(&c).ok())
+        .unwrap_or_default();
+
+    cache.insert(token_hash.to_string(), email.to_string());
+
+    // Save cache (ignore errors - it's just a cache)
+    if let Ok(content) = serde_json::to_string_pretty(&cache) {
+        let _ = std::fs::write(&cache_path, content);
+    }
+}
+
+/// Fetch Claude email from profile API.
+fn fetch_claude_email_from_api(access_token: &str) -> Option<String> {
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .timeout_global(Some(Duration::from_secs(10)))
+        .build()
+        .into();
+
+    let body: String = agent
+        .get("https://api.anthropic.com/api/oauth/profile")
+        .header("Authorization", &format!("Bearer {}", access_token))
+        .call()
+        .ok()?
+        .body_mut()
+        .read_to_string()
+        .ok()?;
+
+    let json: serde_json::Value = serde_json::from_str(&body).ok()?;
+    json["account"]["email"].as_str().map(String::from)
 }
 
 /// Check JWT expiry and extract expires_at from exp claim.

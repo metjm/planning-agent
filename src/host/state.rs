@@ -78,26 +78,36 @@ impl HostState {
 
     /// Store credentials received from a daemon.
     /// Converts CredentialInfo to ProviderCredentials for API calls.
-    /// Keys by (provider, email) to support multiple accounts per provider.
+    /// Keys by (provider, identifier) to support multiple accounts per provider.
+    /// For Claude where email is unknown until API call, uses token hash as identifier.
     pub fn store_credentials(&mut self, credentials: Vec<CredentialInfo>) {
         for cred in credentials {
             let provider_creds = match cred.provider.as_str() {
                 "claude" => ProviderCredentials::Claude {
-                    access_token: cred.access_token,
+                    access_token: cred.access_token.clone(),
                     expires_at: cred.expires_at,
                 },
                 "gemini" => ProviderCredentials::Gemini {
-                    access_token: cred.access_token,
+                    access_token: cred.access_token.clone(),
                     expires_at: cred.expires_at,
                 },
                 "codex" => ProviderCredentials::Codex {
-                    access_token: cred.access_token,
+                    access_token: cred.access_token.clone(),
                     account_id: cred.account_id.unwrap_or_default(),
                 },
                 _ => continue,
             };
-            // Key by (provider, email) to support multiple accounts per provider
-            let key = (cred.provider, cred.email);
+            // Use email as identifier, or token hash if email is empty (e.g., Claude before API call)
+            let identifier = if cred.email.is_empty() {
+                use std::collections::hash_map::DefaultHasher;
+                use std::hash::{Hash, Hasher};
+                let mut hasher = DefaultHasher::new();
+                cred.access_token.hash(&mut hasher);
+                format!("token:{:x}", hasher.finish())
+            } else {
+                cred.email
+            };
+            let key = (cred.provider, identifier);
             self.daemon_credentials.insert(key, provider_creds);
         }
     }
