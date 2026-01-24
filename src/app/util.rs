@@ -403,12 +403,22 @@ Example outputs: "sharing-permissions", "user-auth", "api-rate-limiting""#)
         .wait_with_output()
         .await?;
 
-    let name = String::from_utf8_lossy(&output.stdout)
+    let mut name: String = String::from_utf8_lossy(&output.stdout)
         .trim()
         .to_lowercase()
         .chars()
         .filter(|c| c.is_alphanumeric() || *c == '-')
-        .collect::<String>();
+        .collect();
+
+    // Truncate absurdly long names (Claude sometimes returns garbage)
+    const MAX_FEATURE_NAME_LEN: usize = 50;
+    if name.len() > MAX_FEATURE_NAME_LEN {
+        name.truncate(MAX_FEATURE_NAME_LEN);
+        // Trim trailing hyphens after truncation
+        while name.ends_with('-') {
+            name.pop();
+        }
+    }
 
     if name.is_empty() {
         Ok("feature".to_string())
