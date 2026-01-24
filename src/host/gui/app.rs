@@ -15,6 +15,9 @@ use tokio::sync::{mpsc, Mutex};
 /// Maximum number of log entries to keep.
 const MAX_LOG_ENTRIES: usize = 200;
 
+/// Interval between automatic usage fetches (5 minutes).
+const USAGE_FETCH_INTERVAL_SECS: u64 = 300;
+
 /// Main host application.
 pub struct HostApp {
     state: Arc<Mutex<HostState>>,
@@ -32,6 +35,8 @@ pub struct HostApp {
     notified_sessions: HashSet<String>,
     /// Event log buffer (bounded)
     log_entries: VecDeque<LogEntry>,
+    /// Last time we fetched usage (None = never, triggers initial fetch)
+    last_usage_fetch: Option<Instant>,
 }
 
 #[derive(Default)]
@@ -142,6 +147,7 @@ impl HostApp {
             tray,
             notified_sessions: HashSet::new(),
             log_entries: VecDeque::new(),
+            last_usage_fetch: None,
         }
     }
 
@@ -160,6 +166,7 @@ impl HostApp {
             port,
             notified_sessions: HashSet::new(),
             log_entries: VecDeque::new(),
+            last_usage_fetch: None,
         }
     }
 
@@ -340,6 +347,9 @@ impl eframe::App for HostApp {
         // Process events and log them
         self.process_events();
 
+        // Check if we need to fetch usage (on startup or periodically)
+        self.maybe_fetch_usage();
+
         // Sync display data periodically (every 100ms) or when state changed
         if self.last_sync.elapsed().as_millis() > 100 {
             self.sync_display_data();
@@ -451,6 +461,20 @@ impl HostApp {
                     self.trigger_usage_fetch();
                 }
             }
+        }
+    }
+
+    /// Check if we need to fetch usage (on startup or after interval elapsed).
+    fn maybe_fetch_usage(&mut self) {
+        let should_fetch = match self.last_usage_fetch {
+            None => true, // Never fetched - fetch on startup
+            Some(last) => last.elapsed().as_secs() >= USAGE_FETCH_INTERVAL_SECS,
+        };
+
+        if should_fetch {
+            eprintln!("[host-gui] Triggering usage fetch (startup or periodic)");
+            self.last_usage_fetch = Some(Instant::now());
+            self.trigger_usage_fetch();
         }
     }
 
