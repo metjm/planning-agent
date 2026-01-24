@@ -52,6 +52,24 @@ fn main() {
         timestamp
     );
 
+    // Capture enabled features for update consistency.
+    // This uses CARGO_FEATURE_* env vars set by Cargo during build.
+    // MAINTAINER NOTE: When adding new features to Cargo.toml, add them here too.
+    let mut features = Vec::new();
+    if std::env::var("CARGO_FEATURE_HOST_GUI").is_ok() {
+        features.push("host-gui");
+    }
+    if std::env::var("CARGO_FEATURE_HOST_GUI_TRAY").is_ok() {
+        features.push("host-gui-tray");
+    }
+
+    // Join with comma (empty string if no features)
+    let features_str = features.join(",");
+    println!(
+        "cargo:rustc-env=PLANNING_AGENT_BUILD_FEATURES={}",
+        features_str
+    );
+
     enforce_formatting();
     enforce_line_limits();
     enforce_no_dead_code_allows();

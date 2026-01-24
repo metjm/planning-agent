@@ -414,7 +414,7 @@ async fn handle_update_install_finished(
     tab_manager.update_in_progress = false;
 
     match result {
-        update::UpdateResult::Success(binary_path) => {
+        update::UpdateResult::Success(binary_path, features_msg) => {
             let _ = update::write_update_marker();
 
             // Shutdown the session daemon before exec'ing new binary
@@ -425,6 +425,11 @@ async fn handle_update_install_finished(
             }
 
             restore_terminal(terminal)?;
+
+            // Log the features message for debugging (will be visible before exec)
+            if !features_msg.is_empty() {
+                eprintln!("Update installed successfully{}!", features_msg);
+            }
 
             let args: Vec<String> = std::env::args().skip(1).collect();
 
@@ -450,13 +455,21 @@ async fn handle_update_install_finished(
             tab_manager.update_error =
                 Some("Update requires cargo. Please install Rust and try again.".to_string());
         }
-        update::UpdateResult::InstallFailed(err) => {
-            let short_err = if err.len() > 60 {
-                format!("{}...", err.get(..57).unwrap_or(&err))
+        update::UpdateResult::InstallFailed(err, is_feature_error) => {
+            if is_feature_error && !update::BUILD_FEATURES.is_empty() {
+                tab_manager.update_error = Some(format!(
+                    "Update failed: features '{}' may no longer exist.\n\
+                     Try: cargo install --git https://github.com/metjm/planning-agent.git --force",
+                    update::BUILD_FEATURES,
+                ));
             } else {
-                err
-            };
-            tab_manager.update_error = Some(short_err);
+                let short_err = if err.len() > 60 {
+                    format!("{}...", err.get(..57).unwrap_or(&err))
+                } else {
+                    err
+                };
+                tab_manager.update_error = Some(short_err);
+            }
         }
         update::UpdateResult::BinaryNotFound => {
             tab_manager.update_error = Some("Update installed but binary not found".to_string());

@@ -19,11 +19,26 @@ pub fn fetch_usage_with_credentials(
     credentials: Vec<(String, ProviderCredentials)>,
     container_id: Option<&str>,
 ) {
+    eprintln!(
+        "[fetcher] fetch_usage_with_credentials: {} credentials",
+        credentials.len()
+    );
     for (provider, creds) in credentials {
+        eprintln!("[fetcher] Fetching usage for provider: {}", provider);
         let result = fetch_usage_for_provider(&provider, &creds);
-        if let Some(usage) = result.usage {
-            store.update_account(usage, container_id);
-        } else if let Some(error) = result.error {
+        if let Some(ref usage) = result.usage {
+            eprintln!(
+                "[fetcher]   -> success: {} ({})",
+                usage.email,
+                usage
+                    .session_window
+                    .used_percent
+                    .map(|p| format!("{}%", p))
+                    .unwrap_or_default()
+            );
+            store.update_account(usage.clone(), container_id);
+        } else if let Some(ref error) = result.error {
+            eprintln!("[fetcher]   -> error: {}", error);
             // Create an error record
             let email = extract_email_from_creds(&creds).unwrap_or_else(|| "unknown".to_string());
             let usage = AccountUsageState {
@@ -35,7 +50,7 @@ pub fn fetch_usage_with_credentials(
                 session_window: UsageWindow::default(),
                 weekly_window: UsageWindow::default(),
                 fetched_at: chrono::Utc::now().to_rfc3339(),
-                error: Some(error),
+                error: Some(error.clone()),
                 token_valid: result.token_valid,
             };
             store.update_account(usage, container_id);

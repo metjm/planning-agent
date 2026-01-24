@@ -115,10 +115,19 @@ impl HostState {
     /// Get all stored credentials for fetching usage.
     #[cfg_attr(not(feature = "host-gui"), allow(dead_code))]
     pub fn get_credentials(&self) -> Vec<(String, ProviderCredentials)> {
-        self.daemon_credentials
+        let creds: Vec<_> = self
+            .daemon_credentials
             .iter()
-            .map(|((provider, _email), creds)| (provider.clone(), creds.clone()))
-            .collect()
+            .map(|((provider, email), creds)| {
+                eprintln!("[host-state] get_credentials: {} ({})", provider, email);
+                (provider.clone(), creds.clone())
+            })
+            .collect();
+        eprintln!(
+            "[host-state] get_credentials returning {} credentials",
+            creds.len()
+        );
+        creds
     }
 
     /// Register a new container connection.

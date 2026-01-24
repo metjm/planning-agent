@@ -172,6 +172,7 @@ pub(crate) async fn handle_naming_tab_input(
                                             .unwrap_or_else(|_| {
                                                 update::UpdateResult::InstallFailed(
                                                     "Update task panicked".to_string(),
+                                                    false, // Not a feature-related error (task panic)
                                                 )
                                             });
                                     let _ = update_tx.send(Event::UpdateInstallFinished(result));

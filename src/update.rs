@@ -25,6 +25,10 @@ pub const BUILD_TIMESTAMP: u64 = {
     result
 };
 
+/// Features enabled at build time (comma-separated, empty if none).
+/// Used by perform_update() to preserve features across updates.
+pub const BUILD_FEATURES: &str = env!("PLANNING_AGENT_BUILD_FEATURES");
+
 /// Cache TTL for version info (24 hours)
 const VERSION_CACHE_TTL_SECS: u64 = 86_400;
 
@@ -311,10 +315,14 @@ pub fn get_cached_or_fetch_version_info() -> Option<VersionInfo> {
 
 #[derive(Debug, Clone)]
 pub enum UpdateResult {
-    Success(std::path::PathBuf),
+    /// Update succeeded. Contains (binary_path, features_message).
+    /// features_message is empty if no features, otherwise " with features: X,Y"
+    Success(std::path::PathBuf, String),
     GitNotFound,
     CargoNotFound,
-    InstallFailed(String),
+    /// Install failed. Contains (error_message, is_feature_error).
+    /// is_feature_error is true if the failure was due to an unknown feature.
+    InstallFailed(String, bool),
     BinaryNotFound,
 }
 
@@ -339,6 +347,31 @@ pub fn consume_update_marker() -> bool {
     }
 }
 
+/// Builds the arguments for `cargo install` during update.
+/// Separated from perform_update() for testability.
+///
+/// Returns (args, features_msg) where:
+/// - args: The complete argument list for cargo install
+/// - features_msg: Human-readable description of features being installed (empty if none)
+pub fn build_update_args() -> (Vec<&'static str>, String) {
+    let mut args = vec![
+        "install",
+        "--git",
+        "https://github.com/metjm/planning-agent.git",
+        "--force",
+    ];
+
+    let features_msg = if BUILD_FEATURES.is_empty() {
+        String::new()
+    } else {
+        args.push("--features");
+        args.push(BUILD_FEATURES);
+        format!(" with features: {}", BUILD_FEATURES)
+    };
+
+    (args, features_msg)
+}
+
 pub fn perform_update() -> UpdateResult {
     if which::which("git").is_err() {
         return UpdateResult::GitNotFound;
@@ -348,25 +381,20 @@ pub fn perform_update() -> UpdateResult {
         return UpdateResult::CargoNotFound;
     }
 
-    let output = Command::new("cargo")
-        .args([
-            "install",
-            "--git",
-            "https://github.com/metjm/planning-agent.git",
-            "--force",
-        ])
-        .output();
+    let (args, features_msg) = build_update_args();
+
+    let output = Command::new("cargo").args(&args).output();
 
     match output {
         Ok(result) => {
             if result.status.success() {
                 match which::which("planning") {
-                    Ok(path) => UpdateResult::Success(path),
+                    Ok(path) => UpdateResult::Success(path, features_msg),
                     Err(_) => {
                         if let Some(home) = dirs::home_dir() {
                             let fallback = home.join(".cargo/bin/planning");
                             if fallback.exists() {
-                                return UpdateResult::Success(fallback);
+                                return UpdateResult::Success(fallback, features_msg);
                             }
                         }
                         UpdateResult::BinaryNotFound
@@ -375,13 +403,18 @@ pub fn perform_update() -> UpdateResult {
             } else {
                 let stderr = String::from_utf8_lossy(&result.stderr);
                 let stdout = String::from_utf8_lossy(&result.stdout);
-                UpdateResult::InstallFailed(format!(
-                    "cargo install failed:\n{}\n{}",
-                    stdout, stderr
-                ))
+                let combined = format!("cargo install failed:\n{}\n{}", stdout, stderr);
+
+                // Check if this is a feature-related error
+                let is_feature_error = stderr.contains("unknown feature")
+                    || stderr.contains("does not have the feature")
+                    || stdout.contains("unknown feature")
+                    || stdout.contains("does not have the feature");
+
+                UpdateResult::InstallFailed(combined, is_feature_error)
             }
         }
-        Err(e) => UpdateResult::InstallFailed(format!("Failed to run cargo: {}", e)),
+        Err(e) => UpdateResult::InstallFailed(format!("Failed to run cargo: {}", e), false),
     }
 }
 
@@ -449,5 +482,74 @@ mod tests {
 
         // Second consume should return false (marker was removed)
         assert!(!consume_update_marker());
+    }
+
+    #[test]
+    fn test_build_update_args_structure() {
+        let (args, features_msg) = build_update_args();
+
+        // Core args are always present
+        assert!(args.contains(&"install"));
+        assert!(args.contains(&"--git"));
+        assert!(args.contains(&"https://github.com/metjm/planning-agent.git"));
+        assert!(args.contains(&"--force"));
+
+        // Feature handling depends on BUILD_FEATURES
+        if !BUILD_FEATURES.is_empty() {
+            assert!(
+                args.contains(&"--features"),
+                "Args should contain --features when BUILD_FEATURES is non-empty"
+            );
+            assert!(
+                args.contains(&BUILD_FEATURES),
+                "Args should contain the BUILD_FEATURES value"
+            );
+            assert!(
+                features_msg.contains(BUILD_FEATURES),
+                "Features message should mention the features"
+            );
+        } else {
+            assert!(
+                !args.contains(&"--features"),
+                "Args should not contain --features when BUILD_FEATURES is empty"
+            );
+            assert!(
+                features_msg.is_empty(),
+                "Features message should be empty when no features"
+            );
+        }
+    }
+
+    #[test]
+    fn test_build_features_format() {
+        // BUILD_FEATURES should be empty or contain valid feature names
+        if !BUILD_FEATURES.is_empty() {
+            for feature in BUILD_FEATURES.split(',') {
+                assert!(
+                    feature == "host-gui" || feature == "host-gui-tray",
+                    "Unknown feature in BUILD_FEATURES: '{}'. \
+                     If a new feature was added, update this test.",
+                    feature
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_features_message_format() {
+        let (_, features_msg) = build_update_args();
+
+        if !BUILD_FEATURES.is_empty() {
+            assert!(
+                features_msg.starts_with(" with features: "),
+                "Features message should start with ' with features: ', got: '{}'",
+                features_msg
+            );
+        } else {
+            assert!(
+                features_msg.is_empty(),
+                "Features message should be empty when no features"
+            );
+        }
     }
 }
