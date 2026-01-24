@@ -56,7 +56,9 @@ For each step in the plan:
 - **DO** follow the plan exactly as written
 - **DO** use absolute paths for all file operations
 - **DO** verify changes compile before proceeding
+- **DO** fix unrelated lint/build issues that block progress (keep changes minimal and document them)
 - **DO NOT** add features not in the plan
+- **DO NOT** add dead code or `allow(dead_code)` annotations; wire new code into real usage or remove it
 - **DO NOT** leave TODO comments - implement fully or note blockers
 
 ## Error Handling
@@ -66,7 +68,7 @@ If you encounter a blocker:
 1. Document what went wrong
 2. Explain why it can't be completed as planned
 3. Suggest what information or changes would unblock it
-4. If possible implement a different solution as long as it meets the plan's goals
+4. If needed, adjust the implementation approach to satisfy repo constraints while still meeting the plan's goals (document the deviation)
 
 ## Quality Standards
 

@@ -21,6 +21,32 @@ pub struct ContainerInfo {
     pub build_timestamp: u64,
 }
 
+/// Credential availability info sent from daemon to host.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CredentialInfo {
+    pub provider: String,
+    pub email: String,
+    pub token_valid: bool,
+    pub expires_at: Option<i64>,
+}
+
+/// Usage info returned from host to daemon/GUI.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AccountUsageInfo {
+    pub account_id: String,
+    pub provider: String,
+    pub email: String,
+    pub plan_type: Option<String>,
+    pub rate_limit_tier: Option<String>,
+    pub session_percent: Option<u8>,
+    pub session_reset_at: Option<i64>,
+    pub weekly_percent: Option<u8>,
+    pub weekly_reset_at: Option<i64>,
+    pub fetched_at: String,
+    pub token_valid: bool,
+    pub error: Option<String>,
+}
+
 /// Service exposed by the host to container daemons.
 #[tarpc::service]
 pub trait HostService {
@@ -38,4 +64,12 @@ pub trait HostService {
 
     /// Heartbeat to maintain connection liveness.
     async fn heartbeat();
+
+    /// Report available credentials from a daemon.
+    /// Called on connect/reconnect and when credentials change.
+    async fn report_credentials(credentials: Vec<CredentialInfo>);
+
+    /// Get current usage for all accounts.
+    /// Returns the host's view of all tracked accounts.
+    async fn get_account_usage() -> Vec<AccountUsageInfo>;
 }

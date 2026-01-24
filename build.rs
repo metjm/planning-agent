@@ -467,13 +467,14 @@ fn enforce_no_test_skips() {
                 // Check for #[test] or #[tokio::test]
                 if trimmed == "#[test]" || trimmed.starts_with("#[tokio::test") {
                     // Look ahead for function name
-                    for j in (i + 1)..lines.len().min(i + 5) {
-                        if lines[j].contains("fn ") {
-                            test_fn_start = i + 1;
-                            if let Some(fn_pos) = lines[j].find("fn ") {
-                                let after_fn = &lines[j][fn_pos + 3..];
+                    for (offset, lookahead_line) in lines.iter().skip(i + 1).take(4).enumerate() {
+                        if lookahead_line.contains("fn ") {
+                            test_fn_start = i + 1 + offset;
+                            if let Some(fn_pos) = lookahead_line.find("fn ") {
+                                let after_fn = lookahead_line.get(fn_pos + 3..).unwrap_or("");
                                 if let Some(paren) = after_fn.find('(') {
-                                    test_fn_name = after_fn[..paren].trim().to_string();
+                                    test_fn_name =
+                                        after_fn.get(..paren).unwrap_or("").trim().to_string();
                                 }
                             }
                             in_test_fn = true;
@@ -689,14 +690,15 @@ fn enforce_serial_for_env_mutations() {
                 // Check for #[test] or #[tokio::test]
                 if trimmed == "#[test]" || trimmed.starts_with("#[tokio::test") {
                     // Look ahead for function name
-                    for j in (i + 1)..lines.len().min(i + 5) {
-                        if lines[j].contains("fn ") {
-                            test_fn_start = i + 1;
+                    for (offset, lookahead_line) in lines.iter().skip(i + 1).take(4).enumerate() {
+                        if lookahead_line.contains("fn ") {
+                            test_fn_start = i + 1 + offset;
                             // Extract function name
-                            if let Some(fn_pos) = lines[j].find("fn ") {
-                                let after_fn = &lines[j][fn_pos + 3..];
+                            if let Some(fn_pos) = lookahead_line.find("fn ") {
+                                let after_fn = lookahead_line.get(fn_pos + 3..).unwrap_or("");
                                 if let Some(paren) = after_fn.find('(') {
-                                    test_fn_name = after_fn[..paren].trim().to_string();
+                                    test_fn_name =
+                                        after_fn.get(..paren).unwrap_or("").trim().to_string();
                                 }
                             }
                             in_test_fn = true;

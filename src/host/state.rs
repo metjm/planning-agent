@@ -3,7 +3,9 @@
 //! Tracks connected containers and their sessions, providing aggregated
 //! session data for display in the GUI.
 
+use crate::account_usage::store::UsageStore;
 use crate::host_protocol::SessionInfo;
+use crate::rpc::host_service::AccountUsageInfo;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Instant;
@@ -36,6 +38,8 @@ pub struct HostState {
     cached_sessions: Option<Vec<DisplaySession>>,
     /// Last time any session changed (for "last update" display)
     pub last_update: Instant,
+    /// Account usage tracking store
+    pub usage_store: UsageStore,
 }
 
 impl Default for HostState {
@@ -53,10 +57,17 @@ pub struct DisplaySession {
 
 impl HostState {
     pub fn new() -> Self {
+        // Try to load existing usage store, fall back to empty
+        let usage_store = UsageStore::load().unwrap_or_else(|e| {
+            eprintln!("[host-state] Warning: Could not load usage store: {}", e);
+            UsageStore::new()
+        });
+
         Self {
             containers: HashMap::new(),
             cached_sessions: None,
             last_update: Instant::now(),
+            usage_store,
         }
     }
 
@@ -210,6 +221,31 @@ impl HostState {
             .flat_map(|c| c.sessions.values())
             .filter(|s| s.status.to_lowercase() != "complete")
             .count()
+    }
+
+    /// Get account usage info for RPC response.
+    pub fn get_account_usage(&self) -> Vec<AccountUsageInfo> {
+        self.usage_store
+            .get_all_accounts()
+            .iter()
+            .filter_map(|record| {
+                let usage = record.current_usage.as_ref()?;
+                Some(AccountUsageInfo {
+                    account_id: record.account_id.to_string(),
+                    provider: record.provider.clone(),
+                    email: record.email.clone(),
+                    plan_type: record.plan_type.clone(),
+                    rate_limit_tier: usage.rate_limit_tier.clone(),
+                    session_percent: usage.session_window.used_percent,
+                    session_reset_at: usage.session_window.reset_at.map(|r| r.epoch_seconds),
+                    weekly_percent: usage.weekly_window.used_percent,
+                    weekly_reset_at: usage.weekly_window.reset_at.map(|r| r.epoch_seconds),
+                    fetched_at: usage.fetched_at.clone(),
+                    token_valid: usage.token_valid,
+                    error: usage.error.clone(),
+                })
+            })
+            .collect()
     }
 
     fn invalidate_cache(&mut self) {

@@ -166,30 +166,6 @@ pub fn version_cache_path() -> Result<PathBuf> {
     Ok(planning_agent_home_dir()?.join("version-cache.json"))
 }
 
-/// Returns the codex status log path: `~/.planning-agent/logs/codex-status.log`
-pub fn codex_status_log_path() -> Result<PathBuf> {
-    let logs = planning_agent_home_dir()?.join("logs");
-    fs::create_dir_all(&logs)
-        .with_context(|| format!("Failed to create logs directory: {}", logs.display()))?;
-    Ok(logs.join("codex-status.log"))
-}
-
-/// Returns the Claude usage debug log path: `~/.planning-agent/logs/claude-usage.log`
-pub fn claude_usage_log_path() -> Result<PathBuf> {
-    let logs = planning_agent_home_dir()?.join("logs");
-    fs::create_dir_all(&logs)
-        .with_context(|| format!("Failed to create logs directory: {}", logs.display()))?;
-    Ok(logs.join("claude-usage.log"))
-}
-
-/// Returns the Gemini usage debug log path: `~/.planning-agent/logs/gemini-usage.log`
-pub fn gemini_usage_log_path() -> Result<PathBuf> {
-    let logs = planning_agent_home_dir()?.join("logs");
-    fs::create_dir_all(&logs)
-        .with_context(|| format!("Failed to create logs directory: {}", logs.display()))?;
-    Ok(logs.join("gemini-usage.log"))
-}
-
 /// Computes a working directory hash (SHA256 truncated to 12 hex characters).
 ///
 /// Attempts to canonicalize the path first for consistency across symlinks.

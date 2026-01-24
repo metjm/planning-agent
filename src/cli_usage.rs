@@ -1,10 +1,15 @@
+//! Account usage types and fetching for TUI display.
+//!
+//! This module provides usage data for display in the TUI stats panel.
+//! It uses the account_usage module which fetches data via direct HTTP APIs.
+
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::Instant;
 
-use crate::claude_usage::{self, ClaudeUsage};
-use crate::codex_usage::{self, CodexUsage};
-use crate::gemini_usage::{self, GeminiUsage};
+use crate::account_usage::fetcher::fetch_all_usage;
+use crate::account_usage::store::UsageStore;
+use crate::account_usage::types::AccountUsageState;
 use crate::usage_reset::UsageWindow;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -24,41 +29,24 @@ pub struct ProviderUsage {
 }
 
 impl ProviderUsage {
-    pub fn from_claude_usage(usage: ClaudeUsage) -> Self {
-        Self {
-            provider: "claude".to_string(),
-            display_name: "Claude".to_string(),
-            session: usage.session,
-            weekly: usage.weekly,
-            plan_type: usage.plan_type,
-            fetched_at: usage.fetched_at,
-            status_message: usage.error_message,
-            supports_usage: true,
+    /// Convert from the new AccountUsageState type.
+    fn from_account_usage_state(state: &AccountUsageState) -> Self {
+        let display_name = match state.provider.as_str() {
+            "claude" => "Claude",
+            "gemini" => "Gemini",
+            "codex" => "Codex",
+            _ => &state.provider,
         }
-    }
+        .to_string();
 
-    pub fn from_gemini_usage(usage: GeminiUsage) -> Self {
         Self {
-            provider: "gemini".to_string(),
-            display_name: "Gemini".to_string(),
-            session: UsageWindow::default(),
-            weekly: usage.daily, // Gemini daily maps to weekly slot
-            plan_type: None,     // Gemini /stats doesn't provide plan info
-            fetched_at: usage.fetched_at,
-            status_message: usage.error_message,
-            supports_usage: true,
-        }
-    }
-
-    pub fn from_codex_usage(usage: CodexUsage) -> Self {
-        Self {
-            provider: "codex".to_string(),
-            display_name: "Codex".to_string(),
-            session: usage.session,
-            weekly: usage.weekly,
-            plan_type: usage.plan_type,
-            fetched_at: usage.fetched_at,
-            status_message: usage.error_message,
+            provider: state.provider.clone(),
+            display_name,
+            session: state.session_window.clone(),
+            weekly: state.weekly_window.clone(),
+            plan_type: state.plan_type.clone(),
+            fetched_at: Some(Instant::now()),
+            status_message: state.error.clone(),
             supports_usage: true,
         }
     }
@@ -87,74 +75,18 @@ impl AccountUsage {
     }
 }
 
-/// Fetch usage from a single provider with a timeout wrapper.
-/// Returns None if the fetch exceeds the given timeout.
-fn fetch_with_timeout<T, F>(fetch_fn: F, timeout: std::time::Duration) -> Option<T>
-where
-    F: FnOnce() -> T + Send + 'static,
-    T: Send + 'static,
-{
-    let (tx, rx) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
-        let result = fetch_fn();
-        let _ = tx.send(result);
-    });
-
-    rx.recv_timeout(timeout).ok()
-}
-
-/// Fetch all provider usage with independent timeouts per provider.
-/// If one provider times out, the others still update.
+/// Fetch all provider usage via direct HTTP APIs.
+/// This is a synchronous blocking function for use in spawn_blocking.
 pub fn fetch_all_provider_usage_sync() -> AccountUsage {
+    let mut store = UsageStore::new();
+    fetch_all_usage(&mut store, None);
+
     let mut account_usage = AccountUsage::new();
 
-    // Per-provider timeout (30 seconds each to allow for slow CLI startup)
-    let provider_timeout = std::time::Duration::from_secs(30);
-
-    // Fetch Claude usage (always attempted, independent timeout)
-    if claude_usage::is_claude_available() {
-        match fetch_with_timeout(claude_usage::fetch_claude_usage_sync, provider_timeout) {
-            Some(usage) => {
-                account_usage.update(ProviderUsage::from_claude_usage(usage));
-            }
-            None => {
-                // Claude fetch timed out, add error status but don't block others
-                account_usage.update(ProviderUsage::from_claude_usage(ClaudeUsage::with_error(
-                    "Fetch timed out".to_string(),
-                )));
-            }
-        }
-    } else {
-        account_usage.update(ProviderUsage::from_claude_usage(
-            ClaudeUsage::claude_not_available(),
-        ));
-    }
-
-    // Fetch Gemini usage (independent timeout)
-    if gemini_usage::is_gemini_available() {
-        match fetch_with_timeout(gemini_usage::fetch_gemini_usage_sync, provider_timeout) {
-            Some(usage) => {
-                account_usage.update(ProviderUsage::from_gemini_usage(usage));
-            }
-            None => {
-                account_usage.update(ProviderUsage::from_gemini_usage(GeminiUsage::with_error(
-                    "Fetch timed out".to_string(),
-                )));
-            }
-        }
-    }
-
-    // Fetch Codex usage (independent timeout)
-    if codex_usage::is_codex_available() {
-        match fetch_with_timeout(codex_usage::fetch_codex_usage_sync, provider_timeout) {
-            Some(usage) => {
-                account_usage.update(ProviderUsage::from_codex_usage(usage));
-            }
-            None => {
-                account_usage.update(ProviderUsage::from_codex_usage(CodexUsage::with_error(
-                    "Fetch timed out".to_string(),
-                )));
-            }
+    for record in store.get_all_accounts() {
+        if let Some(state) = &record.current_usage {
+            let provider_usage = ProviderUsage::from_account_usage_state(state);
+            account_usage.update(provider_usage);
         }
     }
 
@@ -164,46 +96,13 @@ pub fn fetch_all_provider_usage_sync() -> AccountUsage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::planning_paths::set_home_for_test;
     use crate::usage_reset::ResetTimestamp;
+    use serial_test::serial;
+    use tempfile::TempDir;
 
     #[test]
-    fn test_provider_usage_from_claude() {
-        let ts = ResetTimestamp::from_epoch_seconds(1700000000);
-        let claude_usage = ClaudeUsage {
-            session: UsageWindow::with_percent_and_reset(5, ts),
-            weekly: UsageWindow::with_percent_and_reset(41, ts),
-            plan_type: Some("Max".to_string()),
-            fetched_at: Some(Instant::now()),
-            error_message: None,
-        };
-        let provider = ProviderUsage::from_claude_usage(claude_usage);
-        assert_eq!(provider.provider, "claude");
-        assert_eq!(provider.display_name, "Claude");
-        assert_eq!(provider.session.used_percent, Some(5));
-        assert_eq!(provider.weekly.used_percent, Some(41));
-        assert_eq!(provider.plan_type, Some("Max".to_string()));
-        assert!(provider.supports_usage);
-    }
-
-    #[test]
-    fn test_provider_usage_from_gemini() {
-        let ts = ResetTimestamp::from_epoch_seconds(1700000000);
-        let gemini_usage = GeminiUsage {
-            daily: UsageWindow::with_percent_and_reset(25, ts), // 25% used = 75% remaining
-            fetched_at: Some(Instant::now()),
-            error_message: None,
-        };
-        let provider = ProviderUsage::from_gemini_usage(gemini_usage);
-        assert_eq!(provider.provider, "gemini");
-        assert_eq!(provider.display_name, "Gemini");
-        assert_eq!(provider.session.used_percent, None); // Gemini doesn't have session usage
-        assert_eq!(provider.weekly.used_percent, Some(25)); // daily maps to weekly
-        assert_eq!(provider.plan_type, None);
-        assert!(provider.supports_usage);
-    }
-
-    #[test]
-    fn test_provider_has_error() {
+    fn test_provider_usage_has_error() {
         let error_usage = ProviderUsage {
             provider: "claude".to_string(),
             display_name: "Claude".to_string(),
@@ -227,5 +126,76 @@ mod tests {
             supports_usage: true,
         };
         assert!(!ok_usage.has_error());
+    }
+
+    #[test]
+    fn test_provider_usage_from_account_state() {
+        let ts = ResetTimestamp::from_epoch_seconds(1700000000);
+        let state = AccountUsageState {
+            account_id: crate::account_usage::types::AccountId::new("test@example.com"),
+            provider: "claude".to_string(),
+            email: "test@example.com".to_string(),
+            plan_type: Some("Max".to_string()),
+            rate_limit_tier: None,
+            session_window: UsageWindow::with_percent_and_reset(5, ts),
+            weekly_window: UsageWindow::with_percent_and_reset(41, ts),
+            fetched_at: chrono::Utc::now().to_rfc3339(),
+            error: None,
+            token_valid: true,
+        };
+
+        let provider = ProviderUsage::from_account_usage_state(&state);
+        assert_eq!(provider.provider, "claude");
+        assert_eq!(provider.display_name, "Claude");
+        assert_eq!(provider.session.used_percent, Some(5));
+        assert_eq!(provider.weekly.used_percent, Some(41));
+        assert_eq!(provider.plan_type, Some("Max".to_string()));
+        assert!(provider.supports_usage);
+    }
+
+    #[test]
+    #[serial]
+    fn test_fetch_all_provider_usage_sync_no_credentials() {
+        let temp_dir = TempDir::new().unwrap();
+        let _guard = set_home_for_test(temp_dir.path().to_path_buf());
+
+        // Set env vars to point to empty temp dirs so no real credentials are found
+        let empty_claude = temp_dir.path().join("claude");
+        let empty_gemini = temp_dir.path().join("gemini");
+        let empty_codex = temp_dir.path().join("codex");
+        std::fs::create_dir_all(&empty_claude).unwrap();
+        std::fs::create_dir_all(&empty_gemini).unwrap();
+        std::fs::create_dir_all(&empty_codex).unwrap();
+        std::env::set_var("CLAUDE_CONFIG_DIR", &empty_claude);
+        std::env::set_var("GEMINI_DIR", &empty_gemini);
+        std::env::set_var("CODEX_HOME", &empty_codex);
+
+        let usage = fetch_all_provider_usage_sync();
+
+        // Restore env
+        std::env::remove_var("CLAUDE_CONFIG_DIR");
+        std::env::remove_var("GEMINI_DIR");
+        std::env::remove_var("CODEX_HOME");
+
+        // No credentials available, so no providers
+        assert!(usage.providers.is_empty());
+    }
+
+    #[test]
+    fn test_account_usage_update() {
+        let mut usage = AccountUsage::new();
+        let provider = ProviderUsage {
+            provider: "claude".to_string(),
+            display_name: "Claude".to_string(),
+            session: UsageWindow::with_percent(10),
+            weekly: UsageWindow::with_percent(20),
+            plan_type: None,
+            fetched_at: Some(Instant::now()),
+            status_message: None,
+            supports_usage: true,
+        };
+        usage.update(provider.clone());
+        assert_eq!(usage.providers.len(), 1);
+        assert!(usage.providers.contains_key("claude"));
     }
 }

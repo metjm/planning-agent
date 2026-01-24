@@ -196,16 +196,6 @@ impl ResetTimestamp {
         }
     }
 
-    /// Creates a reset timestamp from the current time plus a duration.
-    pub fn from_duration_from_now(duration: Duration) -> Self {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default();
-        Self {
-            epoch_seconds: (now + duration).as_secs() as i64,
-        }
-    }
-
     /// Returns the duration from now until this timestamp, or None if already past.
     pub fn duration_from_now(&self) -> Option<Duration> {
         let now = SystemTime::now()
@@ -266,6 +256,14 @@ pub fn format_countdown(duration: Option<Duration>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Test helper: create ResetTimestamp from duration from now.
+    fn reset_timestamp_from_duration(duration: Duration) -> ResetTimestamp {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default();
+        ResetTimestamp::from_epoch_seconds((now + duration).as_secs() as i64)
+    }
 
     #[test]
     fn test_usage_window_default() {
@@ -389,7 +387,7 @@ mod tests {
 
     #[test]
     fn test_time_status_unknown_no_span() {
-        let ts = ResetTimestamp::from_duration_from_now(Duration::from_secs(3600));
+        let ts = reset_timestamp_from_duration(Duration::from_secs(3600));
         let window = UsageWindow::with_percent_and_reset(50, ts);
         assert_eq!(window.time_status(), UsageTimeStatus::Unknown);
     }
@@ -397,7 +395,7 @@ mod tests {
     #[test]
     fn test_time_status_ahead() {
         // 5h window, 2.5h remaining (50% elapsed), but 70% used -> ahead
-        let ts = ResetTimestamp::from_duration_from_now(Duration::from_secs(2 * 3600 + 1800));
+        let ts = reset_timestamp_from_duration(Duration::from_secs(2 * 3600 + 1800));
         let window = UsageWindow::with_percent_reset_and_span(70, ts, UsageWindowSpan::Hours(5));
         assert_eq!(window.time_status(), UsageTimeStatus::Ahead);
     }
@@ -405,7 +403,7 @@ mod tests {
     #[test]
     fn test_time_status_behind() {
         // 5h window, 2.5h remaining (50% elapsed), but only 30% used -> behind
-        let ts = ResetTimestamp::from_duration_from_now(Duration::from_secs(2 * 3600 + 1800));
+        let ts = reset_timestamp_from_duration(Duration::from_secs(2 * 3600 + 1800));
         let window = UsageWindow::with_percent_reset_and_span(30, ts, UsageWindowSpan::Hours(5));
         assert_eq!(window.time_status(), UsageTimeStatus::Behind);
     }
@@ -413,7 +411,7 @@ mod tests {
     #[test]
     fn test_time_status_on_track() {
         // 5h window, 2.5h remaining (50% elapsed), 50% used -> on track
-        let ts = ResetTimestamp::from_duration_from_now(Duration::from_secs(2 * 3600 + 1800));
+        let ts = reset_timestamp_from_duration(Duration::from_secs(2 * 3600 + 1800));
         let window = UsageWindow::with_percent_reset_and_span(50, ts, UsageWindowSpan::Hours(5));
         assert_eq!(window.time_status(), UsageTimeStatus::OnTrack);
 

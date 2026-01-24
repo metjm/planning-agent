@@ -37,6 +37,7 @@ Planning-agent is a TUI/headless tool for iterative AI-powered implementation pl
 ### Workflow State Machine
 
 The core workflow follows this cycle:
+
 - **Planning** → **Reviewing** → (approved) → **Complete** → User Approval
 - **Planning** → **Reviewing** → (rejected) → **Revising** → **Reviewing** (loop)
 
@@ -45,48 +46,57 @@ Max iterations (default 3) prevents infinite revision loops.
 ### Key Module Structure
 
 **Entry Points** (`src/main.rs`):
+
 - TUI mode: `run_tui()` - interactive terminal UI
 - Headless mode: `run_headless()` - non-interactive execution
 - MCP server mode: internal mode for review feedback collection
 
 **Workflow Engine** (`src/app/workflow/`):
+
 - `mod.rs` - Main workflow loop with `run_workflow_with_config()`
 - `planning.rs`, `reviewing.rs`, `revising.rs`, `completion.rs` - Phase handlers
 - Uses `tokio::select!` pattern for concurrent channel handling (see module doc comment for critical pattern)
 
 **Agent Abstraction** (`src/agents/`):
+
 - `AgentType` enum wraps Claude, Codex, and Gemini agents
 - Each agent (in `claude/`, `codex/`, `gemini/`) handles CLI invocation and output parsing
 - `runner.rs` - Common streaming execution logic
 - `protocol.rs` - Agent output protocol handling
 
 **Phase Logic** (`src/phases/`):
+
 - `planning.rs`, `reviewing.rs`, `revising.rs` - Phase-specific agent invocation
 - `review_parser.rs` - Parses `<plan-feedback>` tags from reviewer output
 - `verification.rs` - Post-implementation verification workflow
 
 **TUI Layer** (`src/tui/`):
+
 - `session/` - Session state management with snapshot/restore support
 - `ui/` - Ratatui-based UI components (panels, overlays, stats)
 - `event.rs` - Event handling with `SessionEventSender` for cross-task communication
 - `embedded_terminal.rs` - PTY-based terminal for Claude Code handoff
 
 **Configuration** (`src/config.rs`):
+
 - `WorkflowConfig` - Loaded from `workflow.yaml` or `--config`
 - Defines agents, phase assignments, aggregation modes, failure policies
 
 **State Management** (`src/state.rs`):
+
 - `State` - Workflow state with phase, iteration, plan paths
 - `Phase` enum: Planning, Reviewing, Revising, Complete
 - Persisted to `~/.planning-agent/sessions/<session-id>/state.json`
 
 **Prompt Handling** (`src/agents/prompt.rs`):
+
 - `PreparedPrompt` - Centralized prompt preparation for all agent types
 - `AgentCapabilities` - Defines what each agent CLI supports (system prompts, max turns)
 - For Claude: system prompts passed via `--append-system-prompt`
 - For Codex/Gemini: system prompts merged into user prompt within `<system-context>` tags
 
 **Session Logging** (`src/session_logger.rs`):
+
 - `SessionLogger` - Unified logging for session-scoped events
 - `LogCategory` enum: Workflow, Agent, State, Ui, System
 - All timestamps in UTC ISO 8601 format for consistency
@@ -117,12 +127,13 @@ Agents output streaming JSON. Review feedback must use `<plan-feedback verdict="
 
 **IMPORTANT**: There are two distinct concepts that must not be confused:
 
-| Term | Meaning | Storage |
-|------|---------|---------|
-| **Workflow Session** | planning-agent's orchestration unit | `~/.planning-agent/sessions/<uuid>/` |
-| **Agent Conversation** | Claude/Codex/Gemini's persistent chat context | Managed by each agent's CLI |
+| Term                   | Meaning                                       | Storage                              |
+| ---------------------- | --------------------------------------------- | ------------------------------------ |
+| **Workflow Session**   | planning-agent's orchestration unit           | `~/.planning-agent/sessions/<uuid>/` |
+| **Agent Conversation** | Claude/Codex/Gemini's persistent chat context | Managed by each agent's CLI          |
 
 **Variable naming conventions:**
+
 - `workflow_session_id` - planning-agent's session identifier
 - `conversation_id` - AI agent's conversation/thread ID for resume
 - `agent_conversations` - Map of agent name → conversation state
@@ -130,6 +141,7 @@ Agents output streaming JSON. Review feedback must use `<plan-feedback verdict="
 - `ResumeStrategy::ConversationResume` - Resume using captured conversation ID
 
 **Why this matters:**
+
 - Workflow sessions are what users see in the session browser
 - Agent conversations enable context continuity between planning→revising phases
 - Confusing these leads to bugs like passing workflow IDs to agent resume flags
@@ -207,12 +219,14 @@ This is absolute. Tests must exercise the actual production code, not fake imple
 - **ALWAYS** spin up real servers, real connections, real state
 
 **Why this matters:**
+
 - Mocks hide bugs by testing fake behavior instead of real behavior
 - Mocks drift from production code and provide false confidence
 - Integration issues only appear when real components interact
 - If something is hard to test without mocks, that's a design smell to fix
 
 **What to do instead:**
+
 - Use test harnesses that wrap real implementations (e.g., `TestServer` that starts a real RPC server)
 - Use in-memory databases or temporary files for persistence
 - Use actual network connections on localhost with dynamic ports
@@ -261,4 +275,4 @@ When tests fail, you investigate why they fail and fix the root cause. When refa
 
 Plans must not include timelines, schedules, dates, durations, or time estimates. Focus on technical scope, sequencing, and verification only. Examples to reject: "in two weeks", "Phase 1: Week 1-2", "Q1 delivery", "Sprint 1", "by end of day".
 
-The lazy path is never acceptable. If a task requires significant effort, that effort must be made. Quality and correctness are not optional.
+The lazy path is never acceptable. If a task requires significant effort, that effort must be made. Quality and correctness are not optional. Big refactors, deep investigations, and thorough fixes are encouraged and expected.

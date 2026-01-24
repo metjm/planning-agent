@@ -719,13 +719,11 @@ fn handle_none_mode_input(key: crossterm::event::KeyEvent, session: &mut Session
             return Ok(true);
         }
         KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            if session.running && session.workflow_control_tx.is_some() {
-                session.add_output("[planning] Stopping workflow...".to_string());
-                let _ = session
-                    .workflow_control_tx
-                    .as_ref()
-                    .unwrap()
-                    .try_send(WorkflowCommand::Stop);
+            if session.running {
+                if let Some(tx) = session.workflow_control_tx.clone() {
+                    session.add_output("[planning] Stopping workflow...".to_string());
+                    let _ = tx.try_send(WorkflowCommand::Stop);
+                }
             }
         }
         KeyCode::Tab => {

@@ -38,10 +38,23 @@ pub struct HostApp {
 struct DisplayData {
     sessions: Vec<DisplaySessionRow>,
     containers: Vec<DisplayContainerRow>,
+    accounts: Vec<DisplayAccountRow>,
     active_count: usize,
     approval_count: usize,
     container_count: usize,
     last_update_elapsed_secs: u64,
+}
+
+#[derive(Clone)]
+struct DisplayAccountRow {
+    provider: String,
+    email: String,
+    session_percent: Option<u8>,
+    session_reset: String,
+    weekly_percent: Option<u8>,
+    weekly_reset: String,
+    token_valid: bool,
+    error: Option<String>,
 }
 
 #[derive(Clone)]
@@ -217,6 +230,33 @@ impl HostApp {
             self.display_data.approval_count = state.approval_count();
             self.display_data.container_count = state.containers.len();
             self.display_data.last_update_elapsed_secs = state.last_update.elapsed().as_secs();
+            // Update account usage display
+            self.display_data.accounts = state
+                .usage_store
+                .get_all_accounts()
+                .iter()
+                .filter_map(|record| {
+                    let usage = record.current_usage.as_ref()?;
+                    Some(DisplayAccountRow {
+                        provider: record.provider.clone(),
+                        email: record.email.clone(),
+                        session_percent: usage.session_window.used_percent,
+                        session_reset: usage
+                            .session_window
+                            .reset_at
+                            .map(|r| format_reset_countdown(r.epoch_seconds))
+                            .unwrap_or_default(),
+                        weekly_percent: usage.weekly_window.used_percent,
+                        weekly_reset: usage
+                            .weekly_window
+                            .reset_at
+                            .map(|r| format_reset_countdown(r.epoch_seconds))
+                            .unwrap_or_default(),
+                        token_valid: usage.token_valid,
+                        error: usage.error.clone(),
+                    })
+                })
+                .collect();
             self.last_sync = Instant::now();
         }
     }
@@ -354,6 +394,16 @@ impl eframe::App for HostApp {
                 self.render_container_panel(ui);
             });
 
+        // Right usage sidebar
+        egui::SidePanel::right("usage")
+            .resizable(true)
+            .default_width(200.0)
+            .min_width(160.0)
+            .max_width(300.0)
+            .show(ctx, |ui| {
+                self.render_usage_panel(ui);
+            });
+
         // Central session table
         egui::CentralPanel::default().show(ctx, |ui| {
             self.render_session_table(ui);
@@ -391,8 +441,31 @@ impl HostApp {
                 HostEvent::SessionsUpdated => {
                     // Don't log every heartbeat, just note significant changes
                 }
+                HostEvent::CredentialsReported => {
+                    self.add_log_entry(LogEntry {
+                        timestamp: now,
+                        message: "Credentials reported from daemon".to_string(),
+                        level: LogLevel::Info,
+                    });
+                    // Trigger usage fetching (async - will update store)
+                    self.trigger_usage_fetch();
+                }
             }
         }
+    }
+
+    /// Trigger background usage fetch for all available credentials.
+    /// Uses blocking HTTP calls via ureq, so it's safe to call from async context.
+    fn trigger_usage_fetch(&mut self) {
+        let state = self.state.clone();
+        // Spawn tokio task to fetch usage (ureq is blocking but tokio handles this)
+        tokio::spawn(async move {
+            let mut state = state.lock().await;
+            crate::account_usage::fetcher::fetch_all_usage(&mut state.usage_store, None);
+            if let Err(e) = state.usage_store.save() {
+                eprintln!("[host-gui] Failed to save usage store: {}", e);
+            }
+        });
     }
 
     /// Add a log entry to the bounded buffer.
@@ -454,6 +527,85 @@ impl HostApp {
                 });
             }
         });
+    }
+
+    /// Render the usage sidebar panel.
+    fn render_usage_panel(&self, ui: &mut egui::Ui) {
+        ui.heading("Account Usage");
+        ui.separator();
+
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            if self.display_data.accounts.is_empty() {
+                ui.label("No accounts tracked");
+                ui.small("Usage data appears when");
+                ui.small("credentials are detected");
+                return;
+            }
+
+            for account in &self.display_data.accounts {
+                ui.push_id(&account.email, |ui| {
+                    // Provider badge and email
+                    ui.horizontal(|ui| {
+                        let badge_color = match account.provider.as_str() {
+                            "claude" => egui::Color32::from_rgb(216, 152, 96),
+                            "gemini" => egui::Color32::from_rgb(66, 133, 244),
+                            "codex" => egui::Color32::from_rgb(16, 163, 127),
+                            _ => egui::Color32::GRAY,
+                        };
+                        ui.colored_label(badge_color, &account.provider);
+                        if !account.token_valid {
+                            ui.colored_label(egui::Color32::RED, "⚠");
+                        }
+                    });
+                    ui.small(&account.email);
+
+                    // Error display
+                    if let Some(err) = &account.error {
+                        ui.colored_label(egui::Color32::from_rgb(255, 100, 100), "Error:");
+                        ui.small(truncate_path(err, 30));
+                    } else {
+                        // Session usage bar
+                        if let Some(pct) = account.session_percent {
+                            ui.horizontal(|ui| {
+                                ui.small("Session:");
+                                self.render_usage_bar(ui, pct);
+                                if !account.session_reset.is_empty() {
+                                    ui.small(&account.session_reset);
+                                }
+                            });
+                        }
+                        // Weekly usage bar
+                        if let Some(pct) = account.weekly_percent {
+                            ui.horizontal(|ui| {
+                                ui.small("Weekly:");
+                                self.render_usage_bar(ui, pct);
+                                if !account.weekly_reset.is_empty() {
+                                    ui.small(&account.weekly_reset);
+                                }
+                            });
+                        }
+                    }
+
+                    ui.add_space(8.0);
+                });
+            }
+        });
+    }
+
+    /// Render a small usage progress bar.
+    fn render_usage_bar(&self, ui: &mut egui::Ui, percent: u8) {
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(50.0, 8.0), egui::Sense::hover());
+        ui.painter()
+            .rect_filled(rect, 2.0, egui::Color32::from_rgb(60, 60, 60));
+        let fill_color = match percent {
+            90..=100 => egui::Color32::from_rgb(244, 67, 54),
+            70..=89 => egui::Color32::from_rgb(255, 152, 0),
+            _ => egui::Color32::from_rgb(76, 175, 80),
+        };
+        let fill_rect =
+            egui::Rect::from_min_size(rect.min, egui::vec2(50.0 * percent as f32 / 100.0, 8.0));
+        ui.painter().rect_filled(fill_rect, 2.0, fill_color);
+        ui.small(format!("{}%", percent));
     }
 
     /// Render the log panel at the bottom.
@@ -590,70 +742,8 @@ impl HostApp {
     }
 }
 
-fn format_relative_time(timestamp: &str) -> String {
-    chrono::DateTime::parse_from_rfc3339(timestamp)
-        .map(|dt| {
-            let elapsed = chrono::Utc::now().signed_duration_since(dt.with_timezone(&chrono::Utc));
-            if elapsed.num_seconds() < 60 {
-                "just now".to_string()
-            } else if elapsed.num_minutes() < 60 {
-                format!("{}m ago", elapsed.num_minutes())
-            } else if elapsed.num_hours() < 24 {
-                format!("{}h ago", elapsed.num_hours())
-            } else {
-                format!("{}d ago", elapsed.num_days())
-            }
-        })
-        .unwrap_or_else(|_| "unknown".to_string())
-}
-
-/// Format a Unix timestamp into a human-readable date/time.
-fn format_build_timestamp(timestamp: u64) -> String {
-    use chrono::{TimeZone, Utc};
-    if timestamp == 0 {
-        return "unknown".to_string();
-    }
-    Utc.timestamp_opt(timestamp as i64, 0)
-        .single()
-        .map(|dt| dt.format("%m-%d %H:%M").to_string())
-        .unwrap_or_else(|| "invalid".to_string())
-}
-
-/// Format a duration as a human-readable string (e.g., "5m", "2h 30m").
-fn format_duration(duration: std::time::Duration) -> String {
-    let secs = duration.as_secs();
-    if secs < 60 {
-        format!("{}s", secs)
-    } else if secs < 3600 {
-        format!("{}m", secs / 60)
-    } else {
-        let hours = secs / 3600;
-        let mins = (secs % 3600) / 60;
-        if mins > 0 {
-            format!("{}h {}m", hours, mins)
-        } else {
-            format!("{}h", hours)
-        }
-    }
-}
-
-/// Format ping duration (e.g., "2s ago", "45s ago").
-fn format_ping_duration(duration: std::time::Duration) -> String {
-    let secs = duration.as_secs();
-    if secs < 60 {
-        format!("{}s ago", secs)
-    } else if secs < 3600 {
-        format!("{}m ago", secs / 60)
-    } else {
-        format!("{}h ago", secs / 3600)
-    }
-}
-
-/// Truncate a path for display, showing the end portion.
-fn truncate_path(path: &str, max_len: usize) -> String {
-    if path.len() <= max_len {
-        path.to_string()
-    } else {
-        format!("...{}", &path[path.len().saturating_sub(max_len - 3)..])
-    }
-}
+// Helper functions re-exported from helpers module
+use super::helpers::{
+    format_build_timestamp, format_duration, format_ping_duration, format_relative_time,
+    format_reset_countdown, truncate_path,
+};
