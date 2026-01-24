@@ -7,13 +7,34 @@ use crate::session_daemon::protocol::{LivenessState, SessionRecord};
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 
+/// Check if a process with the given PID is still running.
+/// Returns false if the process has exited.
+pub(crate) fn process_exists(pid: u32) -> bool {
+    #[cfg(unix)]
+    {
+        // On Unix, kill with signal 0 checks process existence without sending a signal.
+        // Returns 0 if process exists, -1 with ESRCH if it doesn't.
+        // Using nix::libc for consistency with existing code (see rpc_client.rs:369).
+        unsafe { nix::libc::kill(pid as nix::libc::pid_t, 0) == 0 }
+    }
+    #[cfg(not(unix))]
+    {
+        // On non-Unix platforms, assume process exists (fall back to timeout-based detection).
+        // Windows support can be added later if needed.
+        let _ = pid;
+        true
+    }
+}
+
 /// Default timeout for marking sessions as unresponsive (seconds).
+/// Changed from 25 seconds to 3 seconds for faster detection.
 /// Can be overridden via PLANNING_SESSIOND_UNRESPONSIVE_SECS environment variable.
-const DEFAULT_UNRESPONSIVE_TIMEOUT_SECS: u64 = 25;
+const DEFAULT_UNRESPONSIVE_TIMEOUT_SECS: u64 = 3;
 
 /// Default timeout for marking sessions as stopped (seconds).
+/// Changed from 60 seconds to 10 seconds.
 /// Can be overridden via PLANNING_SESSIOND_STALE_SECS environment variable.
-const DEFAULT_STALE_TIMEOUT_SECS: u64 = 60;
+const DEFAULT_STALE_TIMEOUT_SECS: u64 = 10;
 
 /// Shared daemon state.
 pub(crate) struct DaemonState {
@@ -111,6 +132,28 @@ impl DaemonState {
             }
 
             if record.liveness != old_liveness {
+                changed.push(record.clone());
+            }
+        }
+
+        changed
+    }
+
+    /// Check all Running/Unresponsive sessions and mark as Stopped if their process has exited.
+    /// Returns records that changed state (with liveness=Stopped).
+    pub(crate) fn check_process_liveness(&mut self) -> Vec<SessionRecord> {
+        let mut changed = Vec::new();
+
+        for record in self.sessions.values_mut() {
+            // Only check sessions that might still be alive
+            if record.liveness == LivenessState::Stopped {
+                continue;
+            }
+
+            // Check if the process still exists
+            if !process_exists(record.pid) {
+                record.liveness = LivenessState::Stopped;
+                record.updated_at = chrono::Utc::now().to_rfc3339();
                 changed.push(record.clone());
             }
         }

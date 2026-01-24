@@ -175,28 +175,18 @@ impl DaemonServer {
 
         // Forward to upstream host connection if configured
         if let Some(upstream_tx) = &self.upstream_tx {
-            // Send SessionGone for stopped sessions, SessionUpdate otherwise
-            if record.liveness == LivenessState::Stopped {
-                daemon_log(
-                    "rpc_server",
-                    &format!(
-                        "Forwarding SessionGone to upstream: {}",
-                        record.workflow_session_id
-                    ),
-                );
-                let _ = upstream_tx.send(UpstreamEvent::SessionGone(
-                    record.workflow_session_id.clone(),
-                ));
-            } else {
-                daemon_log(
-                    "rpc_server",
-                    &format!(
-                        "Forwarding SessionUpdate to upstream: {} (feature: {})",
-                        record.workflow_session_id, record.feature_name
-                    ),
-                );
-                let _ = upstream_tx.send(UpstreamEvent::SessionUpdate(record));
-            }
+            // ALWAYS send SessionUpdate for liveness changes (including Stopped).
+            // SessionGone should only be used for explicit session deletion/cleanup,
+            // which is not currently implemented.
+            // This ensures disconnected sessions remain visible in the host GUI.
+            daemon_log(
+                "rpc_server",
+                &format!(
+                    "Forwarding SessionUpdate to upstream: {} (feature: {}, liveness: {:?})",
+                    record.workflow_session_id, record.feature_name, record.liveness
+                ),
+            );
+            let _ = upstream_tx.send(UpstreamEvent::SessionUpdate(record));
         } else {
             daemon_log(
                 "rpc_server",
@@ -576,6 +566,72 @@ pub async fn run_subscriber_cleanup(
     }
 }
 
+/// Background task to periodically check if session-owning processes have exited.
+/// This provides instant detection of crashed/killed processes without waiting for
+/// heartbeat timeouts. Runs every 500ms to match the heartbeat interval.
+///
+/// NOTE: This task sends SessionUpdate through subscribers and upstream_tx.
+/// The notify_subscribers() method always sends SessionUpdate (not SessionGone),
+/// keeping disconnected sessions visible in the host GUI.
+pub async fn run_process_liveness_monitor(
+    state: Arc<Mutex<DaemonState>>,
+    subscribers: Arc<RwLock<SubscriberRegistry>>,
+    upstream_tx: Option<mpsc::UnboundedSender<UpstreamEvent>>,
+    shutdown_tx: broadcast::Sender<()>,
+) {
+    let mut shutdown_rx = shutdown_tx.subscribe();
+    // Check every 500ms to match heartbeat interval
+    let mut interval = tokio::time::interval(std::time::Duration::from_millis(500));
+
+    loop {
+        tokio::select! {
+            _ = interval.tick() => {
+                // Check for dead processes
+                let changed = {
+                    let mut state = state.lock().await;
+                    state.check_process_liveness()
+                };
+
+                // Notify subscribers and upstream for each changed session
+                for record in changed {
+                    daemon_log(
+                        "liveness_monitor",
+                        &format!(
+                            "Process {} exited, marking session {} as Stopped",
+                            record.pid, record.workflow_session_id
+                        ),
+                    );
+
+                    // Notify local subscribers
+                    {
+                        let failed = {
+                            let registry = subscribers.read().await;
+                            registry.broadcast_session_changed(record.clone()).await
+                        };
+                        if !failed.is_empty() {
+                            let mut registry = subscribers.write().await;
+                            for id in failed {
+                                registry.remove(&id);
+                            }
+                        }
+                    }
+
+                    // Forward to upstream host as SessionUpdate.
+                    // Note: We send SessionUpdate directly here rather than going through
+                    // a shared method to avoid re-acquiring locks. The effect is the same
+                    // since we always send SessionUpdate for liveness changes.
+                    if let Some(ref tx) = upstream_tx {
+                        let _ = tx.send(UpstreamEvent::SessionUpdate(record));
+                    }
+                }
+            }
+            _ = shutdown_rx.recv() => {
+                break;
+            }
+        }
+    }
+}
+
 /// Find an available TCP port.
 pub async fn find_available_port() -> anyhow::Result<u16> {
     use tokio::net::TcpListener;
@@ -690,6 +746,23 @@ pub async fn run_daemon_rpc() -> anyhow::Result<()> {
     tokio::spawn(async move {
         run_subscriber_cleanup(cleanup_subscribers, cleanup_shutdown).await;
     });
+
+    // Spawn process liveness monitor (checks for dead processes every 500ms)
+    {
+        let monitor_state = state.clone();
+        let monitor_subscribers = subscribers.clone();
+        let monitor_upstream_tx = upstream_tx.clone();
+        let monitor_shutdown_tx = shutdown_tx.clone();
+        tokio::spawn(async move {
+            run_process_liveness_monitor(
+                monitor_state,
+                monitor_subscribers,
+                monitor_upstream_tx,
+                monitor_shutdown_tx,
+            )
+            .await
+        });
+    }
 
     // Run main RPC server (blocks until shutdown)
     run_daemon_server(

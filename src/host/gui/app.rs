@@ -631,7 +631,7 @@ impl HostApp {
             });
     }
 
-    /// Render the session table with liveness and PID columns.
+    /// Render the session table with separate sections for live and disconnected sessions.
     fn render_session_table(&self, ui: &mut egui::Ui) {
         if self.display_data.sessions.is_empty() {
             ui.centered_and_justified(|ui| {
@@ -640,6 +640,44 @@ impl HostApp {
             return;
         }
 
+        // Partition sessions into live and disconnected based on liveness
+        let (live_sessions, disconnected_sessions): (Vec<_>, Vec<_>) =
+            self.display_data.sessions.iter().partition(|s| {
+                matches!(
+                    s.liveness,
+                    LivenessDisplay::Running | LivenessDisplay::Unresponsive
+                )
+            });
+
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            // Live Sessions Section
+            if !live_sessions.is_empty() {
+                ui.horizontal(|ui| {
+                    ui.colored_label(egui::Color32::from_rgb(76, 175, 80), "●");
+                    ui.strong(format!("Live Sessions ({})", live_sessions.len()));
+                });
+                ui.separator();
+                self.render_session_rows(ui, &live_sessions);
+            }
+
+            // Disconnected Sessions Section (below live)
+            if !disconnected_sessions.is_empty() {
+                ui.add_space(16.0);
+                ui.horizontal(|ui| {
+                    ui.colored_label(egui::Color32::from_rgb(117, 117, 117), "○");
+                    ui.label(format!(
+                        "Disconnected Sessions ({})",
+                        disconnected_sessions.len()
+                    ));
+                });
+                ui.separator();
+                self.render_session_rows(ui, &disconnected_sessions);
+            }
+        });
+    }
+
+    /// Render session rows as a table.
+    fn render_session_rows(&self, ui: &mut egui::Ui, sessions: &[&DisplaySessionRow]) {
         TableBuilder::new(ui)
             .striped(true)
             .resizable(true)
@@ -677,7 +715,7 @@ impl HostApp {
                 });
             })
             .body(|mut body| {
-                for session in &self.display_data.sessions {
+                for session in sessions {
                     body.row(22.0, |mut row| {
                         // Liveness indicator
                         row.col(|ui| {
@@ -705,7 +743,7 @@ impl HostApp {
                             ui.label(session.iteration.to_string());
                         });
                         row.col(|ui| {
-                            self.render_status(ui, &session.status);
+                            self.render_status(ui, &session.phase, &session.status);
                         });
                         row.col(|ui| {
                             ui.label(session.pid.to_string());
@@ -718,19 +756,9 @@ impl HostApp {
             });
     }
 
-    fn render_status(&self, ui: &mut egui::Ui, status: &str) {
-        let (color, text) = match status.to_lowercase().as_str() {
-            "running" | "planning" | "reviewing" | "revising" => {
-                (egui::Color32::from_rgb(76, 175, 80), "Running")
-            }
-            "awaitingapproval" | "awaiting_approval" => {
-                (egui::Color32::from_rgb(255, 152, 0), "Approval")
-            }
-            "complete" => (egui::Color32::from_rgb(33, 150, 243), "Complete"),
-            "error" => (egui::Color32::from_rgb(244, 67, 54), "Error"),
-            "stopped" => (egui::Color32::from_rgb(117, 117, 117), "Stopped"),
-            _ => (egui::Color32::from_rgb(158, 158, 158), "Unknown"),
-        };
+    /// Render the workflow status with descriptive text and color coding.
+    fn render_status(&self, ui: &mut egui::Ui, phase: &str, status: &str) {
+        let (color, text) = super::status_colors::get_status_display(phase, status);
         ui.colored_label(color, text);
     }
 }

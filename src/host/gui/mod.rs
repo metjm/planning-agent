@@ -4,6 +4,7 @@
 
 pub mod app;
 mod helpers;
+mod status_colors;
 mod usage_panel;
 
 #[cfg(feature = "tray-icon")]

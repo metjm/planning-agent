@@ -21,7 +21,8 @@ async fn test_liveness_running_to_unresponsive_timeout() {
         .unwrap();
 
     let mut record = create_test_record("timeout-test", 1000);
-    let past = chrono::Utc::now() - chrono::Duration::seconds(30);
+    // With default timeouts (3s unresponsive, 10s stopped), 5s old = Unresponsive
+    let past = chrono::Utc::now() - chrono::Duration::seconds(5);
     record.last_heartbeat_at = past.to_rfc3339();
     record.updated_at = past.to_rfc3339();
 
@@ -40,7 +41,7 @@ async fn test_liveness_running_to_unresponsive_timeout() {
     assert_eq!(
         sessions[0].liveness,
         LivenessState::Unresponsive,
-        "Session should be Unresponsive with 30s old timestamp"
+        "Session should be Unresponsive with 5s old timestamp (> 3s unresponsive threshold)"
     );
 }
 
@@ -60,7 +61,8 @@ async fn test_liveness_unresponsive_to_stopped_timeout() {
         .unwrap();
 
     let mut record = create_test_record("stale-test", 1000);
-    let past = chrono::Utc::now() - chrono::Duration::seconds(120);
+    // With default timeouts (3s unresponsive, 10s stopped), 15s old = Stopped
+    let past = chrono::Utc::now() - chrono::Duration::seconds(15);
     record.last_heartbeat_at = past.to_rfc3339();
     record.updated_at = past.to_rfc3339();
 
@@ -78,7 +80,7 @@ async fn test_liveness_unresponsive_to_stopped_timeout() {
     assert_eq!(
         sessions[0].liveness,
         LivenessState::Stopped,
-        "Session should be Stopped with very old timestamp"
+        "Session should be Stopped with 15s old timestamp (> 10s stopped threshold)"
     );
 }
 
@@ -98,7 +100,8 @@ async fn test_liveness_heartbeat_resets_unresponsive() {
         .unwrap();
 
     let mut record = create_test_record("heartbeat-reset-test", 1000);
-    let past = chrono::Utc::now() - chrono::Duration::seconds(30);
+    // With default timeouts (3s unresponsive, 10s stopped), 5s old = Unresponsive
+    let past = chrono::Utc::now() - chrono::Duration::seconds(5);
     record.last_heartbeat_at = past.to_rfc3339();
     record.updated_at = past.to_rfc3339();
 
@@ -116,7 +119,7 @@ async fn test_liveness_heartbeat_resets_unresponsive() {
     assert_eq!(
         sessions[0].liveness,
         LivenessState::Unresponsive,
-        "Session should be Unresponsive with old timestamp"
+        "Session should be Unresponsive with 5s old timestamp"
     );
 
     client
@@ -156,7 +159,8 @@ async fn test_auto_stale_session_replacement() {
         .unwrap();
 
     let mut record1 = create_test_record("auto-replace-test", 1000);
-    let past = chrono::Utc::now() - chrono::Duration::seconds(120);
+    // With default timeouts (3s unresponsive, 10s stopped), 15s old = Stopped
+    let past = chrono::Utc::now() - chrono::Duration::seconds(15);
     record1.last_heartbeat_at = past.to_rfc3339();
     record1.updated_at = past.to_rfc3339();
 
@@ -214,7 +218,8 @@ async fn test_mixed_liveness_states_in_list() {
         .unwrap();
 
     let mut record_a = create_test_record("mixed-a", 1000);
-    let past_a = chrono::Utc::now() - chrono::Duration::seconds(30);
+    // With default timeouts (3s unresponsive, 10s stopped), 5s old = Unresponsive
+    let past_a = chrono::Utc::now() - chrono::Duration::seconds(5);
     record_a.last_heartbeat_at = past_a.to_rfc3339();
     record_a.updated_at = past_a.to_rfc3339();
 
@@ -249,7 +254,7 @@ async fn test_mixed_liveness_states_in_list() {
     assert_eq!(
         session_a.liveness,
         LivenessState::Unresponsive,
-        "Session A should be Unresponsive (30s old)"
+        "Session A should be Unresponsive (5s old)"
     );
     assert_eq!(
         session_b.liveness,

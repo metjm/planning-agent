@@ -237,128 +237,92 @@ pub fn draw_session_browser_overlay(frame: &mut Frame, tab_manager: &TabManager)
         .block(list_block);
         frame.render_widget(empty_para, chunks[4]);
     } else {
-        // Render the session list
+        // Partition entries into live and disconnected
+        let (live_entries, disconnected_entries): (Vec<_>, Vec<_>) = entries
+            .iter()
+            .enumerate()
+            .partition(|(_, e)| e.liveness != LivenessState::Stopped);
+
+        // Build display lines with section headers
         let visible_height = inner_area.height as usize;
         let scroll_offset = tab_manager.session_browser.scroll_offset;
         let selected_idx = tab_manager.session_browser.selected_idx;
 
-        let mut lines: Vec<Line> = Vec::new();
+        // Build all lines with their original entry indices
+        // (None for headers, Some(idx) for entries)
+        let mut all_items: Vec<(Option<usize>, Line)> = Vec::new();
 
-        for (i, entry) in entries
+        // Live sessions section
+        if !live_entries.is_empty() {
+            all_items.push((
+                None,
+                Line::from(vec![
+                    Span::styled("● ", Style::default().fg(Color::Green)),
+                    Span::styled(
+                        format!("Live Sessions ({})", live_entries.len()),
+                        Style::default()
+                            .fg(Color::Green)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                ]),
+            ));
+
+            for (original_idx, entry) in &live_entries {
+                all_items.push((
+                    Some(*original_idx),
+                    render_session_line(
+                        entry,
+                        *original_idx == selected_idx,
+                        tab_manager.update_spinner_frame,
+                    ),
+                ));
+            }
+        }
+
+        // Disconnected sessions section
+        if !disconnected_entries.is_empty() {
+            if !live_entries.is_empty() {
+                all_items.push((None, Line::from(""))); // Spacer
+            }
+            all_items.push((
+                None,
+                Line::from(vec![
+                    Span::styled("○ ", Style::default().fg(Color::DarkGray)),
+                    Span::styled(
+                        format!("Disconnected Sessions ({})", disconnected_entries.len()),
+                        Style::default()
+                            .fg(Color::DarkGray)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                ]),
+            ));
+
+            for (original_idx, entry) in &disconnected_entries {
+                all_items.push((
+                    Some(*original_idx),
+                    render_session_line(
+                        entry,
+                        *original_idx == selected_idx,
+                        tab_manager.update_spinner_frame,
+                    ),
+                ));
+            }
+        }
+
+        // Extract just the lines for display
+        let lines: Vec<Line> = all_items
             .iter()
-            .enumerate()
             .skip(scroll_offset)
             .take(visible_height)
-        {
-            let is_selected = i == selected_idx;
-
-            // Show spinner for Running sessions, selection indicator otherwise
-            let prefix = if entry.liveness == LivenessState::Running {
-                let spinner_char = SPINNER_CHARS
-                    [(tab_manager.update_spinner_frame as usize) % SPINNER_CHARS.len()];
-                format!(" {} ", spinner_char)
-            } else if is_selected {
-                " > ".to_string()
-            } else {
-                "   ".to_string()
-            };
-            let dir_indicator = if entry.is_current_dir { "*" } else { " " };
-            // Snapshot indicator for resumable sessions
-            let snapshot_indicator = if entry.has_snapshot { "◉" } else { " " };
-
-            // Truncate feature name if too long (expanded from 16 to 23 chars)
-            let max_name_len = 23;
-            let feature_name: String = if entry.feature_name.len() > max_name_len {
-                format!(
-                    "{}...",
-                    entry.feature_name.get(..max_name_len - 3).unwrap_or("")
-                )
-            } else {
-                entry.feature_name.clone()
-            };
-
-            let style = if is_selected {
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(Color::DarkGray)
-            };
-
-            // Phase color
-            let phase_style = match entry.phase.as_str() {
-                "Complete" => Style::default().fg(Color::Green),
-                "Planning" => Style::default().fg(Color::Cyan),
-                "Implementation" | "Implementing" => Style::default().fg(Color::Blue),
-                "Reviewing" => Style::default().fg(Color::Magenta),
-                "Revising" => Style::default().fg(Color::Yellow),
-                _ => Style::default().fg(Color::DarkGray),
-            };
-
-            // Workflow status color
-            let status_style = match entry.workflow_status.as_str() {
-                "Complete" => Style::default().fg(Color::Green),
-                "Error" | "Failed" => Style::default().fg(Color::Red),
-                "Stopped" => Style::default().fg(Color::DarkGray),
-                "Planning" | "Implementing" | "Reviewing" | "Revising" => {
-                    Style::default().fg(Color::Cyan)
-                }
-                _ => Style::default().fg(Color::DarkGray),
-            };
-
-            // Liveness style with color - show PID for running sessions
-            let liveness_str = if entry.liveness == LivenessState::Running {
-                if let Some(pid) = entry.pid {
-                    format!("Run {}", pid) // "Run 12345" fits in 12 chars
-                } else {
-                    "Running".to_string()
-                }
-            } else {
-                format!("{}", entry.liveness)
-            };
-            let live_style = liveness_style(&entry.liveness);
-
-            // Truncate workflow_status and phase
-            let phase_display = truncate_str(&entry.phase, 10);
-            let status_display = truncate_str(&entry.workflow_status, 10);
-
-            // Style the prefix based on whether it's a spinner or selection indicator
-            let prefix_style = if entry.liveness == LivenessState::Running {
-                Style::default().fg(Color::Green)
-            } else {
-                style
-            };
-
-            lines.push(Line::from(vec![
-                Span::styled(prefix, prefix_style),
-                Span::styled(dir_indicator, Style::default().fg(Color::Magenta)),
-                Span::styled(snapshot_indicator, Style::default().fg(Color::Blue)),
-                Span::styled(format!("{:<23}", feature_name), style),
-                Span::styled(" │ ", Style::default().fg(Color::DarkGray)),
-                Span::styled(format!("{:<10}", phase_display), phase_style),
-                Span::styled(" │ ", Style::default().fg(Color::DarkGray)),
-                Span::styled(
-                    format!("{:<4}", entry.iteration),
-                    Style::default().fg(Color::DarkGray),
-                ),
-                Span::styled(" │ ", Style::default().fg(Color::DarkGray)),
-                Span::styled(format!("{:<10}", status_display), status_style),
-                Span::styled(" │ ", Style::default().fg(Color::DarkGray)),
-                Span::styled(format!("{:<12}", liveness_str), live_style),
-                Span::styled(" │ ", Style::default().fg(Color::DarkGray)),
-                Span::styled(
-                    entry.last_seen_relative.clone(),
-                    Style::default().fg(Color::DarkGray),
-                ),
-            ]));
-        }
+            .map(|(_, line)| line.clone())
+            .collect();
 
         let list_para = Paragraph::new(lines).block(list_block);
         frame.render_widget(list_para, chunks[4]);
 
-        // Scrollbar if needed
-        if entries.len() > visible_height {
-            let mut scrollbar_state = ScrollbarState::new(entries.len()).position(scroll_offset);
+        // Scrollbar if needed (based on total items including headers)
+        if all_items.len() > visible_height {
+            let mut scrollbar_state = ScrollbarState::new(all_items.len()).position(scroll_offset);
             frame.render_stateful_widget(
                 Scrollbar::new(ScrollbarOrientation::VerticalRight)
                     .begin_symbol(Some("↑"))
@@ -540,6 +504,116 @@ fn draw_confirmation_dialog(
             .border_style(Style::default().fg(warning_color)),
     );
     frame.render_widget(buttons, chunks[2]);
+}
+
+/// Render a single session entry as a Line.
+fn render_session_line(
+    entry: &crate::tui::session_browser::SessionEntry,
+    is_selected: bool,
+    spinner_frame: u8,
+) -> Line<'static> {
+    // Show spinner for Running sessions, selection indicator otherwise
+    let prefix = if entry.liveness == LivenessState::Running {
+        let spinner_char = SPINNER_CHARS[(spinner_frame as usize) % SPINNER_CHARS.len()];
+        format!(" {} ", spinner_char)
+    } else if is_selected {
+        " > ".to_string()
+    } else {
+        "   ".to_string()
+    };
+    let dir_indicator = if entry.is_current_dir { "*" } else { " " };
+    // Snapshot indicator for resumable sessions
+    let snapshot_indicator = if entry.has_snapshot { "◉" } else { " " };
+
+    // Truncate feature name if too long (expanded from 16 to 23 chars)
+    let max_name_len = 23;
+    let feature_name: String = if entry.feature_name.len() > max_name_len {
+        format!(
+            "{}...",
+            entry.feature_name.get(..max_name_len - 3).unwrap_or("")
+        )
+    } else {
+        entry.feature_name.clone()
+    };
+
+    let style = if is_selected {
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+
+    // Phase color
+    let phase_style = match entry.phase.as_str() {
+        "Complete" => Style::default().fg(Color::Green),
+        "Planning" => Style::default().fg(Color::Cyan),
+        "Implementation" | "Implementing" => Style::default().fg(Color::Blue),
+        "Reviewing" => Style::default().fg(Color::Magenta),
+        "Revising" => Style::default().fg(Color::Yellow),
+        _ => Style::default().fg(Color::DarkGray),
+    };
+
+    // Workflow status color
+    let status_style = match entry.workflow_status.as_str() {
+        "Complete" => Style::default().fg(Color::Green),
+        "Error" | "Failed" => Style::default().fg(Color::Red),
+        "Stopped" => Style::default().fg(Color::DarkGray),
+        "Planning" | "Implementing" | "Reviewing" | "Revising" => Style::default().fg(Color::Cyan),
+        _ => Style::default().fg(Color::DarkGray),
+    };
+
+    // Liveness style with color - show PID for running sessions
+    let liveness_str = if entry.liveness == LivenessState::Running {
+        if let Some(pid) = entry.pid {
+            format!("Run {}", pid) // "Run 12345" fits in 12 chars
+        } else {
+            "Running".to_string()
+        }
+    } else {
+        format!("{}", entry.liveness)
+    };
+    let live_style = liveness_style(&entry.liveness);
+
+    // Truncate workflow_status and phase
+    let phase_display = truncate_str(&entry.phase, 10);
+    let status_display = truncate_str(&entry.workflow_status, 10);
+
+    // Style the prefix based on whether it's a spinner or selection indicator
+    let prefix_style = if entry.liveness == LivenessState::Running {
+        Style::default().fg(Color::Green)
+    } else {
+        style
+    };
+
+    Line::from(vec![
+        Span::styled(prefix, prefix_style),
+        Span::styled(
+            dir_indicator.to_string(),
+            Style::default().fg(Color::Magenta),
+        ),
+        Span::styled(
+            snapshot_indicator.to_string(),
+            Style::default().fg(Color::Blue),
+        ),
+        Span::styled(format!("{:<23}", feature_name), style),
+        Span::styled(" │ ", Style::default().fg(Color::DarkGray)),
+        Span::styled(format!("{:<10}", phase_display), phase_style),
+        Span::styled(" │ ", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            format!("{:<4}", entry.iteration),
+            Style::default().fg(Color::DarkGray),
+        ),
+        Span::styled(" │ ", Style::default().fg(Color::DarkGray)),
+        Span::styled(format!("{:<10}", status_display), status_style),
+        Span::styled(" │ ", Style::default().fg(Color::DarkGray)),
+        Span::styled(format!("{:<12}", liveness_str), live_style),
+        Span::styled(" │ ", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            entry.last_seen_relative.clone(),
+            Style::default().fg(Color::DarkGray),
+        ),
+    ])
 }
 
 /// Truncate a string to max length with ellipsis.

@@ -32,10 +32,11 @@ const CREDENTIAL_CHECK_INTERVAL_SECS: u64 = 30;
 /// Events to send upstream to host.
 #[derive(Debug, Clone)]
 pub enum UpstreamEvent {
-    /// Single session updated
+    /// Single session updated (includes liveness changes like Stopped).
+    /// Note: We always send SessionUpdate for liveness changes, even for stopped sessions,
+    /// so they remain visible in the host GUI. There is no SessionGone variant because
+    /// we don't currently have explicit session deletion/cleanup.
     SessionUpdate(SessionRecord),
-    /// Session has stopped/completed and should be removed
-    SessionGone(String),
 }
 
 /// Get the host port from environment or default.
@@ -324,16 +325,12 @@ impl RpcUpstream {
                             daemon_log(
                                 "rpc_upstream",
                                 &format!(
-                                    "Sending SessionUpdate to host: {} (feature: {})",
-                                    record.workflow_session_id, record.feature_name
+                                    "Sending SessionUpdate to host: {} (feature: {}, liveness: {:?})",
+                                    record.workflow_session_id, record.feature_name, record.liveness
                                 ),
                             );
                             let session = SessionInfo::from_session_record(&record);
                             client.session_update(tarpc::context::current(), session).await?;
-                        }
-                        Some(UpstreamEvent::SessionGone(session_id)) => {
-                            daemon_log("rpc_upstream", &format!("Sending SessionGone for {}", session_id));
-                            client.session_gone(tarpc::context::current(), session_id).await?;
                         }
                         None => {
                             // Channel closed, exit

@@ -10,8 +10,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 
-/// Heartbeat interval in seconds.
-const HEARTBEAT_INTERVAL_SECS: u64 = 5;
+/// Heartbeat interval in milliseconds.
+/// Changed from 5 seconds to 500ms for faster liveness detection.
+const HEARTBEAT_INTERVAL_MS: u64 = 500;
 
 /// Number of consecutive heartbeat failures before attempting reconnection.
 const RECONNECT_THRESHOLD: u32 = 2;
@@ -67,14 +68,14 @@ impl SessionTracker {
 
         tokio::spawn(async move {
             let mut interval =
-                tokio::time::interval(tokio::time::Duration::from_secs(HEARTBEAT_INTERVAL_SECS));
+                tokio::time::interval(tokio::time::Duration::from_millis(HEARTBEAT_INTERVAL_MS));
 
             // State for tracking failures and reconnection
             let mut consecutive_failures: u32 = 0;
             let mut last_error_log = std::time::Instant::now()
                 .checked_sub(std::time::Duration::from_secs(ERROR_LOG_INTERVAL_SECS))
                 .unwrap_or_else(std::time::Instant::now);
-            let mut backoff_secs = HEARTBEAT_INTERVAL_SECS;
+            let mut backoff_secs = HEARTBEAT_INTERVAL_MS;
             let mut in_reconnect_mode = false;
 
             loop {
@@ -122,7 +123,7 @@ impl SessionTracker {
                                 match client.reconnect().await {
                                     Ok(()) => {
                                         consecutive_failures = 0;
-                                        backoff_secs = HEARTBEAT_INTERVAL_SECS;
+                                        backoff_secs = HEARTBEAT_INTERVAL_MS;
                                         in_reconnect_mode = false;
 
                                         // Re-register sessions after reconnect
@@ -143,10 +144,10 @@ impl SessionTracker {
                             // Success - reset failure state
                             if consecutive_failures > 0 || in_reconnect_mode {
                                 consecutive_failures = 0;
-                                backoff_secs = HEARTBEAT_INTERVAL_SECS;
+                                backoff_secs = HEARTBEAT_INTERVAL_MS;
                                 in_reconnect_mode = false;
                                 interval = tokio::time::interval(
-                                    tokio::time::Duration::from_secs(HEARTBEAT_INTERVAL_SECS)
+                                    tokio::time::Duration::from_millis(HEARTBEAT_INTERVAL_MS)
                                 );
                             }
                         }
@@ -280,6 +281,12 @@ impl SessionTracker {
     pub async fn force_stop(&self, session_id: &str) -> Result<()> {
         if self.disabled {
             return Ok(());
+        }
+
+        // Remove from active sessions so heartbeat task stops sending heartbeats
+        {
+            let mut sessions = self.active_sessions.lock().await;
+            sessions.remove(session_id);
         }
 
         let client = self.client.lock().await;

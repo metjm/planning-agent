@@ -180,3 +180,101 @@ fn test_session_record_new() {
     assert_eq!(record.pid, 12345);
     assert_eq!(record.liveness, LivenessState::Running);
 }
+
+#[cfg(unix)]
+mod process_liveness_tests {
+    use super::*;
+    use crate::session_daemon::server::process_exists;
+
+    #[test]
+    fn test_process_exists_current_process() {
+        // Current process should always exist
+        let current_pid = std::process::id();
+        assert!(
+            process_exists(current_pid),
+            "Current process {} should exist",
+            current_pid
+        );
+    }
+
+    #[test]
+    fn test_process_exists_nonexistent_process() {
+        // PID 999999 is very unlikely to exist (most systems have PID limits below this)
+        assert!(!process_exists(999999), "PID 999999 should not exist");
+    }
+
+    #[test]
+    fn test_check_process_liveness_dead_process() {
+        let mut state = DaemonState::new();
+
+        // Create a session with a non-existent PID
+        let record = create_test_record("dead-pid-session", 999999);
+        state
+            .sessions
+            .insert(record.workflow_session_id.clone(), record);
+
+        // Session should initially be Running
+        {
+            let session = state.sessions.get("dead-pid-session").unwrap();
+            assert_eq!(session.liveness, LivenessState::Running);
+        }
+
+        // Check process liveness should mark it as Stopped
+        let changed = state.check_process_liveness();
+
+        // Should have one changed record
+        assert_eq!(changed.len(), 1);
+        assert_eq!(changed[0].workflow_session_id, "dead-pid-session");
+        assert_eq!(changed[0].liveness, LivenessState::Stopped);
+
+        // Verify state is updated
+        let session = state.sessions.get("dead-pid-session").unwrap();
+        assert_eq!(session.liveness, LivenessState::Stopped);
+    }
+
+    #[test]
+    fn test_check_process_liveness_live_process() {
+        let mut state = DaemonState::new();
+
+        // Create a session with the current process PID (which definitely exists)
+        let current_pid = std::process::id();
+        let record = create_test_record("live-pid-session", current_pid);
+        state
+            .sessions
+            .insert(record.workflow_session_id.clone(), record);
+
+        // Check process liveness should NOT change anything
+        let changed = state.check_process_liveness();
+
+        // Should have no changed records
+        assert!(
+            changed.is_empty(),
+            "Live process should not trigger state change"
+        );
+
+        // Session should still be Running
+        let session = state.sessions.get("live-pid-session").unwrap();
+        assert_eq!(session.liveness, LivenessState::Running);
+    }
+
+    #[test]
+    fn test_check_process_liveness_skips_stopped_sessions() {
+        let mut state = DaemonState::new();
+
+        // Create a session with a non-existent PID but mark it as already stopped
+        let mut record = create_test_record("already-stopped", 999999);
+        record.liveness = LivenessState::Stopped;
+        state
+            .sessions
+            .insert(record.workflow_session_id.clone(), record);
+
+        // Check process liveness should skip already-stopped sessions
+        let changed = state.check_process_liveness();
+
+        // Should have no changed records (already stopped)
+        assert!(
+            changed.is_empty(),
+            "Already stopped session should not trigger state change"
+        );
+    }
+}
