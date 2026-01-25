@@ -152,6 +152,47 @@ codex_mode:
     reviewing:
       agent: codex-reviewer
 
+# Gemini-mode configuration (for gemini-only workflow)
+# Defines Gemini-specific agents, substitution rules, and phase overrides
+gemini_mode:
+  # Gemini agents for Gemini-only mode (merge into agents map)
+  agents:
+    gemini:
+      command: "gemini"
+      args:
+        - "-p"
+        - "--output-format"
+        - "json"
+      allowed_tools: []
+
+    gemini-reviewer:
+      command: "gemini"
+      args:
+        - "-p"
+        - "--output-format"
+        - "json"
+      allowed_tools: []
+
+  # Agent name substitutions when gemini-only mode is active
+  substitutions:
+    claude: gemini
+    codex: gemini
+
+  # Override the reviewing phase to use only gemini
+  reviewing:
+    agents:
+      - gemini
+    aggregation: any_rejects
+    sequential: false
+
+  # Override implementation to use gemini/gemini-reviewer
+  implementation:
+    implementing:
+      agent: gemini
+      max_turns: 100
+    reviewing:
+      agent: gemini-reviewer
+
 workflow:
   planning:
     agent: codex

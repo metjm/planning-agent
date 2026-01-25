@@ -83,21 +83,25 @@ pub fn workflows_dir() -> Result<PathBuf> {
 /// Discover all available workflows for display in autocomplete.
 /// Does not include selection state since that's per-working-directory.
 pub fn list_available_workflows_for_display() -> Result<Vec<WorkflowInfo>> {
-    let mut workflows = Vec::new();
-
     // Built-in workflows
-    workflows.push(WorkflowInfo {
-        name: "default".to_string(),
-        source: "built-in".to_string(),
-    });
-    workflows.push(WorkflowInfo {
-        name: "claude-only".to_string(),
-        source: "built-in".to_string(),
-    });
-    workflows.push(WorkflowInfo {
-        name: "codex-only".to_string(),
-        source: "built-in".to_string(),
-    });
+    let mut workflows = vec![
+        WorkflowInfo {
+            name: "default".to_string(),
+            source: "built-in".to_string(),
+        },
+        WorkflowInfo {
+            name: "claude-only".to_string(),
+            source: "built-in".to_string(),
+        },
+        WorkflowInfo {
+            name: "codex-only".to_string(),
+            source: "built-in".to_string(),
+        },
+        WorkflowInfo {
+            name: "gemini-only".to_string(),
+            source: "built-in".to_string(),
+        },
+    ];
 
     // User workflows from ~/.planning-agent/workflows/
     let workflows_directory = workflows_dir()?;
@@ -109,7 +113,11 @@ pub fn list_available_workflows_for_display() -> Result<Vec<WorkflowInfo>> {
                 if let Some(stem) = path.file_stem() {
                     let name = stem.to_string_lossy().to_string();
                     // Skip if it conflicts with built-in names
-                    if name != "default" && name != "claude-only" && name != "codex-only" {
+                    if name != "default"
+                        && name != "claude-only"
+                        && name != "codex-only"
+                        && name != "gemini-only"
+                    {
                         workflows.push(WorkflowInfo {
                             name: name.clone(),
                             source: path.display().to_string(),
@@ -155,6 +163,7 @@ pub fn load_workflow_by_name(name: &str) -> Result<crate::config::WorkflowConfig
         "default" => Ok(crate::config::WorkflowConfig::default_config()),
         "claude-only" => Ok(crate::config::WorkflowConfig::claude_only_config()),
         "codex-only" => Ok(crate::config::WorkflowConfig::codex_only_config()),
+        "gemini-only" => Ok(crate::config::WorkflowConfig::gemini_only_config()),
         _ => {
             let workflows_directory = workflows_dir()?;
             let yaml_path = workflows_directory.join(format!("{}.yaml", name));
@@ -258,6 +267,7 @@ mod tests {
         assert!(workflows.iter().any(|w| w.name == "default"));
         assert!(workflows.iter().any(|w| w.name == "claude-only"));
         assert!(workflows.iter().any(|w| w.name == "codex-only"));
+        assert!(workflows.iter().any(|w| w.name == "gemini-only"));
     }
 
     #[test]
@@ -271,6 +281,9 @@ mod tests {
 
         let codex_only = load_workflow_by_name("codex-only").unwrap();
         assert!(!codex_only.agents.is_empty());
+
+        let gemini_only = load_workflow_by_name("gemini-only").unwrap();
+        assert!(!gemini_only.agents.is_empty());
     }
 
     #[test]
@@ -316,5 +329,44 @@ mod tests {
         let codex = codex_only.agents.get("codex").unwrap();
         let codex_reviewer = codex_only.agents.get("codex-reviewer").unwrap();
         assert_eq!(codex.command, codex_reviewer.command);
+    }
+
+    #[test]
+    fn test_gemini_only_workflow_uses_gemini_for_planning() {
+        let gemini_only = load_workflow_by_name("gemini-only").unwrap();
+        assert_eq!(gemini_only.workflow.planning.agent, "gemini");
+    }
+
+    #[test]
+    fn test_gemini_only_workflow_has_implementation_enabled() {
+        let gemini_only = load_workflow_by_name("gemini-only").unwrap();
+        assert!(gemini_only.implementation.enabled);
+    }
+
+    #[test]
+    fn test_gemini_only_workflow_has_gemini_reviewer() {
+        let gemini_only = load_workflow_by_name("gemini-only").unwrap();
+        assert!(gemini_only.agents.contains_key("gemini-reviewer"));
+    }
+
+    #[test]
+    fn test_gemini_only_workflow_uses_correct_impl_agents() {
+        let gemini_only = load_workflow_by_name("gemini-only").unwrap();
+        assert_eq!(
+            gemini_only.implementation.implementing_agent(),
+            Some("gemini")
+        );
+        assert_eq!(
+            gemini_only.implementation.reviewing_agent(),
+            Some("gemini-reviewer")
+        );
+    }
+
+    #[test]
+    fn test_gemini_reviewer_has_same_command_as_gemini() {
+        let gemini_only = load_workflow_by_name("gemini-only").unwrap();
+        let gemini = gemini_only.agents.get("gemini").unwrap();
+        let gemini_reviewer = gemini_only.agents.get("gemini-reviewer").unwrap();
+        assert_eq!(gemini.command, gemini_reviewer.command);
     }
 }

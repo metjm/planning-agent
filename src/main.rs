@@ -4,6 +4,7 @@ mod app;
 mod change_fingerprint;
 mod cli_usage;
 mod config;
+mod config_modes;
 mod daemon_log;
 mod diagnostics;
 mod git_worktree;

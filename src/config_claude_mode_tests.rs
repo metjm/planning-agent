@@ -1,6 +1,7 @@
 //! Tests for Claude mode transformation functionality
 
 use super::*;
+use crate::config::AggregationMode;
 
 #[test]
 fn test_claude_mode_transformation_basic() {
