@@ -152,7 +152,7 @@ Your task:
 
 Return findings in this format:
 - Investigation area: [ANGLE]
-- Evidence found: [SPECIFIC FINDINGS WITH FILE:LINE REFERENCES]
+- Evidence found: [SPECIFIC FINDINGS WITH FILE AND FUNCTION/TYPE REFERENCES]
 - Hypothesis: [WHAT MIGHT BE CAUSING THE BUG]
 - Confidence: [HIGH/MEDIUM/LOW] - [REASONING]
 - Suggested test: [HOW TO VALIDATE THIS HYPOTHESIS]
@@ -291,7 +291,7 @@ Generate debugging analysis in this structure:
 
 ### Sub-Agent 1: Code Path Analysis
 - **Findings:** [Summary]
-- **Evidence:** [File:line references]
+- **Evidence:** [File and function/type references]
 - **Hypothesis:** [If any]
 - **Confidence:** [Level]
 

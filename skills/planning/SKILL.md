@@ -50,7 +50,7 @@ For ANY new functionality, the plan MUST include a code example showing:
 
 ```[language]
 // File: /absolute/path/to/file.ext
-// Location: After line N / Replace lines X-Y / New file
+// Location: In function `foo` / After struct `Bar` / New file
 
 [code example - 10-30 lines showing the key implementation pattern]
 ```
@@ -348,7 +348,7 @@ Write the plan to the `plan-output-path` provided in the inputs. The plan should
 - Current state analysis with specific file references
 - Proposed solution with architectural decisions
 - Implementation steps (single step for simple tasks, multiple only when complex)
-- Full file paths and line numbers for all references
+- Full file paths for all references (use function/type names for location, not line numbers)
 - Relevant code snippets (not full implementations)
 - Testing strategy with specific test scenarios
 - Risk assessment and mitigation strategies
@@ -358,7 +358,7 @@ Write the plan to the `plan-output-path` provided in the inputs. The plan should
 - DO NOT write implementation code, only planning and analysis
 - **VERIFY all library features and APIs by inspecting actual code/documentation**
 - **DO NOT assume methods or features exist - check the source**
-- Include specific file paths and line numbers for all references
+- Include specific file paths for all references (use function/type names for location, not line numbers)
 - Keep code snippets concise (max 10-15 lines) to illustrate concepts
 - Focus on architectural decisions and reasoning
 - Consider existing patterns and maintain consistency
@@ -392,8 +392,8 @@ Write the plan to the `plan-output-path` provided in the inputs. Use this struct
 
 ### Relevant Files
 
-- path/to/file.ext (lines X-Y): [Purpose and current implementation]
-- path/to/another.ext (lines A-B): [Dependencies and interfaces]
+- `path/to/file.ext` - `function_name()` / `StructName`: [Purpose and current implementation]
+- `path/to/another.ext` - `other_function()`: [Dependencies and interfaces]
 
 ### Architecture Overview
 
@@ -432,7 +432,7 @@ Write the plan to the `plan-output-path` provided in the inputs. Use this struct
 
 ```[language]
 // File: /absolute/path/to/file.ext
-// Location: After line N / Replace lines X-Y / New file
+// Location: In function `foo` / After struct `Bar` / New file
 
 [10-30 lines of key implementation code]
 ```
@@ -449,14 +449,14 @@ Write the plan to the `plan-output-path` provided in the inputs. Use this struct
 ### For Simple Features (single step):
 
 - [ ] Complete implementation: [Description]
-  - Files to modify: path/file.ext (lines X-Y)
+  - Files to modify: `path/file.ext` - `function_name()` or `TypeName`
   - Key changes: [Comprehensive description]
   - Verified APIs/methods used: [list with confirmation]
 
 ### For Complex Features (multiple steps only when necessary):
 
 - [ ] Step 1: [Foundation/core functionality]
-  - Files to modify: path/file.ext (lines X-Y)
+  - Files to modify: `path/file.ext` - `function_name()` or `TypeName`
   - Key changes: [Brief description]
   - Dependencies: [Verified library methods]
 - [ ] Step 2: [Build on foundation...]

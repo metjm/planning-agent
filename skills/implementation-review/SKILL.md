@@ -76,12 +76,12 @@ Write your review to `review-output-path` with this structure:
 
 ### Correctly Implemented
 
-1. [Description] - Location: /path/to/file:line
+1. [Description] - Location: `/path/to/file` in `function_name()`
 
 ### Issues Found
 
 1. **Issue**: [Description]
-   **Location**: /path/to/file:line
+   **Location**: `/path/to/file` in `function_name()` or `TypeName`
    **Expected**: [What plan specified]
    **Actual**: [What was implemented]
 

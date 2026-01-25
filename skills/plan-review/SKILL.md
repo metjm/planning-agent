@@ -183,7 +183,7 @@ For each section of the plan, systematically verify:
 #### Current State Analysis Review
 
 - Are file references accurate (do files exist at stated paths)?
-- Are line number references correct?
+- Do the referenced functions/types exist in the stated files?
 - Is the architecture description accurate?
 - Are there relevant files or patterns not mentioned?
 
@@ -303,10 +303,10 @@ Write feedback to the `feedback-output-path` file in this structure:
 **Status:** [OK / INACCURATE / INCOMPLETE]
 
 **File Reference Verification:**
-| File | Line Reference | Status | Notes |
-|------|----------------|--------|-------|
-| path/to/file.ts | Lines 10-20 | VERIFIED | Accurate |
-| path/to/other.ts | Lines 5-15 | INCORRECT | File exists but lines don't match |
+| File | Function/Type | Status | Notes |
+|------|---------------|--------|-------|
+| path/to/file.ts | `handleRequest()` | VERIFIED | Exists as described |
+| path/to/other.ts | `UserConfig` | INCORRECT | Type has different fields |
 
 [Additional feedback on architecture analysis]
 
@@ -528,7 +528,6 @@ Use the following guidelines to determine the overall assessment:
 
 Use this when the plan will work and the approach is reasonable. Minor issues do NOT block approval:
 
-- Incorrect line number references (these drift as code changes)
 - Small inaccuracies in file descriptions
 - Missing edge cases that can be addressed during implementation
 - Stylistic suggestions or "nice to have" improvements
