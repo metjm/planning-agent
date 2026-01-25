@@ -159,11 +159,11 @@ pub fn list_available_workflows(working_dir: &Path) -> Result<Vec<WorkflowInfoWi
 
 /// Load a workflow configuration by name.
 pub fn load_workflow_by_name(name: &str) -> Result<crate::config::WorkflowConfig> {
-    match name {
-        "default" => Ok(crate::config::WorkflowConfig::default_config()),
-        "claude-only" => Ok(crate::config::WorkflowConfig::claude_only_config()),
-        "codex-only" => Ok(crate::config::WorkflowConfig::codex_only_config()),
-        "gemini-only" => Ok(crate::config::WorkflowConfig::gemini_only_config()),
+    let mut config = match name {
+        "default" => crate::config::WorkflowConfig::default_config(),
+        "claude-only" => crate::config::WorkflowConfig::claude_only_config(),
+        "codex-only" => crate::config::WorkflowConfig::codex_only_config(),
+        "gemini-only" => crate::config::WorkflowConfig::gemini_only_config(),
         _ => {
             let workflows_directory = workflows_dir()?;
             let yaml_path = workflows_directory.join(format!("{}.yaml", name));
@@ -181,9 +181,12 @@ pub fn load_workflow_by_name(name: &str) -> Result<crate::config::WorkflowConfig
                 );
             };
 
-            crate::config::WorkflowConfig::load(&path)
+            crate::config::WorkflowConfig::load(&path)?
         }
-    }
+    };
+    // Set the workflow name so it can be persisted with snapshots
+    config.name = name.to_string();
+    Ok(config)
 }
 
 #[cfg(test)]

@@ -32,6 +32,35 @@ pub fn restore_terminal(
     Ok(())
 }
 
+/// Load workflow config from a snapshot's stored workflow name.
+///
+/// This ensures the resumed session uses the same workflow that was originally used,
+/// regardless of any changes to the current workflow selection.
+///
+/// Fallback priority if workflow_name is empty or loading fails:
+/// 1. Persisted workflow selection for the snapshot's working directory
+/// 2. `./workflow.yaml` in working directory
+/// 3. Fallback to claude_only_config()
+pub fn load_workflow_from_snapshot(
+    snapshot: &crate::session_store::SessionSnapshot,
+) -> WorkflowConfig {
+    // Try to load from stored workflow name first
+    if !snapshot.workflow_name.is_empty() {
+        match crate::workflow_selection::load_workflow_by_name(&snapshot.workflow_name) {
+            Ok(config) => return config,
+            Err(e) => {
+                eprintln!(
+                    "[planning-agent] Warning: Failed to load workflow '{}' from snapshot: {}. Falling back to current selection.",
+                    snapshot.workflow_name, e
+                );
+            }
+        }
+    }
+
+    // Fall back to current selection for the snapshot's working directory
+    load_workflow_from_selection(&snapshot.working_dir)
+}
+
 /// Load workflow config from persisted selection or working directory.
 ///
 /// This function handles the non-CLI loading priority:
@@ -92,35 +121,45 @@ pub fn get_workflow_config_for_session(
         .unwrap_or_else(|| load_workflow_from_selection(working_dir))
 }
 
-/// Load workflow config based on CLI flags and working directory.
+/// Load workflow config for CLI resume, respecting CLI overrides then snapshot's stored workflow.
 ///
 /// Priority order:
 /// 1. `--claude` flag → claude_only_config()
 /// 2. `--config <path>` → load from specified file
-/// 3. Persisted workflow selection
-/// 4. `./workflow.yaml` in working directory
-/// 5. Fallback to claude_only_config()
-pub fn load_workflow_config(
+/// 3. Snapshot's stored workflow_name (preserves original workflow)
+/// 4. Persisted workflow selection (fallback for old snapshots)
+/// 5. `./workflow.yaml` in working directory
+/// 6. Fallback to claude_only_config()
+pub fn load_workflow_config_for_resume(
     cli: &Cli,
-    working_dir: &Path,
+    snapshot: &crate::session_store::SessionSnapshot,
     start: std::time::Instant,
 ) -> WorkflowConfig {
-    // --claude flag takes priority over any config file or selection
+    // --claude flag takes priority over any config file or snapshot workflow
     if cli.claude {
         debug_log(start, "Using Claude-only workflow config (--claude)");
-        return WorkflowConfig::claude_only_config();
+        let mut cfg = WorkflowConfig::claude_only_config();
+        cfg.name = "claude-only".to_string();
+        return cfg;
     }
 
-    // --config flag takes priority over saved selection
+    // --config flag takes priority over snapshot workflow
     if let Some(config_path) = &cli.config {
         let full_path = if config_path.is_absolute() {
             config_path.clone()
         } else {
-            working_dir.join(config_path)
+            snapshot.working_dir.join(config_path)
         };
         match WorkflowConfig::load(&full_path) {
-            Ok(cfg) => {
+            Ok(mut cfg) => {
                 debug_log(start, &format!("Loaded config from {:?}", full_path));
+                // Set name from filename if not already set
+                if cfg.name.is_empty() {
+                    cfg.name = full_path
+                        .file_stem()
+                        .map(|s| s.to_string_lossy().to_string())
+                        .unwrap_or_else(|| "custom".to_string());
+                }
                 return cfg;
             }
             Err(e) => {
@@ -129,11 +168,15 @@ pub fn load_workflow_config(
         }
     }
 
-    // Delegate to the shared helper for selection/local/fallback logic
-    let cfg = load_workflow_from_selection(working_dir);
+    // Use snapshot's stored workflow name (preserves original workflow across resume)
+    let cfg = load_workflow_from_snapshot(snapshot);
     debug_log(
         start,
-        &format!("Loaded workflow config for {}", working_dir.display()),
+        &format!(
+            "Loaded workflow '{}' from snapshot for {}",
+            cfg.name,
+            snapshot.working_dir.display()
+        ),
     );
     cfg
 }

@@ -91,12 +91,14 @@ fn test_snapshot_creation() {
         ui_state,
         0,
         saved_at,
+        "claude-only".to_string(),
     );
 
     assert_eq!(snapshot.version, SNAPSHOT_VERSION);
     assert!(!snapshot.saved_at.is_empty());
     assert_eq!(snapshot.workflow_session_id, "test-session-id");
     assert_eq!(snapshot.workflow_state.feature_name, "test-feature");
+    assert_eq!(snapshot.workflow_name, "claude-only");
 }
 
 #[test]
@@ -113,6 +115,7 @@ fn test_snapshot_serialization_roundtrip() {
         ui_state,
         5000,
         saved_at,
+        "default".to_string(),
     );
 
     let json = serde_json::to_string(&snapshot).unwrap();
@@ -143,6 +146,7 @@ fn test_snapshot_info() {
         ui_state,
         0,
         saved_at,
+        "claude-only".to_string(),
     );
 
     let info = snapshot.info();
@@ -166,6 +170,7 @@ fn test_conflict_detection_no_conflict() {
         ui_state,
         0,
         "2025-12-29T15:00:00Z".to_string(),
+        "claude-only".to_string(),
     );
 
     let conflict = check_conflict(&snapshot, &state);
@@ -187,6 +192,7 @@ fn test_conflict_detection_with_conflict() {
         ui_state,
         0,
         "2025-12-29T15:00:00Z".to_string(),
+        "claude-only".to_string(),
     );
 
     let conflict = check_conflict(&snapshot, &state);
@@ -224,6 +230,7 @@ fn test_save_and_load_session_centric_snapshot() {
         ui_state,
         0,
         saved_at,
+        "claude-only".to_string(),
     );
 
     let save_result = save_snapshot(&snapshot);

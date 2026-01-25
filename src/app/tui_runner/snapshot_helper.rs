@@ -35,6 +35,19 @@ pub fn create_and_save_snapshot(
         .map(Ok)
         .unwrap_or_else(|| planning_paths::state_path(working_dir, &state.feature_name))?;
 
+    // Get workflow name from session context (preserves the workflow used for this session)
+    // If no context, fall back to current selection for this working directory
+    let workflow_name = session
+        .context
+        .as_ref()
+        .map(|ctx| ctx.workflow_config.name.clone())
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| {
+            crate::workflow_selection::WorkflowSelection::load(working_dir)
+                .map(|s| s.workflow)
+                .unwrap_or_else(|_| "claude-only".to_string())
+        });
+
     let ui_state = session.to_ui_state();
     let now = chrono::Utc::now().to_rfc3339();
     let mut state_copy = state.clone();
@@ -49,6 +62,7 @@ pub fn create_and_save_snapshot(
         ui_state,
         elapsed,
         now,
+        workflow_name,
     );
 
     save_snapshot(&snapshot)

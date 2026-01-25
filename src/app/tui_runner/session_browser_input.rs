@@ -203,8 +203,8 @@ fn execute_cross_directory_resume_in_process(
 ///
 /// This function now supports both same-directory and cross-directory resume
 /// by creating a SessionContext with the appropriate working directories.
-/// Workflow config is loaded from the current persisted selection for the session's
-/// working directory, ensuring /workflow changes are respected.
+/// Workflow config is loaded from the snapshot's stored workflow name to ensure
+/// the resumed session uses the same workflow that was originally used.
 fn resume_session_in_current_process(
     tab_manager: &mut TabManager,
     entry: &crate::tui::session_browser::SessionEntry,
@@ -225,12 +225,10 @@ fn resume_session_in_current_process(
 
     match load_result {
         Ok(snapshot) => {
-            // Load workflow config from persisted selection for the SESSION's working directory
-            // This ensures /workflow changes are respected when resuming
+            // Load workflow config from snapshot's stored workflow name
+            // This ensures the resumed session uses the same workflow that was originally used
             let workflow_config =
-                crate::app::tui_runner::workflow_loading::load_workflow_from_selection(
-                    &snapshot.working_dir,
-                );
+                crate::app::tui_runner::workflow_loading::load_workflow_from_snapshot(&snapshot);
 
             // Close the browser first to release the borrow
             tab_manager.session_browser.close();

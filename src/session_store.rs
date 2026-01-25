@@ -32,7 +32,8 @@ use std::path::{Path, PathBuf};
 /// - v3: Removed embedded implementation terminal (InputMode/FocusedPanel have Unknown variants)
 /// - v4: Run-tab entries include tool timeline entries (no migration support)
 /// - v5: Review rounds include a kind discriminator (plan vs implementation)
-pub const SNAPSHOT_VERSION: u32 = 5;
+/// - v6: Added workflow_name to preserve workflow config across resume
+pub const SNAPSHOT_VERSION: u32 = 6;
 
 /// A persistable snapshot of a workflow session.
 ///
@@ -56,6 +57,9 @@ pub struct SessionSnapshot {
     /// Total elapsed time before this resume (milliseconds).
     /// Accumulated across multiple stop/resume cycles.
     pub total_elapsed_before_resume_ms: u64,
+    /// Name of the workflow used for this session (e.g., "claude-only", "default").
+    /// Used to restore the correct workflow config on resume.
+    pub workflow_name: String,
 }
 
 /// Serializable subset of Session that captures UI state.
@@ -165,6 +169,7 @@ pub struct SessionSnapshotInfo {
 
 impl SessionSnapshot {
     /// Creates a snapshot with a specific timestamp (for unified stop operations).
+    #[allow(clippy::too_many_arguments)]
     pub fn new_with_timestamp(
         working_dir: PathBuf,
         workflow_session_id: String,
@@ -173,6 +178,7 @@ impl SessionSnapshot {
         ui_state: SessionUiState,
         total_elapsed_before_resume_ms: u64,
         saved_at: String,
+        workflow_name: String,
     ) -> Self {
         Self {
             version: SNAPSHOT_VERSION,
@@ -183,6 +189,7 @@ impl SessionSnapshot {
             workflow_state,
             ui_state,
             total_elapsed_before_resume_ms,
+            workflow_name,
         }
     }
 
@@ -469,6 +476,12 @@ pub fn recover_from_state_file(session_id: &str) -> Result<SessionSnapshot> {
                 .map(|p| p.to_path_buf())
                 .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
 
+            // For recovery, we don't know the original workflow name, so use the
+            // current selection for this working directory (best effort)
+            let workflow_name = crate::workflow_selection::WorkflowSelection::load(&working_dir)
+                .map(|s| s.workflow)
+                .unwrap_or_else(|_| "claude-only".to_string());
+
             return Ok(SessionSnapshot::new_with_timestamp(
                 working_dir,
                 session_id.to_string(),
@@ -477,6 +490,7 @@ pub fn recover_from_state_file(session_id: &str) -> Result<SessionSnapshot> {
                 ui_state,
                 0,
                 chrono::Utc::now().to_rfc3339(),
+                workflow_name,
             ));
         }
     }
@@ -517,6 +531,12 @@ pub fn recover_from_state_file(session_id: &str) -> Result<SessionSnapshot> {
     // 4. Create minimal UI state with defaults
     let ui_state = SessionUiState::minimal_from_state(&state);
 
+    // For recovery, we don't know the original workflow name, so use the
+    // current selection for this working directory (best effort)
+    let workflow_name = crate::workflow_selection::WorkflowSelection::load(&record.working_dir)
+        .map(|s| s.workflow)
+        .unwrap_or_else(|_| "claude-only".to_string());
+
     // 5. Build snapshot
     Ok(SessionSnapshot::new_with_timestamp(
         record.working_dir.clone(),
@@ -526,6 +546,7 @@ pub fn recover_from_state_file(session_id: &str) -> Result<SessionSnapshot> {
         ui_state,
         0,
         chrono::Utc::now().to_rfc3339(),
+        workflow_name,
     ))
 }
 

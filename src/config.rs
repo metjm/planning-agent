@@ -8,6 +8,10 @@ use std::path::Path;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct WorkflowConfig {
+    /// Name of this workflow (e.g., "claude-only", "default", "my-custom").
+    /// Used to persist and restore the correct workflow across session resume.
+    #[serde(default)]
+    pub name: String,
     pub agents: HashMap<String, AgentConfig>,
     pub workflow: PhaseConfigs,
     /// Failure handling policy for transient failures and recovery.

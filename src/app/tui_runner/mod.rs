@@ -350,6 +350,13 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
         first_session
             .adjust_start_time_for_previous_elapsed(snapshot.total_elapsed_before_resume_ms);
 
+        // Load workflow config for resume BEFORE moving workflow_state out of snapshot.
+        // Respects CLI overrides then snapshot's stored workflow.
+        // This ensures the resumed session uses the same workflow that was originally used,
+        // unless explicitly overridden by CLI flags.
+        let resume_workflow_config =
+            workflow_loading::load_workflow_config_for_resume(&cli, &snapshot, start);
+
         // Save state to ensure state file is in sync with snapshot
         let state_path = snapshot.state_path.clone();
         let mut state = snapshot.workflow_state;
@@ -357,11 +364,6 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
         state.save(&state_path)?;
 
         let _ = output_tx.send(Event::StateUpdate(state.clone()));
-
-        // Load workflow config from CLI args (--claude, --config) for resume.
-        // This respects CLI flags which take precedence over persisted selection.
-        let resume_workflow_config =
-            workflow_loading::load_workflow_config(&cli, &snapshot.working_dir, start);
 
         // Set up session context BEFORE starting the workflow
         // This enables proper working directory tracking for cross-directory resume
