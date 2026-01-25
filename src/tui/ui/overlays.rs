@@ -17,7 +17,30 @@ use ratatui::{
 };
 use unicode_width::UnicodeWidthStr;
 
-fn build_phase_spans(session: &Session, theme: &Theme) -> Vec<Span<'static>> {
+/// Display mode for phase progression rendering.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PhaseDisplayMode {
+    /// Arrow-separated full names: "Planning → Reviewing → Revising → Complete"
+    #[default]
+    Arrows,
+    /// Compact chips with symbols: "⠋Plan ✓Review ○Revise ○Done"
+    Chips { spinner_frame: u8 },
+}
+
+/// Renders phase progression as styled spans.
+///
+/// Supports two display modes:
+/// - `Arrows`: Full names with arrow separators (used in footer)
+/// - `Chips`: Compact format with status symbols (used in header)
+///
+/// Phase state mapping:
+/// - `Phase::AwaitingPlanningDecision` maps to Reviewing (user deciding after review)
+/// - `ImplementationPhase::AwaitingMaxIterationsDecision` maps to Deciding
+pub fn build_phase_spans(
+    session: &Session,
+    theme: &Theme,
+    mode: PhaseDisplayMode,
+) -> Vec<Span<'static>> {
     let ui_mode = session.ui_mode();
     let phase = session.workflow_state.as_ref().map(|s| &s.phase);
     let impl_state = session
@@ -26,19 +49,71 @@ fn build_phase_spans(session: &Session, theme: &Theme) -> Vec<Span<'static>> {
         .and_then(|s| s.implementation_state.as_ref());
     let mut spans = Vec::new();
 
+    // Spinner characters for chip mode
+    const SPINNER: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+
+    // Helper to render a single phase entry based on mode
+    let render_phase = |name: &'static str,
+                        short_name: &'static str,
+                        is_cur: bool,
+                        is_done: bool,
+                        mode: PhaseDisplayMode,
+                        theme: &Theme|
+     -> Vec<Span<'static>> {
+        match mode {
+            PhaseDisplayMode::Arrows => {
+                let style = if is_cur {
+                    Style::default().fg(theme.phase_current).bold()
+                } else if is_done {
+                    Style::default().fg(theme.phase_complete)
+                } else {
+                    Style::default().fg(theme.phase_pending)
+                };
+                vec![Span::styled(name, style)]
+            }
+            PhaseDisplayMode::Chips { spinner_frame } => {
+                let (symbol, style) = if is_cur {
+                    let ch = SPINNER[(spinner_frame as usize) % SPINNER.len()];
+                    (ch, Style::default().fg(theme.phase_current).bold())
+                } else if is_done {
+                    ('✓', Style::default().fg(theme.phase_complete))
+                } else {
+                    ('○', Style::default().fg(theme.phase_pending))
+                };
+                vec![
+                    Span::styled(format!("{}", symbol), style),
+                    Span::styled(short_name.to_string(), style),
+                ]
+            }
+        }
+    };
+
+    // Helper for separator based on mode
+    let separator = |mode: PhaseDisplayMode, theme: &Theme| -> Span<'static> {
+        match mode {
+            PhaseDisplayMode::Arrows => Span::styled(" → ", Style::default().fg(theme.muted)),
+            PhaseDisplayMode::Chips { .. } => Span::raw(" "),
+        }
+    };
+
     if ui_mode == UiMode::Implementation {
         let impl_phases = [
-            ("Implementing", ImplementationPhase::Implementing),
-            ("Reviewing", ImplementationPhase::ImplementationReview),
+            ("Implementing", "Impl", ImplementationPhase::Implementing),
+            (
+                "Reviewing",
+                "Review",
+                ImplementationPhase::ImplementationReview,
+            ),
             (
                 "Deciding",
+                "Decide",
                 ImplementationPhase::AwaitingMaxIterationsDecision,
             ),
-            ("Complete", ImplementationPhase::Complete),
+            ("Complete", "Done", ImplementationPhase::Complete),
         ];
         let current = impl_state.map(|s| &s.phase);
-        for (i, (name, p)) in impl_phases.iter().enumerate() {
-            let is_cur = current == Some(p);
+        for (i, (name, short, p)) in impl_phases.iter().enumerate() {
+            // is_done: true when this phase is completed (Phase::Complete marks all done)
             let is_done = matches!(
                 (current, p),
                 (Some(ImplementationPhase::Complete), _)
@@ -52,43 +127,36 @@ fn build_phase_spans(session: &Session, theme: &Theme) -> Vec<Span<'static>> {
                             | ImplementationPhase::ImplementationReview
                     )
             );
-            let style = if is_cur {
-                Style::default().fg(theme.phase_current).bold()
-            } else if is_done {
-                Style::default().fg(theme.phase_complete)
-            } else {
-                Style::default().fg(theme.phase_pending)
-            };
-            spans.push(Span::styled(*name, style));
+            // is_cur: actively running (done phases are never "current")
+            let is_cur = !is_done && current == Some(p);
+            spans.extend(render_phase(name, short, is_cur, is_done, mode, theme));
             if i < impl_phases.len() - 1 {
-                spans.push(Span::styled(" → ", Style::default().fg(theme.muted)));
+                spans.push(separator(mode, theme));
             }
         }
     } else {
         let phases = [
-            ("Planning", Phase::Planning),
-            ("Reviewing", Phase::Reviewing),
-            ("Revising", Phase::Revising),
-            ("Complete", Phase::Complete),
+            ("Planning", "Plan", Phase::Planning),
+            ("Reviewing", "Review", Phase::Reviewing),
+            ("Revising", "Revise", Phase::Revising),
+            ("Complete", "Done", Phase::Complete),
         ];
-        for (i, (name, p)) in phases.iter().enumerate() {
-            let is_cur = phase == Some(p);
+        for (i, (name, short, p)) in phases.iter().enumerate() {
+            // is_done: true when completed (Complete marks all done, AwaitingPlanningDecision = Planning done)
             let is_done = matches!(
                 (phase, p),
                 (Some(Phase::Complete), _)
-                    | (Some(Phase::Revising), Phase::Planning)
+                    | (Some(Phase::Revising), Phase::Planning | Phase::Reviewing)
                     | (Some(Phase::Reviewing), Phase::Planning)
+                    | (Some(Phase::AwaitingPlanningDecision), Phase::Planning)
             );
-            let style = if is_cur {
-                Style::default().fg(theme.phase_current).bold()
-            } else if is_done {
-                Style::default().fg(theme.phase_complete)
-            } else {
-                Style::default().fg(theme.phase_pending)
-            };
-            spans.push(Span::styled(*name, style));
+            // is_cur: actively running (AwaitingPlanningDecision maps to Reviewing as current)
+            let is_cur = !is_done
+                && (phase == Some(p)
+                    || (p == &Phase::Reviewing && phase == Some(&Phase::AwaitingPlanningDecision)));
+            spans.extend(render_phase(name, short, is_cur, is_done, mode, theme));
             if i < phases.len() - 1 {
-                spans.push(Span::styled(" → ", Style::default().fg(theme.muted)));
+                spans.push(separator(mode, theme));
             }
         }
     }
@@ -103,7 +171,7 @@ pub fn draw_footer(frame: &mut Frame, session: &Session, tab_manager: &TabManage
         Style::default().fg(theme.accent),
     ));
     spans.push(Span::styled("│ ", Style::default().fg(theme.muted)));
-    spans.extend(build_phase_spans(session, &theme));
+    spans.extend(build_phase_spans(session, &theme, PhaseDisplayMode::Arrows));
     spans.push(Span::styled(" │ ", Style::default().fg(theme.muted)));
 
     if session.approval_mode != ApprovalMode::None {

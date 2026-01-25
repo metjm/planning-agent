@@ -13,6 +13,9 @@ pub mod theme;
 pub mod util;
 mod workflow_browser_overlay;
 
+#[cfg(test)]
+mod overlays_tests;
+
 use crate::tui::scroll_regions::ScrollableRegions;
 use crate::tui::{ApprovalMode, InputMode, Session, SessionStatus, TabManager};
 use ratatui::{
@@ -26,82 +29,6 @@ use ratatui::{
 /// Spinner characters for animated activity indicators.
 /// Used throughout the UI for loading/progress animations.
 pub const SPINNER_CHARS: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-
-/// Status icon shown in header based on workflow state.
-/// Covers all possible SessionStatus variants.
-enum HeaderStatusIcon {
-    /// Spinning animation when agent is actively running
-    Spinner(u8), // frame index
-    /// Waiting for user input (hourglass)
-    Waiting,
-    /// Session is stopped/paused (can be resumed)
-    Stopped,
-    /// Workflow complete (checkmark)
-    Complete,
-    /// Error state (exclamation)
-    Error,
-}
-
-impl HeaderStatusIcon {
-    fn to_char(&self) -> char {
-        match self {
-            HeaderStatusIcon::Spinner(frame) => {
-                SPINNER_CHARS[(*frame as usize) % SPINNER_CHARS.len()]
-            }
-            HeaderStatusIcon::Waiting => '⏳',
-            HeaderStatusIcon::Stopped => '⏸',
-            HeaderStatusIcon::Complete => '✓',
-            HeaderStatusIcon::Error => '!',
-        }
-    }
-}
-
-/// Determines the header status icon based on session state.
-/// Handles ALL SessionStatus variants explicitly.
-fn determine_header_status(session: &Session, spinner_frame: u8) -> HeaderStatusIcon {
-    // Completion states - show checkmark
-    if matches!(session.status, SessionStatus::Complete) {
-        return HeaderStatusIcon::Complete;
-    }
-
-    // Error state - show exclamation
-    if matches!(session.status, SessionStatus::Error) {
-        return HeaderStatusIcon::Error;
-    }
-
-    // Stopped state - show pause icon (distinct from waiting)
-    if matches!(session.status, SessionStatus::Stopped) {
-        return HeaderStatusIcon::Stopped;
-    }
-
-    // Running states - show spinner
-    // This includes:
-    // - session.running flag being true (agent actively working)
-    // - SessionStatus::Planning (AI is planning)
-    // - SessionStatus::GeneratingSummary (AI generating summary)
-    if session.running
-        || matches!(
-            session.status,
-            SessionStatus::Planning | SessionStatus::GeneratingSummary
-        )
-    {
-        return HeaderStatusIcon::Spinner(spinner_frame);
-    }
-
-    // Waiting states - show hourglass
-    // - SessionStatus::AwaitingApproval (waiting for user approval)
-    // - SessionStatus::InputPending (waiting for user input/objective)
-    if matches!(
-        session.status,
-        SessionStatus::AwaitingApproval | SessionStatus::InputPending
-    ) {
-        return HeaderStatusIcon::Waiting;
-    }
-
-    // Fallback - should not reach here if all variants are covered,
-    // but default to waiting as the safest option
-    HeaderStatusIcon::Waiting
-}
 
 /// Returns the background color for the header based on session state.
 ///
@@ -247,29 +174,57 @@ pub fn draw(frame: &mut Frame, tab_manager: &TabManager, scroll_regions: &mut Sc
 }
 
 fn draw_tab_bar(frame: &mut Frame, tab_manager: &TabManager, area: Rect) {
+    use overlays::{build_phase_spans, PhaseDisplayMode};
     use unicode_width::UnicodeWidthStr;
 
     let active_session = tab_manager.active();
     let theme = theme::Theme::for_session(active_session);
 
-    // Determine phase info from active session
-    let phase_name = active_session.phase_name();
     let (iter, max_iter) = active_session.iteration();
-
-    // Determine status icon using session's spinner frame (animated per-session)
-    let status_icon = determine_header_status(active_session, active_session.spinner_frame);
-    let icon_char = status_icon.to_char();
 
     // Determine background color based on phase
     let bg_color = get_phase_background_color(active_session, &theme);
 
-    // Build left section: icon + phase name + iteration
+    // Build left section: phase chips + iteration
     let iter_display = if max_iter > 0 {
         format!(" ({}/{})", iter, max_iter)
     } else {
         String::new()
     };
-    let left_section = format!(" {} {}{}", icon_char, phase_name, iter_display);
+
+    // Use chip-mode phase spans for compact display with animated spinner
+    let phase_spans = if active_session.workflow_state.is_some() {
+        build_phase_spans(
+            active_session,
+            &theme,
+            PhaseDisplayMode::Chips {
+                spinner_frame: active_session.spinner_frame,
+            },
+        )
+    } else {
+        vec![Span::styled(
+            "Initializing",
+            Style::default().fg(theme.muted),
+        )]
+    };
+
+    // Build left section spans with background color
+    let mut left_spans: Vec<Span> = Vec::new();
+    left_spans.push(Span::styled(" ", Style::default().bg(bg_color)));
+    for span in &phase_spans {
+        left_spans.push(Span::styled(
+            span.content.to_string(),
+            span.style.bg(bg_color),
+        ));
+    }
+    left_spans.push(Span::styled(
+        iter_display.clone(),
+        Style::default().fg(theme.muted).bg(bg_color),
+    ));
+    left_spans.push(Span::styled(" ", Style::default().bg(bg_color)));
+
+    // Calculate left section width for layout
+    let left_section_width: usize = left_spans.iter().map(|s| s.content.width()).sum();
 
     // Build right section: path/title
     let right_section = if let Some(ref state) = active_session.workflow_state {
@@ -317,7 +272,7 @@ fn draw_tab_bar(frame: &mut Frame, tab_manager: &TabManager, area: Rect) {
     // Calculate spacing for right alignment
     //
     // Width calculation strategy:
-    // - left_section: String width via UnicodeWidthStr
+    // - left_section_width: Sum of span widths via UnicodeWidthStr
     // - tabs: Line::width() gives total display width of all tab_spans
     // - right_section: String width via UnicodeWidthStr
     //
@@ -326,26 +281,19 @@ fn draw_tab_bar(frame: &mut Frame, tab_manager: &TabManager, area: Rect) {
     // The final Line will simply be wider than available space, which
     // ratatui handles gracefully by truncating at terminal edge.
     // ============================================================
-    let left_width = left_section.width(); // UnicodeWidthStr on String
     let right_width = right_section.width(); // UnicodeWidthStr on String
     let tabs_line = Line::from(tab_spans.clone());
     let tabs_width = tabs_line.width(); // Line::width() from ratatui
     let available = area.width as usize;
-    let padding = available.saturating_sub(left_width + tabs_width + right_width);
+    let padding = available.saturating_sub(left_section_width + tabs_width + right_width);
 
-    // Build final line with left, tabs, padding, right
-    // Note: total_width = left_width + tabs_width + padding + right_width
+    // Build final line with left (phase chips), tabs, padding, right
+    // Note: total_width = left_section_width + tabs_width + padding + right_width
     // When padding > 0: total_width == available (right-aligned)
     // When padding == 0: total_width > available (content truncated at edge)
     let mut spans: Vec<Span> = Vec::new();
-    // Left: phase info with bold theme text on phase background
-    spans.push(Span::styled(
-        left_section,
-        Style::default()
-            .fg(theme.text)
-            .add_modifier(Modifier::BOLD)
-            .bg(bg_color),
-    ));
+    // Left: phase chips with their own colors on phase background
+    spans.extend(left_spans);
     // Tabs
     spans.extend(tab_spans);
     // Padding to push right section to edge

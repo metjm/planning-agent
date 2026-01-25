@@ -18,9 +18,6 @@ pub fn draw_stats(frame: &mut Frame, session: &Session, area: Rect, show_live_to
 
     let (iter, max_iter) = session.iteration();
 
-    // Phase color - use theme's phase_current color
-    let phase_color = theme.phase_current;
-
     let cost = session.display_cost();
 
     let mut stats_text = vec![
@@ -60,12 +57,47 @@ pub fn draw_stats(frame: &mut Frame, session: &Session, area: Rect, show_live_to
         " Status",
         Style::default().add_modifier(Modifier::BOLD),
     )]));
+    // Phase display with colored indicator symbol
+    let phase_name = session.phase_name();
+    let (phase_symbol, phase_style) = if session.running {
+        // Active/running - use current phase color with spinner
+        let spinner = SPINNER_CHARS[(session.spinner_frame as usize) % SPINNER_CHARS.len()];
+        (
+            spinner,
+            Style::default()
+                .fg(theme.phase_current)
+                .add_modifier(Modifier::BOLD),
+        )
+    } else if matches!(session.status, SessionStatus::Complete) {
+        // Complete - checkmark with complete color
+        (
+            '✓',
+            Style::default()
+                .fg(theme.phase_complete)
+                .add_modifier(Modifier::BOLD),
+        )
+    } else if matches!(session.status, SessionStatus::AwaitingApproval) {
+        // Waiting for approval - use warning color
+        (
+            '⏳',
+            Style::default()
+                .fg(theme.warning)
+                .add_modifier(Modifier::BOLD),
+        )
+    } else {
+        // Default - current phase color with bullet
+        (
+            '●',
+            Style::default()
+                .fg(theme.phase_current)
+                .add_modifier(Modifier::BOLD),
+        )
+    };
+
     stats_text.push(Line::from(vec![
         Span::raw(" Phase: "),
-        Span::styled(
-            session.phase_name(),
-            Style::default().fg(phase_color).bold(),
-        ),
+        Span::styled(format!("{} ", phase_symbol), phase_style),
+        Span::styled(phase_name, phase_style),
     ]));
     stats_text.push(Line::from(format!(" Iter: {}/{}", iter, max_iter)));
     stats_text.push(Line::from(vec![
