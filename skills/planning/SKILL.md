@@ -52,7 +52,7 @@ For ANY new functionality, the plan MUST include a code example showing:
 // File: /absolute/path/to/file.ext
 // Location: In function `foo` / After struct `Bar` / New file
 
-[code example - 10-30 lines showing the key implementation pattern]
+[code example]
 ```
 
 **When code examples are required:**
@@ -132,6 +132,7 @@ This is a guideline for readability, not a strict limit. For large changes:
 4. **State in the plan** how many supplementary files were created and what they contain
 
 **Why this matters:**
+
 - Long plans are harder to review and implement correctly
 - Breaking into files creates natural component boundaries
 - Reviewers can focus on high-level decisions first, then dive into details
@@ -434,7 +435,7 @@ Write the plan to the `plan-output-path` provided in the inputs. Use this struct
 // File: /absolute/path/to/file.ext
 // Location: In function `foo` / After struct `Bar` / New file
 
-[10-30 lines of key implementation code]
+[code example]
 ```
 ````
 
