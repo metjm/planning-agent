@@ -315,9 +315,11 @@ impl WorkflowStateMachine {
                 // Reset to Planning phase - this is a user-initiated restart.
                 // Direct assignment is intentional: restart bypasses normal
                 // transition rules (e.g., Complete->Planning is not normally valid).
+                // Note: iteration is intentionally preserved - user feedback refines
+                // the current iteration rather than starting fresh. This also ensures
+                // max_iterations is properly enforced.
                 let from = self.state.phase.clone();
                 self.state.phase = Phase::Planning;
-                self.state.iteration = 1;
                 // Append feedback to objective
                 self.state.objective =
                     format!("{}\n\n## User Feedback\n{}", self.state.objective, feedback);
@@ -331,7 +333,6 @@ impl WorkflowStateMachine {
                         from,
                         to: Phase::Planning,
                     },
-                    IterationReset,
                     WorkflowRestarted {
                         feedback_preview: preview,
                     },

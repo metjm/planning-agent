@@ -225,9 +225,10 @@ fn test_restart_with_feedback() {
         })
         .expect("RestartWithFeedback should succeed");
 
-    assert_eq!(events.len(), 3);
+    assert_eq!(events.len(), 2);
 
-    // Should have PhaseChanged, IterationReset, and WorkflowRestarted events
+    // Should have PhaseChanged and WorkflowRestarted events
+    // Note: iteration is intentionally preserved (not reset) across restarts
     match &events[0] {
         StateEvent::PhaseChanged { from, to } => {
             assert_eq!(*from, Phase::Complete);
@@ -237,20 +238,15 @@ fn test_restart_with_feedback() {
     }
 
     match &events[1] {
-        StateEvent::IterationReset => {}
-        _ => panic!("Expected IterationReset event"),
-    }
-
-    match &events[2] {
         StateEvent::WorkflowRestarted { feedback_preview } => {
             assert!(feedback_preview.contains("Please improve error handling"));
         }
         _ => panic!("Expected WorkflowRestarted event"),
     }
 
-    // State should be reset
+    // Phase should be reset to Planning, but iteration preserved
     assert_eq!(machine.state().phase, Phase::Planning);
-    assert_eq!(machine.state().iteration, 1);
+    // Iteration remains 1 (was never incremented in this test flow)
     assert!(machine
         .state()
         .objective

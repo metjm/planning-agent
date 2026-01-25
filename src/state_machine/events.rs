@@ -16,8 +16,6 @@ pub enum StateEvent {
     PhaseChanged { from: Phase, to: Phase },
     /// Iteration was incremented
     IterationIncremented { new_value: u32 },
-    /// Iteration was reset (e.g., on restart)
-    IterationReset,
     /// A reviewer's status changed (approved or rejected)
     ReviewerStatusChanged { reviewer_id: String, approved: bool },
     /// Workflow completed successfully

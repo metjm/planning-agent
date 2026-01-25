@@ -322,7 +322,9 @@ fn handle_workflow_restart(
 
     if let Some(ref mut state) = session.workflow_state {
         state.phase = Phase::Planning;
-        state.iteration = 1;
+        // Note: iteration is intentionally preserved across restarts.
+        // User feedback refines the current iteration, not starts fresh.
+        // This also ensures max_iterations is properly enforced.
         state.approval_overridden = false;
         state.objective = format!(
             "{}\n\nUSER FEEDBACK: The previous plan was reviewed and needs changes:\n{}",
