@@ -40,7 +40,11 @@ mod planning;
 mod reviewing;
 mod revising;
 
-use crate::app::implementation::run_implementation_workflow;
+use crate::app::implementation::{run_implementation_workflow, ImplementationContext};
+use crate::app::workflow_decisions::{
+    apply_planning_decision, await_max_iterations_decision,
+    build_max_iterations_summary_from_state, IterativePhase,
+};
 use crate::config::WorkflowConfig;
 use crate::planning_paths;
 use crate::session_logger::{create_session_logger, LogCategory, LogLevel};
@@ -387,6 +391,30 @@ pub async fn run_workflow_with_config(
                 }
             }
 
+            Phase::AwaitingPlanningDecision => {
+                // Re-display the max iterations modal on resume
+                let summary = build_max_iterations_summary_from_state(&state, &last_reviews);
+
+                let decision = await_max_iterations_decision(
+                    IterativePhase::Planning,
+                    &session_logger,
+                    &sender,
+                    &mut approval_rx,
+                    &mut control_rx,
+                    summary,
+                )
+                .await?;
+
+                // Apply the decision using the shared helper
+                if let Some(result) =
+                    apply_planning_decision(decision, &mut state, &state_path, &sender)?
+                {
+                    let _ = tracker.mark_stopped(&state.workflow_session_id).await;
+                    return Ok(result);
+                }
+                sender.send_state_update(state.clone());
+            }
+
             Phase::Complete => {
                 break;
             }
@@ -420,12 +448,18 @@ pub async fn run_workflow_with_config(
                 "Starting implementation workflow",
             );
 
+            let impl_ctx = ImplementationContext {
+                state_path: &state_path,
+                session_sender: sender.clone(),
+                session_logger: session_logger.clone(),
+                approval_rx: &mut approval_rx,
+                control_rx: &mut control_rx,
+            };
             let impl_result = run_implementation_workflow(
                 &mut state,
                 &config,
                 &working_dir,
-                sender.clone(),
-                session_logger.clone(),
+                impl_ctx,
                 None, // No initial feedback
             )
             .await;
@@ -442,6 +476,13 @@ pub async fn run_workflow_with_config(
                                 "[implementation] Implementation complete and approved!"
                                     .to_string(),
                             );
+                            return Ok(WorkflowResult::Accepted);
+                        }
+                        ImplementationWorkflowResult::ApprovedOverridden { iterations_used } => {
+                            sender.send_output(format!(
+                                "[implementation] Implementation accepted by user override after {} iterations",
+                                iterations_used
+                            ));
                             return Ok(WorkflowResult::Accepted);
                         }
                         ImplementationWorkflowResult::Failed {

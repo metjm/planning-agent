@@ -224,9 +224,15 @@ pub async fn handle_session_event(
         }
         Event::SessionMaxIterationsReached {
             session_id,
+            phase,
             summary,
         } => {
             if let Some(session) = tab_manager.session_by_id_mut(session_id) {
+                // Include phase info in the output for context
+                session.add_output(format!(
+                    "[{}] Max iterations reached - awaiting decision",
+                    phase.display_name()
+                ));
                 session.start_max_iterations_prompt(summary);
             }
         }

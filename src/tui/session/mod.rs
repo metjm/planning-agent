@@ -531,6 +531,7 @@ impl Session {
                     Phase::Planning => "Planning",
                     Phase::Reviewing => "Reviewing",
                     Phase::Revising => "Revising",
+                    Phase::AwaitingPlanningDecision => "Awaiting Decision",
                     Phase::Complete => "Complete",
                 }
             }

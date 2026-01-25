@@ -156,6 +156,9 @@ fn get_phase_background_color(session: &Session, theme: &theme::Theme) -> ratatu
                     return match impl_state.phase {
                         ImplementationPhase::Implementing => theme.phase_bg_planning,
                         ImplementationPhase::ImplementationReview => theme.phase_bg_reviewing,
+                        ImplementationPhase::AwaitingMaxIterationsDecision => {
+                            theme.phase_bg_reviewing
+                        }
                         ImplementationPhase::Complete => theme.phase_bg_complete,
                     };
                 }
@@ -165,6 +168,7 @@ fn get_phase_background_color(session: &Session, theme: &theme::Theme) -> ratatu
                 Phase::Planning => theme.phase_bg_planning,
                 Phase::Reviewing => theme.phase_bg_reviewing,
                 Phase::Revising => theme.phase_bg_revising,
+                Phase::AwaitingPlanningDecision => theme.phase_bg_reviewing,
                 Phase::Complete => theme.phase_bg_complete,
             }
         }

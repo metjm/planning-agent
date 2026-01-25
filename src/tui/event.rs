@@ -4,6 +4,7 @@ use futures::StreamExt;
 use std::time::Duration;
 use tokio::sync::mpsc;
 
+use crate::app::workflow_decisions::IterativePhase;
 use crate::cli_usage::AccountUsage;
 use crate::state::State;
 use crate::tui::file_index::FileIndex;
@@ -170,8 +171,10 @@ pub enum Event {
         summary: String,
     },
 
+    /// Max iterations reached - prompt user for decision
     SessionMaxIterationsReached {
         session_id: usize,
+        phase: IterativePhase,
         summary: String,
     },
 

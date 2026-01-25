@@ -14,6 +14,7 @@ pub enum Phase {
     Planning,
     Reviewing,
     Revising,
+    AwaitingPlanningDecision,
     Complete,
 }
 
@@ -27,6 +28,8 @@ pub enum ImplementationPhase {
     Implementing,
     /// Review phase: reviewing the implementation for completeness
     ImplementationReview,
+    /// Awaiting user decision after max iterations reached
+    AwaitingMaxIterationsDecision,
     /// Implementation complete and approved
     Complete,
 }
@@ -48,6 +51,7 @@ impl ImplementationPhase {
         match self {
             ImplementationPhase::Implementing => "Implementing",
             ImplementationPhase::ImplementationReview => "Reviewing Implementation",
+            ImplementationPhase::AwaitingMaxIterationsDecision => "Awaiting Decision",
             ImplementationPhase::Complete => "Implementation Complete",
         }
     }
@@ -120,6 +124,7 @@ impl Phase {
             Phase::Planning => PhaseLabel::Planning,
             Phase::Reviewing => PhaseLabel::Reviewing,
             Phase::Revising => PhaseLabel::Revising,
+            Phase::AwaitingPlanningDecision => PhaseLabel::AwaitingDecision,
             Phase::Complete => PhaseLabel::Complete,
         }
     }
@@ -134,6 +139,7 @@ pub enum PhaseLabel {
     Planning,
     Reviewing,
     Revising,
+    AwaitingDecision,
     Complete,
 }
 
@@ -144,6 +150,7 @@ impl PhaseLabel {
             PhaseLabel::Planning => "Plan",
             PhaseLabel::Reviewing => "Review",
             PhaseLabel::Revising => "Revise",
+            PhaseLabel::AwaitingDecision => "Decide",
             PhaseLabel::Complete => "Done",
         }
     }
@@ -154,6 +161,7 @@ impl PhaseLabel {
             PhaseLabel::Planning => "Planning",
             PhaseLabel::Reviewing => "Reviewing",
             PhaseLabel::Revising => "Revising",
+            PhaseLabel::AwaitingDecision => "Awaiting Decision",
             PhaseLabel::Complete => "Complete",
         }
     }
@@ -650,6 +658,9 @@ impl State {
             (Phase::Planning, Phase::Reviewing)
                 | (Phase::Reviewing, Phase::Revising)
                 | (Phase::Reviewing, Phase::Complete)
+                | (Phase::Reviewing, Phase::AwaitingPlanningDecision)
+                | (Phase::AwaitingPlanningDecision, Phase::Complete)
+                | (Phase::AwaitingPlanningDecision, Phase::Revising)
                 | (Phase::Revising, Phase::Reviewing)
         );
 

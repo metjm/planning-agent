@@ -30,6 +30,10 @@ fn build_phase_spans(session: &Session, theme: &Theme) -> Vec<Span<'static>> {
         let impl_phases = [
             ("Implementing", ImplementationPhase::Implementing),
             ("Reviewing", ImplementationPhase::ImplementationReview),
+            (
+                "Deciding",
+                ImplementationPhase::AwaitingMaxIterationsDecision,
+            ),
             ("Complete", ImplementationPhase::Complete),
         ];
         let current = impl_state.map(|s| &s.phase);
@@ -41,6 +45,11 @@ fn build_phase_spans(session: &Session, theme: &Theme) -> Vec<Span<'static>> {
                     | (
                         Some(ImplementationPhase::ImplementationReview),
                         ImplementationPhase::Implementing
+                    )
+                    | (
+                        Some(ImplementationPhase::AwaitingMaxIterationsDecision),
+                        ImplementationPhase::Implementing
+                            | ImplementationPhase::ImplementationReview
                     )
             );
             let style = if is_cur {

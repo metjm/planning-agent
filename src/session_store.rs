@@ -540,6 +540,7 @@ impl SessionUiState {
                 Phase::Planning => SessionStatus::Planning,
                 Phase::Reviewing => SessionStatus::AwaitingApproval,
                 Phase::Revising => SessionStatus::Planning,
+                Phase::AwaitingPlanningDecision => SessionStatus::AwaitingApproval,
                 Phase::Complete => SessionStatus::Complete,
             },
             output_lines: vec![

@@ -3,6 +3,9 @@
 //! This module provides the `run_implementation_workflow` function that manages
 //! the implementation -> review loop until approval or max iterations.
 
+use crate::app::workflow_decisions::{
+    await_max_iterations_decision, IterativePhase, MaxIterationsDecision,
+};
 use crate::change_fingerprint::compute_change_fingerprint;
 use crate::config::WorkflowConfig;
 use crate::phases::implementation::run_implementation_phase;
@@ -11,17 +14,29 @@ use crate::phases::implementing_conversation_key;
 use crate::phases::verdict::VerificationVerdictResult;
 use crate::session_logger::SessionLogger;
 use crate::state::{ImplementationPhase, ImplementationPhaseState, ResumeStrategy, State};
-use crate::tui::SessionEventSender;
+use crate::tui::{SessionEventSender, UserApprovalResponse, WorkflowCommand};
 use anyhow::{Context, Result};
 use std::path::Path;
 use std::sync::Arc;
+use tokio::sync::mpsc;
+
+/// Context for the implementation workflow containing channels and paths.
+pub struct ImplementationContext<'a> {
+    pub state_path: &'a Path,
+    pub session_sender: SessionEventSender,
+    pub session_logger: Arc<SessionLogger>,
+    pub approval_rx: &'a mut mpsc::Receiver<UserApprovalResponse>,
+    pub control_rx: &'a mut mpsc::Receiver<WorkflowCommand>,
+}
 
 /// Result of the implementation workflow.
 #[derive(Debug, Clone)]
 pub enum ImplementationWorkflowResult {
     /// Implementation was approved
     Approved,
-    /// Implementation failed after max iterations
+    /// Implementation accepted by user override (max iterations reached)
+    ApprovedOverridden { iterations_used: u32 },
+    /// Implementation failed after max iterations (user chose abort)
     Failed {
         iterations_used: u32,
         last_feedback: Option<String>,
@@ -44,17 +59,23 @@ pub enum ImplementationWorkflowResult {
 /// * `state` - The current workflow state (will be modified)
 /// * `config` - The workflow configuration
 /// * `working_dir` - The working directory for implementation
-/// * `session_sender` - Channel to send session events
-/// * `session_logger` - Logger for the session
+/// * `ctx` - Implementation context containing channels and paths
 /// * `initial_feedback` - Optional initial feedback to start with
 pub async fn run_implementation_workflow(
     state: &mut State,
     config: &WorkflowConfig,
     working_dir: &Path,
-    session_sender: SessionEventSender,
-    session_logger: Arc<SessionLogger>,
+    ctx: ImplementationContext<'_>,
     initial_feedback: Option<String>,
 ) -> Result<ImplementationWorkflowResult> {
+    // Destructure context for easier access
+    let ImplementationContext {
+        state_path,
+        session_sender,
+        session_logger,
+        approval_rx,
+        control_rx,
+    } = ctx;
     // Validate config
     let impl_config = &config.implementation;
     if !impl_config.enabled {
@@ -102,6 +123,40 @@ pub async fn run_implementation_workflow(
 
     // Main orchestration loop
     loop {
+        // Check if we need to resume from awaiting max iterations decision
+        {
+            let impl_state = state.implementation_state.as_ref().unwrap();
+            if impl_state.phase == ImplementationPhase::AwaitingMaxIterationsDecision {
+                // Re-display the max iterations modal
+                let summary = build_implementation_max_iterations_summary(
+                    state,
+                    impl_state.last_feedback.as_deref(),
+                );
+
+                let decision = await_max_iterations_decision(
+                    IterativePhase::Implementation,
+                    &session_logger,
+                    &session_sender,
+                    approval_rx,
+                    control_rx,
+                    summary,
+                )
+                .await?;
+
+                // Apply the decision using the shared helper
+                if let Some(result) = apply_implementation_decision(
+                    decision,
+                    state,
+                    state_path,
+                    &session_sender,
+                    &mut current_feedback,
+                )? {
+                    return Ok(result);
+                }
+                // If None returned, continue the loop (Continue or RestartWithFeedback)
+            }
+        }
+
         // Check if we can continue
         let (iteration, can_continue) = {
             let impl_state = state.implementation_state.as_ref().unwrap();
@@ -243,16 +298,43 @@ pub async fn run_implementation_workflow(
 
                 // Check if we have more iterations
                 if iteration >= max_iterations {
-                    session_sender.send_output(format!(
-                        "[implementation] Max iterations ({}) reached without approval",
-                        max_iterations
-                    ));
-                    let impl_state = state.implementation_state.as_mut().unwrap();
-                    impl_state.phase = ImplementationPhase::Complete;
-                    return Ok(ImplementationWorkflowResult::Failed {
-                        iterations_used: iteration,
-                        last_feedback: current_feedback,
-                    });
+                    // Transition to awaiting decision state and persist
+                    {
+                        let impl_state = state.implementation_state.as_mut().unwrap();
+                        impl_state.phase = ImplementationPhase::AwaitingMaxIterationsDecision;
+                    }
+                    state.set_updated_at();
+                    state.save_atomic(state_path)?;
+
+                    // Build summary and prompt user
+                    let summary = build_implementation_max_iterations_summary(
+                        state,
+                        current_feedback.as_deref(),
+                    );
+
+                    let decision = await_max_iterations_decision(
+                        IterativePhase::Implementation,
+                        &session_logger,
+                        &session_sender,
+                        approval_rx,
+                        control_rx,
+                        summary,
+                    )
+                    .await?;
+
+                    // Apply the decision
+                    if let Some(result) = apply_implementation_decision(
+                        decision,
+                        state,
+                        state_path,
+                        &session_sender,
+                        &mut current_feedback,
+                    )? {
+                        return Ok(result);
+                    }
+                    // If None returned, we continue (Continue or RestartWithFeedback)
+                    // The loop will re-evaluate can_continue() on next iteration
+                    continue;
                 }
 
                 // Advance to next iteration
@@ -284,6 +366,129 @@ pub async fn run_implementation_workflow(
     })
 }
 
+/// Builds the summary text for implementation max iterations modal.
+fn build_implementation_max_iterations_summary(
+    state: &State,
+    last_feedback: Option<&str>,
+) -> String {
+    let impl_state = state.implementation_state.as_ref();
+    let iteration = impl_state.map(|s| s.iteration).unwrap_or(0);
+    let max = impl_state.map(|s| s.max_iterations).unwrap_or(0);
+
+    let mut summary = format!(
+        "Implementation has been attempted {} time(s) (max: {}) but review has not approved.\n\n",
+        iteration, max
+    );
+
+    if let Some(feedback) = last_feedback {
+        summary.push_str("## Last Review Feedback\n\n");
+        let preview = if feedback.chars().count() > 500 {
+            let truncated: String = feedback.chars().take(500).collect();
+            format!("{}...\n\n_(truncated)_", truncated)
+        } else {
+            feedback.to_string()
+        };
+        summary.push_str(&preview);
+        summary.push_str("\n\n");
+    }
+
+    summary.push_str("---\n\n");
+    summary.push_str("Choose an action:\n");
+    summary.push_str("- **[y] Yes**: Accept current implementation without further review\n");
+    summary.push_str("- **[c] Continue**: Run another implementation+review cycle\n");
+    summary
+        .push_str("- **[d] Decline**: Provide feedback to guide the next implementation attempt\n");
+    summary.push_str("- **[a] Abort**: Stop the implementation workflow\n");
+
+    summary
+}
+
+/// Applies an implementation max iterations decision to state.
+/// Used by both the main max iterations check and the AwaitingMaxIterationsDecision resume handler.
+///
+/// Returns:
+/// - Some(result) if the decision completes the implementation workflow
+/// - None if the loop should continue (e.g., Continue decision)
+fn apply_implementation_decision(
+    decision: MaxIterationsDecision,
+    state: &mut State,
+    state_path: &Path,
+    session_sender: &SessionEventSender,
+    current_feedback: &mut Option<String>,
+) -> Result<Option<ImplementationWorkflowResult>> {
+    // Get iteration before match to avoid borrow issues
+    let iteration = state
+        .implementation_state
+        .as_ref()
+        .map(|s| s.iteration)
+        .unwrap_or(0);
+
+    match decision {
+        MaxIterationsDecision::ProceedWithoutApproval => {
+            {
+                let impl_state = state.implementation_state.as_mut().unwrap();
+                impl_state.phase = ImplementationPhase::Complete;
+                impl_state.mark_complete();
+            }
+            state.set_updated_at();
+            state.save_atomic(state_path)?;
+            session_sender.send_state_update(state.clone());
+            session_sender
+                .send_output("[implementation] Proceeding without review approval".to_string());
+            session_sender.send_implementation_success(iteration);
+            Ok(Some(ImplementationWorkflowResult::ApprovedOverridden {
+                iterations_used: iteration,
+            }))
+        }
+        MaxIterationsDecision::Continue => {
+            let new_max = {
+                let impl_state = state.implementation_state.as_mut().unwrap();
+                impl_state.max_iterations += 1;
+                impl_state.max_iterations
+            };
+            state.set_updated_at();
+            state.save_atomic(state_path)?;
+            session_sender.send_output(format!(
+                "[implementation] Continuing (max iterations now {})",
+                new_max
+            ));
+            Ok(None) // Continue the loop
+        }
+        MaxIterationsDecision::RestartWithFeedback(feedback) => {
+            {
+                let impl_state = state.implementation_state.as_mut().unwrap();
+                impl_state.iteration = 1;
+                impl_state.phase = ImplementationPhase::Implementing;
+                impl_state.last_feedback = None;
+                impl_state.last_verdict = None;
+            }
+            // NOTE: Conversation ID is PRESERVED (not cleared)
+            *current_feedback = Some(feedback);
+            state.set_updated_at();
+            state.save_atomic(state_path)?;
+            session_sender
+                .send_output("[implementation] Restarting with new feedback...".to_string());
+            session_sender.send_state_update(state.clone());
+            Ok(None) // Continue the loop from restart
+        }
+        MaxIterationsDecision::Abort => {
+            {
+                let impl_state = state.implementation_state.as_mut().unwrap();
+                impl_state.phase = ImplementationPhase::Complete;
+            }
+            state.set_updated_at();
+            state.save_atomic(state_path)?;
+            Ok(Some(ImplementationWorkflowResult::Failed {
+                iterations_used: iteration,
+                last_feedback: current_feedback.clone(),
+            }))
+        }
+        MaxIterationsDecision::Stopped => Ok(Some(ImplementationWorkflowResult::Cancelled {
+            iterations_used: iteration,
+        })),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -292,6 +497,8 @@ mod tests {
     fn test_implementation_workflow_result_variants() {
         // Just verify the enum variants compile
         let _approved = ImplementationWorkflowResult::Approved;
+        let _approved_overridden =
+            ImplementationWorkflowResult::ApprovedOverridden { iterations_used: 3 };
         let _failed = ImplementationWorkflowResult::Failed {
             iterations_used: 3,
             last_feedback: Some("Fix bugs".to_string()),

@@ -49,9 +49,136 @@ pub enum WorkflowFailureDecision {
     Stopped,
 }
 
+/// Identifies which iterative phase reached max iterations.
+/// Used for logging, summary generation, and future extensibility.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IterativePhase {
+    /// Planning/review phase
+    Planning,
+    /// Implementation/implementation-review phase
+    Implementation,
+    // Future: Verification, Testing, etc.
+}
+
+impl IterativePhase {
+    /// Returns the display name for logging and summaries
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            IterativePhase::Planning => "planning",
+            IterativePhase::Implementation => "implementation",
+        }
+    }
+}
+
+/// Decision made by user when max iterations are reached.
+/// This enum is phase-agnostic - each phase interprets it in its own context.
+#[derive(Debug, Clone, PartialEq)]
+pub enum MaxIterationsDecision {
+    /// Accept current state without further review/cycles
+    ProceedWithoutApproval,
+    /// Run another iteration cycle
+    Continue,
+    /// Restart with user-provided feedback
+    RestartWithFeedback(String),
+    /// Abort the workflow
+    Abort,
+    /// Workflow was stopped via control channel
+    Stopped,
+}
+
 /// Helper to log workflow decision messages.
 fn log_decision(logger: &SessionLogger, message: &str) {
     logger.log(LogLevel::Info, LogCategory::Workflow, message);
+}
+
+/// Awaits user decision when max iterations are reached.
+/// This is a low-level function that handles TUI interaction only.
+/// The caller is responsible for interpreting the decision and applying state changes.
+///
+/// # Arguments
+/// * `phase` - Which iterative phase reached max iterations
+/// * `session_logger` - For logging
+/// * `sender` - For sending TUI events
+/// * `approval_rx` - Channel to receive user responses
+/// * `control_rx` - Channel to receive control commands (stop)
+/// * `summary` - Pre-built summary text to display in the modal
+pub async fn await_max_iterations_decision(
+    phase: IterativePhase,
+    session_logger: &Arc<SessionLogger>,
+    sender: &SessionEventSender,
+    approval_rx: &mut mpsc::Receiver<UserApprovalResponse>,
+    control_rx: &mut mpsc::Receiver<WorkflowCommand>,
+    summary: String,
+) -> Result<MaxIterationsDecision> {
+    let phase_name = phase.display_name();
+    log_decision(
+        session_logger,
+        &format!("[{}] Max iterations reached - prompting user", phase_name),
+    );
+    sender.send_output(format!("[{}] Max iterations reached", phase_name));
+    sender.send_output(format!("[{}] Awaiting your decision...", phase_name));
+
+    sender.send_max_iterations_reached(phase, summary);
+
+    loop {
+        tokio::select! {
+            Some(cmd) = control_rx.recv() => {
+                if matches!(cmd, WorkflowCommand::Stop) {
+                    log_decision(
+                        session_logger,
+                        &format!("[{}] Stop command received during max iterations wait", phase_name),
+                    );
+                    return Ok(MaxIterationsDecision::Stopped);
+                }
+            }
+            response = approval_rx.recv() => {
+                match response {
+                    Some(UserApprovalResponse::ProceedWithoutApproval) => {
+                        log_decision(
+                            session_logger,
+                            &format!("[{}] User chose to proceed without approval", phase_name),
+                        );
+                        return Ok(MaxIterationsDecision::ProceedWithoutApproval);
+                    }
+                    Some(UserApprovalResponse::ContinueReviewing) => {
+                        log_decision(
+                            session_logger,
+                            &format!("[{}] User chose to continue with another cycle", phase_name),
+                        );
+                        return Ok(MaxIterationsDecision::Continue);
+                    }
+                    Some(UserApprovalResponse::Decline(feedback)) => {
+                        log_decision(
+                            session_logger,
+                            &format!("[{}] User declined with feedback: {}", phase_name, feedback),
+                        );
+                        return Ok(MaxIterationsDecision::RestartWithFeedback(feedback));
+                    }
+                    Some(UserApprovalResponse::AbortWorkflow) => {
+                        log_decision(
+                            session_logger,
+                            &format!("[{}] User chose to abort workflow", phase_name),
+                        );
+                        return Ok(MaxIterationsDecision::Abort);
+                    }
+                    Some(other) => {
+                        log_decision(
+                            session_logger,
+                            &format!("[{}] Ignoring unexpected response {:?}", phase_name, other),
+                        );
+                        continue;
+                    }
+                    None => {
+                        log_decision(
+                            session_logger,
+                            &format!("[{}] Approval channel closed - aborting", phase_name),
+                        );
+                        return Ok(MaxIterationsDecision::Abort);
+                    }
+                }
+            }
+        }
+    }
 }
 
 pub async fn wait_for_review_decision(
@@ -259,69 +386,34 @@ pub async fn handle_max_iterations(
     control_rx: &mut mpsc::Receiver<WorkflowCommand>,
     last_reviews: &[ReviewResult],
 ) -> Result<Option<WorkflowResult>> {
-    log_decision(session_logger, "Max iterations reached - prompting user");
-    sender.send_output("[planning] Max iterations reached".to_string());
-    sender.send_output("[planning] Awaiting your decision...".to_string());
+    // Set phase to track that we're awaiting user decision (for session resume)
+    state.transition(Phase::AwaitingPlanningDecision)?;
+    state.set_updated_at();
+    state.save_atomic(state_path)?;
 
-    // Note: build_max_iterations_summary still needs working_dir for plan_path construction
-    // We pass state.plan_file directly since it's already an absolute path
+    // Build the summary for planning phase
     let summary = build_max_iterations_summary_from_state(state, last_reviews);
-    sender.send_max_iterations_reached(summary);
 
-    loop {
-        tokio::select! {
-            Some(cmd) = control_rx.recv() => {
-                if matches!(cmd, WorkflowCommand::Stop) {
-                    log_decision(session_logger, "Stop command received during max iterations wait");
-                    return Ok(Some(WorkflowResult::Stopped));
-                }
-            }
-            response = approval_rx.recv() => {
-                match response {
-                    Some(UserApprovalResponse::ProceedWithoutApproval) => {
-                        log_decision(session_logger, "User chose to proceed without AI approval");
-                        sender.send_output("[planning] Proceeding without AI approval...".to_string());
-                        state.approval_overridden = true;
-                        state.transition(Phase::Complete)?;
-                        state.set_updated_at();
-                        state.save(state_path)?;
-                        return Ok(None);
-                    }
-                    Some(UserApprovalResponse::ContinueReviewing) => {
-                        log_decision(session_logger, "User chose to continue reviewing");
-                        sender.send_output("[planning] Continuing with another review cycle...".to_string());
-                        state.max_iterations += 1;
-                        state.transition(Phase::Revising)?;
-                        state.set_updated_at();
-                        state.save(state_path)?;
-                        return Ok(None);
-                    }
-                    Some(UserApprovalResponse::Decline(feedback)) => {
-                        log_decision(session_logger, &format!("User declined with feedback: {}", feedback));
-                        sender.send_output(format!("[planning] Restarting with feedback: {}", feedback));
-                        return Ok(Some(WorkflowResult::NeedsRestart { user_feedback: feedback }));
-                    }
-                    Some(UserApprovalResponse::AbortWorkflow) => {
-                        log_decision(session_logger, "User chose to abort workflow");
-                        sender.send_output("[planning] Workflow aborted by user".to_string());
-                        return Ok(Some(WorkflowResult::Aborted { reason: "User aborted workflow at max iterations".to_string() }));
-                    }
-                    Some(other) => {
-                        log_decision(session_logger, &format!("Ignoring unexpected response {:?} during max iterations prompt", other));
-                        continue;
-                    }
-                    None => {
-                        log_decision(session_logger, "Approval channel closed - aborting");
-                        return Ok(Some(WorkflowResult::Aborted { reason: "Approval channel closed".to_string() }));
-                    }
-                }
-            }
-        }
-    }
+    // Await user decision using the shared function
+    let decision = await_max_iterations_decision(
+        IterativePhase::Planning,
+        session_logger,
+        sender,
+        approval_rx,
+        control_rx,
+        summary,
+    )
+    .await?;
+
+    // Apply the decision using the shared helper
+    apply_planning_decision(decision, state, state_path, sender)
 }
 
 /// Build max iterations summary using state's plan_file (already an absolute path).
-fn build_max_iterations_summary_from_state(state: &State, last_reviews: &[ReviewResult]) -> String {
+pub(crate) fn build_max_iterations_summary_from_state(
+    state: &State,
+    last_reviews: &[ReviewResult],
+) -> String {
     use crate::app::util::truncate_for_summary;
 
     let plan_path = &state.plan_file;
@@ -441,4 +533,45 @@ fn build_max_iterations_summary_from_state(state: &State, last_reviews: &[Review
     );
 
     summary
+}
+
+/// Applies a planning max iterations decision to state.
+/// Used by both handle_max_iterations() and Phase::AwaitingPlanningDecision resume handler.
+pub(crate) fn apply_planning_decision(
+    decision: MaxIterationsDecision,
+    state: &mut State,
+    state_path: &Path,
+    sender: &SessionEventSender,
+) -> Result<Option<WorkflowResult>> {
+    match decision {
+        MaxIterationsDecision::ProceedWithoutApproval => {
+            sender.send_output("[planning] Proceeding without AI approval...".to_string());
+            state.approval_overridden = true;
+            state.transition(Phase::Complete)?;
+            state.set_updated_at();
+            state.save_atomic(state_path)?;
+            Ok(None)
+        }
+        MaxIterationsDecision::Continue => {
+            sender.send_output("[planning] Continuing with another review cycle...".to_string());
+            state.max_iterations += 1;
+            state.transition(Phase::Revising)?;
+            state.set_updated_at();
+            state.save_atomic(state_path)?;
+            Ok(None)
+        }
+        MaxIterationsDecision::RestartWithFeedback(feedback) => {
+            sender.send_output(format!("[planning] Restarting with feedback: {}", feedback));
+            Ok(Some(WorkflowResult::NeedsRestart {
+                user_feedback: feedback,
+            }))
+        }
+        MaxIterationsDecision::Abort => {
+            sender.send_output("[planning] Workflow aborted by user".to_string());
+            Ok(Some(WorkflowResult::Aborted {
+                reason: "User aborted workflow at max iterations".to_string(),
+            }))
+        }
+        MaxIterationsDecision::Stopped => Ok(Some(WorkflowResult::Stopped)),
+    }
 }

@@ -8,6 +8,7 @@ use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::mpsc;
 
+use crate::app::workflow_decisions::IterativePhase;
 use crate::state::State;
 use crate::tui::session::{CliInstanceId, TodoItem, ToolResultSummary};
 
@@ -226,9 +227,11 @@ impl SessionEventSender {
         });
     }
 
-    pub fn send_max_iterations_reached(&self, summary: String) {
+    /// Sends a max iterations reached event to trigger the decision modal.
+    pub fn send_max_iterations_reached(&self, phase: IterativePhase, summary: String) {
         let _ = self.inner.send(Event::SessionMaxIterationsReached {
             session_id: self.session_id,
+            phase,
             summary,
         });
     }

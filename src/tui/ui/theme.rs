@@ -347,7 +347,10 @@ impl Theme {
             // Check planning workflow phase
             match state.phase {
                 Phase::Complete => ThemePhase::Complete,
-                Phase::Planning | Phase::Reviewing | Phase::Revising => ThemePhase::Planning,
+                Phase::Planning
+                | Phase::Reviewing
+                | Phase::Revising
+                | Phase::AwaitingPlanningDecision => ThemePhase::Planning,
             }
         } else {
             // No workflow state - default to planning
