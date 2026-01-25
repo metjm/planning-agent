@@ -30,7 +30,6 @@ agents:
   gemini:
     command: "gemini"
     args:
-      - "-p"
       - "--output-format"
       - "json"
     allowed_tools: []
@@ -160,7 +159,6 @@ gemini_mode:
     gemini:
       command: "gemini"
       args:
-        - "-p"
         - "--output-format"
         - "json"
       allowed_tools: []
@@ -168,7 +166,6 @@ gemini_mode:
     gemini-reviewer:
       command: "gemini"
       args:
-        - "-p"
         - "--output-format"
         - "json"
       allowed_tools: []
