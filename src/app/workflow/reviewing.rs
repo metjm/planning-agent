@@ -13,7 +13,9 @@ use crate::phases::{
 };
 use crate::session_logger::{LogCategory, LogLevel, SessionLogger};
 use crate::state::{FeedbackStatus, Phase, SequentialReviewState, SerializableReviewResult, State};
-use crate::tui::{CancellationError, SessionEventSender, UserApprovalResponse, WorkflowCommand};
+use crate::tui::{
+    CancellationError, ReviewKind, SessionEventSender, UserApprovalResponse, WorkflowCommand,
+};
 use anyhow::Result;
 use std::collections::HashMap;
 use std::path::Path;
@@ -234,7 +236,7 @@ pub async fn run_reviewing_phase(
 
     // Signal round completion for review history UI
     let round_approved = matches!(status, FeedbackStatus::Approved);
-    sender.send_review_round_completed(state.iteration, round_approved);
+    sender.send_review_round_completed(ReviewKind::Plan, state.iteration, round_approved);
 
     *last_reviews = reviews;
     state.last_feedback_status = Some(status.clone());
@@ -387,7 +389,7 @@ pub async fn run_sequential_reviewing_phase(
     // We handle this here because we pass emit_round_started=false to run_multi_agent_review_with_context
     let is_first_reviewer = seq_state.current_reviewer_index == 0;
     if is_first_reviewer {
-        sender.send_review_round_started(state.iteration);
+        sender.send_review_round_started(ReviewKind::Plan, state.iteration);
     }
 
     // Get current reviewer from stored cycle order
@@ -564,7 +566,7 @@ pub async fn run_sequential_reviewing_phase(
         ));
 
         // Signal round completion (rejected)
-        sender.send_review_round_completed(state.iteration, false);
+        sender.send_review_round_completed(ReviewKind::Plan, state.iteration, false);
 
         state.last_feedback_status = Some(FeedbackStatus::NeedsRevision);
 
@@ -612,7 +614,7 @@ pub async fn run_sequential_reviewing_phase(
             sender.send_output("[sequential] All reviewers approved - plan complete!".to_string());
 
             // Signal round completion (approved)
-            sender.send_review_round_completed(state.iteration, true);
+            sender.send_review_round_completed(ReviewKind::Plan, state.iteration, true);
 
             // NOW write merged feedback with ALL accumulated reviews
             let all_reviews = seq_state.get_accumulated_reviews_for_summary();

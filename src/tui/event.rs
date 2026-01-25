@@ -8,7 +8,7 @@ use crate::app::workflow_decisions::IterativePhase;
 use crate::cli_usage::AccountUsage;
 use crate::state::State;
 use crate::tui::file_index::FileIndex;
-use crate::tui::session::{CliInstanceId, TodoItem, ToolResultSummary};
+use crate::tui::session::{CliInstanceId, ReviewKind, TodoItem, ToolResultSummary};
 use crate::update::{UpdateResult, UpdateStatus, VersionInfo};
 use std::time::Instant;
 
@@ -84,17 +84,20 @@ pub enum Event {
     /// A review round has started
     SessionReviewRoundStarted {
         session_id: usize,
+        kind: ReviewKind,
         round: u32,
     },
     /// A reviewer has started within a round
     SessionReviewerStarted {
         session_id: usize,
+        kind: ReviewKind,
         round: u32,
         display_id: String,
     },
     /// A reviewer has completed within a round
     SessionReviewerCompleted {
         session_id: usize,
+        kind: ReviewKind,
         round: u32,
         display_id: String,
         approved: bool,
@@ -104,6 +107,7 @@ pub enum Event {
     /// A reviewer has failed within a round
     SessionReviewerFailed {
         session_id: usize,
+        kind: ReviewKind,
         round: u32,
         display_id: String,
         error: String,
@@ -111,6 +115,7 @@ pub enum Event {
     /// A review round has completed with aggregate verdict
     SessionReviewRoundCompleted {
         session_id: usize,
+        kind: ReviewKind,
         round: u32,
         approved: bool,
     },

@@ -2,7 +2,9 @@ use super::*;
 use crate::config::WorkflowConfig;
 use crate::phases::implementing_conversation_key;
 use crate::state::{ImplementationPhase, ImplementationPhaseState, ResumeStrategy, State};
+use crate::tui::{Event, SessionEventSender};
 use std::path::PathBuf;
+use tokio::sync::mpsc;
 
 #[test]
 fn test_scroll_up_disables_follow_mode() {
@@ -616,6 +618,72 @@ fn test_toggle_focus_without_todos_visible() {
 
     session.toggle_focus_with_visibility(false);
     assert_eq!(session.focused_panel, FocusedPanel::Output);
+}
+
+#[tokio::test]
+async fn test_review_failure_events_update_history() {
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let sender = SessionEventSender::new(0, 0, tx);
+
+    sender.send_review_round_started(ReviewKind::Implementation, 1);
+    sender.send_reviewer_started(ReviewKind::Implementation, 1, "impl".to_string());
+    sender.send_reviewer_failed(
+        ReviewKind::Implementation,
+        1,
+        "impl".to_string(),
+        "boom".to_string(),
+    );
+    sender.send_review_round_completed(ReviewKind::Implementation, 1, false);
+
+    let mut session = Session::new(0);
+    for _ in 0..4 {
+        let event = rx.try_recv().expect("event");
+        match event {
+            Event::SessionReviewRoundStarted { kind, round, .. } => {
+                session.start_review_round(kind, round);
+            }
+            Event::SessionReviewerStarted {
+                kind,
+                round,
+                display_id,
+                ..
+            } => {
+                session.reviewer_started(kind, round, display_id);
+            }
+            Event::SessionReviewerFailed {
+                kind,
+                round,
+                display_id,
+                error,
+                ..
+            } => {
+                session.reviewer_failed(kind, round, display_id, error);
+            }
+            Event::SessionReviewRoundCompleted {
+                kind,
+                round,
+                approved,
+                ..
+            } => {
+                session.set_round_verdict(kind, round, approved);
+            }
+            _ => {}
+        }
+    }
+
+    let round = session
+        .review_history
+        .iter()
+        .find(|r| r.kind == ReviewKind::Implementation && r.round == 1)
+        .expect("implementation round");
+
+    assert_eq!(round.aggregate_verdict, Some(false));
+    let reviewer = round
+        .reviewers
+        .iter()
+        .find(|r| r.display_id == "impl")
+        .expect("reviewer");
+    assert!(matches!(reviewer.status, ReviewerStatus::Failed { .. }));
 }
 
 #[test]

@@ -563,7 +563,7 @@ pub(super) fn draw_reviewer_history_panel(
             lines.push(Line::from(vec![
                 Span::styled(format!("{} ", round_icon), Style::default().fg(round_color)),
                 Span::styled(
-                    format!("Round {}", round.round),
+                    format!("{} Round {}", round.kind.label(), round.round),
                     Style::default().fg(theme.text).add_modifier(Modifier::BOLD),
                 ),
             ]));

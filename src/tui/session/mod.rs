@@ -31,9 +31,9 @@ use super::event::UserApprovalResponse;
 
 pub use model::{
     ApprovalContext, ApprovalMode, FeedbackTarget, FocusedPanel, ImplementationSuccessModal,
-    InputMode, PasteBlock, ReviewModalEntry, ReviewRound, ReviewerEntry, ReviewerStatus, RunTab,
-    RunTabEntry, SessionStatus, SummaryState, TodoItem, TodoStatus, ToolKind, ToolResultSummary,
-    ToolTimelineEntry,
+    InputMode, PasteBlock, ReviewKind, ReviewModalEntry, ReviewRound, ReviewerEntry,
+    ReviewerStatus, RunTab, RunTabEntry, SessionStatus, SummaryState, TodoItem, TodoStatus,
+    ToolKind, ToolResultSummary, ToolTimelineEntry,
 };
 
 /// Represents an active tool call with optional ID for correlation

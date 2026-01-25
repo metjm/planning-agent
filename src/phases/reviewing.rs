@@ -12,7 +12,7 @@ use crate::phases::reviewing_conversation_key;
 use crate::planning_paths;
 use crate::session_logger::SessionLogger;
 use crate::state::{FeedbackStatus, ResumeStrategy, State};
-use crate::tui::SessionEventSender;
+use crate::tui::{ReviewKind, SessionEventSender};
 use anyhow::Result;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -117,7 +117,7 @@ pub async fn run_multi_agent_review_with_context(
 
     // Only emit round started if caller requests it
     if emit_round_started {
-        session_sender.send_review_round_started(iteration);
+        session_sender.send_review_round_started(ReviewKind::Plan, iteration);
     }
 
     let phase_name = format!("Reviewing #{}", iteration);
@@ -210,7 +210,7 @@ pub async fn run_multi_agent_review_with_context(
                 let review_started_at = std::time::Instant::now();
 
                 // Signal reviewer started
-                sender.send_reviewer_started(iter, display_id.clone());
+                sender.send_reviewer_started(ReviewKind::Plan, iter, display_id.clone());
 
                 sender.send_output(format!("[review:{}] Starting file-based review...", display_id));
 
@@ -421,6 +421,7 @@ pub async fn run_multi_agent_review_with_context(
 
                 // Send reviewer completed event with duration
                 session_sender.send_reviewer_completed(
+                    ReviewKind::Plan,
                     iteration,
                     agent_name.clone(),
                     !needs_revision, // approved = !needs_revision
@@ -478,6 +479,7 @@ pub async fn run_multi_agent_review_with_context(
 
                 // Send reviewer failed event
                 session_sender.send_reviewer_failed(
+                    ReviewKind::Plan,
                     iteration,
                     agent_name.clone(),
                     full_error.clone(),
@@ -495,7 +497,12 @@ pub async fn run_multi_agent_review_with_context(
                     .send_output(format!("[error] {} review failed: {}", agent_name, error));
 
                 // Send reviewer failed event
-                session_sender.send_reviewer_failed(iteration, agent_name.clone(), error.clone());
+                session_sender.send_reviewer_failed(
+                    ReviewKind::Plan,
+                    iteration,
+                    agent_name.clone(),
+                    error.clone(),
+                );
 
                 // Classify the error based on its content
                 let kind = classify_execution_error(&error);

@@ -140,8 +140,33 @@ pub struct ReviewerEntry {
 }
 
 /// A single review round (iteration)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ReviewKind {
+    Plan,
+    Implementation,
+}
+
+impl ReviewKind {
+    pub fn label(&self) -> &'static str {
+        match self {
+            ReviewKind::Plan => "Plan",
+            ReviewKind::Implementation => "Implementation",
+        }
+    }
+
+    pub fn sort_rank(&self) -> u64 {
+        match self {
+            ReviewKind::Plan => 0,
+            ReviewKind::Implementation => 1,
+        }
+    }
+}
+
+/// A single review round (iteration)
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ReviewRound {
+    /// Review kind for this round (plan or implementation)
+    pub kind: ReviewKind,
     /// Round number (1-indexed, matches state.iteration)
     pub round: u32,
     /// Reviewers in this round
@@ -151,8 +176,9 @@ pub struct ReviewRound {
 }
 
 impl ReviewRound {
-    pub fn new(round: u32) -> Self {
+    pub fn new(kind: ReviewKind, round: u32) -> Self {
         Self {
+            kind,
             round,
             reviewers: Vec::new(),
             aggregate_verdict: None,
@@ -232,18 +258,20 @@ pub struct ImplementationSuccessModal {
     pub iterations_used: u32,
 }
 
-/// Entry representing a single review feedback file for modal display.
+/// Entry representing a single review file for modal display.
 ///
 /// Entries are sorted by (iteration DESC, agent_name ASC) to show most recent
 /// reviews first, with deterministic ordering when multiple agents review
 /// the same iteration.
 #[derive(Debug, Clone)]
 pub struct ReviewModalEntry {
+    /// Review kind for this entry
+    pub kind: ReviewKind,
     /// Display name shown in tab (e.g., "Round 1 - claude", "Round 2")
     pub display_name: String,
     /// Cached content of the feedback file
     pub content: String,
-    /// Sort key for ordering: iteration * 1_000_000 + (1_000_000 - agent_ordinal)
-    /// Higher values = more recent iteration, lower agent_ordinal = earlier in alphabet
+    /// Sort key for ordering: iteration * 1_000_000_000 + (kind_rank * 1_000_000) + (1_000_000 - agent_ordinal)
+    /// Higher values = more recent iteration, then by kind, then by agent
     pub sort_key: u64,
 }

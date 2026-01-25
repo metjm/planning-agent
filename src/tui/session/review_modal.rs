@@ -2,7 +2,7 @@
 //!
 //! Provides functionality to toggle, navigate, and scroll the review feedback modal.
 
-use super::model::ReviewModalEntry;
+use super::model::{ReviewKind, ReviewModalEntry};
 use super::Session;
 use std::collections::hash_map::DefaultHasher;
 use std::fs;
@@ -40,10 +40,8 @@ impl Session {
                 let path = entry.path();
                 let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
 
-                if filename.starts_with("feedback_") && filename.ends_with(".md") {
-                    if let Some(entry) = Self::parse_feedback_entry(&path, filename) {
-                        entries.push(entry);
-                    }
+                if let Some(entry) = Self::parse_review_entry(&path, filename) {
+                    entries.push(entry);
                 }
             }
         }
@@ -53,7 +51,11 @@ impl Session {
         }
 
         // Sort by sort_key descending (most recent first, then by agent name)
-        entries.sort_by(|a, b| b.sort_key.cmp(&a.sort_key));
+        entries.sort_by(|a, b| {
+            b.sort_key
+                .cmp(&a.sort_key)
+                .then_with(|| b.kind.sort_rank().cmp(&a.kind.sort_rank()))
+        });
 
         self.review_modal_entries = entries;
         self.review_modal_tab = 0; // Select most recent
@@ -75,32 +77,54 @@ impl Session {
         }
     }
 
-    fn parse_feedback_entry(path: &Path, filename: &str) -> Option<ReviewModalEntry> {
-        // Parse "feedback_{iteration}.md" or "feedback_{iteration}_{agent}.md"
-        let stem = filename.strip_prefix("feedback_")?.strip_suffix(".md")?;
-
-        let (iteration, agent_name): (u32, Option<&str>) =
-            if let Some((iter_str, agent)) = stem.split_once('_') {
-                (iter_str.parse().ok()?, Some(agent))
+    fn parse_review_entry(path: &Path, filename: &str) -> Option<ReviewModalEntry> {
+        let (kind, iteration, agent_name) = if let Some(stem) = filename
+            .strip_prefix("feedback_")
+            .and_then(|s| s.strip_suffix(".md"))
+        {
+            let (iteration, agent) = if let Some((iter, agent)) = stem.split_once('_') {
+                (iter.parse::<u32>().ok()?, Some(agent))
             } else {
-                (stem.parse().ok()?, None)
+                (stem.parse::<u32>().ok()?, None)
             };
+            (ReviewKind::Plan, iteration, agent)
+        } else if let Some(stem) = filename
+            .strip_prefix("implementation_review_")
+            .and_then(|s| s.strip_suffix(".md"))
+        {
+            let (iteration, agent) = if let Some((iter, agent)) = stem.split_once('_') {
+                (iter.parse::<u32>().ok()?, Some(agent))
+            } else {
+                (stem.parse::<u32>().ok()?, None)
+            };
+            (ReviewKind::Implementation, iteration, agent)
+        } else {
+            return None;
+        };
 
         let content =
             fs::read_to_string(path).unwrap_or_else(|e| format!("Error reading file: {}", e));
 
-        let display_name = match agent_name {
-            Some(agent) => format!("Round {} - {}", iteration, agent),
-            None => format!("Round {}", iteration),
+        let display_name = match kind {
+            ReviewKind::Plan => match agent_name {
+                Some(agent) => format!("Plan Round {} - {}", iteration, agent),
+                None => format!("Plan Round {}", iteration),
+            },
+            ReviewKind::Implementation => match agent_name {
+                Some(agent) => format!("Implementation Review {} - {}", iteration, agent),
+                None => format!("Implementation Review {}", iteration),
+            },
         };
 
-        // Sort key: iteration * 1_000_000 + (1_000_000 - agent_ordinal)
-        // This gives higher sort_key to higher iterations,
-        // and within same iteration, lower agent_ordinal (earlier in hash order)
+        // Sort key: iteration * 1_000_000_000 + (kind_rank * 1_000_000) + (1_000_000 - agent_ordinal)
+        // This gives higher sort_key to higher iterations, then kind rank, then agent ordinal
         let ordinal = Self::agent_ordinal(agent_name);
-        let sort_key = (iteration as u64) * 1_000_000 + (1_000_000 - ordinal);
+        let sort_key = (iteration as u64) * 1_000_000_000
+            + (kind.sort_rank() * 1_000_000)
+            + (1_000_000 - ordinal);
 
         Some(ReviewModalEntry {
+            kind,
             display_name,
             content,
             sort_key,
@@ -164,5 +188,73 @@ impl Session {
             .get(self.review_modal_tab)
             .map(|e| e.content.as_str())
             .unwrap_or("")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::planning_paths::{session_dir, set_home_for_test};
+    use crate::state::State;
+    use std::path::Path;
+    use tempfile::tempdir;
+
+    fn setup_session(session_id: &str) -> Session {
+        let mut session = Session::new(0);
+        let mut state = State::new("test-feature", "objective", 1).expect("state");
+        state.workflow_session_id = session_id.to_string();
+        session.workflow_state = Some(state);
+        session
+    }
+
+    #[test]
+    fn test_review_modal_loads_plan_and_implementation_reviews() {
+        let temp = tempdir().expect("tempdir");
+        let _guard = set_home_for_test(temp.path().to_path_buf());
+
+        let session_id = "session-1";
+        let dir = session_dir(session_id).expect("session dir");
+        fs::create_dir_all(&dir).expect("create dir");
+        fs::write(dir.join("feedback_1.md"), "Plan review").expect("write plan");
+        fs::write(
+            dir.join("implementation_review_1.md"),
+            "Implementation review",
+        )
+        .expect("write implementation");
+
+        let mut session = setup_session(session_id);
+
+        assert!(session.toggle_review_modal(Path::new(".")));
+
+        let names: Vec<String> = session
+            .review_modal_entries
+            .iter()
+            .map(|entry| entry.display_name.clone())
+            .collect();
+        assert!(names.contains(&"Plan Round 1".to_string()));
+        assert!(names.contains(&"Implementation Review 1".to_string()));
+    }
+
+    #[test]
+    fn test_review_modal_orders_by_iteration() {
+        let temp = tempdir().expect("tempdir");
+        let _guard = set_home_for_test(temp.path().to_path_buf());
+
+        let session_id = "session-2";
+        let dir = session_dir(session_id).expect("session dir");
+        fs::create_dir_all(&dir).expect("create dir");
+        fs::write(dir.join("feedback_1.md"), "Plan review").expect("write plan");
+        fs::write(
+            dir.join("implementation_review_2.md"),
+            "Implementation review",
+        )
+        .expect("write implementation");
+
+        let mut session = setup_session(session_id);
+
+        assert!(session.toggle_review_modal(Path::new(".")));
+
+        let first = session.review_modal_entries.first().expect("first entry");
+        assert_eq!(first.display_name, "Implementation Review 2");
     }
 }

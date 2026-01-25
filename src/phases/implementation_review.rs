@@ -12,7 +12,7 @@ use crate::phases::verdict::{
 use crate::planning_paths;
 use crate::session_logger::SessionLogger;
 use crate::state::{ResumeStrategy, State};
-use crate::tui::SessionEventSender;
+use crate::tui::{ReviewKind, SessionEventSender};
 use anyhow::{Context, Result};
 use std::fs;
 use std::path::Path;
@@ -100,73 +100,150 @@ pub async fn run_implementation_review_phase(
         session_logger,
     };
 
-    // Execute the review
-    let result = agent
-        .execute_streaming_with_context(
-            prompt,
-            Some(IMPLEMENTATION_REVIEW_SYSTEM_PROMPT.to_string()),
-            max_turns,
-            context,
-        )
-        .await
-        .context("Implementation review agent execution failed")?;
+    let review_started_at = std::time::Instant::now();
+    session_sender.send_review_round_started(ReviewKind::Implementation, iteration);
+    session_sender.send_reviewer_started(
+        ReviewKind::Implementation,
+        iteration,
+        agent_name.to_string(),
+    );
 
-    // Extract report from output
-    let mut report = result.output.clone();
+    let phase_result: Result<ImplementationReviewResult> = (async {
+        // Execute the review
+        let result = agent
+            .execute_streaming_with_context(
+                prompt,
+                Some(IMPLEMENTATION_REVIEW_SYSTEM_PROMPT.to_string()),
+                max_turns,
+                context,
+            )
+            .await
+            .context("Implementation review agent execution failed")?;
 
-    // If output is empty or doesn't contain the verdict, try reading from report file
-    if (report.trim().is_empty() || !report.contains("Verdict")) && report_path.exists() {
-        if let Ok(file_content) = fs::read_to_string(&report_path) {
-            if !file_content.trim().is_empty() {
-                report = file_content;
+        // Extract report from output
+        let mut report = result.output.clone();
+
+        // If output is empty or doesn't contain the verdict, try reading from report file
+        if (report.trim().is_empty() || !report.contains("Verdict")) && report_path.exists() {
+            if let Ok(file_content) = fs::read_to_string(&report_path) {
+                if !file_content.trim().is_empty() {
+                    report = file_content;
+                    session_sender.send_output(format!(
+                        "[implementation-review] Loaded report from {}",
+                        report_path.display()
+                    ));
+                }
+            }
+        }
+
+        // Save report to file
+        if let Some(parent) = report_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(&report_path, &report)
+            .with_context(|| format!("Failed to save review report: {}", report_path.display()))?;
+
+        session_sender.send_output(format!(
+            "[implementation-review] Report saved to {}",
+            report_path.display()
+        ));
+
+        // Parse verdict
+        let verdict = parse_verification_verdict(&report);
+
+        // Log the verdict
+        match &verdict {
+            VerificationVerdictResult::Approved => {
+                session_sender.send_output("[implementation-review] Verdict: APPROVED".to_string());
+            }
+            VerificationVerdictResult::NeedsRevision => {
+                session_sender
+                    .send_output("[implementation-review] Verdict: NEEDS REVISION".to_string());
+            }
+            VerificationVerdictResult::ParseFailure { reason } => {
                 session_sender.send_output(format!(
-                    "[implementation-review] Loaded report from {}",
-                    report_path.display()
+                    "[implementation-review] WARNING: Could not parse verdict: {}",
+                    reason
                 ));
             }
         }
-    }
 
-    // Save report to file
-    if let Some(parent) = report_path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    fs::write(&report_path, &report)
-        .with_context(|| format!("Failed to save review report: {}", report_path.display()))?;
+        // Extract feedback if verdict requires revision
+        let feedback = if verdict.needs_revision() {
+            extract_implementation_feedback(&report)
+        } else {
+            None
+        };
 
-    session_sender.send_output(format!(
-        "[implementation-review] Report saved to {}",
-        report_path.display()
-    ));
+        Ok(ImplementationReviewResult { verdict, feedback })
+    })
+    .await;
 
-    // Parse verdict
-    let verdict = parse_verification_verdict(&report);
-
-    // Log the verdict
-    match &verdict {
-        VerificationVerdictResult::Approved => {
-            session_sender.send_output("[implementation-review] Verdict: APPROVED".to_string());
+    let duration_ms = review_started_at.elapsed().as_millis() as u64;
+    match phase_result {
+        Ok(review_result) => {
+            match &review_result.verdict {
+                VerificationVerdictResult::Approved => {
+                    session_sender.send_reviewer_completed(
+                        ReviewKind::Implementation,
+                        iteration,
+                        agent_name.to_string(),
+                        true,
+                        "Approved".to_string(),
+                        duration_ms,
+                    );
+                    session_sender.send_review_round_completed(
+                        ReviewKind::Implementation,
+                        iteration,
+                        true,
+                    );
+                }
+                VerificationVerdictResult::NeedsRevision => {
+                    session_sender.send_reviewer_completed(
+                        ReviewKind::Implementation,
+                        iteration,
+                        agent_name.to_string(),
+                        false,
+                        "Needs revision".to_string(),
+                        duration_ms,
+                    );
+                    session_sender.send_review_round_completed(
+                        ReviewKind::Implementation,
+                        iteration,
+                        false,
+                    );
+                }
+                VerificationVerdictResult::ParseFailure { reason } => {
+                    session_sender.send_reviewer_failed(
+                        ReviewKind::Implementation,
+                        iteration,
+                        agent_name.to_string(),
+                        reason.clone(),
+                    );
+                    session_sender.send_review_round_completed(
+                        ReviewKind::Implementation,
+                        iteration,
+                        false,
+                    );
+                }
+            }
+            Ok(review_result)
         }
-        VerificationVerdictResult::NeedsRevision => {
-            session_sender
-                .send_output("[implementation-review] Verdict: NEEDS REVISION".to_string());
-        }
-        VerificationVerdictResult::ParseFailure { reason } => {
-            session_sender.send_output(format!(
-                "[implementation-review] WARNING: Could not parse verdict: {}",
-                reason
-            ));
+        Err(err) => {
+            session_sender.send_reviewer_failed(
+                ReviewKind::Implementation,
+                iteration,
+                agent_name.to_string(),
+                err.to_string(),
+            );
+            session_sender.send_review_round_completed(
+                ReviewKind::Implementation,
+                iteration,
+                false,
+            );
+            Err(err).context("Implementation review phase failed after start")
         }
     }
-
-    // Extract feedback if verdict requires revision
-    let feedback = if verdict.needs_revision() {
-        extract_implementation_feedback(&report)
-    } else {
-        None
-    };
-
-    Ok(ImplementationReviewResult { verdict, feedback })
 }
 
 /// Builds the implementation review prompt with clean format and skill invocation at the end.

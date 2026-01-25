@@ -31,7 +31,8 @@ use std::path::{Path, PathBuf};
 /// - v2: UsageWindow with reset timestamps (session/weekly fields)
 /// - v3: Removed embedded implementation terminal (InputMode/FocusedPanel have Unknown variants)
 /// - v4: Run-tab entries include tool timeline entries (no migration support)
-pub const SNAPSHOT_VERSION: u32 = 4;
+/// - v5: Review rounds include a kind discriminator (plan vs implementation)
+pub const SNAPSHOT_VERSION: u32 = 5;
 
 /// A persistable snapshot of a workflow session.
 ///

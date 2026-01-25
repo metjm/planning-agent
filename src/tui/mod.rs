@@ -17,9 +17,9 @@ pub use event::{
 };
 pub use scroll_regions::ScrollableRegions;
 pub use session::{
-    ApprovalContext, ApprovalMode, CliInstanceId, FeedbackTarget, FocusedPanel, InputMode, RunTab,
-    RunTabEntry, Session, SessionContext, SessionStatus, SummaryState, TodoItem, TodoStatus,
-    ToolKind, ToolResultSummary, ToolTimelineEntry,
+    ApprovalContext, ApprovalMode, CliInstanceId, FeedbackTarget, FocusedPanel, InputMode,
+    ReviewKind, RunTab, RunTabEntry, Session, SessionContext, SessionStatus, SummaryState,
+    TodoItem, TodoStatus, ToolKind, ToolResultSummary, ToolTimelineEntry,
 };
 pub use tabs::TabManager;
 pub use title::TerminalTitleManager;

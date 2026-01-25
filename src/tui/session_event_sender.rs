@@ -10,7 +10,7 @@ use tokio::sync::mpsc;
 
 use crate::app::workflow_decisions::IterativePhase;
 use crate::state::State;
-use crate::tui::session::{CliInstanceId, TodoItem, ToolResultSummary};
+use crate::tui::session::{CliInstanceId, ReviewKind, TodoItem, ToolResultSummary};
 
 use super::event::{Event, TokenUsage};
 
@@ -170,16 +170,18 @@ impl SessionEventSender {
         });
     }
 
-    pub fn send_review_round_started(&self, round: u32) {
+    pub fn send_review_round_started(&self, kind: ReviewKind, round: u32) {
         let _ = self.inner.send(Event::SessionReviewRoundStarted {
             session_id: self.session_id,
+            kind,
             round,
         });
     }
 
-    pub fn send_reviewer_started(&self, round: u32, display_id: String) {
+    pub fn send_reviewer_started(&self, kind: ReviewKind, round: u32, display_id: String) {
         let _ = self.inner.send(Event::SessionReviewerStarted {
             session_id: self.session_id,
+            kind,
             round,
             display_id,
         });
@@ -187,6 +189,7 @@ impl SessionEventSender {
 
     pub fn send_reviewer_completed(
         &self,
+        kind: ReviewKind,
         round: u32,
         display_id: String,
         approved: bool,
@@ -195,6 +198,7 @@ impl SessionEventSender {
     ) {
         let _ = self.inner.send(Event::SessionReviewerCompleted {
             session_id: self.session_id,
+            kind,
             round,
             display_id,
             approved,
@@ -203,18 +207,26 @@ impl SessionEventSender {
         });
     }
 
-    pub fn send_reviewer_failed(&self, round: u32, display_id: String, error: String) {
+    pub fn send_reviewer_failed(
+        &self,
+        kind: ReviewKind,
+        round: u32,
+        display_id: String,
+        error: String,
+    ) {
         let _ = self.inner.send(Event::SessionReviewerFailed {
             session_id: self.session_id,
+            kind,
             round,
             display_id,
             error,
         });
     }
 
-    pub fn send_review_round_completed(&self, round: u32, approved: bool) {
+    pub fn send_review_round_completed(&self, kind: ReviewKind, round: u32, approved: bool) {
         let _ = self.inner.send(Event::SessionReviewRoundCompleted {
             session_id: self.session_id,
+            kind,
             round,
             approved,
         });
