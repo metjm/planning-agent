@@ -1,19 +1,61 @@
 //! Usage panel rendering for host GUI.
 
-use super::helpers::truncate_path;
+use crate::account_usage::types::AccountId;
 use eframe::egui;
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum AccountProvider {
+    Claude,
+    Codex,
+    Gemini,
+}
+
+impl AccountProvider {
+    pub fn try_from_str(value: &str) -> Option<Self> {
+        match value.to_lowercase().as_str() {
+            "claude" => Some(Self::Claude),
+            "codex" => Some(Self::Codex),
+            "gemini" => Some(Self::Gemini),
+            _ => None,
+        }
+    }
+
+    pub fn label(&self) -> &str {
+        match self {
+            Self::Claude => "claude",
+            Self::Codex => "codex",
+            Self::Gemini => "gemini",
+        }
+    }
+
+    pub fn badge_color(&self) -> egui::Color32 {
+        match self {
+            Self::Claude => egui::Color32::from_rgb(216, 152, 96),
+            Self::Gemini => egui::Color32::from_rgb(66, 133, 244),
+            Self::Codex => egui::Color32::from_rgb(16, 163, 127),
+        }
+    }
+
+    pub fn order_index(&self) -> u8 {
+        match self {
+            Self::Claude => 0,
+            Self::Codex => 1,
+            Self::Gemini => 2,
+        }
+    }
+}
 
 /// Display data for an account in the usage panel.
 #[derive(Debug, Clone)]
 pub struct DisplayAccountRow {
-    pub provider: String,
+    pub account_id: AccountId,
+    pub provider: AccountProvider,
     pub email: String,
     pub session_percent: Option<u8>,
     pub session_reset: String,
     pub weekly_percent: Option<u8>,
     pub weekly_reset: String,
     pub token_valid: bool,
-    pub error: Option<String>,
 }
 
 /// Render the usage panel contents.
@@ -25,61 +67,47 @@ pub fn render_usage_panel_content(ui: &mut egui::Ui, accounts: &[DisplayAccountR
         return;
     }
 
+    let mut last_provider: Option<&AccountProvider> = None;
     for account in accounts {
-        ui.push_id(&account.email, |ui| {
+        if last_provider.map_or(false, |provider| provider != &account.provider) {
+            ui.separator();
+        }
+
+        ui.push_id(&account.account_id, |ui| {
             // Provider badge and email
             ui.horizontal(|ui| {
-                let badge_color = match account.provider.as_str() {
-                    "claude" => egui::Color32::from_rgb(216, 152, 96),
-                    "gemini" => egui::Color32::from_rgb(66, 133, 244),
-                    "codex" => egui::Color32::from_rgb(16, 163, 127),
-                    _ => egui::Color32::GRAY,
-                };
-                ui.colored_label(badge_color, &account.provider);
+                ui.colored_label(account.provider.badge_color(), account.provider.label());
                 if !account.token_valid {
                     ui.colored_label(egui::Color32::RED, "⚠");
                 }
             });
             ui.small(&account.email);
 
-            // Error display
-            if let Some(err) = &account.error {
+            // Session usage bar
+            if let Some(pct) = account.session_percent {
                 ui.horizontal(|ui| {
-                    ui.colored_label(egui::Color32::from_rgb(255, 100, 100), "Error:");
-                    if ui
-                        .small_button("📋")
-                        .on_hover_text("Copy full error")
-                        .clicked()
-                    {
-                        ui.ctx().copy_text(err.clone());
+                    ui.small("Session:");
+                    render_usage_bar(ui, pct);
+                    if !account.session_reset.is_empty() {
+                        ui.small(&account.session_reset);
                     }
                 });
-                ui.small(truncate_path(err, 30));
-            } else {
-                // Session usage bar
-                if let Some(pct) = account.session_percent {
-                    ui.horizontal(|ui| {
-                        ui.small("Session:");
-                        render_usage_bar(ui, pct);
-                        if !account.session_reset.is_empty() {
-                            ui.small(&account.session_reset);
-                        }
-                    });
-                }
-                // Weekly usage bar
-                if let Some(pct) = account.weekly_percent {
-                    ui.horizontal(|ui| {
-                        ui.small("Weekly:");
-                        render_usage_bar(ui, pct);
-                        if !account.weekly_reset.is_empty() {
-                            ui.small(&account.weekly_reset);
-                        }
-                    });
-                }
+            }
+            // Weekly usage bar
+            if let Some(pct) = account.weekly_percent {
+                ui.horizontal(|ui| {
+                    ui.small("Weekly:");
+                    render_usage_bar(ui, pct);
+                    if !account.weekly_reset.is_empty() {
+                        ui.small(&account.weekly_reset);
+                    }
+                });
             }
 
             ui.add_space(8.0);
         });
+
+        last_provider = Some(&account.provider);
     }
 }
 

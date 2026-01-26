@@ -1,14 +1,15 @@
 //! Main host application using egui/eframe.
 
+use crate::account_usage::types::AccountId;
 #[cfg(feature = "tray-icon")]
 use crate::host::gui::tray::{HostTray, TrayCommand};
-use crate::host::gui::usage_panel::{self, DisplayAccountRow};
+use crate::host::gui::usage_panel::{self, AccountProvider, DisplayAccountRow};
 use crate::host::rpc_server::HostEvent;
 use crate::host::state::HostState;
 use crate::session_daemon::LivenessState;
 use eframe::egui;
 use egui_extras::{Column, TableBuilder};
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::{mpsc, Mutex};
@@ -41,6 +42,8 @@ pub struct HostApp {
     log_entries: VecDeque<LogEntry>,
     /// Last time we fetched usage (None = never, triggers initial fetch)
     last_usage_fetch: Option<Instant>,
+    /// Last error message per account to dedupe logging
+    account_error_cache: HashMap<AccountId, String>,
 }
 
 #[derive(Default)]
@@ -140,6 +143,7 @@ impl HostApp {
             notified_sessions: HashSet::new(),
             log_entries: VecDeque::new(),
             last_usage_fetch: None,
+            account_error_cache: HashMap::new(),
         }
     }
 
@@ -159,6 +163,7 @@ impl HostApp {
             notified_sessions: HashSet::new(),
             log_entries: VecDeque::new(),
             last_usage_fetch: None,
+            account_error_cache: HashMap::new(),
         }
     }
 
@@ -230,33 +235,90 @@ impl HostApp {
             self.display_data.container_count = state.containers.len();
             self.display_data.last_update_elapsed_secs = state.last_update.elapsed().as_secs();
             // Update account usage display
-            self.display_data.accounts = state
-                .usage_store
-                .get_all_accounts()
-                .iter()
-                .filter_map(|record| {
-                    let usage = record.current_usage.as_ref()?;
-                    Some(DisplayAccountRow {
-                        provider: record.provider.clone(),
-                        email: record.email.clone(),
-                        session_percent: usage.session_window.used_percent,
-                        session_reset: usage
-                            .session_window
-                            .reset_at
-                            .map(|r| format_reset_countdown(r.epoch_seconds))
-                            .unwrap_or_default(),
-                        weekly_percent: usage.weekly_window.used_percent,
-                        weekly_reset: usage
-                            .weekly_window
-                            .reset_at
-                            .map(|r| format_reset_countdown(r.epoch_seconds))
-                            .unwrap_or_default(),
-                        token_valid: usage.token_valid,
-                        error: usage.error.clone(),
-                    })
-                })
-                .collect();
+            let mut rows: Vec<DisplayAccountRow> = Vec::new();
+            let mut seen_accounts: HashSet<AccountId> = HashSet::new();
+
+            for record in state.usage_store.get_all_accounts() {
+                let usage = match &record.current_usage {
+                    Some(usage) => usage,
+                    None => continue,
+                };
+
+                seen_accounts.insert(record.account_id.clone());
+
+                if let Some(error) = &usage.error {
+                    self.log_account_error_once(
+                        &record.account_id,
+                        &record.provider,
+                        &record.email,
+                        error,
+                    );
+                    continue;
+                }
+
+                self.account_error_cache.remove(&record.account_id);
+
+                let provider = match AccountProvider::try_from_str(&record.provider) {
+                    Some(provider) => provider,
+                    None => {
+                        eprintln!(
+                            "[host-gui] unknown account provider: provider={}, email={}",
+                            record.provider, record.email
+                        );
+                        continue;
+                    }
+                };
+
+                rows.push(DisplayAccountRow {
+                    account_id: record.account_id.clone(),
+                    provider,
+                    email: record.email.clone(),
+                    session_percent: usage.session_window.used_percent,
+                    session_reset: usage
+                        .session_window
+                        .reset_at
+                        .map(|r| format_reset_countdown(r.epoch_seconds))
+                        .unwrap_or_default(),
+                    weekly_percent: usage.weekly_window.used_percent,
+                    weekly_reset: usage
+                        .weekly_window
+                        .reset_at
+                        .map(|r| format_reset_countdown(r.epoch_seconds))
+                        .unwrap_or_default(),
+                    token_valid: usage.token_valid,
+                });
+            }
+
+            rows.sort_by(|a, b| {
+                (a.provider.order_index(), &a.email).cmp(&(b.provider.order_index(), &b.email))
+            });
+
+            self.account_error_cache
+                .retain(|account_id, _| seen_accounts.contains(account_id));
+            self.display_data.accounts = rows;
             self.last_sync = Instant::now();
+        }
+    }
+
+    fn log_account_error_once(
+        &mut self,
+        account_id: &AccountId,
+        provider: &str,
+        email: &str,
+        error: &str,
+    ) {
+        let should_log = self
+            .account_error_cache
+            .get(account_id)
+            .map(|prev| prev != error)
+            .unwrap_or(true);
+        if should_log {
+            eprintln!(
+                "[host-gui] account usage error: provider={}, email={}, error={}",
+                provider, email, error
+            );
+            self.account_error_cache
+                .insert(account_id.clone(), error.to_string());
         }
     }
 
