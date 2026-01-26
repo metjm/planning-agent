@@ -34,7 +34,7 @@ cargo install --path .
 
 Planning-agent is a TUI/headless tool for iterative AI-powered implementation planning. It orchestrates multiple AI agents (Claude, Codex, Gemini) through a structured workflow.
 
-### Workflow State Machine
+### Workflow Phases
 
 The core workflow follows this cycle:
 
@@ -43,271 +43,299 @@ The core workflow follows this cycle:
 
 Max iterations (default 3) prevents infinite revision loops.
 
-### Key Module Structure
+## CQRS/Event Sourcing Architecture
+
+**This is the most important section. Read it carefully.**
+
+The workflow uses a strict CQRS (Command Query Responsibility Segregation) architecture with event sourcing. All state changes go through the domain actor.
+
+### Core Components
+
+| Component | Location | Purpose |
+|-----------|----------|---------|
+| `WorkflowCommand` | `src/domain/cqrs/commands.rs` | Intent to change state |
+| `WorkflowEvent` | `src/domain/cqrs/events.rs` | Facts that happened (immutable) |
+| `WorkflowAggregate` | `src/domain/cqrs/mod.rs` | Validates commands, emits events |
+| `WorkflowView` | `src/domain/view.rs` | Read-only projection for queries |
+| `WorkflowActor` | `src/domain/actor.rs` | Serializes command execution (ractor) |
+| `FileEventStore` | `src/event_store/file_store.rs` | Persists events to JSONL |
+
+### The Golden Rule: No Direct State Mutation
+
+**NEVER mutate workflow state directly. Always dispatch commands.**
+
+```rust
+// WRONG - Direct mutation (this pattern was deleted)
+state.phase = Phase::Reviewing;
+state.iteration += 1;
+state.save(&path)?;
+
+// CORRECT - Dispatch command to actor
+dispatch_domain_command(
+    &actor_ref,
+    WorkflowCommand::PlanningCompleted { plan_path: PlanPath(path) },
+    &session_logger,
+).await;
+```
+
+### How State Changes Flow
+
+```
+1. Workflow code dispatches WorkflowCommand
+       ↓
+2. WorkflowActor receives command
+       ↓
+3. WorkflowAggregate.handle() validates and emits WorkflowEvent(s)
+       ↓
+4. Events persisted to ~/.planning-agent/sessions/<id>/events.jsonl
+       ↓
+5. WorkflowQuery.dispatch() updates WorkflowView projection
+       ↓
+6. View broadcast via watch channel to TUI
+```
+
+### Reading State: Use WorkflowView
+
+All workflow phases receive `&WorkflowView` (read-only). Extract what you need:
+
+```rust
+// Reading from view (correct)
+let phase = view.planning_phase.unwrap_or(Phase::Planning);
+let iteration = view.iteration.unwrap_or_default().0;
+let plan_path = view.plan_path.as_ref().map(|p| p.0.clone());
+let feature_name = view.feature_name.as_ref().map(|f| f.0.as_str());
+```
+
+### Available Commands
+
+Planning phase:
+- `CreateWorkflow` - Initialize new workflow
+- `StartPlanning` - Begin planning
+- `PlanningCompleted { plan_path }` - Plan file written
+
+Review phase:
+- `ReviewCycleStarted { mode, reviewers }` - Begin review cycle
+- `ReviewerApproved { reviewer_id }` - Single reviewer approved
+- `ReviewerRejected { reviewer_id, feedback_path }` - Single reviewer rejected
+- `ReviewCycleCompleted { approved }` - All reviewers done
+
+Revision phase:
+- `RevisingStarted { feedback_summary }` - Begin revision
+- `RevisionCompleted { plan_path }` - Revised plan written
+
+User decisions:
+- `UserApproved` - User accepts plan
+- `UserDeclined` - User rejects plan
+- `UserAborted { reason }` - User cancels workflow
+- `UserOverrideApproval` - User overrides AI rejection
+- `UserRequestedImplementation` - User wants implementation
+
+Implementation phase:
+- `ImplementationStarted { max_iterations }`
+- `ImplementationRoundStarted { iteration }`
+- `ImplementationRoundCompleted`
+- `ImplementationReviewCompleted { verdict, feedback }`
+- `ImplementationAccepted` / `ImplementationDeclined` / `ImplementationCancelled`
+
+Metadata:
+- `RecordAgentConversation { agent_id, conversation_id, ... }`
+- `RecordInvocation { agent_id, phase, ... }`
+- `RecordFailure { failure }`
+- `AttachWorktree { worktree_state }`
+
+### DO NOT
+
+- **DO NOT** add fields to track state outside the aggregate
+- **DO NOT** create new state structs that bypass WorkflowView
+- **DO NOT** persist state via direct file writes (use commands)
+- **DO NOT** read state from files directly (use WorkflowView)
+- **DO NOT** add `&mut` parameters to phase functions for state
+- **DO NOT** create shims or wrappers around WorkflowView
+
+### Strong Types
+
+Always use domain types, never primitives:
+
+```rust
+// WRONG
+let session_id: String = uuid.to_string();
+let iteration: u32 = 1;
+let path: PathBuf = plan_path;
+
+// CORRECT
+let workflow_id: WorkflowId = WorkflowId(uuid);
+let iteration: Iteration = Iteration::first();
+let path: PlanPath = PlanPath(plan_path);
+```
+
+Key types in `src/domain/types.rs`:
+- `WorkflowId`, `AgentId`, `ConversationId` - Identity types
+- `PlanPath`, `FeedbackPath`, `WorkingDir` - Path wrappers
+- `Objective`, `FeatureName` - Content wrappers
+- `Iteration`, `MaxIterations` - Numeric wrappers
+- `Phase`, `ImplementationPhase` - State enums
+- `FeedbackStatus`, `ImplementationVerdict` - Result enums
+
+## Key Module Structure
 
 **Entry Points** (`src/main.rs`):
-
 - TUI mode: `run_tui()` - interactive terminal UI
 - Headless mode: `run_headless()` - non-interactive execution
-- MCP server mode: internal mode for review feedback collection
 
 **Workflow Engine** (`src/app/workflow/`):
-
-- `mod.rs` - Main workflow loop with `run_workflow_with_config()`
+- `mod.rs` - Main workflow loop, actor spawning, command dispatch
 - `planning.rs`, `reviewing.rs`, `revising.rs`, `completion.rs` - Phase handlers
-- Uses `tokio::select!` pattern for concurrent channel handling (see module doc comment for critical pattern)
+- All phases receive `&WorkflowView` and dispatch commands via `WorkflowPhaseContext`
 
-**Agent Abstraction** (`src/agents/`):
+**Domain Layer** (`src/domain/`):
+- `cqrs/` - Aggregate, commands, events, query handler
+- `actor.rs` - WorkflowActor (ractor-based)
+- `view.rs` - WorkflowView projection
+- `types.rs` - Strong domain types
+- `input.rs` - WorkflowInput (New/Resume) for initialization
 
-- `AgentType` enum wraps Claude, Codex, and Gemini agents
-- Each agent (in `claude/`, `codex/`, `gemini/`) handles CLI invocation and output parsing
-- `runner.rs` - Common streaming execution logic
-- `protocol.rs` - Agent output protocol handling
+**Event Store** (`src/event_store/`):
+- `file_store.rs` - JSONL event persistence with snapshots
+- Uses `fs2` for file locking, atomic writes
 
 **Phase Logic** (`src/phases/`):
-
-- `planning.rs`, `reviewing.rs`, `revising.rs` - Phase-specific agent invocation
-- `review_parser.rs` - Parses `<plan-feedback>` tags from reviewer output
-- `verification.rs` - Post-implementation verification workflow
+- `planning.rs`, `reviewing.rs`, `revising.rs` - Agent invocation
+- All functions take `&WorkflowView`, never mutate state
 
 **TUI Layer** (`src/tui/`):
+- `session/mod.rs` - Session with `workflow_view: Option<WorkflowView>`
+- `event.rs` - `Event::SessionViewUpdate` carries boxed `WorkflowView`
+- `session_event_sender.rs` - `send_view_update()` broadcasts view changes
 
-- `session/` - Session state management with snapshot/restore support
-- `ui/` - Ratatui-based UI components (panels, overlays, stats)
-- `event.rs` - Event handling with `SessionEventSender` for cross-task communication
-- `embedded_terminal.rs` - PTY-based terminal for Claude Code handoff
+**Agent Abstraction** (`src/agents/`):
+- `AgentType` enum wraps Claude, Codex, and Gemini agents
+- `runner.rs` - Common streaming execution logic
 
-**Configuration** (`src/config.rs`):
-
-- `WorkflowConfig` - Loaded from `workflow.yaml` or `--config`
-- Defines agents, phase assignments, aggregation modes, failure policies
-
-**State Management** (`src/state.rs`):
-
-- `State` - Workflow state with phase, iteration, plan paths
-- `Phase` enum: Planning, Reviewing, Revising, Complete
-- Persisted to `~/.planning-agent/sessions/<session-id>/state.json`
-
-**Prompt Handling** (`src/agents/prompt.rs`):
-
-- `PreparedPrompt` - Centralized prompt preparation for all agent types
-- `AgentCapabilities` - Defines what each agent CLI supports (system prompts, max turns)
-- For Claude: system prompts passed via `--append-system-prompt`
-- For Codex/Gemini: system prompts merged into user prompt within `<system-context>` tags
-
-**Session Logging** (`src/session_logger.rs`):
-
-- `SessionLogger` - Unified logging for session-scoped events
-- `LogCategory` enum: Workflow, Agent, State, Ui, System
-- All timestamps in UTC ISO 8601 format for consistency
-
-### Data Storage
+## Data Storage
 
 All data stored under `~/.planning-agent/`:
 
 ```
 ~/.planning-agent/sessions/<session-id>/
+├── events.jsonl         # Event log (append-only, source of truth)
+├── snapshot.json        # Aggregate snapshot (optimization)
 ├── plan.md              # Implementation plan
 ├── feedback_1.md        # Review feedback (round 1)
-├── feedback_2.md        # Review feedback (round 2)
-├── state.json           # Workflow state
-├── session.json         # Session snapshot (for resume)
+├── session.json         # UI snapshot for resume
 ├── session_info.json    # Lightweight metadata for listing
-├── logs/
-│   ├── session.log      # Main session log
-│   └── agent-stream.log # Raw agent output
-└── diagnostics/         # Failure bundles
+└── logs/
+    ├── session.log      # Main session log
+    └── agent-stream.log # Raw agent output
 ```
 
-### Agent Protocol
+**Event Log Format** (`events.jsonl`):
+```json
+{"aggregate_id":"uuid","sequence":1,"event_type":"WorkflowCreated","event":{...}}
+{"aggregate_id":"uuid","sequence":2,"event_type":"PlanningCompleted","event":{...}}
+```
 
-Agents output streaming JSON. Review feedback must use `<plan-feedback verdict="approve|reject">` tags for structured parsing. MCP (Model Context Protocol) servers are injected for review feedback collection.
+## Channel Pattern (Critical)
 
-### Naming Conventions: Sessions vs Conversations
+When awaiting channel receives in workflow code, always use `tokio::select!` to check both `approval_rx` AND `control_rx`. Single-channel awaits cause freeze bugs on quit.
 
-**IMPORTANT**: There are two distinct concepts that must not be confused:
+```rust
+// CORRECT - Always select on both channels
+tokio::select! {
+    Some(cmd) = control_rx.recv() => {
+        match cmd {
+            WorkflowCommand::Stop => return Ok(WorkflowResult::Stopped),
+            WorkflowCommand::Interrupt { feedback } => { ... }
+        }
+    }
+    response = approval_rx.recv() => {
+        // Handle approval
+    }
+}
 
-| Term                   | Meaning                                       | Storage                              |
-| ---------------------- | --------------------------------------------- | ------------------------------------ |
-| **Workflow Session**   | planning-agent's orchestration unit           | `~/.planning-agent/sessions/<uuid>/` |
-| **Agent Conversation** | Claude/Codex/Gemini's persistent chat context | Managed by each agent's CLI          |
+// WRONG - Will freeze on quit
+let response = approval_rx.recv().await;
+```
 
-**Variable naming conventions:**
+## Naming Conventions
 
-- `workflow_session_id` - planning-agent's session identifier
-- `conversation_id` - AI agent's conversation/thread ID for resume
-- `agent_conversations` - Map of agent name → conversation state
-- `AgentConversationState` - State for an agent's conversation
-- `ResumeStrategy::ConversationResume` - Resume using captured conversation ID
+### Sessions vs Conversations
 
-**Why this matters:**
+| Term | Meaning | Storage |
+|------|---------|---------|
+| **Workflow Session** | planning-agent's orchestration unit | `~/.planning-agent/sessions/<uuid>/` |
+| **Agent Conversation** | Claude/Codex/Gemini's chat context | Managed by each agent's CLI |
 
-- Workflow sessions are what users see in the session browser
-- Agent conversations enable context continuity between planning→revising phases
-- Confusing these leads to bugs like passing workflow IDs to agent resume flags
+Variable naming:
+- `workflow_session_id` - planning-agent's session ID
+- `conversation_id` - AI agent's conversation/thread ID
+- `agent_conversations` - Map of agent → conversation state
 
-### Channel Pattern (Critical)
+## Build Enforcement
 
-When awaiting channel receives in workflow code, always use `tokio::select!` to check both `approval_rx` AND `control_rx`. Single-channel awaits cause freeze bugs on quit. See `src/app/workflow/mod.rs` header comment for the pattern.
+The build script (`build.rs`) enforces:
 
-### File Line Limits
-
-The build enforces a 750-line limit per file (see `build.rs`). When a file exceeds this limit:
-
-- **DO**: Extract related functions into a new module (e.g., `workflow_lifecycle.rs` from `events.rs`)
-- **DON'T**: Compress code with hacky tricks like removing comments, shortening names, or condensing logic
-
-Proper extraction maintains readability and creates logical module boundaries.
-
-### Build Enforcement Checks
-
-The build script (`build.rs`) enforces several code quality rules. Violations fail the build:
-
-1. **No #[ignore] Tests**: Tests cannot use the `#[ignore]` attribute. Ignored tests provide false confidence. Tests must either run or be deleted.
-
-2. **No Silent Test Skips**: Tests cannot silently skip with early returns like `if !available { return; }`. Tests must either:
-   - Run and verify behavior (use `set_home_for_test()` for isolated test environments)
-   - Fail explicitly if prerequisites aren't met
-   - Be deleted if they can't run reliably
-
-3. **No Nested Tokio Runtimes**: Cannot use `std::thread::spawn` + `Runtime::new()` pattern. This causes async clients (tarpc) to break when the spawned thread's runtime is dropped. Make functions async instead.
-
-4. **Serial Tests for Env Mutations**: Tests calling `std::env::set_var` or `std::env::remove_var` must have `#[serial]` or `#[serial_test::serial]` attribute to prevent parallel test interference.
-
-5. **No #[allow(dead_code)]**: Delete unused code instead of silencing warnings.
-
-6. **Code Formatting**: All code must pass `cargo fmt --check`.
-
-7. **Max Files Per Folder**: No folder can contain more than 10 `.rs` files. Split large modules into subfolders.
-
-8. **Tests Must Be in Test Folders**: All tests must be in folders whose name contains "test". See the Test Location Pattern below.
+1. **No #[ignore] Tests** - Tests run or get deleted
+2. **No Silent Test Skips** - No early returns to skip tests
+3. **No Nested Tokio Runtimes** - Use async, not thread spawn + Runtime::new()
+4. **Serial Tests for Env Mutations** - Use `#[serial]` for env var changes
+5. **No #[allow(dead_code)]** - Delete unused code
+6. **Code Formatting** - Must pass `cargo fmt --check`
+7. **Max 10 Files Per Folder** - Split large modules
+8. **Max 750 Lines Per File** - Extract into submodules
+9. **Tests in Test Folders** - Use `#[path = "tests/foo.rs"]` pattern
 
 ### Test Location Pattern
 
-Tests must live in folders with "test" in the name (e.g., `src/foo/tests/`). Use the `#[path]` attribute to keep tests as child modules while placing them in a separate folder:
-
 ```rust
 // src/foo/bar.rs
-fn private_fn() { }  // stays private - no visibility change needed
+fn private_fn() { }
 
 #[cfg(test)]
 #[path = "tests/bar.rs"]
 mod tests;
 ```
 
-Then in `src/foo/tests/bar.rs`:
 ```rust
-use super::*;  // Can access private items - this is still a child module!
+// src/foo/tests/bar.rs
+use super::*;
 
 #[test]
 fn test_private_fn() {
-    private_fn();  // Works because tests is a child of bar
+    private_fn();  // Works - tests is a child module
 }
 ```
 
-**Why this pattern:**
-- Tests live in a `tests/` folder (satisfies build check)
-- Tests can access private items via `super::*` (no `pub(crate)` needed)
-- Clear separation between production and test code
-- No visibility changes required for internal functions
+## Code Quality Standards
 
-**Migration:** Use `SKIP_FOLDER_CHECK=1 SKIP_TEST_FOLDER_CHECK=1` during migration.
+### No Shortcuts
+
+- **DO NOT** dismiss failures as "flaky" without investigation
+- **DO NOT** create wrapper functions to avoid refactoring
+- **DO NOT** add `#[allow(...)]` to silence warnings
+- **DO NOT** leave backwards compatibility code
+
+### No Mocking
+
+Tests use real implementations only:
+- Real servers, real connections, real file systems
+- No mock/fake/stub implementations
+- No "TestFoo" versions of production types
+
+### No Backwards Compatibility
+
+- **DELETE** old code paths immediately
+- **DELETE** deprecated functions (no `#[deprecated]`)
+- **DELETE** legacy format support
+- **DELETE** unused parameters
 
 ### Refactoring is Encouraged
 
-**Never be afraid to change a lot of code if it improves things.**
+Change as much code as needed to fix problems properly:
+- Update all call sites when changing signatures
+- Rename types/functions across the entire codebase
+- Delete and rewrite broken code
+- Never choose "minimal change" over correctness
 
-When fixing a bug or adding a feature reveals a design problem, fix the design. Don't work around it:
+### No Timelines in Plans
 
-- **DO** change function signatures and update all callers
-- **DO** rename types/functions across the entire codebase for clarity
-- **DO** move code between modules to improve organization
-- **DO** delete and rewrite code that's fundamentally broken
-- **DO** make sweeping changes if the current approach is wrong
-
-The number of files or lines changed is irrelevant. What matters is that the code is correct and clean when you're done. A 50-file refactor that fixes a systemic issue is better than a 2-line hack that papers over it.
-
-Never choose a "minimal change" that leaves the codebase worse. Never add a workaround because "refactoring would touch too many files." If the right fix requires updating 100 call sites, update 100 call sites.
-
-### Code Quality Standards
-
-**No shortcuts. No laziness. No excuses.**
-
-This is non-negotiable. Every problem must be properly investigated and fixed. When something breaks, you fix it correctly - you do not:
-
-- Dismiss failures as "flaky" or "pre-existing" without investigation
-- Claim something is an "environment issue" to avoid doing the work
-- Create wrapper functions or shims to avoid proper refactoring
-- Mark tests as `#[ignore]` instead of fixing them or deleting them
-- Add `#[allow(...)]` attributes to silence legitimate warnings
-- Hand-wave problems away with vague explanations
-
-### No Mocking in Tests
-
-**Tests must use real implementations. Mocking is never allowed.**
-
-This is absolute. Tests must exercise the actual production code, not fake implementations:
-
-- **NEVER** create mock/fake/stub implementations of traits
-- **NEVER** create "TestFoo" versions of production types with simplified behavior
-- **NEVER** use mocking frameworks or libraries
-- **ALWAYS** spin up real servers, real connections, real state
-
-**Why this matters:**
-
-- Mocks hide bugs by testing fake behavior instead of real behavior
-- Mocks drift from production code and provide false confidence
-- Integration issues only appear when real components interact
-- If something is hard to test without mocks, that's a design smell to fix
-
-**What to do instead:**
-
-- Use test harnesses that wrap real implementations (e.g., `TestServer` that starts a real RPC server)
-- Use in-memory databases or temporary files for persistence
-- Use actual network connections on localhost with dynamic ports
-- Accept slower tests in exchange for correctness
-
-### No Flaky Tests
-
-**If a test fails, it is a real bug. Fix it.**
-
-Never dismiss test failures as "flaky" or "intermittent":
-
-- **NEVER** assume a failing test is flaky without investigation
-- **NEVER** re-run tests hoping they pass the second time
-- **NEVER** mark tests as `#[ignore]` because they "sometimes fail"
-- **ALWAYS** investigate the root cause of every test failure
-- **ALWAYS** fix the underlying bug, not the test
-
-If a test fails inconsistently, that indicates a real bug - likely a race condition, timing issue, or resource leak. These are serious bugs that must be fixed.
-
-### No Backwards Compatibility Code
-
-**Delete old code. Never keep deprecated features around.**
-
-When refactoring or changing functionality:
-
-- **DELETE** old code paths, don't keep them "just in case"
-- **DELETE** deprecated functions immediately, don't mark them `#[deprecated]`
-- **DELETE** legacy format support, don't maintain dual-path loading
-- **DELETE** unused parameters, don't add `#[allow(unused)]`
-- **DELETE** catch-all enum variants like `Unknown` with `#[serde(other)]`
-- **DELETE** backwards compatibility tests when removing features
-
-Make a clean cut. Users with old data can either migrate manually or lose access - that's acceptable for transient data like planning sessions. The maintenance burden of compatibility code is never worth it.
-
-When tests fail, you investigate why they fail and fix the root cause. When refactoring is needed, you do the refactoring properly. When something is broken, you take ownership and fix it.
-
-**Specific requirements:**
-
-- **DO**: Properly extract code into new modules with correct visibility (`pub(crate)`)
-- **DO**: Update all call sites when refactoring function signatures
-- **DO**: Write proper tests that use the actual API, not test-only wrappers
-- **DO**: Investigate every test failure and fix the underlying issue
-- **DO**: Take the time to understand problems before proposing solutions
-
-**No Timelines in Plans:**
-
-Plans must not include timelines, schedules, dates, durations, or time estimates. Focus on technical scope, sequencing, and verification only. Examples to reject: "in two weeks", "Phase 1: Week 1-2", "Q1 delivery", "Sprint 1", "by end of day".
-
-The lazy path is never acceptable. If a task requires significant effort, that effort must be made. Quality and correctness are not optional. Big refactors, deep investigations, and thorough fixes are encouraged and expected.
+Plans must not include time estimates, schedules, or deadlines. Focus on technical scope and sequencing only.
