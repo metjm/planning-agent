@@ -2,9 +2,9 @@
 
 use super::WorkflowResult;
 use crate::app::util::build_approval_summary;
+use crate::domain::view::WorkflowView;
 use crate::git_worktree;
 use crate::session_daemon::{LogCategory, LogLevel, SessionLogger};
-use crate::state::State;
 use crate::tui::{SessionEventSender, UserApprovalResponse, WorkflowCommand};
 use anyhow::Result;
 use std::sync::Arc;
@@ -16,7 +16,7 @@ fn log_completion(logger: &SessionLogger, message: &str) {
 }
 
 pub async fn handle_completion(
-    state: &State,
+    view: &WorkflowView,
     session_logger: &Arc<SessionLogger>,
     sender: &SessionEventSender,
     approval_rx: &mut mpsc::Receiver<UserApprovalResponse>,
@@ -30,7 +30,7 @@ pub async fn handle_completion(
     sender.send_output("".to_string());
 
     // Output merge instructions if using a worktree
-    if let Some(ref wt_state) = state.worktree_info {
+    if let Some(ref wt_state) = view.worktree_info {
         let info = git_worktree::WorktreeInfo {
             worktree_path: wt_state.worktree_path.clone(),
             branch_name: wt_state.branch_name.clone(),
@@ -44,22 +44,31 @@ pub async fn handle_completion(
         }
     }
 
-    // state.plan_file is now an absolute path (in ~/.planning-agent/plans/)
-    let plan_path = state.plan_file.clone();
+    // view.plan_path is now an absolute path (in ~/.planning-agent/plans/)
+    let plan_path = view
+        .plan_path
+        .as_ref()
+        .expect("plan_path must be set before completion")
+        .0
+        .clone();
+    let iteration = view
+        .iteration
+        .expect("iteration must be set before completion")
+        .0;
 
-    if state.approval_overridden {
+    if view.approval_overridden {
         sender.send_output("=== PROCEEDING WITHOUT AI APPROVAL ===".to_string());
         sender.send_output("User chose to proceed after max iterations".to_string());
         sender.send_output("Waiting for your final decision...".to_string());
 
-        let summary = build_approval_summary(&plan_path, true, state.iteration);
+        let summary = build_approval_summary(&plan_path, true, iteration);
         sender.send_user_override_approval(summary);
     } else {
         sender.send_output("=== PLAN APPROVED BY AI ===".to_string());
-        sender.send_output(format!("Completed after {} iteration(s)", state.iteration));
+        sender.send_output(format!("Completed after {} iteration(s)", iteration));
         sender.send_output("Waiting for your approval...".to_string());
 
-        let summary = build_approval_summary(&plan_path, false, state.iteration);
+        let summary = build_approval_summary(&plan_path, false, iteration);
         sender.send_approval_request(summary);
     };
 

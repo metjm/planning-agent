@@ -1,7 +1,6 @@
 //! Approval-related input handling for the TUI.
 
 use crate::app::workflow::{run_workflow_with_config, WorkflowRunConfig};
-use crate::planning_paths;
 use crate::tui::file_index::FileIndex;
 use crate::tui::mention::update_mention_state;
 use crate::tui::{
@@ -190,7 +189,7 @@ pub async fn handle_all_reviewers_failed_input(
         KeyCode::Char('r') | KeyCode::Char('R') => {
             if is_recovery_mode {
                 // Recovery mode: spawn a new workflow
-                // Get working dir and config before mutable borrow of workflow_state
+                // Get working dir and config before accessing workflow_view
                 let base_working_dir = session
                     .context
                     .as_ref()
@@ -202,26 +201,12 @@ pub async fn handle_all_reviewers_failed_input(
                     &base_working_dir,
                 );
 
-                if let Some(ref mut state) = session.workflow_state {
-                    // Clear the failure before continuing
-                    state.clear_failure();
-
-                    // Compute state_path from working_dir and feature_name
-                    let state_path =
-                        match planning_paths::state_path(&base_working_dir, &state.feature_name) {
-                            Ok(p) => p,
-                            Err(e) => {
-                                session.handle_error(&format!("Failed to get state path: {}", e));
-                                return Ok(false);
-                            }
-                        };
-
-                    // Save state with cleared failure
-                    state.set_updated_at();
-                    if let Err(e) = state.save(&state_path) {
-                        session.handle_error(&format!("Failed to save state: {}", e));
+                if let Some(ref view) = session.workflow_view {
+                    // Get feature_name from view
+                    let Some(ref _feature_name) = view.feature_name else {
+                        session.handle_error("Missing feature_name in workflow view");
                         return Ok(false);
-                    }
+                    };
 
                     // Set up channels
                     let (new_approval_tx, new_approval_rx) =
@@ -240,13 +225,19 @@ pub async fn handle_all_reviewers_failed_input(
                         let working_dir = base_working_dir;
                         let tx = output_tx.clone();
                         let sid = session.id;
-                        let state = state.clone();
+                        let view = view.clone();
                         async move {
+                            let input = crate::domain::input::WorkflowInput::Resume(
+                                crate::domain::input::ResumeWorkflowInput {
+                                    workflow_id: view
+                                        .workflow_id
+                                        .expect("workflow_id must be present in view"),
+                                },
+                            );
                             run_workflow_with_config(
-                                state,
+                                input,
                                 WorkflowRunConfig {
                                     working_dir,
-                                    state_path,
                                     config: cfg,
                                     output_tx: tx,
                                     approval_rx: new_approval_rx,
@@ -287,17 +278,13 @@ pub async fn handle_all_reviewers_failed_input(
             session.status = SessionStatus::Stopped;
         }
         KeyCode::Char('a') | KeyCode::Char('A') => {
-            if is_recovery_mode {
-                // Recovery mode: clear failure and mark as error
-                if let Some(ref mut state) = session.workflow_state {
-                    state.clear_failure();
-                }
-            } else {
+            if !is_recovery_mode {
                 // Normal mode: send abort via channel
                 if let Some(tx) = session.approval_tx.clone() {
                     let _ = tx.send(UserApprovalResponse::AbortWorkflow).await;
                 }
             }
+            // Recovery mode: no action needed, just update UI state below
             session.approval_mode = ApprovalMode::None;
             session.status = SessionStatus::Error;
             session.error_state = Some("All reviewers failed - user aborted".to_string());
@@ -333,7 +320,7 @@ pub async fn handle_workflow_failure_input(
         KeyCode::Char('r') | KeyCode::Char('R') => {
             if is_recovery_mode {
                 // Recovery mode: spawn a new workflow
-                // Get working dir and config before mutable borrow of workflow_state
+                // Get working dir and config before accessing workflow_view
                 let base_working_dir = session
                     .context
                     .as_ref()
@@ -345,26 +332,12 @@ pub async fn handle_workflow_failure_input(
                     &base_working_dir,
                 );
 
-                if let Some(ref mut state) = session.workflow_state {
-                    // Clear the failure before continuing
-                    state.clear_failure();
-
-                    // Compute state_path from working_dir and feature_name
-                    let state_path =
-                        match planning_paths::state_path(&base_working_dir, &state.feature_name) {
-                            Ok(p) => p,
-                            Err(e) => {
-                                session.handle_error(&format!("Failed to get state path: {}", e));
-                                return Ok(false);
-                            }
-                        };
-
-                    // Save state with cleared failure
-                    state.set_updated_at();
-                    if let Err(e) = state.save(&state_path) {
-                        session.handle_error(&format!("Failed to save state: {}", e));
+                if let Some(ref view) = session.workflow_view {
+                    // Get feature_name from view
+                    let Some(ref _feature_name) = view.feature_name else {
+                        session.handle_error("Missing feature_name in workflow view");
                         return Ok(false);
-                    }
+                    };
 
                     // Set up channels
                     let (new_approval_tx, new_approval_rx) =
@@ -383,13 +356,19 @@ pub async fn handle_workflow_failure_input(
                         let working_dir = base_working_dir;
                         let tx = output_tx.clone();
                         let sid = session.id;
-                        let state = state.clone();
+                        let view = view.clone();
                         async move {
+                            let input = crate::domain::input::WorkflowInput::Resume(
+                                crate::domain::input::ResumeWorkflowInput {
+                                    workflow_id: view
+                                        .workflow_id
+                                        .expect("workflow_id must be present in view"),
+                                },
+                            );
                             run_workflow_with_config(
-                                state,
+                                input,
                                 WorkflowRunConfig {
                                     working_dir,
-                                    state_path,
                                     config: cfg,
                                     output_tx: tx,
                                     approval_rx: new_approval_rx,
@@ -431,17 +410,13 @@ pub async fn handle_workflow_failure_input(
             session.status = SessionStatus::Stopped;
         }
         KeyCode::Char('a') | KeyCode::Char('A') => {
-            if is_recovery_mode {
-                // Recovery mode: clear failure and mark as error
-                if let Some(ref mut state) = session.workflow_state {
-                    state.clear_failure();
-                }
-            } else {
+            if !is_recovery_mode {
                 // Normal mode: send abort via channel
                 if let Some(tx) = session.approval_tx.clone() {
                     let _ = tx.send(UserApprovalResponse::WorkflowFailureAbort).await;
                 }
             }
+            // Recovery mode: no action needed, just update UI state below
             session.approval_mode = ApprovalMode::None;
             session.status = SessionStatus::Error;
             session.error_state = Some("Workflow aborted by user".to_string());

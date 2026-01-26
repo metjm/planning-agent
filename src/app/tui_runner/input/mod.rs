@@ -19,9 +19,11 @@ use crate::tui::{
 };
 use anyhow::Result;
 
+use crate::session_daemon::session_logger::SessionLogger;
 use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::text::Line;
 use std::path::Path;
+use std::sync::Arc;
 use tokio::sync::{mpsc, watch};
 
 use super::input_naming::handle_naming_tab_input;
@@ -381,13 +383,13 @@ pub async fn handle_key_event(
     // Handle 'p' to toggle plan modal (global hotkey, works from any mode except error state or input areas)
     let in_text_input = session.input_mode != InputMode::Normal
         || session.approval_mode == ApprovalMode::EnteringFeedback;
-    if key.code == KeyCode::Char('p') && session.workflow_state.is_some() && !in_text_input {
+    if key.code == KeyCode::Char('p') && session.workflow_view.is_some() && !in_text_input {
         session.toggle_plan_modal(working_dir);
         return Ok(false);
     }
 
     // Handle 'v' to toggle review modal (global hotkey, works from any mode except error state or input areas)
-    if key.code == KeyCode::Char('v') && session.workflow_state.is_some() && !in_text_input {
+    if key.code == KeyCode::Char('v') && session.workflow_view.is_some() && !in_text_input {
         session.toggle_review_modal(working_dir);
         return Ok(false);
     }
@@ -562,14 +564,22 @@ async fn handle_implementation_chat_input(
                 );
                 return Ok(false);
             };
-            let Some(state) = session.workflow_state.clone() else {
+            let Some(view) = session.workflow_view.clone() else {
                 session.add_output(
-                    "[implementation] Follow-up unavailable: missing workflow state".to_string(),
+                    "[implementation] Follow-up unavailable: missing workflow view".to_string(),
                 );
                 return Ok(false);
             };
 
-            let session_id = session.id;
+            let Some(workflow_id) = view.workflow_id.as_ref() else {
+                session.add_output(
+                    "[implementation] Follow-up unavailable: missing workflow ID".to_string(),
+                );
+                return Ok(false);
+            };
+            let workflow_session_id = workflow_id.to_string();
+
+            let ui_session_id = session.id;
             let run_id = session.current_run_id;
             let (cancel_tx, cancel_rx) = watch::channel(false);
 
@@ -586,19 +596,30 @@ async fn handle_implementation_chat_input(
             session.tab_slash_state.clear();
 
             let working_dir = context.effective_working_dir.clone();
-            let state_path = context.state_path.clone();
             let workflow_config = context.workflow_config.clone();
-            let session_sender = SessionEventSender::new(session_id, run_id, output_tx.clone());
+            let session_sender = SessionEventSender::new(ui_session_id, run_id, output_tx.clone());
+
+            let session_logger = match SessionLogger::new(&workflow_session_id) {
+                Ok(logger) => Arc::new(logger),
+                Err(e) => {
+                    session.add_output(format!(
+                        "[implementation] Follow-up unavailable: failed to create logger: {}",
+                        e
+                    ));
+                    return Ok(false);
+                }
+            };
 
             tokio::spawn(async move {
                 let _ = run_implementation_interaction(
-                    state,
-                    workflow_config,
-                    working_dir,
-                    state_path,
-                    message,
+                    &view,
+                    &workflow_config,
+                    &working_dir,
+                    &message,
                     session_sender,
+                    session_logger,
                     cancel_rx,
+                    None,
                 )
                 .await;
             });

@@ -29,18 +29,18 @@ pub const SPINNER_CHARS: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '
 /// Returns the background color for the header based on session state.
 ///
 /// PRIORITY ORDER (checked top-to-bottom, first match wins):
-/// 1. Error state - ALWAYS red, regardless of workflow_state presence
+/// 1. Error state - ALWAYS red, regardless of workflow_view presence
 /// 2. Stopped state - muted blue-gray
 /// 3. Waiting states (InputPending, AwaitingApproval when not running) - gray
-/// 4. Workflow phase colors (if workflow_state exists) - phase-specific
-/// 5. Default (no workflow_state and not in above states) - gray (waiting)
+/// 4. Workflow phase colors (if workflow_view exists) - phase-specific
+/// 5. Default (no workflow_view and not in above states) - gray (waiting)
 fn get_phase_background_color(session: &Session, theme: &theme::Theme) -> ratatui::style::Color {
-    use crate::state::{ImplementationPhase, Phase};
+    use crate::domain::types::{ImplementationPhase, Phase};
 
     // ============================================================
     // PRIORITY 1: Error state takes precedence over ALL other states
-    // This check happens FIRST, before workflow_state is examined.
-    // Even if workflow_state is None (e.g., initialization failure),
+    // This check happens FIRST, before workflow_view is examined.
+    // Even if workflow_view is None (e.g., initialization failure),
     // error state will show the correct red background.
     // ============================================================
     if matches!(session.status, SessionStatus::Error) {
@@ -71,31 +71,30 @@ fn get_phase_background_color(session: &Session, theme: &theme::Theme) -> ratatu
     // PRIORITY 4+5: Phase-based colors for active workflow
     // Only reached if not Error, Stopped, or Waiting states
     // ============================================================
-    match &session.workflow_state {
-        Some(state) => {
+    match &session.workflow_view {
+        Some(view) => {
             // Check implementation phase first
-            if let Some(impl_state) = &state.implementation_state {
+            if let Some(impl_state) = &view.implementation_state {
                 if impl_state.phase != ImplementationPhase::Complete {
                     return match impl_state.phase {
                         ImplementationPhase::Implementing => theme.phase_bg_planning,
                         ImplementationPhase::ImplementationReview => theme.phase_bg_reviewing,
-                        ImplementationPhase::AwaitingMaxIterationsDecision => {
-                            theme.phase_bg_reviewing
-                        }
+                        ImplementationPhase::AwaitingDecision => theme.phase_bg_reviewing,
                         ImplementationPhase::Complete => theme.phase_bg_complete,
                     };
                 }
             }
             // Planning workflow phases
-            match state.phase {
-                Phase::Planning => theme.phase_bg_planning,
-                Phase::Reviewing => theme.phase_bg_reviewing,
-                Phase::Revising => theme.phase_bg_revising,
-                Phase::AwaitingPlanningDecision => theme.phase_bg_reviewing,
-                Phase::Complete => theme.phase_bg_complete,
+            match view.planning_phase {
+                Some(Phase::Planning) => theme.phase_bg_planning,
+                Some(Phase::Reviewing) => theme.phase_bg_reviewing,
+                Some(Phase::Revising) => theme.phase_bg_revising,
+                Some(Phase::AwaitingPlanningDecision) => theme.phase_bg_reviewing,
+                Some(Phase::Complete) => theme.phase_bg_complete,
+                None => theme.phase_bg_waiting,
             }
         }
-        // No workflow_state AND not Error/Stopped/Waiting = use waiting color
+        // No workflow_view AND not Error/Stopped/Waiting = use waiting color
         // (This is the initial state before workflow starts, or an edge case)
         None => theme.phase_bg_waiting,
     }
@@ -189,7 +188,7 @@ fn draw_tab_bar(frame: &mut Frame, tab_manager: &TabManager, area: Rect) {
     };
 
     // Use chip-mode phase spans for compact display with animated spinner
-    let phase_spans = if active_session.workflow_state.is_some() {
+    let phase_spans = if active_session.workflow_view.is_some() {
         build_phase_spans(
             active_session,
             &theme,
@@ -223,9 +222,12 @@ fn draw_tab_bar(frame: &mut Frame, tab_manager: &TabManager, area: Rect) {
     let left_section_width: usize = left_spans.iter().map(|s| s.content.width()).sum();
 
     // Build right section: path/title
-    let right_section = if let Some(ref state) = active_session.workflow_state {
-        let plan_path = state.plan_file.display().to_string();
-        format!("Planning Agent - {} ", plan_path)
+    let right_section = if let Some(ref view) = active_session.workflow_view {
+        if let Some(ref plan_path) = view.plan_path {
+            format!("Planning Agent - {} ", plan_path.as_path().display())
+        } else {
+            "Planning Agent ".to_string()
+        }
     } else {
         "Planning Agent ".to_string()
     };

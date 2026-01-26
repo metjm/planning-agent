@@ -7,7 +7,6 @@ use tokio::sync::mpsc;
 use crate::app::workflow_decisions::IterativePhase;
 use crate::app::AccountUsage;
 use crate::domain::view::WorkflowView;
-use crate::state::State;
 use crate::tui::file_index::FileIndex;
 use crate::tui::session::{CliInstanceId, ReviewKind, TodoItem, ToolResultSummary};
 use crate::update::{UpdateResult, UpdateStatus, VersionInfo};
@@ -59,7 +58,6 @@ pub enum Event {
     Resize,
 
     Output(String),
-    StateUpdate(State),
 
     SessionOutput {
         session_id: usize,
@@ -69,14 +67,10 @@ pub enum Event {
         session_id: usize,
         line: String,
     },
-    SessionStateUpdate {
-        session_id: usize,
-        state: State,
-    },
-    /// New event-sourced view update (replaces SessionStateUpdate in CQRS mode)
+    /// Event-sourced view update for workflow state
     SessionViewUpdate {
         session_id: usize,
-        view: WorkflowView,
+        view: Box<WorkflowView>,
     },
     SessionApprovalRequest {
         session_id: usize,

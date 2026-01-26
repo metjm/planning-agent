@@ -5,16 +5,20 @@
 
 use crate::agents::{AgentContext, AgentType};
 use crate::config::WorkflowConfig;
+use crate::domain::actor::WorkflowMessage;
+use crate::domain::types::{AgentId, ConversationId, PhaseLabel, ResumeStrategy};
+use crate::domain::view::WorkflowView;
+use crate::domain::WorkflowCommand as DomainCommand;
 use crate::phases::implementing_conversation_key;
 use crate::planning_paths;
-use crate::session_daemon::{create_session_logger, SessionLogger};
-use crate::state::{ResumeStrategy, State};
+use crate::session_daemon::{LogCategory, LogLevel, SessionLogger};
 use crate::tui::SessionEventSender;
 use anyhow::{Context, Result};
+use ractor::ActorRef;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
-use tokio::sync::watch;
+use tokio::sync::{oneshot, watch};
 
 /// Minimal system prompt - the skill handles the details.
 const IMPLEMENTATION_SYSTEM_PROMPT: &str =
@@ -38,24 +42,27 @@ pub struct ImplementationResult {
 /// Runs the implementation phase to execute an approved plan.
 ///
 /// # Arguments
-/// * `state` - The current workflow state
+/// * `view` - The current workflow view (read-only projection of state)
 /// * `config` - The workflow configuration
 /// * `working_dir` - The working directory for the implementation
 /// * `iteration` - The current iteration number (1-indexed)
 /// * `feedback` - Optional feedback from a previous review iteration
 /// * `session_sender` - Channel to send session events
 /// * `session_logger` - Logger for the session
+/// * `actor_ref` - Optional actor reference for dispatching commands
 ///
 /// # Returns
 /// An `ImplementationResult` containing the output and metadata from the run.
+#[allow(clippy::too_many_arguments)]
 pub async fn run_implementation_phase(
-    state: &State,
+    view: &WorkflowView,
     config: &WorkflowConfig,
     working_dir: &Path,
     iteration: u32,
     feedback: Option<&str>,
     session_sender: SessionEventSender,
     session_logger: Arc<SessionLogger>,
+    actor_ref: Option<ActorRef<WorkflowMessage>>,
 ) -> Result<ImplementationResult> {
     // Get implementation config
     let impl_config = &config.implementation;
@@ -84,20 +91,40 @@ pub async fn run_implementation_phase(
     let agent = AgentType::from_config(agent_name, agent_config, working_dir.to_path_buf())?;
 
     // Build the prompt
-    let prompt = build_implementation_prompt(state, working_dir, iteration, feedback);
+    let prompt = build_implementation_prompt(view, working_dir, iteration, feedback);
+
+    // Get workflow ID from view
+    let workflow_id = view
+        .workflow_id
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("WorkflowView missing workflow_id"))?;
 
     // Get log path
     let log_path =
-        planning_paths::session_implementation_log_path(&state.workflow_session_id, iteration)?;
+        planning_paths::session_implementation_log_path(&workflow_id.to_string(), iteration)?;
 
     // Prepare conversation key for resume
     let conversation_key = implementing_conversation_key(agent_name);
+    let agent_id = AgentId::from(conversation_key.as_str());
 
     // Get existing conversation ID if available (entry created by orchestrator)
-    let conversation_id = state
+    let conversation_id = view
         .agent_conversations
-        .get(&conversation_key)
-        .and_then(|conv| conv.conversation_id.clone());
+        .get(&agent_id)
+        .and_then(|conv| conv.conversation_id.as_ref().map(|c| c.0.clone()));
+
+    // Dispatch RecordInvocation command to CQRS actor
+    dispatch_implementation_command(
+        &actor_ref,
+        &session_logger,
+        DomainCommand::RecordInvocation {
+            agent_id: agent_id.clone(),
+            phase: PhaseLabel::Implementing,
+            conversation_id: conversation_id.clone().map(ConversationId::from),
+            resume_strategy: ResumeStrategy::ConversationResume,
+        },
+    )
+    .await;
 
     let phase_name = format!("Implementation #{}", iteration);
 
@@ -107,7 +134,7 @@ pub async fn run_implementation_phase(
         conversation_id: conversation_id.clone(),
         resume_strategy: ResumeStrategy::ConversationResume,
         cancel_rx: None,
-        session_logger,
+        session_logger: session_logger.clone(),
     };
 
     // Execute the implementation
@@ -120,6 +147,20 @@ pub async fn run_implementation_phase(
         )
         .await
         .context("Implementation agent execution failed")?;
+
+    // Store captured conversation ID for future resume
+    if let Some(ref captured_id) = result.conversation_id {
+        dispatch_implementation_command(
+            &actor_ref,
+            &session_logger,
+            DomainCommand::RecordAgentConversation {
+                agent_id,
+                resume_strategy: ResumeStrategy::ConversationResume,
+                conversation_id: Some(ConversationId::from(captured_id.clone())),
+            },
+        )
+        .await;
+    }
 
     // Save the implementation log
     if let Some(parent) = log_path.parent() {
@@ -147,23 +188,26 @@ pub async fn run_implementation_phase(
 }
 
 /// Runs a follow-up interaction after implementation is complete.
+#[allow(clippy::too_many_arguments)]
 pub async fn run_implementation_interaction(
-    mut state: State,
-    config: WorkflowConfig,
-    working_dir: PathBuf,
-    state_path: PathBuf,
-    user_message: String,
+    view: &WorkflowView,
+    config: &WorkflowConfig,
+    working_dir: &Path,
+    user_message: &str,
     mut session_sender: SessionEventSender,
+    session_logger: Arc<SessionLogger>,
     cancel_rx: watch::Receiver<bool>,
+    actor_ref: Option<ActorRef<WorkflowMessage>>,
 ) -> Result<()> {
     let result = run_implementation_interaction_inner(
-        &mut state,
-        &config,
-        &working_dir,
-        &state_path,
-        &user_message,
+        view,
+        config,
+        working_dir,
+        user_message,
         &mut session_sender,
+        session_logger,
         cancel_rx,
+        actor_ref,
     )
     .await;
 
@@ -175,14 +219,16 @@ pub async fn run_implementation_interaction(
     result
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_implementation_interaction_inner(
-    state: &mut State,
+    view: &WorkflowView,
     config: &WorkflowConfig,
     working_dir: &Path,
-    state_path: &Path,
     user_message: &str,
     session_sender: &mut SessionEventSender,
+    session_logger: Arc<SessionLogger>,
     cancel_rx: watch::Receiver<bool>,
+    actor_ref: Option<ActorRef<WorkflowMessage>>,
 ) -> Result<()> {
     let impl_config = &config.implementation;
     if !impl_config.enabled {
@@ -200,20 +246,37 @@ async fn run_implementation_interaction_inner(
     let agent = AgentType::from_config(agent_name, agent_config, working_dir.to_path_buf())?;
 
     let conversation_key = implementing_conversation_key(agent_name);
-    let agent_session =
-        state.get_or_create_agent_session(&conversation_key, ResumeStrategy::ConversationResume);
-    let conversation_id = agent_session.conversation_id.clone().ok_or_else(|| {
-        anyhow::anyhow!("No conversation ID available for implementation follow-up")
-    })?;
+    let agent_id = AgentId::from(conversation_key.as_str());
 
-    let session_logger = create_session_logger(&state.workflow_session_id)?;
+    // Get conversation ID from view - required for follow-up
+    let conversation_id = view
+        .agent_conversations
+        .get(&agent_id)
+        .and_then(|conv| conv.conversation_id.as_ref().map(|c| c.0.clone()))
+        .ok_or_else(|| {
+            anyhow::anyhow!("No conversation ID available for implementation follow-up")
+        })?;
 
     session_sender.send_output(format!(
         "[implementation] Starting follow-up using agent: {}",
         agent_name
     ));
 
-    let prompt = build_implementation_followup_prompt(state, working_dir, user_message);
+    let prompt = build_implementation_followup_prompt(view, working_dir, user_message);
+
+    // Dispatch RecordInvocation command to CQRS actor
+    // Use Implementing phase for follow-up since it's a continuation of implementation
+    dispatch_implementation_command(
+        &actor_ref,
+        &session_logger,
+        DomainCommand::RecordInvocation {
+            agent_id: agent_id.clone(),
+            phase: PhaseLabel::Implementing,
+            conversation_id: Some(ConversationId::from(conversation_id.clone())),
+            resume_strategy: ResumeStrategy::ConversationResume,
+        },
+    )
+    .await;
 
     let context = AgentContext {
         session_sender: session_sender.clone(),
@@ -221,7 +284,7 @@ async fn run_implementation_interaction_inner(
         conversation_id: Some(conversation_id),
         resume_strategy: ResumeStrategy::ConversationResume,
         cancel_rx: Some(cancel_rx),
-        session_logger,
+        session_logger: session_logger.clone(),
     };
 
     let result = agent
@@ -234,30 +297,36 @@ async fn run_implementation_interaction_inner(
         .await
         .context("Implementation follow-up agent execution failed")?;
 
+    // Store captured conversation ID for future resume via CQRS command
     if let Some(conv_id) = result.conversation_id {
-        state.update_agent_conversation_id(&conversation_key, conv_id);
+        dispatch_implementation_command(
+            &actor_ref,
+            &session_logger,
+            DomainCommand::RecordAgentConversation {
+                agent_id,
+                resume_strategy: ResumeStrategy::ConversationResume,
+                conversation_id: Some(ConversationId::from(conv_id)),
+            },
+        )
+        .await;
     }
-
-    state.set_updated_at();
-    state.save_atomic(state_path)?;
-    session_sender.send_state_update(state.clone());
 
     Ok(())
 }
 
 /// Builds the implementation prompt with clean format and skill invocation at the end.
 fn build_implementation_prompt(
-    state: &State,
+    view: &WorkflowView,
     working_dir: &Path,
     iteration: u32,
     feedback: Option<&str>,
 ) -> String {
-    // Resolve plan path to absolute
-    let plan_path = if state.plan_file.is_absolute() {
-        state.plan_file.clone()
-    } else {
-        working_dir.join(&state.plan_file)
-    };
+    // Get plan path from view (already absolute in ~/.planning-agent/sessions/)
+    let plan_path = view
+        .plan_path
+        .as_ref()
+        .map(|p| p.0.display().to_string())
+        .unwrap_or_else(|| "plan.md".to_string());
 
     let feedback_section = match feedback {
         Some(fb) => format!(
@@ -279,21 +348,22 @@ Paths:
 Run the "implementation" skill to execute the plan."#,
         iteration = iteration,
         workspace = working_dir.display(),
-        plan = plan_path.display(),
+        plan = plan_path,
         feedback_section = feedback_section,
     )
 }
 
 fn build_implementation_followup_prompt(
-    state: &State,
+    view: &WorkflowView,
     working_dir: &Path,
     user_message: &str,
 ) -> String {
-    let plan_path = if state.plan_file.is_absolute() {
-        state.plan_file.clone()
-    } else {
-        working_dir.join(&state.plan_file)
-    };
+    // Get plan path from view (already absolute in ~/.planning-agent/sessions/)
+    let plan_path = view
+        .plan_path
+        .as_ref()
+        .map(|p| p.0.display().to_string())
+        .unwrap_or_else(|| "plan.md".to_string());
 
     format!(
         r#"Continue the implementation.
@@ -308,9 +378,47 @@ Paths:
 
 Apply the requested changes using available tools."#,
         workspace = working_dir.display(),
-        plan = plan_path.display(),
+        plan = plan_path,
         user_message = user_message,
     )
+}
+
+/// Helper to dispatch implementation commands to the CQRS actor.
+async fn dispatch_implementation_command(
+    actor_ref: &Option<ActorRef<WorkflowMessage>>,
+    session_logger: &Arc<SessionLogger>,
+    cmd: DomainCommand,
+) {
+    if let Some(ref actor) = actor_ref {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        if let Err(e) =
+            actor.send_message(WorkflowMessage::Command(Box::new(cmd.clone()), reply_tx))
+        {
+            session_logger.log(
+                LogLevel::Warn,
+                LogCategory::Workflow,
+                &format!("Failed to send implementation command: {}", e),
+            );
+            return;
+        }
+        match reply_rx.await {
+            Ok(Ok(_)) => {}
+            Ok(Err(e)) => {
+                session_logger.log(
+                    LogLevel::Warn,
+                    LogCategory::Workflow,
+                    &format!("Implementation command rejected: {}", e),
+                );
+            }
+            Err(_) => {
+                session_logger.log(
+                    LogLevel::Warn,
+                    LogCategory::Workflow,
+                    "Implementation command reply channel closed",
+                );
+            }
+        }
+    }
 }
 
 #[cfg(test)]

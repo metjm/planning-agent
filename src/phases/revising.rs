@@ -1,16 +1,14 @@
 use crate::agents::{AgentContext, AgentType};
 use crate::config::WorkflowConfig;
 use crate::domain::actor::WorkflowMessage;
-use crate::domain::types::{
-    AgentId, ConversationId, PhaseLabel, ResumeStrategy as DomainResumeStrategy,
-};
+use crate::domain::types::{AgentId, ConversationId, PhaseLabel, ResumeStrategy};
+use crate::domain::view::WorkflowView;
 use crate::domain::WorkflowCommand as DomainCommand;
 use crate::phases::planning_conversation_key;
 use crate::phases::ReviewResult;
 use crate::planning_paths;
 use crate::prompt_format::PromptBuilder;
 use crate::session_daemon::{LogCategory, LogLevel, SessionLogger};
-use crate::state::{ResumeStrategy, State};
 use crate::tui::SessionEventSender;
 use anyhow::Result;
 use ractor::ActorRef;
@@ -28,13 +26,12 @@ Examples to reject: "in two weeks", "Phase 1: Week 1-2", "Q1 delivery", "Sprint 
 
 #[allow(clippy::too_many_arguments)]
 pub async fn run_revision_phase_with_context(
-    state: &mut State,
+    view: &WorkflowView,
     working_dir: &Path,
     config: &WorkflowConfig,
     reviews: &[ReviewResult],
     session_sender: SessionEventSender,
     iteration: u32,
-    state_path: &Path,
     session_logger: Arc<SessionLogger>,
     actor_ref: Option<ActorRef<WorkflowMessage>>,
 ) -> Result<()> {
@@ -65,10 +62,14 @@ pub async fn run_revision_phase_with_context(
     ));
 
     // Compute session folder for supplementary file access
-    let session_folder = planning_paths::session_dir(&state.workflow_session_id)?;
+    let workflow_id = view
+        .workflow_id
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("WorkflowView missing workflow_id"))?;
+    let session_folder = planning_paths::session_dir(&workflow_id.to_string())?;
 
     let prompt = build_revision_prompt_with_reviews(
-        state,
+        view,
         reviews,
         working_dir,
         &session_folder,
@@ -82,14 +83,19 @@ pub async fn run_revision_phase_with_context(
     let resume_strategy = ResumeStrategy::ConversationResume;
     // Use the SAME session key as planning phase for session continuity
     let conversation_id_name = planning_conversation_key(agent_name);
-    let agent_session =
-        state.get_or_create_agent_session(&conversation_id_name, resume_strategy.clone());
-    let conversation_id = agent_session.conversation_id.clone();
-    let conv_resume_strategy = agent_session.resume_strategy.clone();
+    let agent_id = AgentId::from(conversation_id_name.as_str());
 
-    state.record_invocation(&conversation_id_name, &phase_name);
-    state.set_updated_at();
-    state.save_atomic(state_path)?;
+    // Get existing conversation state from view (read-only)
+    let (conversation_id, conv_resume_strategy) = view
+        .agent_conversations
+        .get(&agent_id)
+        .map(|state| {
+            (
+                state.conversation_id.as_ref().map(|c| c.0.clone()),
+                state.resume_strategy,
+            )
+        })
+        .unwrap_or((None, ResumeStrategy::ConversationResume));
 
     // Dispatch RevisingStarted command to CQRS actor
     let feedback_summary = build_feedback_summary(reviews);
@@ -105,10 +111,10 @@ pub async fn run_revision_phase_with_context(
         &actor_ref,
         &session_logger,
         DomainCommand::RecordInvocation {
-            agent_id: AgentId::from(conversation_id_name.as_str()),
+            agent_id,
             phase: PhaseLabel::Revising,
             conversation_id: conversation_id.clone().map(ConversationId::from),
-            resume_strategy: to_domain_resume_strategy(&conv_resume_strategy),
+            resume_strategy: conv_resume_strategy,
         },
     )
     .await;
@@ -142,14 +148,18 @@ pub async fn run_revision_phase_with_context(
 }
 
 fn build_revision_prompt_with_reviews(
-    state: &State,
+    view: &WorkflowView,
     reviews: &[ReviewResult],
     working_dir: &Path,
     session_folder: &Path,
     session_resume_active: bool,
     iteration: u32,
 ) -> String {
-    let plan_path = state.plan_file.display().to_string();
+    let plan_path = view
+        .plan_path
+        .as_ref()
+        .map(|p| p.0.display().to_string())
+        .unwrap_or_else(|| "plan.md".to_string());
 
     // Build summary table
     let mut summary_table =
@@ -301,15 +311,6 @@ async fn dispatch_revising_command(
                 );
             }
         }
-    }
-}
-
-/// Convert state ResumeStrategy to domain ResumeStrategy.
-fn to_domain_resume_strategy(strategy: &ResumeStrategy) -> DomainResumeStrategy {
-    match strategy {
-        ResumeStrategy::Stateless => DomainResumeStrategy::Stateless,
-        ResumeStrategy::ConversationResume => DomainResumeStrategy::ConversationResume,
-        ResumeStrategy::ResumeLatest => DomainResumeStrategy::ResumeLatest,
     }
 }
 

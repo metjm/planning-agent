@@ -239,15 +239,15 @@ impl Default for TimestampUtc {
     }
 }
 
-/// Planning phase state.
+/// Planning workflow phase state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
-pub enum PlanningPhase {
+pub enum Phase {
     #[default]
     Planning,
     Reviewing,
     Revising,
-    AwaitingDecision,
+    AwaitingPlanningDecision,
     Complete,
 }
 

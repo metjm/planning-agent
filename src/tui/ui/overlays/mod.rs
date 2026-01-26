@@ -1,5 +1,6 @@
 pub mod approval_overlay;
 pub mod error_overlay;
+mod render_helpers;
 pub mod session_browser_overlay;
 pub mod success_overlay;
 pub mod workflow_browser_overlay;
@@ -10,11 +11,12 @@ pub use session_browser_overlay::draw_session_browser_overlay;
 pub use success_overlay::draw_implementation_success_overlay;
 pub use workflow_browser_overlay::draw_workflow_browser_overlay;
 
+use render_helpers::{render_command_line, render_update_line};
+
 use super::dropdowns::{draw_mention_dropdown, draw_slash_dropdown};
 use super::theme::Theme;
 use super::util::{compute_wrapped_line_count, parse_markdown_line, wrap_text_at_width};
-use super::SPINNER_CHARS;
-use crate::state::{ImplementationPhase, Phase, UiMode};
+use crate::domain::types::{ImplementationPhase, Phase, UiMode};
 use crate::tui::scroll_regions::{ScrollRegion, ScrollableRegions};
 use crate::tui::{ApprovalMode, FocusedPanel, Session, TabManager};
 use crate::update::UpdateStatus;
@@ -47,18 +49,21 @@ pub enum PhaseDisplayMode {
 ///
 /// Phase state mapping:
 /// - `Phase::AwaitingPlanningDecision` maps to Reviewing (user deciding after review)
-/// - `ImplementationPhase::AwaitingMaxIterationsDecision` maps to Deciding
+/// - `ImplementationPhase::AwaitingDecision` maps to Deciding
 pub fn build_phase_spans(
     session: &Session,
     theme: &Theme,
     mode: PhaseDisplayMode,
 ) -> Vec<Span<'static>> {
     let ui_mode = session.ui_mode();
-    let phase = session.workflow_state.as_ref().map(|s| &s.phase);
-    let impl_state = session
-        .workflow_state
+    let phase = session
+        .workflow_view
         .as_ref()
-        .and_then(|s| s.implementation_state.as_ref());
+        .and_then(|v| v.planning_phase.as_ref());
+    let impl_state = session
+        .workflow_view
+        .as_ref()
+        .and_then(|v| v.implementation_state.as_ref());
     let mut spans = Vec::new();
 
     // Spinner characters for chip mode
@@ -116,11 +121,7 @@ pub fn build_phase_spans(
                 "Review",
                 ImplementationPhase::ImplementationReview,
             ),
-            (
-                "Deciding",
-                "Decide",
-                ImplementationPhase::AwaitingMaxIterationsDecision,
-            ),
+            ("Deciding", "Decide", ImplementationPhase::AwaitingDecision),
             ("Complete", "Done", ImplementationPhase::Complete),
         ];
         let current = impl_state.map(|s| &s.phase);
@@ -134,7 +135,7 @@ pub fn build_phase_spans(
                         ImplementationPhase::Implementing
                     )
                     | (
-                        Some(ImplementationPhase::AwaitingMaxIterationsDecision),
+                        Some(ImplementationPhase::AwaitingDecision),
                         ImplementationPhase::Implementing
                             | ImplementationPhase::ImplementationReview
                     )
@@ -236,7 +237,7 @@ pub fn draw_footer(frame: &mut Frame, session: &Session, tab_manager: &TabManage
         ));
     }
 
-    if session.workflow_state.is_some() {
+    if session.workflow_view.is_some() {
         spans.push(Span::styled(" │ ", Style::default().fg(theme.muted)));
         spans.push(Span::styled(
             "[p] Plan  [v] Reviews",
@@ -473,58 +474,6 @@ pub fn draw_tab_input_overlay(frame: &mut Frame, session: &Session, tab_manager:
     frame.render_widget(help, chunks[instructions_chunk_idx]);
 }
 
-fn render_update_line(tab_manager: &TabManager) -> Line<'static> {
-    if tab_manager.update_in_progress {
-        let spinner =
-            SPINNER_CHARS[tab_manager.update_spinner_frame as usize % SPINNER_CHARS.len()];
-        Line::from(vec![
-            Span::styled(
-                format!(" {} ", spinner),
-                Style::default().fg(Color::Yellow).bold(),
-            ),
-            Span::styled(
-                "Installing update... ",
-                Style::default().fg(Color::Yellow).bold(),
-            ),
-            Span::styled(
-                "(this may take a moment)",
-                Style::default().fg(Color::DarkGray),
-            ),
-        ])
-    } else if let Some(ref notice) = tab_manager.update_notice {
-        Line::from(vec![
-            Span::styled(" ✓ ", Style::default().fg(Color::Green).bold()),
-            Span::styled(notice.clone(), Style::default().fg(Color::Green)),
-        ])
-    } else if let Some(ref error) = tab_manager.update_error {
-        Line::from(vec![
-            Span::styled(" Update failed: ", Style::default().fg(Color::Red)),
-            Span::styled(error.clone(), Style::default().fg(Color::Red)),
-        ])
-    } else {
-        match &tab_manager.update_status {
-            UpdateStatus::UpdateAvailable(info) => Line::from(vec![
-                Span::styled(
-                    " Update available ",
-                    Style::default().fg(Color::Green).bold(),
-                ),
-                Span::styled(
-                    format!("({}, {}) ", info.short_sha, info.commit_date),
-                    Style::default().fg(Color::Green),
-                ),
-                Span::styled("Enter ", Style::default().fg(Color::DarkGray)),
-                Span::styled("/update", Style::default().fg(Color::Yellow)),
-                Span::styled(" to install", Style::default().fg(Color::DarkGray)),
-            ]),
-            UpdateStatus::CheckFailed(err) => Line::from(vec![
-                Span::styled(" Update check failed: ", Style::default().fg(Color::Yellow)),
-                Span::styled(err.clone(), Style::default().fg(Color::DarkGray)),
-            ]),
-            _ => Line::from(""),
-        }
-    }
-}
-
 /// Draw the plan modal overlay showing the full plan file contents.
 ///
 /// The modal is 80% of the terminal size with scrollable content and a scrollbar.
@@ -551,9 +500,10 @@ pub fn draw_plan_modal(frame: &mut Frame, session: &Session, regions: &mut Scrol
 
     // Title block
     let plan_path = session
-        .workflow_state
+        .workflow_view
         .as_ref()
-        .map(|s| s.plan_file.display().to_string())
+        .and_then(|v| v.plan_path.as_ref())
+        .map(|p| p.as_path().display().to_string())
         .unwrap_or_else(|| "Plan".to_string());
 
     let title = Paragraph::new(Line::from(vec![Span::styled(
@@ -765,66 +715,4 @@ pub fn draw_review_modal(frame: &mut Frame, session: &Session, regions: &mut Scr
             .border_style(Style::default().fg(Color::DarkGray)),
     );
     frame.render_widget(instructions, chunks[2]);
-}
-
-/// Render slash command status/result line(s).
-fn render_command_line(tab_manager: &TabManager) -> ratatui::text::Text<'static> {
-    if tab_manager.command_in_progress {
-        let spinner =
-            SPINNER_CHARS[tab_manager.update_spinner_frame as usize % SPINNER_CHARS.len()];
-        ratatui::text::Text::from(Line::from(vec![
-            Span::styled(
-                format!(" {} ", spinner),
-                Style::default().fg(Color::Yellow).bold(),
-            ),
-            Span::styled("Running command...", Style::default().fg(Color::Yellow)),
-        ]))
-    } else if let Some(ref notice) = tab_manager.command_notice {
-        // Multi-line notice - convert each line
-        let lines: Vec<Line> = notice
-            .lines()
-            .map(|line| {
-                // Color code status symbols
-                if line.contains("✓") {
-                    Line::from(Span::styled(
-                        format!(" {}", line),
-                        Style::default().fg(Color::Green),
-                    ))
-                } else if line.contains("✗") {
-                    Line::from(Span::styled(
-                        format!(" {}", line),
-                        Style::default().fg(Color::Red),
-                    ))
-                } else if line.contains("○") {
-                    Line::from(Span::styled(
-                        format!(" {}", line),
-                        Style::default().fg(Color::DarkGray),
-                    ))
-                } else if line.starts_with("[config") {
-                    Line::from(Span::styled(
-                        format!(" {}", line),
-                        Style::default().fg(Color::Cyan).bold(),
-                    ))
-                } else if line.trim().starts_with("Note:") {
-                    Line::from(Span::styled(
-                        format!(" {}", line),
-                        Style::default().fg(Color::Yellow),
-                    ))
-                } else {
-                    Line::from(Span::styled(
-                        format!(" {}", line),
-                        Style::default().fg(Color::DarkGray),
-                    ))
-                }
-            })
-            .collect();
-        ratatui::text::Text::from(lines)
-    } else if let Some(ref error) = tab_manager.command_error {
-        ratatui::text::Text::from(Line::from(vec![
-            Span::styled(" Command failed: ", Style::default().fg(Color::Red)),
-            Span::styled(error.clone(), Style::default().fg(Color::Red)),
-        ]))
-    } else {
-        ratatui::text::Text::from("")
-    }
 }

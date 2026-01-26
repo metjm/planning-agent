@@ -28,6 +28,7 @@ pub mod actor;
 pub mod cqrs;
 pub mod errors;
 pub mod failure;
+pub mod input;
 pub mod review;
 pub mod services;
 pub mod supervisor;
@@ -41,13 +42,14 @@ pub use cqrs::*;
 pub use actor::{create_actor_args, WorkflowActor, WorkflowActorArgs, WorkflowMessage};
 pub use errors::WorkflowError;
 pub use failure::{FailureContext, FailureKind, FailurePolicy, RecoveryAction};
+pub use input::{NewWorkflowInput, ResumeWorkflowInput, WorkflowInput};
 pub use review::{ReviewMode, SequentialReviewState, SerializableReviewResult};
 pub use services::{WorkflowClock, WorkflowServices};
 pub use supervisor::{SupervisorMsg, WorkflowSupervisor};
 pub use types::{
     AgentConversationState, AgentId, FeatureName, FeedbackPath, FeedbackStatus,
     ImplementationPhase, ImplementationPhaseState, ImplementationVerdict, InvocationRecord,
-    Iteration, MaxIterations, Objective, PhaseLabel, PlanPath, PlanningPhase, ResumeStrategy,
-    TimestampUtc, UiMode, WorkflowId, WorkingDir, WorktreeState,
+    Iteration, MaxIterations, Objective, Phase, PhaseLabel, PlanPath, ResumeStrategy, TimestampUtc,
+    UiMode, WorkflowId, WorkingDir, WorktreeState,
 };
 pub use view::{WorkflowEventEnvelope, WorkflowView};

@@ -12,10 +12,12 @@ use crate::app::cli::Cli;
 use crate::app::util::{
     build_resume_command, debug_log, extract_feature_name, format_window_title,
 };
-use crate::app::workflow::run_workflow_with_config;
-use crate::app::workflow_common::pre_create_session_folder_with_working_dir;
+// Re-export for submodules
+pub(crate) use crate::app::workflow::run_workflow_with_config;
+use crate::domain::input::{NewWorkflowInput, WorkflowInput};
+use crate::domain::types::WorktreeState;
+use crate::domain::view::WorkflowView;
 use crate::planning_paths;
-use crate::state::State;
 use crate::tui::{
     Event, EventHandler, InputMode, SessionStatus, TabManager, TerminalTitleManager,
     WorkflowCommand,
@@ -23,17 +25,75 @@ use crate::tui::{
 use crate::update;
 use anyhow::{Context, Result};
 use crossterm::event::{KeyboardEnhancementFlags, PushKeyboardEnhancementFlags};
-use std::path::PathBuf;
 use std::time::Duration;
 
 pub use events::process_event;
-pub use workflow_lifecycle::{check_workflow_completions, handle_init_completion};
+pub use workflow_lifecycle::{check_workflow_completions, handle_init_completion, InitResult};
 pub use workflow_loading::{restore_terminal, ResumableSession};
 
-pub type InitHandle = Option<(
-    usize,
-    tokio::task::JoinHandle<Result<(State, PathBuf, String, PathBuf)>>,
-)>;
+/// Handle to the initialization task for a new session.
+/// Contains (session_id, join_handle) where join_handle resolves to InitResult.
+pub type InitHandle = Option<(usize, tokio::task::JoinHandle<Result<InitResult>>)>;
+
+/// Finds a session ID by feature name for --continue workflow support.
+///
+/// Searches through session_info.json files to find a session matching the feature name
+/// that was started from the given working directory.
+async fn find_session_by_feature_name(
+    feature_name: &str,
+    working_dir: &std::path::Path,
+) -> Result<String> {
+    let sessions_dir = planning_paths::sessions_dir()?;
+    if !sessions_dir.exists() {
+        anyhow::bail!(
+            "No sessions found. Cannot continue workflow '{}'",
+            feature_name
+        );
+    }
+
+    let mut entries: Vec<_> = std::fs::read_dir(&sessions_dir)?
+        .filter_map(|e| e.ok())
+        .collect();
+
+    // Sort by modification time (most recent first)
+    entries.sort_by(|a, b| {
+        let a_time = a.metadata().and_then(|m| m.modified()).ok();
+        let b_time = b.metadata().and_then(|m| m.modified()).ok();
+        b_time.cmp(&a_time)
+    });
+
+    for entry in entries {
+        let session_id = entry.file_name().to_string_lossy().to_string();
+        let info_path = sessions_dir.join(&session_id).join("session_info.json");
+        if !info_path.exists() {
+            continue;
+        }
+
+        if let Ok(content) = std::fs::read_to_string(&info_path) {
+            if let Ok(info) = serde_json::from_str::<serde_json::Value>(&content) {
+                let matches_name = info
+                    .get("feature_name")
+                    .and_then(|v| v.as_str())
+                    .is_some_and(|n| n == feature_name);
+
+                let matches_dir = info
+                    .get("working_dir")
+                    .and_then(|v| v.as_str())
+                    .is_some_and(|d| std::path::Path::new(d) == working_dir);
+
+                if matches_name && matches_dir {
+                    return Ok(session_id);
+                }
+            }
+        }
+    }
+
+    anyhow::bail!(
+        "No session found for feature '{}' in directory '{}'",
+        feature_name,
+        working_dir.display()
+    )
+}
 
 pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
     debug_log(start, "run_tui starting");
@@ -321,33 +381,31 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
             }
         };
 
-        // Check for conflict with current state file
-        if snapshot.state_path.exists() {
-            let current_state = State::load(&snapshot.state_path).ok();
-            if let Some(ref cs) = current_state {
-                if let Some(conflict_msg) = crate::session_daemon::check_conflict(&snapshot, cs) {
-                    let first_session = tab_manager.active_mut();
-                    first_session.add_output(format!("[warning] {}", conflict_msg));
-                    first_session.add_output(
-                        "[warning] Using snapshot state. State file will be overwritten."
-                            .to_string(),
-                    );
-                }
-            }
-        }
-
-        // Restore the session from snapshot
+        // Restore the session from snapshot using workflow_view if available
         let first_session = tab_manager.active_mut();
-        let restored_state = snapshot.workflow_state.clone();
+
+        // Extract workflow info from workflow_view
+        let view = &snapshot.workflow_view;
+        let feature_name = view
+            .feature_name
+            .as_ref()
+            .map(|n| n.0.clone())
+            .unwrap_or_else(|| "Unknown".to_string());
+        let phase_str = view
+            .planning_phase
+            .map(|p| format!("{:?}", p))
+            .unwrap_or_else(|| "Unknown".to_string());
+        let iteration = view.iteration.map(|i| i.0).unwrap_or(1);
+
         *first_session = crate::tui::Session::from_ui_state(
             snapshot.ui_state.clone(),
-            Some(restored_state.clone()),
+            Some(snapshot.workflow_view.clone()),
         );
-        first_session.name = restored_state.feature_name.clone();
+        first_session.name = feature_name.clone();
         first_session.add_output(format!("[planning] Resumed session: {}", session_id));
         first_session.add_output(format!(
-            "[planning] Feature: {}, Phase: {:?}, Iteration: {}",
-            restored_state.feature_name, restored_state.phase, restored_state.iteration
+            "[planning] Feature: {}, Phase: {}, Iteration: {}",
+            feature_name, phase_str, iteration
         ));
         first_session.add_output("[planning] Continuing workflow...".to_string());
 
@@ -356,36 +414,44 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
         first_session
             .adjust_start_time_for_previous_elapsed(snapshot.total_elapsed_before_resume_ms);
 
-        // Load workflow config for resume BEFORE moving workflow_state out of snapshot.
+        // Load workflow config for resume.
         // Respects CLI overrides then snapshot's stored workflow.
         // This ensures the resumed session uses the same workflow that was originally used,
         // unless explicitly overridden by CLI flags.
         let resume_workflow_config =
             workflow_loading::load_workflow_config_for_resume(&cli, &snapshot, start);
 
-        // Save state to ensure state file is in sync with snapshot
-        let state_path = snapshot.state_path.clone();
-        let mut state = snapshot.workflow_state;
-        state.set_updated_at();
-        state.save(&state_path)?;
+        // Create WorkflowInput for resuming
+        let workflow_input = match WorkflowInput::resume(session_id) {
+            Ok(input) => input,
+            Err(e) => {
+                restore_terminal(&mut terminal)?;
+                anyhow::bail!("Invalid session ID '{}': {}", session_id, e);
+            }
+        };
 
-        let _ = output_tx.send(Event::StateUpdate(state.clone()));
+        // Get worktree info from workflow_view
+        let worktree_info = snapshot.workflow_view.worktree_info.clone();
 
         // Set up session context BEFORE starting the workflow
         // This enables proper working directory tracking for cross-directory resume
+        let state_path = snapshot.state_path.clone();
         let context = crate::tui::SessionContext::from_snapshot(
             snapshot.working_dir.clone(),
             state_path.clone(),
-            state.worktree_info.as_ref(),
+            worktree_info.as_ref(),
             resume_workflow_config.clone(),
         );
         first_session.context = Some(context);
 
+        // Build the initial view for the resumed workflow
+        let initial_view = snapshot.workflow_view.clone();
+
         // Use the shared resume helper (same as /sessions overlay)
         workflow_lifecycle::start_resumed_workflow(
             first_session,
-            state,
-            state_path,
+            workflow_input,
+            initial_view,
             &working_dir,
             &resume_workflow_config,
             &output_tx,
@@ -412,6 +478,7 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
         let worktree_flag = cli.worktree;
         let custom_worktree_dir = cli.worktree_dir.clone();
         let custom_worktree_branch = cli.worktree_branch.clone();
+        let init_session_id = first_session_id;
 
         let handle = tokio::spawn(async move {
             let _ = init_tx.send(Event::Output("[planning] Initializing...".to_string()));
@@ -422,14 +489,67 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                 extract_feature_name(&init_objective, Some(&init_tx)).await?
             };
 
-            let state_path = planning_paths::state_path(&init_working_dir, &feature_name)?;
-
-            let mut state = if init_continue {
+            // For --continue, find the session and resume it
+            // For new workflows, create WorkflowInput::New
+            if init_continue {
                 let _ = init_tx.send(Event::Output(format!(
                     "[planning] Loading existing workflow: {}",
                     feature_name
                 )));
-                State::load(&state_path)?
+
+                // Find existing session by feature name
+                let session_id = find_session_by_feature_name(&feature_name, &init_working_dir)
+                    .await
+                    .context("Failed to find session for --continue")?;
+
+                let state_path = planning_paths::session_state_path(&session_id)?;
+
+                // Bootstrap view from event log
+                let view = if let Ok(log_path) = planning_paths::session_event_log_path(&session_id)
+                {
+                    crate::domain::actor::bootstrap_view_from_events(&log_path, &session_id)
+                } else {
+                    WorkflowView::default()
+                };
+
+                // Check for existing worktree
+                let effective_working_dir = if let Some(ref wt) = view.worktree_info {
+                    if crate::git_worktree::is_valid_worktree(&wt.worktree_path) {
+                        let _ = init_tx.send(Event::Output(format!(
+                            "[planning] Reusing existing worktree: {}",
+                            wt.worktree_path.display()
+                        )));
+                        let _ = init_tx.send(Event::Output(format!(
+                            "[planning] Branch: {}",
+                            wt.branch_name
+                        )));
+                        wt.worktree_path.clone()
+                    } else {
+                        let _ = init_tx.send(Event::Output(
+                            "[planning] Warning: Previous worktree no longer valid".to_string(),
+                        ));
+                        init_working_dir.clone()
+                    }
+                } else {
+                    init_working_dir.clone()
+                };
+
+                // Send view update
+                let _ = init_tx.send(Event::SessionViewUpdate {
+                    session_id: init_session_id,
+                    view: Box::new(view.clone()),
+                });
+
+                let workflow_input = WorkflowInput::resume(&session_id)
+                    .map_err(|e| anyhow::anyhow!("Invalid session ID: {}", e))?;
+
+                Ok::<_, anyhow::Error>(InitResult {
+                    input: workflow_input,
+                    view,
+                    state_path,
+                    feature_name,
+                    effective_working_dir,
+                })
             } else {
                 let _ = init_tx.send(Event::Output(format!(
                     "[planning] Starting new workflow: {}",
@@ -439,47 +559,25 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                     "[planning] Objective: {}",
                     init_objective
                 )));
-                State::new(&feature_name, &init_objective, init_max_iterations)?
-            };
 
-            // Set up git worktree if in a git repository (and not disabled)
-            // Check if state already has worktree_info (--continue case)
-            let effective_working_dir = if let Some(ref existing_wt) = state.worktree_info {
-                // Worktree already exists from previous session (--continue case)
-                // Note: Even if --worktree is not passed, we respect the existing worktree
-                // because changes already exist there. --worktree only affects NEW sessions.
-                // Validate it still exists and is a valid git worktree
-                if crate::git_worktree::is_valid_worktree(&existing_wt.worktree_path) {
-                    let _ = init_tx.send(Event::Output(format!(
-                        "[planning] Reusing existing worktree: {}",
-                        existing_wt.worktree_path.display()
-                    )));
-                    let _ = init_tx.send(Event::Output(format!(
-                        "[planning] Branch: {}",
-                        existing_wt.branch_name
-                    )));
-                    existing_wt.worktree_path.clone()
+                // Create new workflow input
+                let mut new_input = NewWorkflowInput::new(
+                    feature_name.clone(),
+                    init_objective.clone(),
+                    init_max_iterations,
+                );
+
+                // Generate a new workflow session ID
+                let workflow_id = crate::domain::types::WorkflowId::new();
+                let workflow_id_str = workflow_id.to_string();
+
+                let state_path = planning_paths::session_state_path(&workflow_id_str)?;
+
+                // Set up git worktree if enabled
+                let effective_working_dir = if !worktree_flag {
+                    init_working_dir.clone()
                 } else {
-                    // Worktree is gone or invalid - clear it and fall back
-                    let _ = init_tx.send(Event::Output(
-                        "[planning] Warning: Previous worktree no longer valid".to_string(),
-                    ));
-                    let _ = init_tx.send(Event::Output(format!(
-                        "[planning] Falling back to: {}",
-                        existing_wt.original_dir.display()
-                    )));
-                    let original = existing_wt.original_dir.clone();
-                    state.worktree_info = None;
-                    original
-                }
-            } else if !worktree_flag {
-                // Worktree is disabled by default
-                init_working_dir.clone()
-            } else {
-                // No existing worktree, create a new one
-                // Get session directory for worktree (graceful fallback if it fails)
-                let session_dir =
-                    match crate::planning_paths::session_dir(&state.workflow_session_id) {
+                    let session_dir = match crate::planning_paths::session_dir(&workflow_id_str) {
                         Ok(dir) => dir,
                         Err(e) => {
                             let _ = init_tx.send(Event::Output(format!(
@@ -489,97 +587,121 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                             let _ = init_tx.send(Event::Output(
                                 "[planning] Continuing with original directory".to_string(),
                             ));
-                            return Ok::<_, anyhow::Error>((
-                                state,
+
+                            let view = WorkflowView {
+                                workflow_id: Some(workflow_id),
+                                feature_name: Some(new_input.feature_name.clone()),
+                                objective: Some(new_input.objective.clone()),
+                                max_iterations: Some(new_input.max_iterations),
+                                ..Default::default()
+                            };
+                            let _ = init_tx.send(Event::SessionViewUpdate {
+                                session_id: init_session_id,
+                                view: Box::new(view.clone()),
+                            });
+
+                            return Ok::<_, anyhow::Error>(InitResult {
+                                input: WorkflowInput::New(new_input),
+                                view,
                                 state_path,
                                 feature_name,
-                                init_working_dir.clone(),
-                            ));
+                                effective_working_dir: init_working_dir.clone(),
+                            });
                         }
                     };
 
-                // Use custom worktree dir if provided, otherwise use session_dir
-                let worktree_base = custom_worktree_dir
-                    .as_ref()
-                    .map(|d| d.to_path_buf())
-                    .unwrap_or(session_dir);
+                    let worktree_base = custom_worktree_dir
+                        .as_ref()
+                        .map(|d| d.to_path_buf())
+                        .unwrap_or(session_dir);
 
-                match crate::git_worktree::create_session_worktree(
-                    &init_working_dir,
-                    &state.workflow_session_id,
-                    &feature_name,
-                    &worktree_base,
-                    custom_worktree_branch.as_deref(),
-                ) {
-                    crate::git_worktree::WorktreeSetupResult::Created(info) => {
-                        let _ = init_tx.send(Event::Output(format!(
-                            "[planning] Created git worktree at: {}",
-                            info.worktree_path.display()
-                        )));
-                        let _ = init_tx.send(Event::Output(format!(
-                            "[planning] Working on branch: {}",
-                            info.branch_name
-                        )));
-                        if let Some(ref source) = info.source_branch {
+                    match crate::git_worktree::create_session_worktree(
+                        &init_working_dir,
+                        &workflow_id_str,
+                        &feature_name,
+                        &worktree_base,
+                        custom_worktree_branch.as_deref(),
+                    ) {
+                        crate::git_worktree::WorktreeSetupResult::Created(info) => {
                             let _ = init_tx.send(Event::Output(format!(
-                                "[planning] Will merge into: {}",
-                                source
+                                "[planning] Created git worktree at: {}",
+                                info.worktree_path.display()
                             )));
-                        }
+                            let _ = init_tx.send(Event::Output(format!(
+                                "[planning] Working on branch: {}",
+                                info.branch_name
+                            )));
+                            if let Some(ref source) = info.source_branch {
+                                let _ = init_tx.send(Event::Output(format!(
+                                    "[planning] Will merge into: {}",
+                                    source
+                                )));
+                            }
 
-                        // Warn about submodules if present
-                        if info.has_submodules {
+                            if info.has_submodules {
+                                let _ = init_tx.send(Event::Output(
+                                    "[planning] Warning: Repository has submodules".to_string(),
+                                ));
+                                let _ = init_tx.send(Event::Output(
+                                    "[planning] Submodules may not be initialized in the worktree."
+                                        .to_string(),
+                                ));
+                                let _ = init_tx.send(Event::Output(
+                                    "[planning] Run 'git submodule update --init' in the worktree if needed.".to_string()
+                                ));
+                            }
+
+                            let wt_state = WorktreeState {
+                                worktree_path: info.worktree_path.clone(),
+                                branch_name: info.branch_name,
+                                source_branch: info.source_branch,
+                                original_dir: info.original_dir,
+                            };
+                            new_input = new_input.with_worktree(wt_state);
+                            info.worktree_path
+                        }
+                        crate::git_worktree::WorktreeSetupResult::NotAGitRepo => {
                             let _ = init_tx.send(Event::Output(
-                                "[planning] Warning: Repository has submodules".to_string(),
-                            ));
-                            let _ = init_tx.send(Event::Output(
-                                "[planning] Submodules may not be initialized in the worktree."
+                                "[planning] Not a git repository, using original directory"
                                     .to_string(),
                             ));
-                            let _ = init_tx.send(Event::Output(
-                                "[planning] Run 'git submodule update --init' in the worktree if needed.".to_string()
-                            ));
+                            init_working_dir.clone()
                         }
-
-                        let wt_state = crate::state::WorktreeState {
-                            worktree_path: info.worktree_path.clone(),
-                            branch_name: info.branch_name,
-                            source_branch: info.source_branch,
-                            original_dir: info.original_dir,
-                        };
-                        state.worktree_info = Some(wt_state);
-                        info.worktree_path
+                        crate::git_worktree::WorktreeSetupResult::Failed(err) => {
+                            let _ = init_tx.send(Event::Output(format!(
+                                "[planning] Warning: Git worktree setup failed: {}",
+                                err
+                            )));
+                            let _ = init_tx.send(Event::Output(
+                                "[planning] Continuing with original directory".to_string(),
+                            ));
+                            init_working_dir.clone()
+                        }
                     }
-                    crate::git_worktree::WorktreeSetupResult::NotAGitRepo => {
-                        let _ = init_tx.send(Event::Output(
-                            "[planning] Not a git repository, using original directory".to_string(),
-                        ));
-                        init_working_dir.clone()
-                    }
-                    crate::git_worktree::WorktreeSetupResult::Failed(err) => {
-                        let _ = init_tx.send(Event::Output(format!(
-                            "[planning] Warning: Git worktree setup failed: {}",
-                            err
-                        )));
-                        let _ = init_tx.send(Event::Output(
-                            "[planning] Continuing with original directory".to_string(),
-                        ));
-                        init_working_dir.clone()
-                    }
-                }
-            };
+                };
 
-            // Pre-create plan folder and files using effective_working_dir
-            pre_create_session_folder_with_working_dir(&state, Some(&effective_working_dir))
-                .context("Failed to pre-create plan files")?;
+                // Build initial view for new workflow
+                let view = WorkflowView {
+                    workflow_id: Some(workflow_id),
+                    feature_name: Some(new_input.feature_name.clone()),
+                    objective: Some(new_input.objective.clone()),
+                    max_iterations: Some(new_input.max_iterations),
+                    worktree_info: new_input.worktree_info.clone(),
+                    ..Default::default()
+                };
+                let _ = init_tx.send(Event::SessionViewUpdate {
+                    session_id: init_session_id,
+                    view: Box::new(view.clone()),
+                });
 
-            state.set_updated_at();
-            state.save(&state_path)?;
-
-            let _ = init_tx.send(Event::StateUpdate(state.clone()));
-
-            // Return effective_working_dir along with state, state_path, feature_name
-            Ok::<_, anyhow::Error>((state, state_path, feature_name, effective_working_dir))
+                Ok::<_, anyhow::Error>(InitResult {
+                    input: WorkflowInput::New(new_input),
+                    view,
+                    state_path,
+                    feature_name,
+                    effective_working_dir,
+                })
+            }
         });
         debug_log(start, "init task spawned");
 
@@ -650,11 +772,16 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
         if quit_requested {
             debug_log(start, "Quit requested, saving snapshots");
             for session in tab_manager.sessions_mut() {
-                // Save snapshot if we have state
-                if let Some(ref state) = session.workflow_state {
+                // Save snapshot if we have workflow view
+                if let Some(ref view) = session.workflow_view {
+                    let session_id = view
+                        .workflow_id
+                        .as_ref()
+                        .map(|id| id.to_string())
+                        .unwrap_or_else(|| "unknown".to_string());
                     debug_log(
                         start,
-                        &format!("Saving snapshot for session {}", state.workflow_session_id),
+                        &format!("Saving snapshot for session {}", session_id),
                     );
                     // Use session context's base_working_dir if available (preserves original session directory)
                     let session_working_dir = session
@@ -664,15 +791,20 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                         .unwrap_or_else(|| working_dir.clone());
                     if let Err(e) = snapshot_helper::create_and_save_snapshot(
                         session,
-                        state,
+                        view,
                         &session_working_dir,
                     ) {
                         debug_log(start, &format!("Failed to save snapshot: {}", e));
                     } else {
                         debug_log(start, "Snapshot saved successfully");
+                        let feature_name = view
+                            .feature_name
+                            .as_ref()
+                            .map(|n| n.0.clone())
+                            .unwrap_or_else(|| "unknown".to_string());
                         resumable_sessions.push(ResumableSession {
-                            feature_name: state.feature_name.clone(),
-                            session_id: state.workflow_session_id.clone(),
+                            feature_name,
+                            session_id,
                             working_dir: session_working_dir,
                         });
                     }

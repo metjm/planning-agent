@@ -6,10 +6,11 @@ use crate::app::workflow_common::plan_file_has_content;
 use crate::app::workflow_decisions::{wait_for_plan_failure_decision, PlanFailureDecision};
 use crate::config::WorkflowConfig;
 use crate::domain::actor::WorkflowMessage;
+use crate::domain::types::PlanPath;
+use crate::domain::view::WorkflowView;
 use crate::domain::WorkflowCommand as DomainCommand;
 use crate::phases::{self, run_planning_phase_with_context};
 use crate::session_daemon::{LogCategory, LogLevel, SessionLogger};
-use crate::state::{Phase, State};
 use crate::tui::{CancellationError, SessionEventSender, UserApprovalResponse, WorkflowCommand};
 use anyhow::Result;
 use ractor::ActorRef;
@@ -19,9 +20,8 @@ use tokio::sync::mpsc;
 
 #[allow(clippy::too_many_arguments)]
 pub async fn run_planning_phase(
-    state: &mut State,
+    view: &WorkflowView,
     working_dir: &Path,
-    state_path: &Path,
     config: &WorkflowConfig,
     sender: &SessionEventSender,
     approval_rx: &mut mpsc::Receiver<UserApprovalResponse>,
@@ -37,12 +37,19 @@ pub async fn run_planning_phase(
     sender.send_phase_started("Planning".to_string());
     sender.send_output("".to_string());
     sender.send_output("=== PLANNING PHASE ===".to_string());
-    sender.send_output(format!("Feature: {}", state.feature_name));
+    let feature_name = view
+        .feature_name
+        .as_ref()
+        .map(|f| f.0.as_str())
+        .unwrap_or("");
+    sender.send_output(format!("Feature: {}", feature_name));
     sender.send_output(format!("Agent: {}", config.workflow.planning.agent));
-    sender.send_output(format!("Plan file: {}", state.plan_file.display()));
-
-    // state.plan_file is now an absolute path (in ~/.planning-agent/plans/)
-    let plan_path = state.plan_file.clone();
+    let plan_path = view
+        .plan_path
+        .as_ref()
+        .map(|p| p.0.clone())
+        .unwrap_or_default();
+    sender.send_output(format!("Plan file: {}", plan_path.display()));
 
     loop {
         // Check for commands before starting planning
@@ -77,11 +84,10 @@ pub async fn run_planning_phase(
             "Calling run_planning_phase_with_context...",
         );
         let planning_result = run_planning_phase_with_context(
-            state,
+            view,
             working_dir,
             config,
             sender.clone(),
-            state_path,
             session_logger.clone(),
             actor_ref.clone(),
         )
@@ -255,15 +261,19 @@ pub async fn run_planning_phase(
         LogCategory::Workflow,
         "Transitioning: Planning -> Reviewing",
     );
-    state.transition(Phase::Reviewing)?;
-    state.set_updated_at();
-    state.save_atomic(state_path)?;
-    sender.send_state_update(state.clone());
+    dispatch_domain_command(
+        &actor_ref,
+        DomainCommand::PlanningCompleted {
+            plan_path: PlanPath(plan_path.clone()),
+        },
+        &session_logger,
+    )
+    .await;
     sender.send_output("[planning] Transitioning to review phase...".to_string());
 
     phases::spawn_summary_generation(
         "Planning".to_string(),
-        state,
+        view,
         working_dir,
         config,
         sender.clone(),

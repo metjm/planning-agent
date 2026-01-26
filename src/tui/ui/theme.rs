@@ -7,7 +7,7 @@
 //!
 //! Semantic colors (success=green, error=red) remain consistent across all themes.
 
-use crate::state::{ImplementationPhase, Phase};
+use crate::domain::types::{ImplementationPhase, Phase};
 use crate::tui::{Session, SessionStatus};
 use ratatui::style::Color;
 
@@ -335,25 +335,26 @@ impl Theme {
             return ThemePhase::Complete;
         }
 
-        // Check workflow state for phase
-        if let Some(ref state) = session.workflow_state {
+        // Check workflow view for phase
+        if let Some(ref view) = session.workflow_view {
             // Check implementation phase first
-            if let Some(ref impl_state) = state.implementation_state {
+            if let Some(ref impl_state) = view.implementation_state {
                 if impl_state.phase != ImplementationPhase::Complete {
                     return ThemePhase::Implementation;
                 }
             }
 
             // Check planning workflow phase
-            match state.phase {
-                Phase::Complete => ThemePhase::Complete,
-                Phase::Planning
-                | Phase::Reviewing
-                | Phase::Revising
-                | Phase::AwaitingPlanningDecision => ThemePhase::Planning,
+            match view.planning_phase {
+                Some(Phase::Complete) => ThemePhase::Complete,
+                Some(Phase::Planning)
+                | Some(Phase::Reviewing)
+                | Some(Phase::Revising)
+                | Some(Phase::AwaitingPlanningDecision)
+                | None => ThemePhase::Planning,
             }
         } else {
-            // No workflow state - default to planning
+            // No workflow view - default to planning
             ThemePhase::Planning
         }
     }

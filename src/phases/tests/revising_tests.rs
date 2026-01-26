@@ -1,6 +1,11 @@
 use super::*;
-use crate::state::Phase;
+use crate::domain::types::{
+    FeatureName, FeedbackPath, Iteration, MaxIterations, Objective, Phase, PlanPath, WorkflowId,
+    WorkingDir,
+};
+use crate::domain::view::WorkflowView;
 use std::path::{Path, PathBuf};
+use uuid::Uuid;
 
 fn test_reviews() -> Vec<ReviewResult> {
     vec![
@@ -19,11 +24,28 @@ fn test_reviews() -> Vec<ReviewResult> {
     ]
 }
 
+fn minimal_view() -> WorkflowView {
+    WorkflowView {
+        workflow_id: Some(WorkflowId(Uuid::new_v4())),
+        feature_name: Some(FeatureName("test".to_string())),
+        objective: Some(Objective("test objective".to_string())),
+        working_dir: Some(WorkingDir(PathBuf::from("/workspaces/myproject"))),
+        plan_path: Some(PlanPath(PathBuf::from(
+            "/home/user/.planning-agent/sessions/abc123/plan.md",
+        ))),
+        feedback_path: Some(FeedbackPath(PathBuf::from(
+            "/home/user/.planning-agent/sessions/abc123/feedback.md",
+        ))),
+        planning_phase: Some(Phase::Revising),
+        iteration: Some(Iteration(1)),
+        max_iterations: Some(MaxIterations(3)),
+        ..Default::default()
+    }
+}
+
 #[test]
 fn test_revision_prompt_includes_plan_path() {
-    let mut state = State::new("test", "test objective", 3).unwrap();
-    state.phase = Phase::Revising;
-    state.plan_file = PathBuf::from("/home/user/.planning-agent/sessions/abc123/plan.md");
+    let view = minimal_view();
 
     let reviews = test_reviews();
     let working_dir = std::path::Path::new("/workspaces/myproject");
@@ -31,7 +53,7 @@ fn test_revision_prompt_includes_plan_path() {
 
     // Test with session_resume_active = false (full context prompt)
     let prompt =
-        build_revision_prompt_with_reviews(&state, &reviews, working_dir, session_folder, false, 1);
+        build_revision_prompt_with_reviews(&view, &reviews, working_dir, session_folder, false, 1);
 
     eprintln!("Generated revision prompt:\n{}", prompt);
 
@@ -48,8 +70,7 @@ fn test_revision_prompt_includes_plan_path() {
 
 #[test]
 fn test_build_revision_prompt_full_context() {
-    let mut state = State::new("test", "test objective", 3).unwrap();
-    state.phase = Phase::Revising;
+    let view = minimal_view();
 
     let reviews = test_reviews();
     let working_dir = Path::new("/workspaces/myproject");
@@ -57,7 +78,7 @@ fn test_build_revision_prompt_full_context() {
 
     // Test with session_resume_active = false (full context prompt)
     let prompt =
-        build_revision_prompt_with_reviews(&state, &reviews, working_dir, session_folder, false, 1);
+        build_revision_prompt_with_reviews(&view, &reviews, working_dir, session_folder, false, 1);
 
     // Check XML structure
     assert!(prompt.starts_with("<user-prompt>"));
@@ -78,8 +99,7 @@ fn test_build_revision_prompt_full_context() {
 
 #[test]
 fn test_build_revision_prompt_session_resume() {
-    let mut state = State::new("test", "test objective", 3).unwrap();
-    state.phase = Phase::Revising;
+    let view = minimal_view();
 
     let reviews = test_reviews();
     let working_dir = Path::new("/workspaces/myproject");
@@ -87,7 +107,7 @@ fn test_build_revision_prompt_session_resume() {
 
     // Test with session_resume_active = true (simplified continuation prompt)
     let prompt =
-        build_revision_prompt_with_reviews(&state, &reviews, working_dir, session_folder, true, 1);
+        build_revision_prompt_with_reviews(&view, &reviews, working_dir, session_folder, true, 1);
 
     // Should NOT be XML structured
     assert!(!prompt.starts_with("<user-prompt>"));
@@ -124,8 +144,7 @@ fn revision_system_prompt_contains_no_timeline_directive() {
 
 #[test]
 fn revision_prompt_session_resume_contains_no_timeline_directive() {
-    let mut state = State::new("test", "test objective", 3).unwrap();
-    state.phase = Phase::Revising;
+    let view = minimal_view();
 
     let reviews = test_reviews();
     let working_dir = Path::new("/workspaces/myproject");
@@ -133,7 +152,7 @@ fn revision_prompt_session_resume_contains_no_timeline_directive() {
 
     // Test with session_resume_active = true (simplified continuation prompt)
     let prompt =
-        build_revision_prompt_with_reviews(&state, &reviews, working_dir, session_folder, true, 1);
+        build_revision_prompt_with_reviews(&view, &reviews, working_dir, session_folder, true, 1);
 
     assert!(
         prompt.contains("Do not add timelines"),
@@ -143,8 +162,7 @@ fn revision_prompt_session_resume_contains_no_timeline_directive() {
 
 #[test]
 fn revision_prompt_full_context_contains_no_timeline_directive() {
-    let mut state = State::new("test", "test objective", 3).unwrap();
-    state.phase = Phase::Revising;
+    let view = minimal_view();
 
     let reviews = test_reviews();
     let working_dir = Path::new("/workspaces/myproject");
@@ -152,7 +170,7 @@ fn revision_prompt_full_context_contains_no_timeline_directive() {
 
     // Test with session_resume_active = false (full context prompt)
     let prompt =
-        build_revision_prompt_with_reviews(&state, &reviews, working_dir, session_folder, false, 1);
+        build_revision_prompt_with_reviews(&view, &reviews, working_dir, session_folder, false, 1);
 
     assert!(
         prompt.contains("DO NOT include timelines"),
@@ -162,15 +180,14 @@ fn revision_prompt_full_context_contains_no_timeline_directive() {
 
 #[test]
 fn test_revision_prompt_includes_session_folder_full_context() {
-    let mut state = State::new("test", "test objective", 3).unwrap();
-    state.phase = Phase::Revising;
+    let view = minimal_view();
 
     let reviews = test_reviews();
     let working_dir = Path::new("/workspaces/myproject");
     let session_folder = Path::new("/home/user/.planning-agent/sessions/abc123");
 
     let prompt =
-        build_revision_prompt_with_reviews(&state, &reviews, working_dir, session_folder, false, 1);
+        build_revision_prompt_with_reviews(&view, &reviews, working_dir, session_folder, false, 1);
 
     assert!(prompt.contains("<session-folder-path>"));
     assert!(prompt.contains("/home/user/.planning-agent/sessions/abc123"));
@@ -178,15 +195,14 @@ fn test_revision_prompt_includes_session_folder_full_context() {
 
 #[test]
 fn test_revision_prompt_includes_session_folder_session_resume() {
-    let mut state = State::new("test", "test objective", 3).unwrap();
-    state.phase = Phase::Revising;
+    let view = minimal_view();
 
     let reviews = test_reviews();
     let working_dir = Path::new("/workspaces/myproject");
     let session_folder = Path::new("/home/user/.planning-agent/sessions/abc123");
 
     let prompt =
-        build_revision_prompt_with_reviews(&state, &reviews, working_dir, session_folder, true, 1);
+        build_revision_prompt_with_reviews(&view, &reviews, working_dir, session_folder, true, 1);
 
     assert!(prompt.contains("session folder"));
     assert!(prompt.contains("/home/user/.planning-agent/sessions/abc123"));

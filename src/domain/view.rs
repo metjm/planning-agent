@@ -9,7 +9,7 @@ use crate::domain::review::ReviewMode;
 use crate::domain::types::{
     AgentConversationState, AgentId, FeatureName, FeedbackPath, FeedbackStatus,
     ImplementationPhase, ImplementationPhaseState, InvocationRecord, Iteration, MaxIterations,
-    Objective, PlanPath, PlanningPhase, UiMode, WorkflowId, WorkingDir, WorktreeState,
+    Objective, Phase, PlanPath, UiMode, WorkflowId, WorkingDir, WorktreeState,
 };
 use crate::domain::WorkflowEvent;
 use serde::{Deserialize, Serialize};
@@ -25,7 +25,7 @@ pub struct WorkflowView {
     pub working_dir: Option<WorkingDir>,
     pub plan_path: Option<PlanPath>,
     pub feedback_path: Option<FeedbackPath>,
-    pub planning_phase: Option<PlanningPhase>,
+    pub planning_phase: Option<Phase>,
     pub iteration: Option<Iteration>,
     pub max_iterations: Option<MaxIterations>,
     pub last_feedback_status: Option<FeedbackStatus>,
@@ -66,7 +66,7 @@ impl WorkflowView {
                 self.max_iterations = Some(*max_iterations);
                 self.plan_path = Some(plan_path.clone());
                 self.feedback_path = Some(feedback_path.clone());
-                self.planning_phase = Some(PlanningPhase::Planning);
+                self.planning_phase = Some(Phase::Planning);
                 self.iteration = Some(Iteration::first());
                 self.review_mode = None;
                 self.last_feedback_status = None;
@@ -80,17 +80,17 @@ impl WorkflowView {
             }
 
             WorkflowEvent::PlanningStarted { .. } => {
-                self.planning_phase = Some(PlanningPhase::Planning);
+                self.planning_phase = Some(Phase::Planning);
             }
 
             WorkflowEvent::PlanningCompleted { plan_path, .. } => {
                 self.plan_path = Some(plan_path.clone());
-                self.planning_phase = Some(PlanningPhase::Reviewing);
+                self.planning_phase = Some(Phase::Reviewing);
             }
 
             WorkflowEvent::ReviewCycleStarted { mode, .. } => {
                 self.review_mode = Some(mode.clone());
-                self.planning_phase = Some(PlanningPhase::Reviewing);
+                self.planning_phase = Some(Phase::Reviewing);
             }
 
             WorkflowEvent::ReviewerApproved { reviewer_id, .. } => {
@@ -109,9 +109,9 @@ impl WorkflowView {
 
             WorkflowEvent::ReviewCycleCompleted { approved, .. } => {
                 self.planning_phase = Some(if *approved {
-                    PlanningPhase::Complete
+                    Phase::Complete
                 } else {
-                    PlanningPhase::Revising
+                    Phase::Revising
                 });
                 self.last_feedback_status = Some(if *approved {
                     FeedbackStatus::Approved
@@ -121,12 +121,12 @@ impl WorkflowView {
             }
 
             WorkflowEvent::RevisingStarted { .. } => {
-                self.planning_phase = Some(PlanningPhase::Revising);
+                self.planning_phase = Some(Phase::Revising);
             }
 
             WorkflowEvent::RevisionCompleted { plan_path, .. } => {
                 self.plan_path = Some(plan_path.clone());
-                self.planning_phase = Some(PlanningPhase::Reviewing);
+                self.planning_phase = Some(Phase::Reviewing);
                 let current = self
                     .iteration
                     .expect("WorkflowView must be initialized before RevisionCompleted");
@@ -140,11 +140,11 @@ impl WorkflowView {
             }
 
             WorkflowEvent::PlanningMaxIterationsReached { .. } => {
-                self.planning_phase = Some(PlanningPhase::AwaitingDecision);
+                self.planning_phase = Some(Phase::AwaitingPlanningDecision);
             }
 
             WorkflowEvent::UserApproved { .. } => {
-                self.planning_phase = Some(PlanningPhase::Complete);
+                self.planning_phase = Some(Phase::Complete);
             }
 
             WorkflowEvent::UserRequestedImplementation { .. } => {
@@ -153,7 +153,7 @@ impl WorkflowView {
 
             WorkflowEvent::UserOverrideApproval { .. } => {
                 self.approval_overridden = true;
-                self.planning_phase = Some(PlanningPhase::Complete);
+                self.planning_phase = Some(Phase::Complete);
             }
 
             WorkflowEvent::UserDeclined { .. } | WorkflowEvent::UserAborted { .. } => {
@@ -263,7 +263,7 @@ impl WorkflowView {
 
     /// Returns true if the workflow should continue (not complete and within iteration limits).
     pub fn should_continue(&self) -> bool {
-        if self.planning_phase == Some(PlanningPhase::Complete) {
+        if self.planning_phase == Some(Phase::Complete) {
             return false;
         }
         match (self.iteration, self.max_iterations) {

@@ -5,7 +5,7 @@
 //! new terminals.
 
 use crate::config::WorkflowConfig;
-use crate::state::WorktreeState;
+use crate::domain::types::WorktreeState;
 use std::path::{Path, PathBuf};
 
 /// Per-session context tracking working directory, paths, and configuration.

@@ -1,28 +1,30 @@
 use super::*;
-use crate::state::Phase;
-use std::collections::HashMap;
+use crate::domain::types::{FeatureName, Iteration, MaxIterations, Objective, Phase, PlanPath};
+use crate::domain::view::WorkflowView;
 use std::path::PathBuf;
+use uuid::Uuid;
 
-fn minimal_state() -> State {
-    State {
-        phase: Phase::Planning,
-        iteration: 1,
-        max_iterations: 3,
-        feature_name: "test-feature".to_string(),
-        objective: "Test objective".to_string(),
-        plan_file: PathBuf::from("/tmp/test-plan.md"),
-        feedback_file: PathBuf::from("/tmp/test-feedback.md"),
+fn minimal_view() -> WorkflowView {
+    WorkflowView {
+        workflow_id: Some(crate::domain::types::WorkflowId(Uuid::new_v4())),
+        feature_name: Some(FeatureName::from("test-feature")),
+        objective: Some(Objective::from("Test objective")),
+        working_dir: None,
+        plan_path: Some(PlanPath::from(PathBuf::from("/tmp/test-plan.md"))),
+        feedback_path: None,
+        planning_phase: Some(Phase::Planning),
+        iteration: Some(Iteration::first()),
+        max_iterations: Some(MaxIterations::default()),
         last_feedback_status: None,
-        approval_overridden: false,
-        workflow_session_id: "test-session".to_string(),
-        agent_conversations: HashMap::new(),
+        review_mode: None,
+        implementation_state: None,
+        agent_conversations: std::collections::HashMap::new(),
         invocations: Vec::new(),
-        updated_at: String::new(),
         last_failure: None,
         failure_history: Vec::new(),
         worktree_info: None,
-        implementation_state: None,
-        sequential_review: None,
+        approval_overridden: false,
+        last_event_sequence: 0,
     }
 }
 
@@ -40,9 +42,9 @@ fn planning_system_prompt_references_skill() {
 
 #[test]
 fn build_planning_prompt_includes_plan_output_path() {
-    let state = minimal_state();
+    let view = minimal_view();
     let working_dir = PathBuf::from("/tmp/workspace");
-    let prompt = build_planning_prompt(&state, &working_dir);
+    let prompt = build_planning_prompt(&view, &working_dir);
 
     assert!(
         prompt.contains("<plan-output-path>"),
@@ -56,9 +58,9 @@ fn build_planning_prompt_includes_plan_output_path() {
 
 #[test]
 fn build_planning_prompt_includes_session_folder() {
-    let state = minimal_state();
+    let view = minimal_view();
     let working_dir = PathBuf::from("/tmp/workspace");
-    let prompt = build_planning_prompt(&state, &working_dir);
+    let prompt = build_planning_prompt(&view, &working_dir);
 
     assert!(
         prompt.contains("<session-folder-path>"),
@@ -68,9 +70,9 @@ fn build_planning_prompt_includes_session_folder() {
 
 #[test]
 fn build_planning_prompt_includes_workspace_root() {
-    let state = minimal_state();
+    let view = minimal_view();
     let working_dir = PathBuf::from("/tmp/workspace");
-    let prompt = build_planning_prompt(&state, &working_dir);
+    let prompt = build_planning_prompt(&view, &working_dir);
 
     assert!(
         prompt.contains("<workspace-root>"),
@@ -84,9 +86,9 @@ fn build_planning_prompt_includes_workspace_root() {
 
 #[test]
 fn build_planning_prompt_includes_objective() {
-    let state = minimal_state();
+    let view = minimal_view();
     let working_dir = PathBuf::from("/tmp/workspace");
-    let prompt = build_planning_prompt(&state, &working_dir);
+    let prompt = build_planning_prompt(&view, &working_dir);
 
     assert!(
         prompt.contains("<objective>"),
@@ -100,9 +102,9 @@ fn build_planning_prompt_includes_objective() {
 
 #[test]
 fn build_planning_prompt_references_skill() {
-    let state = minimal_state();
+    let view = minimal_view();
     let working_dir = PathBuf::from("/tmp/workspace");
-    let prompt = build_planning_prompt(&state, &working_dir);
+    let prompt = build_planning_prompt(&view, &working_dir);
 
     assert!(
         prompt.contains("planning"),

@@ -1,7 +1,11 @@
 use super::*;
 use crate::config::WorkflowConfig;
+use crate::domain::types::{
+    AgentConversationState, AgentId, ConversationId, ImplementationPhase, ImplementationPhaseState,
+    ImplementationVerdict, Iteration, MaxIterations, ResumeStrategy, TimestampUtc,
+};
+use crate::domain::view::WorkflowView;
 use crate::phases::implementing_conversation_key;
-use crate::state::{ImplementationPhase, ImplementationPhaseState, ResumeStrategy, State};
 use crate::tui::{Event, SessionEventSender};
 use std::path::PathBuf;
 use tokio::sync::mpsc;
@@ -710,25 +714,33 @@ fn test_toggle_focus_with_summary() {
 
 fn build_interactive_session() -> Session {
     let mut session = Session::new(0);
-    let mut state = State::new("feature", "objective", 1).expect("state");
-    state.implementation_state = Some(ImplementationPhaseState {
-        phase: ImplementationPhase::Complete,
-        iteration: 1,
-        max_iterations: 1,
-        last_verdict: Some("APPROVED".to_string()),
-        last_feedback: None,
-    });
-
     let config = WorkflowConfig::claude_only_config();
     let agent_name = config
         .implementation
         .implementing_agent()
         .expect("implementing agent");
     let conversation_key = implementing_conversation_key(agent_name);
-    state.get_or_create_agent_session(&conversation_key, ResumeStrategy::ConversationResume);
-    state.update_agent_conversation_id(&conversation_key, "conv-id".to_string());
+    let agent_id = AgentId::from(conversation_key.as_str());
 
-    session.workflow_state = Some(state);
+    // Build a WorkflowView with implementation state and conversation
+    let mut view = WorkflowView::default();
+    view.implementation_state = Some(ImplementationPhaseState {
+        phase: ImplementationPhase::Complete,
+        iteration: Iteration(1),
+        max_iterations: MaxIterations(1),
+        last_verdict: Some(ImplementationVerdict::Approved),
+        last_feedback: None,
+    });
+    view.agent_conversations.insert(
+        agent_id,
+        AgentConversationState {
+            conversation_id: Some(ConversationId("conv-id".to_string())),
+            resume_strategy: ResumeStrategy::ConversationResume,
+            last_used_at: TimestampUtc::default(),
+        },
+    );
+
+    session.workflow_view = Some(view);
     session.context = Some(SessionContext::new(
         PathBuf::from("/tmp"),
         Some(PathBuf::from("/tmp")),

@@ -1,8 +1,8 @@
 use crate::domain::failure::NETWORK_ERROR_PATTERN;
-use crate::planning_paths::SessionInfo;
-use crate::state::State;
+use crate::domain::input::NewWorkflowInput;
+use crate::domain::types::{Phase, WorkflowId};
+use crate::planning_paths::{session_dir, SessionInfo};
 use regex::Regex;
-use std::fs;
 use std::path::Path;
 
 /// Creates the session folder, optionally recording a working directory.
@@ -11,21 +11,12 @@ use std::path::Path;
 /// Note: Plan file is created by AI agent, not pre-created empty.
 /// Note: Feedback files are created by individual reviewers during the reviewing phase.
 pub fn pre_create_session_folder_with_working_dir(
-    state: &State,
+    input: &NewWorkflowInput,
+    workflow_id: &WorkflowId,
     working_dir: Option<&Path>,
 ) -> anyhow::Result<()> {
-    let plan_path = &state.plan_file;
-
-    // Create the session folder (parent directory of plan file)
-    if let Some(session_folder) = plan_path.parent() {
-        fs::create_dir_all(session_folder).map_err(|e| {
-            anyhow::anyhow!(
-                "Failed to create session folder {}: {}",
-                session_folder.display(),
-                e
-            )
-        })?;
-    }
+    // Create the session folder (session_dir already creates directories)
+    let _folder = session_dir(&workflow_id.to_string())?;
 
     // Note: Plan file is created by AI agent with actual content.
     // Note: Feedback files are created by individual reviewers.
@@ -34,14 +25,14 @@ pub fn pre_create_session_folder_with_working_dir(
     let default_wd = std::env::current_dir().unwrap_or_default();
     let wd = working_dir.unwrap_or(&default_wd);
     let session_info = SessionInfo::new(
-        &state.workflow_session_id,
-        &state.feature_name,
-        &state.objective,
+        &workflow_id.to_string(),
+        input.feature_name.as_str(),
+        input.objective.as_str(),
         wd,
-        &format!("{:?}", state.phase),
-        state.iteration,
+        &format!("{:?}", Phase::Planning),
+        1, // Initial iteration
     );
-    if let Err(e) = session_info.save(&state.workflow_session_id) {
+    if let Err(e) = session_info.save(&workflow_id.to_string()) {
         // Log warning but don't fail - session_info is optional metadata
         eprintln!(
             "[planning] Warning: Failed to save session_info.json: {}",

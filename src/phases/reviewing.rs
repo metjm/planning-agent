@@ -5,8 +5,10 @@ use crate::config::{AgentRef, AggregationMode, WorkflowConfig};
 use crate::domain::actor::WorkflowMessage;
 use crate::domain::failure::FailureKind;
 use crate::domain::types::{
-    AgentId, ConversationId, PhaseLabel, ResumeStrategy as DomainResumeStrategy,
+    AgentId, ConversationId, FeedbackStatus, PhaseLabel, ResumeStrategy as DomainResumeStrategy,
+    ResumeStrategy,
 };
+use crate::domain::view::WorkflowView;
 use crate::domain::WorkflowCommand as DomainCommand;
 use crate::phases::review_parser::parse_review_feedback;
 use crate::phases::review_prompts::{
@@ -16,7 +18,6 @@ use crate::phases::review_schema::SubmittedReview;
 use crate::phases::reviewing_conversation_key;
 use crate::planning_paths;
 use crate::session_daemon::{LogCategory, LogLevel, SessionLogger};
-use crate::state::{FeedbackStatus, ResumeStrategy, State};
 use crate::tui::{ReviewKind, SessionEventSender};
 use anyhow::Result;
 use ractor::ActorRef;
@@ -95,13 +96,12 @@ fn generate_feedback_file_path(
 
 #[allow(clippy::too_many_arguments)]
 pub async fn run_multi_agent_review_with_context(
-    state: &mut State,
+    view: &WorkflowView,
     working_dir: &Path,
     config: &WorkflowConfig,
     agent_refs: &[AgentRef],
     session_sender: SessionEventSender,
     iteration: u32,
-    state_path: &Path,
     session_logger: Arc<SessionLogger>,
     emit_round_started: bool,
     actor_ref: Option<ActorRef<WorkflowMessage>>,
@@ -128,53 +128,54 @@ pub async fn run_multi_agent_review_with_context(
         session_sender.send_review_round_started(ReviewKind::Plan, iteration);
     }
 
-    let phase_name = format!("Reviewing #{}", iteration);
-
     // Check if tags are required from config
     let require_tags = config.workflow.reviewing.require_plan_feedback_tags;
 
     // Build agent contexts: (display_id, conversation_id, resume_strategy, custom_prompt)
+    // Reviewing always uses Stateless - each review should be independent
+    // with a fresh perspective on the plan, not influenced by prior sessions.
     let mut agent_contexts: Vec<(String, Option<String>, ResumeStrategy, Option<String>)> =
         Vec::new();
     for agent_ref in agent_refs {
         let display_id = agent_ref.display_id().to_string();
         let custom_prompt = agent_ref.custom_prompt().map(|s| s.to_string());
 
-        // Reviewing always uses Stateless - each review should be independent
-        // with a fresh perspective on the plan, not influenced by prior sessions.
-        let resume_strategy = ResumeStrategy::Stateless;
         // Use namespaced session key to avoid collisions with planning sessions
         let conversation_id_name = reviewing_conversation_key(&display_id);
-        let agent_session =
-            state.get_or_create_agent_session(&conversation_id_name, resume_strategy.clone());
+        let agent_id = AgentId::from(conversation_id_name.as_str());
 
-        // Clone values before further state mutations
-        let conv_id = agent_session.conversation_id.clone();
-        let conv_resume_strategy = agent_session.resume_strategy.clone();
+        // Look up existing conversation state from view, default to Stateless with no conversation
+        let (conv_id, resume_strategy) = view
+            .agent_conversations
+            .get(&agent_id)
+            .map(|state| {
+                (
+                    state.conversation_id.as_ref().map(|c| c.0.clone()),
+                    state.resume_strategy,
+                )
+            })
+            .unwrap_or((None, ResumeStrategy::Stateless));
 
         agent_contexts.push((
             display_id.clone(),
             conv_id.clone(),
-            conv_resume_strategy.clone(),
+            resume_strategy,
             custom_prompt,
         ));
-        state.record_invocation(&conversation_id_name, &phase_name);
 
         // Dispatch RecordInvocation command to CQRS actor
         dispatch_reviewing_command(
             &actor_ref,
             &session_logger,
             DomainCommand::RecordInvocation {
-                agent_id: AgentId::from(conversation_id_name.as_str()),
+                agent_id,
                 phase: PhaseLabel::Reviewing,
                 conversation_id: conv_id.clone().map(ConversationId::from),
-                resume_strategy: to_domain_resume_strategy(&conv_resume_strategy),
+                resume_strategy: to_domain_resume_strategy(&resume_strategy),
             },
         )
         .await;
     }
-    state.set_updated_at();
-    state.save_atomic(state_path)?;
 
     // Build agents: (display_id, AgentType, conversation_id, resume_strategy, custom_prompt)
     #[allow(clippy::type_complexity)]
@@ -205,7 +206,11 @@ pub async fn run_multi_agent_review_with_context(
         .collect::<Result<Vec<_>>>()?;
 
     // Get plan path (absolute)
-    let plan_path = state.plan_file.clone();
+    let plan_path = view
+        .plan_path
+        .as_ref()
+        .map(|p| p.0.clone())
+        .unwrap_or_else(|| PathBuf::from("plan.md"));
     let plan_path_abs = if plan_path.is_absolute() {
         plan_path.clone()
     } else {
@@ -213,8 +218,16 @@ pub async fn run_multi_agent_review_with_context(
     };
 
     // Get objective for prompts
-    let objective = state.objective.clone();
-    let session_id = state.workflow_session_id.clone();
+    let objective = view
+        .objective
+        .as_ref()
+        .map(|o| o.0.clone())
+        .unwrap_or_default();
+    let session_id = view
+        .workflow_id
+        .as_ref()
+        .map(|id| id.0.to_string())
+        .unwrap_or_default();
 
     let futures: Vec<_> = agents
         .into_iter()
@@ -483,10 +496,10 @@ pub async fn run_multi_agent_review_with_context(
                     attempt_timestamps,
                     initial_output: Some(&initial_output),
                     retry_output: retry_output.as_deref(),
-                    state_path: Some(state_path),
-                    plan_file: Some(&state.plan_file),
+                    state_path: None,
+                    plan_file: Some(&plan_path),
                     feedback_file: Some(&feedback_file_path),
-                    workflow_session_id: Some(&state.workflow_session_id),
+                    workflow_session_id: Some(&session_id),
                 };
 
                 let bundle_path = create_review_bundle(bundle_config);
@@ -601,7 +614,7 @@ async fn execute_review_attempt(
         session_sender: sender.clone(),
         phase: phase.to_string(),
         conversation_id: conversation_id.clone(),
-        resume_strategy: resume_strategy.clone(),
+        resume_strategy: *resume_strategy,
         cancel_rx: None,
         session_logger,
     };

@@ -21,7 +21,7 @@ use crate::domain::services::WorkflowServices;
 use crate::domain::types::{
     AgentConversationState, AgentId, FeatureName, FeedbackPath, FeedbackStatus,
     ImplementationPhase, ImplementationPhaseState, InvocationRecord, Iteration, MaxIterations,
-    Objective, PlanPath, PlanningPhase, TimestampUtc, WorkingDir, WorktreeState,
+    Objective, Phase, PlanPath, TimestampUtc, WorkingDir, WorktreeState,
 };
 use async_trait::async_trait;
 use cqrs_es::Aggregate;
@@ -35,7 +35,7 @@ pub struct WorkflowData {
     pub objective: Objective,
     pub working_dir: WorkingDir,
     pub created_at: TimestampUtc,
-    pub planning_phase: PlanningPhase,
+    pub planning_phase: Phase,
     pub iteration: Iteration,
     pub max_iterations: MaxIterations,
     pub plan_path: PlanPath,
@@ -109,14 +109,14 @@ impl Aggregate for WorkflowAggregate {
 
             // StartPlanning - idempotent when already planning
             (WorkflowState::Active(data), WorkflowCommand::StartPlanning)
-                if data.planning_phase == PlanningPhase::Planning =>
+                if data.planning_phase == Phase::Planning =>
             {
                 Ok(vec![WorkflowEvent::PlanningStarted { started_at: now }])
             }
 
             // PlanningCompleted
             (WorkflowState::Active(data), WorkflowCommand::PlanningCompleted { plan_path })
-                if data.planning_phase == PlanningPhase::Planning =>
+                if data.planning_phase == Phase::Planning =>
             {
                 Ok(vec![WorkflowEvent::PlanningCompleted {
                     plan_path,
@@ -128,7 +128,7 @@ impl Aggregate for WorkflowAggregate {
             (
                 WorkflowState::Active(data),
                 WorkflowCommand::ReviewCycleStarted { mode, reviewers },
-            ) if data.planning_phase == PlanningPhase::Reviewing => {
+            ) if data.planning_phase == Phase::Reviewing => {
                 Ok(vec![WorkflowEvent::ReviewCycleStarted {
                     mode,
                     reviewers,
@@ -138,7 +138,7 @@ impl Aggregate for WorkflowAggregate {
 
             // ReviewerApproved
             (WorkflowState::Active(data), WorkflowCommand::ReviewerApproved { reviewer_id })
-                if data.planning_phase == PlanningPhase::Reviewing =>
+                if data.planning_phase == Phase::Reviewing =>
             {
                 Ok(vec![WorkflowEvent::ReviewerApproved {
                     reviewer_id,
@@ -153,7 +153,7 @@ impl Aggregate for WorkflowAggregate {
                     reviewer_id,
                     feedback_path,
                 },
-            ) if data.planning_phase == PlanningPhase::Reviewing => {
+            ) if data.planning_phase == Phase::Reviewing => {
                 Ok(vec![WorkflowEvent::ReviewerRejected {
                     reviewer_id,
                     feedback_path,
@@ -163,7 +163,7 @@ impl Aggregate for WorkflowAggregate {
 
             // ReviewCycleCompleted
             (WorkflowState::Active(data), WorkflowCommand::ReviewCycleCompleted { approved })
-                if data.planning_phase == PlanningPhase::Reviewing =>
+                if data.planning_phase == Phase::Reviewing =>
             {
                 Ok(vec![WorkflowEvent::ReviewCycleCompleted {
                     approved,
@@ -175,7 +175,7 @@ impl Aggregate for WorkflowAggregate {
             (
                 WorkflowState::Active(data),
                 WorkflowCommand::RevisingStarted { feedback_summary },
-            ) if data.planning_phase == PlanningPhase::Revising => {
+            ) if data.planning_phase == Phase::Revising => {
                 Ok(vec![WorkflowEvent::RevisingStarted {
                     feedback_summary,
                     started_at: now,
@@ -184,7 +184,7 @@ impl Aggregate for WorkflowAggregate {
 
             // RevisionCompleted
             (WorkflowState::Active(data), WorkflowCommand::RevisionCompleted { plan_path })
-                if data.planning_phase == PlanningPhase::Revising =>
+                if data.planning_phase == Phase::Revising =>
             {
                 Ok(vec![WorkflowEvent::RevisionCompleted {
                     plan_path,
@@ -408,7 +408,7 @@ impl Aggregate for WorkflowAggregate {
                     objective,
                     working_dir,
                     created_at,
-                    planning_phase: PlanningPhase::Planning,
+                    planning_phase: Phase::Planning,
                     iteration: Iteration::first(),
                     max_iterations,
                     plan_path,
@@ -427,18 +427,18 @@ impl Aggregate for WorkflowAggregate {
 
             // PlanningStarted
             (WorkflowState::Active(data), WorkflowEvent::PlanningStarted { .. }) => {
-                data.planning_phase = PlanningPhase::Planning;
+                data.planning_phase = Phase::Planning;
             }
 
             // PlanningCompleted
             (WorkflowState::Active(data), WorkflowEvent::PlanningCompleted { plan_path, .. }) => {
                 data.plan_path = plan_path;
-                data.planning_phase = PlanningPhase::Reviewing;
+                data.planning_phase = Phase::Reviewing;
             }
 
             // ReviewCycleStarted
             (WorkflowState::Active(data), WorkflowEvent::ReviewCycleStarted { mode, .. }) => {
-                data.planning_phase = PlanningPhase::Reviewing;
+                data.planning_phase = Phase::Reviewing;
                 data.review_mode = Some(mode);
             }
 
@@ -459,9 +459,9 @@ impl Aggregate for WorkflowAggregate {
             // ReviewCycleCompleted
             (WorkflowState::Active(data), WorkflowEvent::ReviewCycleCompleted { approved, .. }) => {
                 data.planning_phase = if approved {
-                    PlanningPhase::Complete
+                    Phase::Complete
                 } else {
-                    PlanningPhase::Revising
+                    Phase::Revising
                 };
                 data.last_feedback_status = Some(if approved {
                     FeedbackStatus::Approved
@@ -472,14 +472,14 @@ impl Aggregate for WorkflowAggregate {
 
             // RevisingStarted
             (WorkflowState::Active(data), WorkflowEvent::RevisingStarted { .. }) => {
-                data.planning_phase = PlanningPhase::Revising;
+                data.planning_phase = Phase::Revising;
             }
 
             // RevisionCompleted
             (WorkflowState::Active(data), WorkflowEvent::RevisionCompleted { plan_path, .. }) => {
                 data.plan_path = plan_path;
                 data.iteration = data.iteration.next();
-                data.planning_phase = PlanningPhase::Reviewing;
+                data.planning_phase = Phase::Reviewing;
                 if let Some(ReviewMode::Sequential(ref mut state)) = data.review_mode {
                     state.plan_version += 1;
                     state.approvals.clear();
@@ -490,12 +490,12 @@ impl Aggregate for WorkflowAggregate {
 
             // PlanningMaxIterationsReached
             (WorkflowState::Active(data), WorkflowEvent::PlanningMaxIterationsReached { .. }) => {
-                data.planning_phase = PlanningPhase::AwaitingDecision;
+                data.planning_phase = Phase::AwaitingPlanningDecision;
             }
 
             // UserApproved
             (WorkflowState::Active(data), WorkflowEvent::UserApproved { .. }) => {
-                data.planning_phase = PlanningPhase::Complete;
+                data.planning_phase = Phase::Complete;
             }
 
             // UserRequestedImplementation - no state change (ImplementationStarted follows)
@@ -510,7 +510,7 @@ impl Aggregate for WorkflowAggregate {
             // UserOverrideApproval
             (WorkflowState::Active(data), WorkflowEvent::UserOverrideApproval { .. }) => {
                 data.approval_overridden = true;
-                data.planning_phase = PlanningPhase::Complete;
+                data.planning_phase = Phase::Complete;
             }
 
             // ImplementationStarted
@@ -665,3 +665,7 @@ fn command_name(cmd: &WorkflowCommand) -> &'static str {
 #[cfg(test)]
 #[path = "../tests/aggregate_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../tests/aggregate_impl_tests.rs"]
+mod impl_tests;

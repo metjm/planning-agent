@@ -5,13 +5,14 @@
 
 use crate::agents::{AgentContext, AgentType};
 use crate::config::WorkflowConfig;
+use crate::domain::types::ResumeStrategy;
+use crate::domain::view::WorkflowView;
 use crate::phases::implementation_reviewing_conversation_key;
 use crate::phases::verdict::{
     extract_implementation_feedback, parse_verification_verdict, VerificationVerdictResult,
 };
 use crate::planning_paths;
 use crate::session_daemon::SessionLogger;
-use crate::state::{ResumeStrategy, State};
 use crate::tui::{ReviewKind, SessionEventSender};
 use anyhow::{Context, Result};
 use std::fs;
@@ -33,7 +34,7 @@ pub struct ImplementationReviewResult {
 /// Runs the implementation review phase to compare implementation against plan.
 ///
 /// # Arguments
-/// * `state` - The current workflow state
+/// * `view` - The current workflow view (read-only projection of state)
 /// * `config` - The workflow configuration
 /// * `working_dir` - The working directory to review
 /// * `iteration` - The current iteration number (1-indexed)
@@ -44,7 +45,7 @@ pub struct ImplementationReviewResult {
 /// # Returns
 /// An `ImplementationReviewResult` containing the report and verdict.
 pub async fn run_implementation_review_phase(
-    state: &State,
+    view: &WorkflowView,
     config: &WorkflowConfig,
     working_dir: &Path,
     iteration: u32,
@@ -80,11 +81,15 @@ pub async fn run_implementation_review_phase(
 
     // Build the prompt
     let prompt =
-        build_implementation_review_prompt(state, working_dir, iteration, implementation_log_path);
+        build_implementation_review_prompt(view, working_dir, iteration, implementation_log_path)?;
 
     // Get report path
+    let workflow_id = view
+        .workflow_id
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("Workflow ID not set in view"))?;
     let report_path =
-        planning_paths::session_implementation_review_path(&state.workflow_session_id, iteration)?;
+        planning_paths::session_implementation_review_path(&workflow_id.0.to_string(), iteration)?;
 
     // Implementation review is stateless per round - we don't need conversation resume
     let _conversation_key = implementation_reviewing_conversation_key(agent_name);
@@ -248,21 +253,33 @@ pub async fn run_implementation_review_phase(
 
 /// Builds the implementation review prompt with clean format and skill invocation at the end.
 fn build_implementation_review_prompt(
-    state: &State,
+    view: &WorkflowView,
     working_dir: &Path,
     iteration: u32,
     implementation_log_path: Option<&Path>,
-) -> String {
+) -> Result<String> {
+    // Get plan path from view
+    let plan_path_ref = view
+        .plan_path
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("Plan path not set in view"))?;
+
     // Resolve plan path to absolute
-    let plan_path = if state.plan_file.is_absolute() {
-        state.plan_file.clone()
+    let plan_path = if plan_path_ref.0.is_absolute() {
+        plan_path_ref.0.clone()
     } else {
-        working_dir.join(&state.plan_file)
+        working_dir.join(&plan_path_ref.0)
     };
+
+    // Get workflow_id for review output path
+    let workflow_id = view
+        .workflow_id
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("Workflow ID not set in view"))?;
 
     // Get review output path
     let review_output =
-        planning_paths::session_implementation_review_path(&state.workflow_session_id, iteration)
+        planning_paths::session_implementation_review_path(&workflow_id.0.to_string(), iteration)
             .unwrap_or_else(|_| working_dir.join(format!("review_{}.md", iteration)));
 
     let log_section = match implementation_log_path {
@@ -270,7 +287,7 @@ fn build_implementation_review_prompt(
         None => String::new(),
     };
 
-    format!(
+    Ok(format!(
         r#"Review the implementation against the approved plan.
 
 ##################### IMPLEMENTATION REVIEW #{iteration} #####################
@@ -286,7 +303,7 @@ Run the "implementation-review" skill to perform the review."#,
         plan = plan_path.display(),
         review_output = review_output.display(),
         log_section = log_section,
-    )
+    ))
 }
 
 #[cfg(test)]

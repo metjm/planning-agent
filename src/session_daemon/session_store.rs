@@ -11,9 +11,9 @@
 //! - **Versioned format**: Snapshots include a version field for future migrations.
 
 use crate::app::AccountUsage;
+use crate::domain::types::Phase;
 use crate::domain::view::WorkflowView;
 use crate::planning_paths;
-use crate::state::State;
 use crate::tui::session::model::{
     ApprovalContext, ApprovalMode, FeedbackTarget, FocusedPanel, InputMode, PasteBlock,
     ReviewRound, RunTab, SessionStatus, TodoItem,
@@ -48,12 +48,10 @@ pub struct SessionSnapshot {
     pub saved_at: String,
     /// Working directory where the workflow was running
     pub working_dir: PathBuf,
-    /// The workflow session ID (from State.workflow_session_id)
+    /// The workflow session ID (from WorkflowView.workflow_id)
     pub workflow_session_id: String,
     /// Path to the state file for this workflow
     pub state_path: PathBuf,
-    /// The workflow state at time of snapshot (legacy, kept for compatibility)
-    pub workflow_state: State,
     /// UI state that can be restored
     pub ui_state: SessionUiState,
     /// Total elapsed time before this resume (milliseconds).
@@ -63,9 +61,8 @@ pub struct SessionSnapshot {
     /// Used to restore the correct workflow config on resume.
     pub workflow_name: String,
     /// Event-sourced view of the workflow (CQRS projection).
-    /// This is the authoritative source for workflow state in v7+.
-    #[serde(default)]
-    pub workflow_view: Option<WorkflowView>,
+    /// This is the authoritative source for workflow state.
+    pub workflow_view: WorkflowView,
     /// Last applied event sequence number for resumption.
     /// Events after this sequence need to be replayed on resume.
     #[serde(default)]
@@ -184,12 +181,11 @@ impl SessionSnapshot {
         working_dir: PathBuf,
         workflow_session_id: String,
         state_path: PathBuf,
-        workflow_state: State,
         ui_state: SessionUiState,
         total_elapsed_before_resume_ms: u64,
         saved_at: String,
         workflow_name: String,
-        workflow_view: Option<WorkflowView>,
+        workflow_view: WorkflowView,
         last_event_sequence: u64,
     ) -> Self {
         Self {
@@ -198,7 +194,6 @@ impl SessionSnapshot {
             working_dir,
             workflow_session_id,
             state_path,
-            workflow_state,
             ui_state,
             total_elapsed_before_resume_ms,
             workflow_name,
@@ -211,9 +206,17 @@ impl SessionSnapshot {
     pub fn info(&self) -> SessionSnapshotInfo {
         SessionSnapshotInfo {
             workflow_session_id: self.workflow_session_id.clone(),
-            feature_name: self.workflow_state.feature_name.clone(),
-            phase: format!("{:?}", self.workflow_state.phase),
-            iteration: self.workflow_state.iteration,
+            feature_name: self
+                .workflow_view
+                .feature_name
+                .as_ref()
+                .map(|f| f.0.clone())
+                .unwrap_or_default(),
+            phase: format!(
+                "{:?}",
+                self.workflow_view.planning_phase.unwrap_or(Phase::Planning)
+            ),
+            iteration: self.workflow_view.iteration.map(|i| i.0).unwrap_or(1),
             saved_at: self.saved_at.clone(),
             working_dir: self.working_dir.clone(),
         }
@@ -266,13 +269,29 @@ pub fn save_snapshot(snapshot: &SessionSnapshot) -> Result<PathBuf> {
 fn update_session_info(snapshot: &SessionSnapshot) -> Result<()> {
     let info = planning_paths::SessionInfo {
         session_id: snapshot.workflow_session_id.clone(),
-        feature_name: snapshot.workflow_state.feature_name.clone(),
-        objective: snapshot.workflow_state.objective.clone(),
+        feature_name: snapshot
+            .workflow_view
+            .feature_name
+            .as_ref()
+            .map(|f| f.0.clone())
+            .unwrap_or_default(),
+        objective: snapshot
+            .workflow_view
+            .objective
+            .as_ref()
+            .map(|o| o.0.clone())
+            .unwrap_or_default(),
         working_dir: snapshot.working_dir.clone(),
         created_at: snapshot.saved_at.clone(), // Use saved_at as approximation
         updated_at: snapshot.saved_at.clone(),
-        phase: format!("{:?}", snapshot.workflow_state.phase),
-        iteration: snapshot.workflow_state.iteration,
+        phase: format!(
+            "{:?}",
+            snapshot
+                .workflow_view
+                .planning_phase
+                .unwrap_or(Phase::Planning)
+        ),
+        iteration: snapshot.workflow_view.iteration.map(|i| i.0).unwrap_or(1),
     };
     info.save(&snapshot.workflow_session_id)
 }
@@ -414,7 +433,7 @@ pub fn cleanup_old_snapshots(older_than_days: u32) -> Result<Vec<String>> {
             // Load the full snapshot to get worktree info
             if let Ok(full_snapshot) = load_snapshot(session_id) {
                 // Clean up git worktree if present
-                if let Some(ref wt_state) = full_snapshot.workflow_state.worktree_info {
+                if let Some(ref wt_state) = full_snapshot.workflow_view.worktree_info {
                     if wt_state.worktree_path.exists() {
                         if let Err(e) = crate::git_worktree::remove_worktree(
                             &wt_state.original_dir,
@@ -448,149 +467,70 @@ pub fn cleanup_old_snapshots(older_than_days: u32) -> Result<Vec<String>> {
     Ok(deleted)
 }
 
-/// Checks for potential conflict between snapshot and state file.
-///
-/// Returns `Some(state_updated_at)` if there's a conflict (state file is newer than snapshot).
-/// Returns `None` if there's no conflict.
-pub fn check_conflict(snapshot: &SessionSnapshot, current_state: &State) -> Option<String> {
-    // Compare snapshot.saved_at with state.updated_at
-    if current_state.updated_at > snapshot.saved_at {
-        Some(current_state.updated_at.clone())
-    } else {
-        None
-    }
-}
-
-/// Attempts to recover a session from state file when no snapshot exists.
+/// Attempts to recover a session from event log when no snapshot exists.
 /// Returns a minimal snapshot with just workflow state (no UI state).
 ///
 /// This is a fallback mechanism for crash recovery when the periodic auto-save
 /// didn't save a snapshot before the crash.
 ///
 /// Recovery order:
-/// 1. Try new session-centric state path: `~/.planning-agent/sessions/<session-id>/state.json`
-/// 2. Fall back to daemon registry to find legacy state path
+/// 1. Try to bootstrap WorkflowView from event log
+/// 2. Fall back to daemon registry to find working directory
 pub fn recover_from_state_file(session_id: &str) -> Result<SessionSnapshot> {
-    // 1. Try new session-centric state path first
-    if let Ok(session_state_path) = planning_paths::session_state_path(session_id) {
-        if session_state_path.exists() {
-            let state = State::load(&session_state_path).with_context(|| {
-                format!(
-                    "Failed to load state file at {}. The file may be corrupted.",
-                    session_state_path.display()
-                )
-            })?;
-
-            let ui_state = SessionUiState::minimal_from_state(&state);
-
-            // Get working_dir from state's plan_file parent or use current dir
-            let working_dir = state
-                .plan_file
-                .parent()
-                .map(|p| p.to_path_buf())
-                .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
-
-            // For recovery, we don't know the original workflow name, so use the
-            // current selection for this working directory (best effort)
-            let workflow_name = crate::app::WorkflowSelection::load(&working_dir)
-                .map(|s| s.workflow)
-                .unwrap_or_else(|_| "claude-only".to_string());
-
-            // Try to bootstrap WorkflowView from event log (if exists)
-            let (workflow_view, last_event_sequence) = if let Ok(log_path) =
-                planning_paths::session_event_log_path(session_id)
-            {
-                let view = crate::domain::actor::bootstrap_view_from_events(&log_path, session_id);
-                let seq = view.last_event_sequence;
-                if seq > 0 {
-                    (Some(view), seq)
-                } else {
-                    (None, 0)
-                }
-            } else {
-                (None, 0)
-            };
-
-            return Ok(SessionSnapshot::new_with_timestamp(
-                working_dir,
-                session_id.to_string(),
-                session_state_path,
-                state,
-                ui_state,
-                0,
-                chrono::Utc::now().to_rfc3339(),
-                workflow_name,
-                workflow_view,
-                last_event_sequence,
-            ));
-        }
-    }
-
-    // 2. Fall back to daemon registry for legacy state paths
-    let registry_path = planning_paths::sessiond_registry_path()?;
-    if !registry_path.exists() {
-        anyhow::bail!("No daemon registry found for recovery");
-    }
-
-    let content = fs::read_to_string(&registry_path).context("Failed to read daemon registry")?;
-
-    // NOTE: Registry format is Vec<SessionRecord> (JSON array), verified in server.rs
-    let records: Vec<crate::session_daemon::protocol::SessionRecord> =
-        serde_json::from_str(&content).context("Failed to parse daemon registry")?;
-
-    let record = records
-        .iter()
-        .find(|r| r.workflow_session_id == session_id)
-        .ok_or_else(|| anyhow::anyhow!("Session {} not found in daemon registry", session_id))?;
-
-    // Derive state path from session_dir (legacy compatibility during migration)
-    let state_path = record.session_dir.join("state.json");
-
-    // 3. Check if state file exists (may have been deleted)
-    if !state_path.exists() {
+    // 1. Try to bootstrap WorkflowView from event log
+    let log_path = planning_paths::session_event_log_path(session_id)?;
+    if !log_path.exists() {
         anyhow::bail!(
-            "State file not found at {}. The session data may have been deleted.",
-            state_path.display()
+            "Event log not found at {}. The session data may have been deleted.",
+            log_path.display()
         );
     }
 
-    // 4. Load state from state_path
-    let state = State::load(&state_path).with_context(|| {
-        format!(
-            "Failed to load state file at {}. The file may be corrupted.",
-            state_path.display()
-        )
-    })?;
+    let workflow_view = crate::domain::actor::bootstrap_view_from_events(&log_path, session_id);
+    let last_event_sequence = workflow_view.last_event_sequence;
 
-    // 4. Create minimal UI state with defaults
-    let ui_state = SessionUiState::minimal_from_state(&state);
+    if last_event_sequence == 0 {
+        anyhow::bail!(
+            "Event log at {} is empty or could not be parsed.",
+            log_path.display()
+        );
+    }
+
+    // Get working_dir from workflow_view or fall back to daemon registry
+    let working_dir = workflow_view
+        .working_dir
+        .as_ref()
+        .map(|w| w.0.clone())
+        .or_else(|| {
+            // Fall back to daemon registry
+            let registry_path = planning_paths::sessiond_registry_path().ok()?;
+            let content = fs::read_to_string(&registry_path).ok()?;
+            let records: Vec<crate::session_daemon::protocol::SessionRecord> =
+                serde_json::from_str(&content).ok()?;
+            records
+                .iter()
+                .find(|r| r.workflow_session_id == session_id)
+                .map(|r| r.working_dir.clone())
+        })
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+
+    // Get state_path from session directory
+    let state_path = planning_paths::session_state_path(session_id)?;
+
+    // Create minimal UI state from WorkflowView
+    let ui_state = SessionUiState::minimal_from_view(&workflow_view);
 
     // For recovery, we don't know the original workflow name, so use the
     // current selection for this working directory (best effort)
-    let workflow_name = crate::app::WorkflowSelection::load(&record.working_dir)
+    let workflow_name = crate::app::WorkflowSelection::load(&working_dir)
         .map(|s| s.workflow)
         .unwrap_or_else(|_| "claude-only".to_string());
 
-    // Try to bootstrap WorkflowView from event log (if exists)
-    let (workflow_view, last_event_sequence) =
-        if let Ok(log_path) = planning_paths::session_event_log_path(session_id) {
-            let view = crate::domain::actor::bootstrap_view_from_events(&log_path, session_id);
-            let seq = view.last_event_sequence;
-            if seq > 0 {
-                (Some(view), seq)
-            } else {
-                (None, 0)
-            }
-        } else {
-            (None, 0)
-        };
-
-    // 5. Build snapshot
+    // Build snapshot
     Ok(SessionSnapshot::new_with_timestamp(
-        record.working_dir.clone(),
+        working_dir,
         session_id.to_string(),
         state_path,
-        state,
         ui_state,
         0,
         chrono::Utc::now().to_rfc3339(),
@@ -601,14 +541,21 @@ pub fn recover_from_state_file(session_id: &str) -> Result<SessionSnapshot> {
 }
 
 impl SessionUiState {
-    /// Create minimal UI state from workflow state (for recovery from crashes).
+    /// Create minimal UI state from WorkflowView (for recovery from crashes).
     /// All UI state is reset to defaults since we don't have the original.
-    pub fn minimal_from_state(state: &State) -> Self {
-        use crate::state::Phase;
+    pub fn minimal_from_view(view: &WorkflowView) -> Self {
+        let phase = view.planning_phase.unwrap_or(Phase::Planning);
+        let iteration = view.iteration.map(|i| i.0).unwrap_or(1);
+        let feature_name = view
+            .feature_name
+            .as_ref()
+            .map(|f| f.0.clone())
+            .unwrap_or_default();
+
         Self {
             id: 0,
-            name: state.feature_name.clone(),
-            status: match state.phase {
+            name: feature_name,
+            status: match phase {
                 Phase::Planning => SessionStatus::Planning,
                 Phase::Reviewing => SessionStatus::AwaitingApproval,
                 Phase::Revising => SessionStatus::Planning,
@@ -616,11 +563,8 @@ impl SessionUiState {
                 Phase::Complete => SessionStatus::Complete,
             },
             output_lines: vec![
-                "[recovery] Session recovered from state file".to_string(),
-                format!(
-                    "[recovery] Phase: {:?}, Iteration: {}",
-                    state.phase, state.iteration
-                ),
+                "[recovery] Session recovered from event log".to_string(),
+                format!("[recovery] Phase: {:?}, Iteration: {}", phase, iteration),
                 "[recovery] UI state reset to defaults. Workflow state preserved.".to_string(),
             ],
             scroll_position: 0,

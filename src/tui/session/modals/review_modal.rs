@@ -23,12 +23,16 @@ impl Session {
     }
 
     fn open_review_modal(&mut self) -> bool {
-        let Some(ref state) = self.workflow_state else {
+        let Some(ref view) = self.workflow_view else {
+            return false;
+        };
+        let Some(ref workflow_id) = view.workflow_id else {
             return false;
         };
 
         // Get session directory
-        let session_dir = match crate::planning_paths::session_dir(&state.workflow_session_id) {
+        let session_id = workflow_id.0.to_string();
+        let session_dir = match crate::planning_paths::session_dir(&session_id) {
             Ok(dir) => dir,
             Err(_) => return false,
         };

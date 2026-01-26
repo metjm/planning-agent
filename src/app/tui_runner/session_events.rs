@@ -38,14 +38,9 @@ pub async fn handle_session_event(
                 session.add_streaming(line);
             }
         }
-        Event::SessionStateUpdate { session_id, state } => {
-            if let Some(session) = tab_manager.session_by_id_mut(session_id) {
-                session.name = state.feature_name.clone();
-                session.workflow_state = Some(state);
-            }
-        }
         Event::SessionViewUpdate { session_id, view } => {
             if let Some(session) = tab_manager.session_by_id_mut(session_id) {
+                let view = *view; // Unbox the view
                 if let Some(ref name) = view.feature_name {
                     session.name = name.as_str().to_string();
                 }
@@ -173,13 +168,13 @@ pub async fn handle_session_event(
 
                 // Save snapshot on phase transition (natural checkpoint for recovery)
                 // Use session context's base_working_dir if available
-                if let Some(ref state) = session.workflow_state {
+                if let Some(ref view) = session.workflow_view {
                     let base_working_dir = session
                         .context
                         .as_ref()
                         .map(|ctx| ctx.base_working_dir.as_path())
                         .unwrap_or(working_dir);
-                    let _ = create_and_save_snapshot(session, state, base_working_dir);
+                    let _ = create_and_save_snapshot(session, view, base_working_dir);
                 }
             }
         }

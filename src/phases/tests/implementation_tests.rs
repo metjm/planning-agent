@@ -1,37 +1,41 @@
 use super::*;
+use crate::domain::types::{
+    FeatureName, Iteration, MaxIterations, Objective, Phase, PlanPath, WorkflowId,
+};
+use crate::domain::view::WorkflowView;
+use std::collections::HashMap;
 use std::path::PathBuf;
+use uuid::Uuid;
 
-fn minimal_state() -> State {
-    use crate::state::Phase;
-    use std::collections::HashMap;
-
-    State {
-        phase: Phase::Complete,
-        iteration: 1,
-        max_iterations: 3,
-        feature_name: "test-feature".to_string(),
-        objective: "Test objective".to_string(),
-        plan_file: PathBuf::from("/tmp/test-plan/plan.md"),
-        feedback_file: PathBuf::from("/tmp/test-feedback.md"),
+fn minimal_view() -> WorkflowView {
+    WorkflowView {
+        workflow_id: Some(WorkflowId(Uuid::new_v4())),
+        feature_name: Some(FeatureName::from("test-feature")),
+        objective: Some(Objective::from("Test objective")),
+        working_dir: None,
+        plan_path: Some(PlanPath::from(PathBuf::from("/tmp/test-plan/plan.md"))),
+        feedback_path: None,
+        planning_phase: Some(Phase::Complete),
+        iteration: Some(Iteration::first()),
+        max_iterations: Some(MaxIterations::default()),
         last_feedback_status: None,
-        approval_overridden: false,
-        workflow_session_id: "test-session-id".to_string(),
+        review_mode: None,
+        implementation_state: None,
         agent_conversations: HashMap::new(),
         invocations: Vec::new(),
-        updated_at: String::new(),
         last_failure: None,
         failure_history: Vec::new(),
         worktree_info: None,
-        implementation_state: None,
-        sequential_review: None,
+        approval_overridden: false,
+        last_event_sequence: 0,
     }
 }
 
 #[test]
 fn test_build_implementation_prompt_basic() {
-    let state = minimal_state();
+    let view = minimal_view();
     let working_dir = PathBuf::from("/tmp/workspace");
-    let prompt = build_implementation_prompt(&state, &working_dir, 1, None);
+    let prompt = build_implementation_prompt(&view, &working_dir, 1, None);
 
     // Check paths are included
     assert!(prompt.contains("/tmp/workspace"));
@@ -46,10 +50,10 @@ fn test_build_implementation_prompt_basic() {
 
 #[test]
 fn test_build_implementation_prompt_with_feedback() {
-    let state = minimal_state();
+    let view = minimal_view();
     let working_dir = PathBuf::from("/tmp/workspace");
     let feedback = "Missing error handling in src/main.rs";
-    let prompt = build_implementation_prompt(&state, &working_dir, 2, Some(feedback));
+    let prompt = build_implementation_prompt(&view, &working_dir, 2, Some(feedback));
 
     // Should include the feedback section
     assert!(prompt.contains("FEEDBACK FROM REVIEW"));
@@ -64,9 +68,9 @@ fn test_build_implementation_prompt_with_feedback() {
 
 #[test]
 fn test_build_implementation_followup_prompt() {
-    let state = minimal_state();
+    let view = minimal_view();
     let working_dir = PathBuf::from("/tmp/workspace");
-    let prompt = build_implementation_followup_prompt(&state, &working_dir, "Fix the bug");
+    let prompt = build_implementation_followup_prompt(&view, &working_dir, "Fix the bug");
 
     assert!(prompt.contains("USER MESSAGE"));
     assert!(prompt.contains("Fix the bug"));

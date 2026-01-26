@@ -6,11 +6,12 @@ use crate::app::workflow_decisions::{wait_for_workflow_failure_decision, Workflo
 use crate::config::WorkflowConfig;
 use crate::domain::actor::WorkflowMessage;
 use crate::domain::failure::{FailureContext, FailureKind};
+use crate::domain::review::ReviewMode;
 use crate::domain::types::PhaseLabel;
+use crate::domain::view::WorkflowView;
 use crate::domain::WorkflowCommand as DomainCommand;
 use crate::phases::{self, run_revision_phase_with_context};
 use crate::session_daemon::{LogCategory, LogLevel, SessionLogger};
-use crate::state::{Phase, State};
 use crate::tui::{CancellationError, SessionEventSender, UserApprovalResponse, WorkflowCommand};
 use anyhow::Result;
 use ractor::ActorRef;
@@ -18,22 +19,10 @@ use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
-/// Converts a legacy Phase to a domain PhaseLabel.
-fn phase_to_label(phase: &Phase) -> PhaseLabel {
-    match phase {
-        Phase::Planning => PhaseLabel::Planning,
-        Phase::Reviewing => PhaseLabel::Reviewing,
-        Phase::Revising => PhaseLabel::Revising,
-        Phase::AwaitingPlanningDecision => PhaseLabel::AwaitingDecision,
-        Phase::Complete => PhaseLabel::Complete,
-    }
-}
-
 #[allow(clippy::too_many_arguments)]
 pub async fn run_revising_phase(
-    state: &mut State,
+    view: &WorkflowView,
     working_dir: &Path,
-    state_path: &Path,
     config: &WorkflowConfig,
     sender: &SessionEventSender,
     approval_rx: &mut mpsc::Receiver<UserApprovalResponse>,
@@ -66,20 +55,17 @@ pub async fn run_revising_phase(
         }
     }
 
+    // Extract iteration from view (Iteration is a newtype wrapping u32)
+    let iteration = view.iteration.map(|i| i.0).unwrap_or(1);
+
     session_logger.log(
         LogLevel::Info,
         LogCategory::Workflow,
-        &format!(
-            ">>> ENTERING Revising phase (iteration {})",
-            state.iteration
-        ),
+        &format!(">>> ENTERING Revising phase (iteration {})", iteration),
     );
     sender.send_phase_started("Revising".to_string());
     sender.send_output("".to_string());
-    sender.send_output(format!(
-        "=== REVISION PHASE (Iteration {}) ===",
-        state.iteration
-    ));
+    sender.send_output(format!("=== REVISION PHASE (Iteration {}) ===", iteration));
     // Revision uses the planning agent for session continuity
     sender.send_output(format!(
         "Agent: {} (planning agent)",
@@ -96,13 +82,12 @@ pub async fn run_revising_phase(
             "Calling run_revision_phase_with_context...",
         );
         let revision_result = run_revision_phase_with_context(
-            state,
+            view,
             working_dir,
             config,
             last_reviews,
             sender.clone(),
-            state.iteration,
-            state_path,
+            iteration,
             session_logger.clone(),
             actor_ref.clone(),
         )
@@ -175,26 +160,21 @@ pub async fn run_revising_phase(
                             LogCategory::Workflow,
                             "User chose to stop and save state after revision failure",
                         );
-                        // Save failure context for later recovery
+                        // Save failure context for later recovery via CQRS command
                         // Uses planning agent for session continuity
                         let failure = FailureContext::new(
                             FailureKind::Unknown(error_msg),
-                            phase_to_label(&state.phase),
+                            PhaseLabel::Revising,
                             Some(config.workflow.planning.agent.clone().into()),
                             max_retries as u32,
                         );
-                        // Dispatch RecordFailure command
+                        // Dispatch RecordFailure command (events persisted by actor)
                         dispatch_domain_command(
                             &actor_ref,
-                            DomainCommand::RecordFailure {
-                                failure: failure.clone(),
-                            },
+                            DomainCommand::RecordFailure { failure },
                             &session_logger,
                         )
                         .await;
-                        state.set_failure(failure);
-                        state.set_updated_at();
-                        state.save_atomic(state_path)?;
                         return Ok(Some(WorkflowResult::Stopped));
                     }
                     WorkflowFailureDecision::Abort => {
@@ -235,33 +215,29 @@ pub async fn run_revising_phase(
         "run_revision_phase_with_context completed",
     );
 
-    // Reset sequential review state: restart from first reviewer
-    // and increment plan version since the plan was modified
-    if let Some(ref mut seq_state) = state.sequential_review {
-        seq_state.increment_version(); // Clears approvals AND accumulated_reviews, increments version
-        seq_state.reset_to_first_reviewer();
+    // Log sequential review state if present (actual reset is done by RevisionCompleted event)
+    if let Some(ReviewMode::Sequential(ref seq_state)) = view.review_mode {
+        // Plan version will be incremented by RevisionCompleted event
+        let next_version = seq_state.plan_version + 1;
         sender.send_output(format!(
             "[sequential] Plan revised - restarting from first reviewer (version {})",
-            seq_state.plan_version
+            next_version
         ));
         session_logger.log(
             LogLevel::Info,
             LogCategory::Workflow,
             &format!(
-                "Sequential review: reset to first reviewer, plan version {}",
-                seq_state.plan_version
+                "Sequential review: will reset to first reviewer, plan version {}",
+                next_version
             ),
         );
     }
 
-    // Keep old feedback files - don't cleanup
-    // let feedback_path = working_dir.join(&state.feedback_file);
-    // match cleanup_merged_feedback(&feedback_path) { ... }
-
-    let revision_phase_name = format!("Revising #{}", state.iteration);
+    // Spawn summary generation for the revision phase
+    let revision_phase_name = format!("Revising #{}", iteration);
     phases::spawn_summary_generation(
         revision_phase_name,
-        state,
+        view,
         working_dir,
         config,
         sender.clone(),
@@ -269,21 +245,17 @@ pub async fn run_revising_phase(
         session_logger.clone(),
     );
 
-    state.iteration += 1;
-    // Update feedback filename for the new iteration before transitioning to review
-    state.update_feedback_for_iteration(state.iteration);
+    // The next iteration will be current + 1 (incremented by RevisionCompleted event)
+    let next_iteration = iteration + 1;
     session_logger.log(
         LogLevel::Info,
         LogCategory::Workflow,
         &format!(
-            "Transitioning: Revising -> Reviewing (iteration now {})",
-            state.iteration
+            "Transitioning: Revising -> Reviewing (iteration will be {})",
+            next_iteration
         ),
     );
-    state.transition(Phase::Reviewing)?;
-    state.set_updated_at();
-    state.save_atomic(state_path)?;
-    sender.send_state_update(state.clone());
+    // Phase transition and state persistence handled by RevisionCompleted command dispatched by caller
     sender.send_output("[planning] Transitioning to review phase...".to_string());
 
     Ok(None)

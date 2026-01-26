@@ -1,9 +1,10 @@
 use crate::agents::{AgentContext, AgentType};
 use crate::config::WorkflowConfig;
+use crate::domain::types::ResumeStrategy;
+use crate::domain::view::WorkflowView;
 use crate::phases::ReviewResult;
 use crate::prompt_format::PromptBuilder;
 use crate::session_daemon::SessionLogger;
-use crate::state::{ResumeStrategy, State};
 use crate::tui::SessionEventSender;
 use anyhow::Result;
 use std::path::Path;
@@ -17,14 +18,18 @@ When referencing files, use absolute paths."#;
 
 pub fn spawn_summary_generation(
     phase: String,
-    state: &State,
+    view: &WorkflowView,
     working_dir: &Path,
     config: &WorkflowConfig,
     sender: SessionEventSender,
     reviews: Option<&[ReviewResult]>,
     session_logger: Arc<SessionLogger>,
 ) {
-    let plan_path = working_dir.join(&state.plan_file);
+    let plan_path = view
+        .plan_path
+        .as_ref()
+        .map(|p| p.as_path().to_path_buf())
+        .unwrap_or_else(|| working_dir.join("plan.md"));
     let working_dir = working_dir.to_path_buf();
     let config = config.clone();
     let phase_clone = phase.clone();

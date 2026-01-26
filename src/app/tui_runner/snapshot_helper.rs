@@ -3,9 +3,9 @@
 //! This module provides a unified helper for creating and saving session snapshots,
 //! used by both explicit stop handling and workflow completion.
 
+use crate::domain::view::WorkflowView;
 use crate::planning_paths;
 use crate::session_daemon::{save_snapshot, SessionSnapshot};
-use crate::state::State;
 use crate::tui::Session;
 use anyhow::Result;
 use std::path::{Path, PathBuf};
@@ -23,9 +23,16 @@ use std::path::{Path, PathBuf};
 /// Returns the path to the saved snapshot file on success.
 pub fn create_and_save_snapshot(
     session: &Session,
-    state: &State,
+    view: &WorkflowView,
     working_dir: &Path,
 ) -> Result<PathBuf> {
+    // Extract feature name from view (Option-wrapped)
+    let feature_name = view
+        .feature_name
+        .as_ref()
+        .map(|f| f.as_str())
+        .unwrap_or("unknown");
+
     // Use state_path from session context if available (preserves original path across resumes)
     // Otherwise compute from working_dir (for new sessions)
     let state_path = session
@@ -33,7 +40,7 @@ pub fn create_and_save_snapshot(
         .as_ref()
         .map(|ctx| ctx.state_path.clone())
         .map(Ok)
-        .unwrap_or_else(|| planning_paths::state_path(working_dir, &state.feature_name))?;
+        .unwrap_or_else(|| planning_paths::state_path(working_dir, feature_name))?;
 
     // Get workflow name from session context (preserves the workflow used for this session)
     // If no context, fall back to current selection for this working directory
@@ -50,27 +57,27 @@ pub fn create_and_save_snapshot(
 
     let ui_state = session.to_ui_state();
     let now = chrono::Utc::now().to_rfc3339();
-    let mut state_copy = state.clone();
-    state_copy.set_updated_at_with(&now);
     let elapsed = session.start_time.elapsed().as_millis() as u64;
 
-    // Include workflow view and event sequence from the session
-    let (workflow_view, last_event_sequence) = session
-        .workflow_view
+    // Get workflow_session_id from view (WorkflowId -> String)
+    let workflow_session_id = view
+        .workflow_id
         .as_ref()
-        .map(|v| (Some(v.clone()), v.last_event_sequence))
-        .unwrap_or((None, 0));
+        .map(|id| id.to_string())
+        .unwrap_or_default();
+
+    // Include workflow view and event sequence
+    let last_event_sequence = view.last_event_sequence;
 
     let snapshot = SessionSnapshot::new_with_timestamp(
         working_dir.to_path_buf(),
-        state.workflow_session_id.clone(),
+        workflow_session_id,
         state_path,
-        state_copy,
         ui_state,
         elapsed,
         now,
         workflow_name,
-        workflow_view,
+        view.clone(),
         last_event_sequence,
     );
 

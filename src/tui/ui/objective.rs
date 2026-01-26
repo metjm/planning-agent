@@ -41,14 +41,15 @@ pub fn compute_objective_height(objective: &str, available_width: u16, max_heigh
 
 /// Draw the objective panel.
 ///
-/// Displays the planning objective from `session.workflow_state.objective`.
+/// Displays the planning objective from `session.workflow_view.objective`.
 /// Shows a placeholder when no objective is set.
 pub fn draw_objective(frame: &mut Frame, session: &Session, area: Rect) {
     let theme = Theme::for_session(session);
     let objective_text = session
-        .workflow_state
+        .workflow_view
         .as_ref()
-        .map(|s| s.objective.as_str())
+        .and_then(|v| v.objective.as_ref())
+        .map(|o| o.as_str())
         .unwrap_or("");
 
     let block = Block::default()

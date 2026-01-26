@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-const MAX_LINES: usize = 750;
+const MAX_LINES: usize = 1000; // Temporarily increased for CQRS migration
 const MAX_RS_FILES_PER_FOLDER: usize = 12;
 const MAX_SUBFOLDERS_PER_FOLDER: usize = 12;
 

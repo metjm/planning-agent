@@ -9,14 +9,14 @@ use crate::app::workflow_decisions::{
 };
 use crate::config::WorkflowConfig;
 use crate::domain::actor::WorkflowMessage;
-use crate::domain::types::{ImplementationVerdict, Iteration};
+use crate::domain::types::{ImplementationPhase, ImplementationVerdict, Iteration, ResumeStrategy};
+use crate::domain::view::WorkflowView;
 use crate::domain::WorkflowCommand as DomainCommand;
 use crate::phases::implementation::run_implementation_phase;
 use crate::phases::implementation_review::run_implementation_review_phase;
 use crate::phases::implementing_conversation_key;
 use crate::phases::verdict::VerificationVerdictResult;
 use crate::session_daemon::{LogCategory, LogLevel, SessionLogger};
-use crate::state::{ImplementationPhase, ImplementationPhaseState, ResumeStrategy, State};
 use crate::tui::{SessionEventSender, UserApprovalResponse, WorkflowCommand};
 use anyhow::{Context, Result};
 use ractor::ActorRef;
@@ -24,9 +24,8 @@ use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot};
 
-/// Context for the implementation workflow containing channels and paths.
+/// Context for the implementation workflow containing channels and resources.
 pub struct ImplementationContext<'a> {
-    pub state_path: &'a Path,
     pub session_sender: SessionEventSender,
     pub session_logger: Arc<SessionLogger>,
     pub approval_rx: &'a mut mpsc::Receiver<UserApprovalResponse>,
@@ -61,13 +60,13 @@ pub enum ImplementationWorkflowResult {
 /// - No changes detected (returns ImplementationWorkflowResult::NoChanges)
 ///
 /// # Arguments
-/// * `state` - The current workflow state (will be modified)
+/// * `view` - The current workflow view (read-only projection)
 /// * `config` - The workflow configuration
 /// * `working_dir` - The working directory for implementation
 /// * `ctx` - Implementation context containing channels and paths
 /// * `initial_feedback` - Optional initial feedback to start with
 pub async fn run_implementation_workflow(
-    state: &mut State,
+    view: &WorkflowView,
     config: &WorkflowConfig,
     working_dir: &Path,
     ctx: ImplementationContext<'_>,
@@ -75,7 +74,6 @@ pub async fn run_implementation_workflow(
 ) -> Result<ImplementationWorkflowResult> {
     // Destructure context for easier access
     let ImplementationContext {
-        state_path,
         session_sender,
         session_logger,
         approval_rx,
@@ -133,33 +131,36 @@ pub async fn run_implementation_workflow(
         anyhow::bail!("Implementation is disabled in config");
     }
 
-    let max_iterations = impl_config.max_iterations;
+    let config_max_iterations = impl_config.max_iterations;
 
-    // Initialize implementation state if not present
-    if state.implementation_state.is_none() {
-        state.implementation_state = Some(ImplementationPhaseState::new(max_iterations));
+    // Get initial state from view (should exist - UserRequestedImplementation was called earlier)
+    let (mut local_iteration, mut local_max_iterations, initial_phase) =
+        if let Some(ref impl_state) = view.implementation_state {
+            (
+                impl_state.iteration.0,
+                impl_state.max_iterations.0,
+                impl_state.phase,
+            )
+        } else {
+            // Implementation state not yet initialized - use config defaults
+            // This shouldn't happen in normal flow but provides a fallback
+            (1, config_max_iterations, ImplementationPhase::Implementing)
+        };
+
+    // Ensure max_iterations is set from config if view has 0
+    if local_max_iterations == 0 {
+        local_max_iterations = config_max_iterations;
+    }
+    // Start from iteration 1 if not started
+    if local_iteration == 0 {
+        local_iteration = 1;
     }
 
-    // Ensure max_iterations is set
-    {
-        let impl_state = state.implementation_state.as_mut().unwrap();
-        if impl_state.max_iterations == 0 {
-            impl_state.max_iterations = max_iterations;
-        }
-        // Start from iteration 1 if not started
-        if impl_state.iteration == 0 {
-            impl_state.iteration = 1;
-        }
-    }
-
-    // Emit initial state update so TUI switches to implementation palette
-    session_sender.send_state_update(state.clone());
     session_sender.send_phase_started("Implementing".to_string());
 
     // Use initial feedback if provided
     let mut current_feedback = initial_feedback.or_else(|| {
-        state
-            .implementation_state
+        view.implementation_state
             .as_ref()
             .and_then(|s| s.last_feedback.clone())
     });
@@ -169,102 +170,85 @@ pub async fn run_implementation_workflow(
 
     session_sender.send_output(format!(
         "[implementation] Starting implementation workflow (max {} iterations)",
-        max_iterations
+        local_max_iterations
     ));
 
     // Main orchestration loop
+    let mut local_phase = initial_phase;
     loop {
         // Check if we need to resume from awaiting max iterations decision
-        {
-            let impl_state = state.implementation_state.as_ref().unwrap();
-            if impl_state.phase == ImplementationPhase::AwaitingMaxIterationsDecision {
-                // Re-display the max iterations modal
-                let summary = build_implementation_max_iterations_summary(
-                    state,
-                    impl_state.last_feedback.as_deref(),
-                );
+        if local_phase == ImplementationPhase::AwaitingDecision {
+            // Re-display the max iterations modal
+            let summary =
+                build_implementation_max_iterations_summary(view, current_feedback.as_deref());
 
-                let decision = await_max_iterations_decision(
-                    IterativePhase::Implementation,
-                    &session_logger,
-                    &session_sender,
-                    approval_rx,
-                    control_rx,
-                    summary,
-                )
-                .await?;
+            let decision = await_max_iterations_decision(
+                IterativePhase::Implementation,
+                &session_logger,
+                &session_sender,
+                approval_rx,
+                control_rx,
+                summary,
+            )
+            .await?;
 
-                // Dispatch domain commands for user decisions
-                match &decision {
-                    MaxIterationsDecision::Abort => {
-                        dispatch_impl_cmd(DomainCommand::ImplementationDeclined {
-                            reason: "User declined at max iterations".to_string(),
-                        })
-                        .await;
-                    }
-                    MaxIterationsDecision::Stopped => {
-                        dispatch_impl_cmd(DomainCommand::ImplementationCancelled {
-                            reason: "User stopped implementation workflow".to_string(),
-                        })
-                        .await;
-                    }
-                    _ => {}
-                }
-
-                // Apply the decision using the shared helper
-                if let Some(result) = apply_implementation_decision(
-                    decision,
-                    state,
-                    state_path,
-                    &session_sender,
-                    &mut current_feedback,
-                )? {
-                    return Ok(result);
-                }
-                // If None returned, continue the loop (Continue or RestartWithFeedback)
+            // Apply the decision using the shared helper
+            if let Some(result) = apply_implementation_decision(
+                decision,
+                &dispatch_impl_cmd,
+                &session_sender,
+                &mut local_iteration,
+                &mut local_max_iterations,
+                &mut local_phase,
+                &mut current_feedback,
+            )
+            .await?
+            {
+                return Ok(result);
             }
+            // If None returned, continue the loop (Continue or RestartWithFeedback)
         }
 
         // Check if we can continue
-        let (iteration, can_continue) = {
-            let impl_state = state.implementation_state.as_ref().unwrap();
-            (impl_state.iteration, impl_state.can_continue())
-        };
+        let can_continue =
+            local_phase != ImplementationPhase::Complete && local_iteration <= local_max_iterations;
 
         if !can_continue {
             break;
         }
 
         // === Implementation Phase ===
-        {
-            let impl_state = state.implementation_state.as_mut().unwrap();
-            impl_state.phase = ImplementationPhase::Implementing;
-        }
         session_sender.send_output(format!(
             "[implementation] === Implementation Round {}/{} ===",
-            iteration, max_iterations
+            local_iteration, local_max_iterations
         ));
 
         // Dispatch ImplementationRoundStarted command
         dispatch_impl_cmd(DomainCommand::ImplementationRoundStarted {
-            iteration: Iteration(iteration),
+            iteration: Iteration(local_iteration),
         })
         .await;
 
-        // Ensure agent_conversations entry exists for implementing agent (for conversation ID capture)
+        // Record agent conversation for implementing agent (for conversation ID capture)
         if let Some(agent_cfg) = impl_config.implementing.as_ref() {
             let key = implementing_conversation_key(&agent_cfg.agent);
-            state.get_or_create_agent_session(&key, ResumeStrategy::ConversationResume);
+            dispatch_impl_cmd(DomainCommand::RecordAgentConversation {
+                agent_id: key.into(),
+                resume_strategy: ResumeStrategy::ConversationResume,
+                conversation_id: None,
+            })
+            .await;
         }
 
         let impl_result = run_implementation_phase(
-            state,
+            view,
             config,
             working_dir,
-            iteration,
+            local_iteration,
             current_feedback.as_deref(),
             session_sender.clone(),
             session_logger.clone(),
+            actor_ref.clone(),
         )
         .await
         .context("Implementation phase failed")?;
@@ -276,10 +260,8 @@ pub async fn run_implementation_workflow(
                 reason: "Implementation cancelled by user".to_string(),
             })
             .await;
-            let impl_state = state.implementation_state.as_mut().unwrap();
-            impl_state.phase = ImplementationPhase::Complete;
             return Ok(ImplementationWorkflowResult::Cancelled {
-                iterations_used: iteration,
+                iterations_used: local_iteration,
             });
         }
 
@@ -299,36 +281,35 @@ pub async fn run_implementation_workflow(
         if let Some(conv_id) = impl_result.conversation_id {
             if let Some(agent_cfg) = impl_config.implementing.as_ref() {
                 let key = implementing_conversation_key(&agent_cfg.agent);
-                state.update_agent_conversation_id(&key, conv_id);
+                dispatch_impl_cmd(DomainCommand::RecordAgentConversation {
+                    agent_id: key.into(),
+                    resume_strategy: ResumeStrategy::ConversationResume,
+                    conversation_id: Some(conv_id.into()),
+                })
+                .await;
             }
         }
 
         // Dispatch ImplementationRoundCompleted command
         let fingerprint = compute_change_fingerprint(working_dir).unwrap_or(0);
         dispatch_impl_cmd(DomainCommand::ImplementationRoundCompleted {
-            iteration: Iteration(iteration),
+            iteration: Iteration(local_iteration),
             fingerprint,
         })
         .await;
 
         // === Review Phase ===
-        {
-            let impl_state = state.implementation_state.as_mut().unwrap();
-            impl_state.phase = ImplementationPhase::ImplementationReview;
-        }
-        // Emit state update and phase event for review phase
-        session_sender.send_state_update(state.clone());
         session_sender.send_phase_started("Implementation Review".to_string());
         session_sender.send_output(format!(
             "[implementation] === Review Round {}/{} ===",
-            iteration, max_iterations
+            local_iteration, local_max_iterations
         ));
 
         let review_result = run_implementation_review_phase(
-            state,
+            view,
             config,
             working_dir,
-            iteration,
+            local_iteration,
             Some(&impl_result.log_path),
             session_sender.clone(),
             session_logger.clone(),
@@ -336,13 +317,7 @@ pub async fn run_implementation_workflow(
         .await
         .context("Implementation review phase failed")?;
 
-        // Store the verdict
-        {
-            let impl_state = state.implementation_state.as_mut().unwrap();
-            impl_state.last_verdict = Some(review_result.verdict.to_state_string());
-        }
-
-        // Dispatch ImplementationReviewCompleted command
+        // Dispatch ImplementationReviewCompleted command (verdict stored via event)
         let domain_verdict = match &review_result.verdict {
             VerificationVerdictResult::Approved => ImplementationVerdict::Approved,
             // NeedsRevision and ParseFailure both map to NeedsChanges
@@ -350,7 +325,7 @@ pub async fn run_implementation_workflow(
             | VerificationVerdictResult::ParseFailure { .. } => ImplementationVerdict::NeedsChanges,
         };
         dispatch_impl_cmd(DomainCommand::ImplementationReviewCompleted {
-            iteration: Iteration(iteration),
+            iteration: Iteration(local_iteration),
             verdict: domain_verdict,
             feedback: review_result.feedback.clone(),
         })
@@ -362,24 +337,15 @@ pub async fn run_implementation_workflow(
                 // Dispatch ImplementationAccepted command
                 dispatch_impl_cmd(DomainCommand::ImplementationAccepted).await;
 
-                let impl_state = state.implementation_state.as_mut().unwrap();
-                impl_state.phase = ImplementationPhase::Complete;
-                impl_state.mark_complete();
-                // Emit state update so TUI reverts to planning palette
-                session_sender.send_state_update(state.clone());
                 session_sender.send_phase_started("Implementation Complete".to_string());
                 session_sender.send_output("[implementation] Implementation approved!".to_string());
                 // Emit success event to trigger the success modal in TUI
-                session_sender.send_implementation_success(iteration);
+                session_sender.send_implementation_success(local_iteration);
                 return Ok(ImplementationWorkflowResult::Approved);
             }
             VerificationVerdictResult::NeedsRevision
             | VerificationVerdictResult::ParseFailure { .. } => {
-                // Store feedback for next iteration
-                {
-                    let impl_state = state.implementation_state.as_mut().unwrap();
-                    impl_state.last_feedback = review_result.feedback.clone();
-                }
+                // Store feedback for next iteration (via local tracking)
                 current_feedback = review_result.feedback;
 
                 // Circuit breaker: check if anything changed
@@ -391,31 +357,24 @@ pub async fn run_implementation_workflow(
                             "[implementation] No changes detected between iterations, stopping"
                                 .to_string(),
                         );
-                        let impl_state = state.implementation_state.as_mut().unwrap();
-                        impl_state.phase = ImplementationPhase::Complete;
                         return Ok(ImplementationWorkflowResult::NoChanges {
-                            iterations_used: iteration,
+                            iterations_used: local_iteration,
                         });
                     }
                 }
                 last_fingerprint = Some(current_fingerprint);
 
                 // Check if we have more iterations
-                if iteration >= max_iterations {
+                if local_iteration >= local_max_iterations {
                     // Dispatch ImplementationMaxIterationsReached command
                     dispatch_impl_cmd(DomainCommand::ImplementationMaxIterationsReached).await;
 
-                    // Transition to awaiting decision state and persist
-                    {
-                        let impl_state = state.implementation_state.as_mut().unwrap();
-                        impl_state.phase = ImplementationPhase::AwaitingMaxIterationsDecision;
-                    }
-                    state.set_updated_at();
-                    state.save_atomic(state_path)?;
+                    // Transition to awaiting decision state
+                    local_phase = ImplementationPhase::AwaitingDecision;
 
                     // Build summary and prompt user
                     let summary = build_implementation_max_iterations_summary(
-                        state,
+                        view,
                         current_feedback.as_deref(),
                     );
 
@@ -429,31 +388,18 @@ pub async fn run_implementation_workflow(
                     )
                     .await?;
 
-                    // Dispatch domain commands for user decisions
-                    match &decision {
-                        MaxIterationsDecision::Abort => {
-                            dispatch_impl_cmd(DomainCommand::ImplementationDeclined {
-                                reason: "User declined at max iterations".to_string(),
-                            })
-                            .await;
-                        }
-                        MaxIterationsDecision::Stopped => {
-                            dispatch_impl_cmd(DomainCommand::ImplementationCancelled {
-                                reason: "User stopped implementation workflow".to_string(),
-                            })
-                            .await;
-                        }
-                        _ => {}
-                    }
-
                     // Apply the decision
                     if let Some(result) = apply_implementation_decision(
                         decision,
-                        state,
-                        state_path,
+                        &dispatch_impl_cmd,
                         &session_sender,
+                        &mut local_iteration,
+                        &mut local_max_iterations,
+                        &mut local_phase,
                         &mut current_feedback,
-                    )? {
+                    )
+                    .await?
+                    {
                         return Ok(result);
                     }
                     // If None returned, we continue (Continue or RestartWithFeedback)
@@ -462,42 +408,31 @@ pub async fn run_implementation_workflow(
                 }
 
                 // Advance to next iteration
-                {
-                    let impl_state = state.implementation_state.as_mut().unwrap();
-                    impl_state.advance_to_next_iteration();
-                }
-                let new_iteration = state.implementation_state.as_ref().unwrap().iteration;
-                // Emit state update for new iteration
-                session_sender.send_state_update(state.clone());
+                local_iteration += 1;
                 session_sender.send_phase_started("Implementing".to_string());
                 session_sender.send_output(format!(
                     "[implementation] Issues found, starting iteration {}...",
-                    new_iteration
+                    local_iteration
                 ));
             }
         }
     }
 
     // Should not reach here, but handle gracefully
-    let iteration = state
-        .implementation_state
-        .as_ref()
-        .map(|s| s.iteration)
-        .unwrap_or(0);
     Ok(ImplementationWorkflowResult::Failed {
-        iterations_used: iteration,
+        iterations_used: local_iteration,
         last_feedback: current_feedback,
     })
 }
 
 /// Builds the summary text for implementation max iterations modal.
 fn build_implementation_max_iterations_summary(
-    state: &State,
+    view: &WorkflowView,
     last_feedback: Option<&str>,
 ) -> String {
-    let impl_state = state.implementation_state.as_ref();
-    let iteration = impl_state.map(|s| s.iteration).unwrap_or(0);
-    let max = impl_state.map(|s| s.max_iterations).unwrap_or(0);
+    let impl_state = view.implementation_state.as_ref();
+    let iteration = impl_state.map(|s| s.iteration.0).unwrap_or(0);
+    let max = impl_state.map(|s| s.max_iterations.0).unwrap_or(0);
 
     let mut summary = format!(
         "Implementation has been attempted {} time(s) (max: {}) but review has not approved.\n\n",
@@ -527,36 +462,35 @@ fn build_implementation_max_iterations_summary(
     summary
 }
 
-/// Applies an implementation max iterations decision to state.
-/// Used by both the main max iterations check and the AwaitingMaxIterationsDecision resume handler.
+/// Applies an implementation max iterations decision.
+/// Used by both the main max iterations check and the AwaitingDecision resume handler.
+///
+/// This function dispatches domain commands and updates local loop state.
 ///
 /// Returns:
 /// - Some(result) if the decision completes the implementation workflow
 /// - None if the loop should continue (e.g., Continue decision)
-fn apply_implementation_decision(
+async fn apply_implementation_decision<F, Fut>(
     decision: MaxIterationsDecision,
-    state: &mut State,
-    state_path: &Path,
+    dispatch_impl_cmd: &F,
     session_sender: &SessionEventSender,
+    local_iteration: &mut u32,
+    local_max_iterations: &mut u32,
+    local_phase: &mut ImplementationPhase,
     current_feedback: &mut Option<String>,
-) -> Result<Option<ImplementationWorkflowResult>> {
-    // Get iteration before match to avoid borrow issues
-    let iteration = state
-        .implementation_state
-        .as_ref()
-        .map(|s| s.iteration)
-        .unwrap_or(0);
+) -> Result<Option<ImplementationWorkflowResult>>
+where
+    F: Fn(DomainCommand) -> Fut,
+    Fut: std::future::Future<Output = ()>,
+{
+    let iteration = *local_iteration;
 
     match decision {
         MaxIterationsDecision::ProceedWithoutApproval => {
-            {
-                let impl_state = state.implementation_state.as_mut().unwrap();
-                impl_state.phase = ImplementationPhase::Complete;
-                impl_state.mark_complete();
-            }
-            state.set_updated_at();
-            state.save_atomic(state_path)?;
-            session_sender.send_state_update(state.clone());
+            // Dispatch ImplementationAccepted command (user override)
+            dispatch_impl_cmd(DomainCommand::ImplementationAccepted).await;
+
+            *local_phase = ImplementationPhase::Complete;
             session_sender
                 .send_output("[implementation] Proceeding without review approval".to_string());
             session_sender.send_implementation_success(iteration);
@@ -565,51 +499,45 @@ fn apply_implementation_decision(
             }))
         }
         MaxIterationsDecision::Continue => {
-            let new_max = {
-                let impl_state = state.implementation_state.as_mut().unwrap();
-                impl_state.max_iterations += 1;
-                impl_state.max_iterations
-            };
-            state.set_updated_at();
-            state.save_atomic(state_path)?;
+            *local_max_iterations += 1;
+            *local_phase = ImplementationPhase::Implementing;
             session_sender.send_output(format!(
                 "[implementation] Continuing (max iterations now {})",
-                new_max
+                *local_max_iterations
             ));
             Ok(None) // Continue the loop
         }
         MaxIterationsDecision::RestartWithFeedback(feedback) => {
-            {
-                let impl_state = state.implementation_state.as_mut().unwrap();
-                impl_state.iteration = 1;
-                impl_state.phase = ImplementationPhase::Implementing;
-                impl_state.last_feedback = None;
-                impl_state.last_verdict = None;
-            }
+            *local_iteration = 1;
+            *local_phase = ImplementationPhase::Implementing;
             // NOTE: Conversation ID is PRESERVED (not cleared)
             *current_feedback = Some(feedback);
-            state.set_updated_at();
-            state.save_atomic(state_path)?;
             session_sender
                 .send_output("[implementation] Restarting with new feedback...".to_string());
-            session_sender.send_state_update(state.clone());
             Ok(None) // Continue the loop from restart
         }
         MaxIterationsDecision::Abort => {
-            {
-                let impl_state = state.implementation_state.as_mut().unwrap();
-                impl_state.phase = ImplementationPhase::Complete;
-            }
-            state.set_updated_at();
-            state.save_atomic(state_path)?;
+            dispatch_impl_cmd(DomainCommand::ImplementationDeclined {
+                reason: "User declined at max iterations".to_string(),
+            })
+            .await;
+
+            *local_phase = ImplementationPhase::Complete;
             Ok(Some(ImplementationWorkflowResult::Failed {
                 iterations_used: iteration,
                 last_feedback: current_feedback.clone(),
             }))
         }
-        MaxIterationsDecision::Stopped => Ok(Some(ImplementationWorkflowResult::Cancelled {
-            iterations_used: iteration,
-        })),
+        MaxIterationsDecision::Stopped => {
+            dispatch_impl_cmd(DomainCommand::ImplementationCancelled {
+                reason: "User stopped implementation workflow".to_string(),
+            })
+            .await;
+
+            Ok(Some(ImplementationWorkflowResult::Cancelled {
+                iterations_used: iteration,
+            }))
+        }
     }
 }
 

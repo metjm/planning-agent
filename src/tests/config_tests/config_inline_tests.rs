@@ -241,7 +241,7 @@ workflow:
     assert!(claude_config.session_persistence.enabled);
     assert_eq!(
         claude_config.session_persistence.strategy,
-        crate::state::ResumeStrategy::ConversationResume
+        crate::domain::types::ResumeStrategy::ConversationResume
     );
 }
 

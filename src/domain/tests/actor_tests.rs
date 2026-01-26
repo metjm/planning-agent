@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::domain::types::{
-    FeatureName, FeedbackPath, MaxIterations, Objective, PlanPath, PlanningPhase, WorkingDir,
+    FeatureName, FeedbackPath, MaxIterations, Objective, Phase, PlanPath, WorkingDir,
 };
 use crate::planning_paths;
 use tempfile::tempdir;
@@ -112,10 +112,7 @@ async fn test_bootstrap_view_from_events() {
         bootstrapped_view.feature_name.as_ref().unwrap().as_str(),
         "bootstrap-test"
     );
-    assert_eq!(
-        bootstrapped_view.planning_phase,
-        Some(PlanningPhase::Planning)
-    );
+    assert_eq!(bootstrapped_view.planning_phase, Some(Phase::Planning));
     assert_eq!(bootstrapped_view.last_event_sequence, 1);
 }
 

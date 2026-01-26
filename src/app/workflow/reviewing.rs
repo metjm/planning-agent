@@ -3,20 +3,23 @@
 use super::WorkflowResult;
 use crate::app::util::{build_all_reviewers_failed_summary, build_review_failure_summary};
 use crate::app::workflow_decisions::{
-    handle_max_iterations, wait_for_all_reviewers_failed_decision, wait_for_review_decision,
-    AllReviewersFailedDecision, ReviewDecision,
+    await_max_iterations_decision, wait_for_all_reviewers_failed_decision,
+    wait_for_review_decision, AllReviewersFailedDecision, IterativePhase, MaxIterationsDecision,
+    ReviewDecision,
 };
 use crate::config::{AgentRef, WorkflowConfig};
 use crate::domain::actor::WorkflowMessage;
 use crate::domain::review::ReviewMode;
+use crate::domain::review::{SequentialReviewState, SerializableReviewResult};
 use crate::domain::types::AgentId;
+use crate::domain::types::{FeedbackPath, FeedbackStatus};
+use crate::domain::view::WorkflowView;
 use crate::domain::WorkflowCommand as DomainCommand;
 use crate::phases::{
     self, aggregate_reviews, merge_feedback, run_multi_agent_review_with_context,
     write_feedback_files,
 };
 use crate::session_daemon::{LogCategory, LogLevel, SessionLogger};
-use crate::state::{FeedbackStatus, Phase, SequentialReviewState, SerializableReviewResult, State};
 use crate::tui::{
     CancellationError, ReviewKind, SessionEventSender, UserApprovalResponse, WorkflowCommand,
 };
@@ -29,7 +32,6 @@ use tokio::sync::{mpsc, oneshot};
 
 pub struct WorkflowPhaseContext<'a> {
     pub working_dir: &'a Path,
-    pub state_path: &'a Path,
     pub config: &'a WorkflowConfig,
     pub sender: &'a SessionEventSender,
     /// Session logger for workflow events.
@@ -74,26 +76,23 @@ impl<'a> WorkflowPhaseContext<'a> {
 }
 
 pub async fn run_reviewing_phase(
-    state: &mut State,
+    view: &WorkflowView,
     context: &WorkflowPhaseContext<'_>,
     approval_rx: &mut mpsc::Receiver<UserApprovalResponse>,
     control_rx: &mut mpsc::Receiver<WorkflowCommand>,
     last_reviews: &mut Vec<phases::ReviewResult>,
 ) -> Result<Option<WorkflowResult>> {
     let working_dir = context.working_dir;
-    let state_path = context.state_path;
     let config = context.config;
     let sender = context.sender;
+    let iteration = view.iteration.unwrap_or_default().0;
     context.log_workflow(&format!(
         ">>> ENTERING Reviewing phase (iteration {})",
-        state.iteration
+        iteration
     ));
     sender.send_phase_started("Reviewing".to_string());
     sender.send_output("".to_string());
-    sender.send_output(format!(
-        "=== REVIEW PHASE (Iteration {}) ===",
-        state.iteration
-    ));
+    sender.send_output(format!("=== REVIEW PHASE (Iteration {}) ===", iteration));
     let reviewer_display_names: Vec<&str> = config
         .workflow
         .reviewing
@@ -145,13 +144,12 @@ pub async fn run_reviewing_phase(
             pending_reviewers.iter().map(|r| r.display_id()).collect();
         context.log_workflow(&format!("Running reviewers: {:?}", pending_display_ids));
         let batch = run_multi_agent_review_with_context(
-            state,
+            view,
             working_dir,
             config,
             &pending_reviewers,
             sender.clone(),
-            state.iteration,
-            state_path,
+            iteration,
             context.session_logger.clone(),
             true, // emit_round_started: parallel mode always emits
             context.actor_ref.clone(),
@@ -278,8 +276,12 @@ pub async fn run_reviewing_phase(
     let mut reviews: Vec<phases::ReviewResult> = reviews_by_agent.into_values().collect();
     reviews.sort_by(|a, b| a.agent_name.cmp(&b.agent_name));
 
-    // state.feedback_file is now an absolute path (in ~/.planning-agent/plans/)
-    let feedback_path = state.feedback_file.clone();
+    // Get feedback path from view (already an absolute path)
+    let feedback_path = view
+        .feedback_path
+        .clone()
+        .map(|fp| fp.0)
+        .unwrap_or_else(|| std::path::PathBuf::from("feedback.md"));
     let _ = write_feedback_files(&reviews, &feedback_path);
     let _ = merge_feedback(&reviews, &feedback_path);
 
@@ -293,7 +295,7 @@ pub async fn run_reviewing_phase(
             context
                 .dispatch_command(DomainCommand::ReviewerRejected {
                     reviewer_id,
-                    feedback_path: crate::domain::types::FeedbackPath::from(feedback_path.clone()),
+                    feedback_path: FeedbackPath::from(feedback_path.clone()),
                 })
                 .await;
         } else {
@@ -305,7 +307,7 @@ pub async fn run_reviewing_phase(
 
     // Signal round completion for review history UI
     let round_approved = matches!(status, FeedbackStatus::Approved);
-    sender.send_review_round_completed(ReviewKind::Plan, state.iteration, round_approved);
+    sender.send_review_round_completed(ReviewKind::Plan, iteration, round_approved);
 
     // Dispatch ReviewCycleCompleted command to CQRS actor
     context
@@ -315,12 +317,11 @@ pub async fn run_reviewing_phase(
         .await;
 
     *last_reviews = reviews;
-    state.last_feedback_status = Some(status.clone());
 
-    let review_phase_name = format!("Reviewing #{}", state.iteration);
+    let review_phase_name = format!("Reviewing #{}", iteration);
     phases::spawn_summary_generation(
         review_phase_name,
-        state,
+        view,
         working_dir,
         config,
         sender.clone(),
@@ -328,28 +329,29 @@ pub async fn run_reviewing_phase(
         context.session_logger.clone(),
     );
 
+    let max_iterations = view.max_iterations.map(|m| m.0).unwrap_or(3);
     match status {
         FeedbackStatus::Approved => {
             context.log_workflow("Plan APPROVED! Transitioning to Complete");
             sender.send_output("[planning] Plan APPROVED!".to_string());
-            state.transition(Phase::Complete)?;
+            // Transition is handled by ReviewCycleCompleted event
         }
         FeedbackStatus::NeedsRevision => {
             sender.send_output("[planning] Plan needs revision".to_string());
-            if state.iteration >= state.max_iterations {
+            if iteration >= max_iterations {
                 // Dispatch PlanningMaxIterationsReached command
                 context
                     .dispatch_command(DomainCommand::PlanningMaxIterationsReached)
                     .await;
 
-                let result = handle_max_iterations(
-                    state,
+                let result = handle_max_iterations_with_view(
+                    view,
                     &context.session_logger,
-                    state_path,
                     sender,
                     approval_rx,
                     control_rx,
                     last_reviews,
+                    context,
                 )
                 .await?;
                 if let Some(workflow_result) = result {
@@ -357,13 +359,10 @@ pub async fn run_reviewing_phase(
                 }
             } else {
                 context.log_workflow("Transitioning: Reviewing -> Revising");
-                state.transition(Phase::Revising)?;
+                // Transition is handled by ReviewCycleCompleted event
             }
         }
     }
-    state.set_updated_at();
-    state.save_atomic(state_path)?;
-    sender.send_state_update(state.clone());
 
     Ok(None)
 }
@@ -388,6 +387,196 @@ fn output_failure_bundles(sender: &SessionEventSender, failures: &[phases::Revie
     }
 }
 
+/// Handles max iterations reached during reviewing phase using WorkflowView.
+/// Dispatches appropriate commands based on user decision.
+async fn handle_max_iterations_with_view(
+    view: &WorkflowView,
+    session_logger: &Arc<SessionLogger>,
+    sender: &SessionEventSender,
+    approval_rx: &mut mpsc::Receiver<UserApprovalResponse>,
+    control_rx: &mut mpsc::Receiver<WorkflowCommand>,
+    last_reviews: &[phases::ReviewResult],
+    context: &WorkflowPhaseContext<'_>,
+) -> Result<Option<WorkflowResult>> {
+    // Build the summary for planning phase
+    let summary = build_max_iterations_summary_from_view(view, last_reviews);
+
+    // Await user decision using the shared function
+    let decision = await_max_iterations_decision(
+        IterativePhase::Planning,
+        session_logger,
+        sender,
+        approval_rx,
+        control_rx,
+        summary,
+    )
+    .await?;
+
+    // Dispatch domain commands for user decisions
+    match &decision {
+        MaxIterationsDecision::ProceedWithoutApproval => {
+            context
+                .dispatch_command(DomainCommand::UserOverrideApproval {
+                    override_reason: "User proceeded without AI approval at max iterations"
+                        .to_string(),
+                })
+                .await;
+            sender.send_output("[planning] Proceeding without AI approval...".to_string());
+            Ok(None)
+        }
+        MaxIterationsDecision::Continue => {
+            sender.send_output("[planning] Continuing with another review cycle...".to_string());
+            // The caller should handle incrementing max_iterations via command
+            Ok(None)
+        }
+        MaxIterationsDecision::RestartWithFeedback(feedback) => {
+            sender.send_output(format!("[planning] Restarting with feedback: {}", feedback));
+            Ok(Some(WorkflowResult::NeedsRestart {
+                user_feedback: feedback.clone(),
+            }))
+        }
+        MaxIterationsDecision::Abort => {
+            context
+                .dispatch_command(DomainCommand::UserAborted {
+                    reason: "User aborted workflow at max iterations".to_string(),
+                })
+                .await;
+            sender.send_output("[planning] Workflow aborted by user".to_string());
+            Ok(Some(WorkflowResult::Aborted {
+                reason: "User aborted workflow at max iterations".to_string(),
+            }))
+        }
+        MaxIterationsDecision::Stopped => Ok(Some(WorkflowResult::Stopped)),
+    }
+}
+
+/// Build max iterations summary using WorkflowView's plan_path.
+pub(crate) fn build_max_iterations_summary_from_view(
+    view: &WorkflowView,
+    last_reviews: &[phases::ReviewResult],
+) -> String {
+    use crate::app::util::truncate_for_summary;
+
+    let plan_path = view
+        .plan_path
+        .as_ref()
+        .map(|p| p.0.display().to_string())
+        .unwrap_or_else(|| "plan.md".to_string());
+    let iteration = view.iteration.unwrap_or_default().0;
+
+    let mut summary = format!(
+        "The plan has been reviewed {} times but has not been approved by AI.\n\nPlan file: {}\n\n",
+        iteration, plan_path
+    );
+
+    if let Some(ref status) = view.last_feedback_status {
+        summary.push_str(&format!("Last review verdict: {:?}\n\n", status));
+    }
+
+    if !last_reviews.is_empty() {
+        // Review Summary with verdict grouping
+        summary.push_str("---\n\n## Review Summary\n\n");
+
+        let needs_revision_count = last_reviews.iter().filter(|r| r.needs_revision).count();
+        let approved_count = last_reviews.len() - needs_revision_count;
+
+        summary.push_str(&format!(
+            "**{} reviewer(s):** {} needs revision, {} approved\n\n",
+            last_reviews.len(),
+            needs_revision_count,
+            approved_count
+        ));
+
+        let needs_revision: Vec<_> = last_reviews.iter().filter(|r| r.needs_revision).collect();
+        let approved: Vec<_> = last_reviews.iter().filter(|r| !r.needs_revision).collect();
+
+        if !needs_revision.is_empty() {
+            let names: Vec<_> = needs_revision
+                .iter()
+                .map(|r| r.agent_name.to_uppercase())
+                .collect();
+            summary.push_str(&format!("**Needs Revision:** {}\n\n", names.join(", ")));
+        }
+
+        if !approved.is_empty() {
+            let names: Vec<_> = approved
+                .iter()
+                .map(|r| r.agent_name.to_uppercase())
+                .collect();
+            summary.push_str(&format!("**Approved:** {}\n\n", names.join(", ")));
+        }
+
+        for review in last_reviews {
+            let verdict = if review.needs_revision {
+                "NEEDS REVISION"
+            } else {
+                "APPROVED"
+            };
+            let truncated_summary = truncate_for_summary(&review.summary, 120);
+            summary.push_str(&format!(
+                "- **{}** - **{}**: {}\n",
+                review.agent_name.to_uppercase(),
+                verdict,
+                truncated_summary
+            ));
+        }
+        summary.push('\n');
+
+        // Preview section
+        summary.push_str("---\n\n## Latest Review Feedback (Preview)\n\n");
+        summary.push_str("_Scroll down for full feedback_\n\n");
+        for review in last_reviews {
+            let verdict = if review.needs_revision {
+                "NEEDS REVISION"
+            } else {
+                "APPROVED"
+            };
+            summary.push_str(&format!(
+                "### {} ({})\n\n",
+                review.agent_name.to_uppercase(),
+                verdict
+            ));
+            let preview: String = review
+                .feedback
+                .lines()
+                .take(5)
+                .collect::<Vec<_>>()
+                .join("\n");
+            summary.push_str(&format!("{}\n\n", truncate_for_summary(&preview, 300)));
+        }
+
+        // Full feedback section
+        summary.push_str("---\n\n## Full Review Feedback\n\n");
+        for review in last_reviews {
+            let verdict = if review.needs_revision {
+                "NEEDS REVISION"
+            } else {
+                "APPROVED"
+            };
+            summary.push_str(&format!(
+                "### {} ({})\n\n",
+                review.agent_name.to_uppercase(),
+                verdict
+            ));
+            summary.push_str(&format!("{}\n\n", review.feedback));
+        }
+    } else {
+        summary.push_str("---\n\n_No review feedback available._\n\n");
+    }
+
+    summary.push_str("---\n\n");
+    summary.push_str("Choose an action:\n");
+    summary.push_str("- **[p] Proceed**: Accept the current plan and continue to implementation\n");
+    summary.push_str(
+        "- **[c] Continue Review**: Run another review cycle (adds 1 to max iterations)\n",
+    );
+    summary.push_str(
+        "- **[d] Restart with Feedback**: Provide feedback to restart the entire workflow\n",
+    );
+
+    summary
+}
+
 /// Sequential reviewing phase: runs reviewers one at a time.
 /// If any reviewer rejects, immediately transitions to revision.
 /// After revision, restarts from the first reviewer to ensure
@@ -400,28 +589,29 @@ fn output_failure_bundles(sender: &SessionEventSender, failures: &[phases::Revie
 ///
 /// TUI events: Emits `send_review_round_started` once at start of sequential cycle
 /// (when first reviewer starts), then passes emit_round_started=false to
-/// run_multi_agent_review_with_context to prevent duplicates.
+/// run_multi_agent_review_with_view to prevent duplicates.
 pub async fn run_sequential_reviewing_phase(
-    state: &mut State,
+    view: &WorkflowView,
     context: &WorkflowPhaseContext<'_>,
     approval_rx: &mut mpsc::Receiver<UserApprovalResponse>,
     control_rx: &mut mpsc::Receiver<WorkflowCommand>,
     last_reviews: &mut Vec<phases::ReviewResult>,
 ) -> Result<Option<WorkflowResult>> {
     let working_dir = context.working_dir;
-    let state_path = context.state_path;
     let config = context.config;
     let sender = context.sender;
     let reviewers = &config.workflow.reviewing.agents;
+    let iteration = view.iteration.unwrap_or_default().0;
 
-    // Initialize sequential review state if not present
-    if state.sequential_review.is_none() {
-        state.sequential_review = Some(SequentialReviewState::new());
-    }
-    let seq_state = state.sequential_review.as_mut().unwrap();
+    // Get sequential review state from view's review_mode
+    let seq_state = match &view.review_mode {
+        Some(ReviewMode::Sequential(state)) => state.clone(),
+        _ => SequentialReviewState::new(),
+    };
 
     // Validate reviewer state in case config changed between sessions
     let reviewer_ids: Vec<&str> = reviewers.iter().map(|r| r.display_id()).collect();
+    let mut seq_state = seq_state;
     if seq_state.validate_reviewer_state(&reviewer_ids) {
         context.log_workflow("Sequential review: config changed, reset to start new cycle");
         sender.send_output(
@@ -433,14 +623,14 @@ pub async fn run_sequential_reviewing_phase(
     let reviewer_agent_ids: Vec<AgentId> = reviewer_ids.iter().map(|s| AgentId::from(*s)).collect();
     context
         .dispatch_command(DomainCommand::ReviewCycleStarted {
-            mode: ReviewMode::Sequential(seq_state.clone().into()),
+            mode: ReviewMode::Sequential(seq_state.clone()),
             reviewers: reviewer_agent_ids,
         })
         .await;
 
     context.log_workflow(&format!(
         ">>> ENTERING Sequential Reviewing phase (iteration {}, reviewer {}/{}, plan version {})",
-        state.iteration,
+        iteration,
         seq_state.current_reviewer_index + 1,
         reviewers.len(),
         seq_state.plan_version
@@ -450,7 +640,7 @@ pub async fn run_sequential_reviewing_phase(
     sender.send_output("".to_string());
     sender.send_output(format!(
         "=== SEQUENTIAL REVIEW (Iteration {}, Reviewer {}/{}) ===",
-        state.iteration,
+        iteration,
         seq_state.current_reviewer_index + 1,
         reviewers.len()
     ));
@@ -469,17 +659,17 @@ pub async fn run_sequential_reviewing_phase(
         if let Some(rejector) = tiebreaker {
             log_msg.push_str(&format!(
                 " [tiebreaker: prioritized previous rejector '{}']",
-                rejector
+                rejector.as_str()
             ));
         }
         context.log_workflow(&log_msg);
     }
 
     // Emit round started ONLY for first reviewer in this sequential cycle
-    // We handle this here because we pass emit_round_started=false to run_multi_agent_review_with_context
+    // We handle this here because we pass emit_round_started=false to run_multi_agent_review_with_view
     let is_first_reviewer = seq_state.current_reviewer_index == 0;
     if is_first_reviewer {
-        sender.send_review_round_started(ReviewKind::Plan, state.iteration);
+        sender.send_review_round_started(ReviewKind::Plan, iteration);
     }
 
     // Get current reviewer from stored cycle order
@@ -488,7 +678,7 @@ pub async fn run_sequential_reviewing_phase(
         .expect("cycle order must be populated after start_new_cycle");
     let reviewer = reviewers
         .iter()
-        .find(|r| r.display_id() == current_id)
+        .find(|r| r.display_id() == current_id.as_str())
         .expect("reviewer must exist in config after validate_reviewer_state");
     let reviewer_id = reviewer.display_id();
 
@@ -529,13 +719,12 @@ pub async fn run_sequential_reviewing_phase(
         // Run single reviewer using existing infrastructure (single-element slice)
         // Pass emit_round_started=false to prevent duplicate TUI events
         let batch = run_multi_agent_review_with_context(
-            state,
+            view,
             working_dir,
             config,
             std::slice::from_ref(reviewer),
             sender.clone(),
-            state.iteration,
-            state_path,
+            iteration,
             context.session_logger.clone(),
             false, // DO NOT emit round_started, we handle it above
             context.actor_ref.clone(),
@@ -641,12 +830,15 @@ pub async fn run_sequential_reviewing_phase(
 
     // Write individual feedback file for this reviewer (uses agent-specific filename)
     // This is safe to call repeatedly - each reviewer gets their own file
-    let feedback_path = state.feedback_file.clone();
+    let feedback_path = view
+        .feedback_path
+        .clone()
+        .map(|fp| fp.0)
+        .unwrap_or_else(|| std::path::PathBuf::from("feedback.md"));
     let _ = write_feedback_files(std::slice::from_ref(&review), &feedback_path);
     // DO NOT call merge_feedback here - we'll do it once at the end when all approve
 
-    // Re-borrow seq_state after mutable operations
-    let seq_state = state.sequential_review.as_mut().unwrap();
+    let max_iterations = view.max_iterations.map(|m| m.0).unwrap_or(3);
 
     if review.needs_revision {
         // Record the rejecting reviewer for tiebreaker in next cycle
@@ -665,40 +857,38 @@ pub async fn run_sequential_reviewing_phase(
         context
             .dispatch_command(DomainCommand::ReviewerRejected {
                 reviewer_id: AgentId::from(reviewer_id),
-                feedback_path: crate::domain::types::FeedbackPath::from(feedback_path.clone()),
+                feedback_path: FeedbackPath::from(feedback_path.clone()),
             })
             .await;
 
         // Signal round completion (rejected)
-        sender.send_review_round_completed(ReviewKind::Plan, state.iteration, false);
+        sender.send_review_round_completed(ReviewKind::Plan, iteration, false);
 
         // Dispatch ReviewCycleCompleted command (rejected)
         context
             .dispatch_command(DomainCommand::ReviewCycleCompleted { approved: false })
             .await;
 
-        state.last_feedback_status = Some(FeedbackStatus::NeedsRevision);
-
         // Check iteration limit
-        if state.iteration >= state.max_iterations {
+        if iteration >= max_iterations {
             // Dispatch PlanningMaxIterationsReached command
             context
                 .dispatch_command(DomainCommand::PlanningMaxIterationsReached)
                 .await;
 
-            return handle_max_iterations(
-                state,
+            return handle_max_iterations_with_view(
+                view,
                 &context.session_logger,
-                state_path,
                 sender,
                 approval_rx,
                 control_rx,
                 last_reviews,
+                context,
             )
             .await;
         }
 
-        state.transition(Phase::Revising)?;
+        // Transition is handled by ReviewCycleCompleted event
     } else {
         // Reviewer approved - record approval and accumulate review for summary
         let serializable_review = SerializableReviewResult {
@@ -735,7 +925,7 @@ pub async fn run_sequential_reviewing_phase(
             sender.send_output("[sequential] All reviewers approved - plan complete!".to_string());
 
             // Signal round completion (approved)
-            sender.send_review_round_completed(ReviewKind::Plan, state.iteration, true);
+            sender.send_review_round_completed(ReviewKind::Plan, iteration, true);
 
             // Dispatch ReviewCycleCompleted command (approved)
             context
@@ -747,10 +937,10 @@ pub async fn run_sequential_reviewing_phase(
             let _ = merge_feedback(&all_reviews, &feedback_path);
 
             // Pass ALL accumulated reviews to summary generation
-            let review_phase_name = format!("Reviewing #{}", state.iteration);
+            let review_phase_name = format!("Reviewing #{}", iteration);
             phases::spawn_summary_generation(
                 review_phase_name,
-                state,
+                view,
                 working_dir,
                 config,
                 sender.clone(),
@@ -758,12 +948,14 @@ pub async fn run_sequential_reviewing_phase(
                 context.session_logger.clone(),
             );
 
-            state.last_feedback_status = Some(FeedbackStatus::Approved);
-            state.transition(Phase::Complete)?;
+            // Transition is handled by ReviewCycleCompleted event
         } else {
             // More reviewers to go - advance to next in stored cycle order
             seq_state.advance_to_next_reviewer();
-            let next_id = seq_state.get_current_reviewer().unwrap_or("(end of cycle)");
+            let next_id = seq_state
+                .get_current_reviewer()
+                .map(|id| id.as_str())
+                .unwrap_or("(end of cycle)");
             context.log_workflow(&format!(
                 "Advancing to reviewer {}/{}: {}",
                 seq_state.current_reviewer_index + 1,
@@ -773,10 +965,6 @@ pub async fn run_sequential_reviewing_phase(
             // Stay in Reviewing phase - next workflow loop iteration will process next reviewer
         }
     }
-
-    state.set_updated_at();
-    state.save_atomic(state_path)?;
-    sender.send_state_update(state.clone());
 
     Ok(None)
 }

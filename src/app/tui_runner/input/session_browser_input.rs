@@ -238,10 +238,10 @@ fn resume_session_in_current_process(
             let session_id = session.id;
 
             // Restore the session from snapshot
-            let restored_state = snapshot.workflow_state.clone();
+            let restored_view = snapshot.workflow_view.clone();
             *session = crate::tui::Session::from_ui_state(
                 snapshot.ui_state.clone(),
-                Some(restored_state.clone()),
+                Some(restored_view.clone()),
             );
             session.id = session_id;
             session.adjust_start_time_for_previous_elapsed(snapshot.total_elapsed_before_resume_ms);
@@ -249,23 +249,32 @@ fn resume_session_in_current_process(
             // Compute effective_working_dir from worktree_info if present
             let effective_working_dir = compute_effective_working_dir(
                 &snapshot.working_dir,
-                restored_state.worktree_info.as_ref(),
+                restored_view.worktree_info.as_ref(),
             );
 
             // Create and set session context BEFORE starting the workflow
             let context = SessionContext::from_snapshot(
                 snapshot.working_dir.clone(),
                 snapshot.state_path.clone(),
-                restored_state.worktree_info.as_ref(),
+                restored_view.worktree_info.as_ref(),
                 workflow_config.clone(),
             );
             session.context = Some(context);
 
             // Log resume information
             session.add_output(format!("[planning] Resumed session: {}", entry.session_id));
+            let feature_name = restored_view
+                .feature_name
+                .as_ref()
+                .map(|f| f.0.as_str())
+                .unwrap_or("<unknown>");
+            let phase = restored_view
+                .planning_phase
+                .unwrap_or(crate::domain::types::Phase::Planning);
+            let iteration = restored_view.iteration.map(|i| i.0).unwrap_or(1);
             session.add_output(format!(
                 "[planning] Feature: {}, Phase: {:?}, Iteration: {}",
-                restored_state.feature_name, restored_state.phase, restored_state.iteration
+                feature_name, phase, iteration
             ));
 
             // Log working directory info if cross-directory or using worktree
@@ -287,10 +296,21 @@ fn resume_session_in_current_process(
             session.total_cost = snapshot.ui_state.total_cost;
 
             // Start the actual workflow
+            let input = if let Some(ref workflow_id) = restored_view.workflow_id {
+                crate::domain::WorkflowInput::Resume(crate::domain::ResumeWorkflowInput {
+                    workflow_id: workflow_id.clone(),
+                })
+            } else {
+                tab_manager.session_browser.error =
+                    Some("Failed to resume: workflow ID missing from snapshot".to_string());
+                tab_manager.session_browser.resuming = false;
+                return;
+            };
+
             super::super::workflow_lifecycle::start_resumed_workflow(
                 session,
-                restored_state,
-                snapshot.state_path,
+                input,
+                restored_view,
                 &snapshot.working_dir,
                 &workflow_config,
                 output_tx,

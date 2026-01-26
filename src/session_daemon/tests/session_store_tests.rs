@@ -1,6 +1,8 @@
 //! Tests for session_store module.
 
 use super::*;
+use crate::domain::types::{FeatureName, Iteration, MaxIterations, Objective, Phase};
+use crate::domain::view::WorkflowView;
 use crate::planning_paths::{set_home_for_test, TestHomeGuard};
 use tempfile::tempdir;
 
@@ -11,8 +13,15 @@ fn test_env() -> (tempfile::TempDir, TestHomeGuard) {
     (dir, guard)
 }
 
-fn create_test_state() -> State {
-    State::new("test-feature", "Test objective", 3).unwrap()
+fn create_test_workflow_view() -> WorkflowView {
+    WorkflowView {
+        feature_name: Some(FeatureName("test-feature".to_string())),
+        objective: Some(Objective("Test objective".to_string())),
+        iteration: Some(Iteration(1)),
+        max_iterations: Some(MaxIterations(3)),
+        planning_phase: Some(Phase::Planning),
+        ..Default::default()
+    }
 }
 
 fn create_test_ui_state() -> SessionUiState {
@@ -79,7 +88,7 @@ fn create_test_ui_state() -> SessionUiState {
 
 #[test]
 fn test_snapshot_creation() {
-    let state = create_test_state();
+    let workflow_view = create_test_workflow_view();
     let ui_state = create_test_ui_state();
     let saved_at = chrono::Utc::now().to_rfc3339();
 
@@ -87,27 +96,28 @@ fn test_snapshot_creation() {
         PathBuf::from("/tmp/test"),
         "test-session-id".to_string(),
         PathBuf::from("/tmp/test/.planning-agent/test-feature.json"),
-        state.clone(),
         ui_state,
         0,
         saved_at,
         "claude-only".to_string(),
-        None, // No workflow view for legacy test
-        0,    // No event sequence
+        workflow_view,
+        0,
     );
 
     assert_eq!(snapshot.version, SNAPSHOT_VERSION);
     assert!(!snapshot.saved_at.is_empty());
     assert_eq!(snapshot.workflow_session_id, "test-session-id");
-    assert_eq!(snapshot.workflow_state.feature_name, "test-feature");
+    assert_eq!(
+        snapshot.workflow_view.feature_name.as_ref().unwrap().0,
+        "test-feature"
+    );
     assert_eq!(snapshot.workflow_name, "claude-only");
-    assert!(snapshot.workflow_view.is_none());
     assert_eq!(snapshot.last_event_sequence, 0);
 }
 
 #[test]
 fn test_snapshot_serialization_roundtrip() {
-    let state = create_test_state();
+    let workflow_view = create_test_workflow_view();
     let ui_state = create_test_ui_state();
     let saved_at = chrono::Utc::now().to_rfc3339();
 
@@ -115,12 +125,11 @@ fn test_snapshot_serialization_roundtrip() {
         PathBuf::from("/tmp/test"),
         "test-session-id".to_string(),
         PathBuf::from("/tmp/test/.planning-agent/test-feature.json"),
-        state,
         ui_state,
         5000,
         saved_at,
         "default".to_string(),
-        None,
+        workflow_view,
         0,
     );
 
@@ -131,8 +140,8 @@ fn test_snapshot_serialization_roundtrip() {
     assert_eq!(loaded.saved_at, snapshot.saved_at);
     assert_eq!(loaded.workflow_session_id, snapshot.workflow_session_id);
     assert_eq!(
-        loaded.workflow_state.feature_name,
-        snapshot.workflow_state.feature_name
+        loaded.workflow_view.feature_name,
+        snapshot.workflow_view.feature_name
     );
     assert_eq!(loaded.ui_state.name, snapshot.ui_state.name);
     assert_eq!(loaded.total_elapsed_before_resume_ms, 5000);
@@ -140,7 +149,7 @@ fn test_snapshot_serialization_roundtrip() {
 
 #[test]
 fn test_snapshot_info() {
-    let state = create_test_state();
+    let workflow_view = create_test_workflow_view();
     let ui_state = create_test_ui_state();
     let saved_at = chrono::Utc::now().to_rfc3339();
 
@@ -148,12 +157,11 @@ fn test_snapshot_info() {
         PathBuf::from("/tmp/test"),
         "test-session-id".to_string(),
         PathBuf::from("/tmp/test/.planning-agent/test-feature.json"),
-        state,
         ui_state,
         0,
         saved_at,
         "claude-only".to_string(),
-        None,
+        workflow_view,
         0,
     );
 
@@ -162,54 +170,6 @@ fn test_snapshot_info() {
     assert_eq!(info.feature_name, "test-feature");
     assert_eq!(info.phase, "Planning");
     assert_eq!(info.iteration, 1);
-}
-
-#[test]
-fn test_conflict_detection_no_conflict() {
-    let mut state = create_test_state();
-    state.set_updated_at_with("2025-12-29T14:00:00Z");
-
-    let ui_state = create_test_ui_state();
-    let snapshot = SessionSnapshot::new_with_timestamp(
-        PathBuf::from("/tmp/test"),
-        "test-session-id".to_string(),
-        PathBuf::from("/tmp/test/.planning-agent/test-feature.json"),
-        state.clone(),
-        ui_state,
-        0,
-        "2025-12-29T15:00:00Z".to_string(),
-        "claude-only".to_string(),
-        None,
-        0,
-    );
-
-    let conflict = check_conflict(&snapshot, &state);
-    assert!(conflict.is_none());
-}
-
-#[test]
-fn test_conflict_detection_with_conflict() {
-    let mut state = create_test_state();
-    state.set_updated_at_with("2025-12-29T16:00:00Z");
-
-    let ui_state = create_test_ui_state();
-    let original_state = create_test_state();
-    let snapshot = SessionSnapshot::new_with_timestamp(
-        PathBuf::from("/tmp/test"),
-        "test-session-id".to_string(),
-        PathBuf::from("/tmp/test/.planning-agent/test-feature.json"),
-        original_state,
-        ui_state,
-        0,
-        "2025-12-29T15:00:00Z".to_string(),
-        "claude-only".to_string(),
-        None,
-        0,
-    );
-
-    let conflict = check_conflict(&snapshot, &state);
-    assert!(conflict.is_some());
-    assert_eq!(conflict.unwrap(), "2025-12-29T16:00:00Z");
 }
 
 #[test]
@@ -229,7 +189,7 @@ fn test_session_centric_snapshot_path() {
 fn test_save_and_load_session_centric_snapshot() {
     let (_temp_dir, _guard) = test_env();
 
-    let state = create_test_state();
+    let workflow_view = create_test_workflow_view();
     let ui_state = create_test_ui_state();
     let session_id = format!("test-session-{}", uuid::Uuid::new_v4());
     let saved_at = chrono::Utc::now().to_rfc3339();
@@ -238,12 +198,11 @@ fn test_save_and_load_session_centric_snapshot() {
         PathBuf::from("/tmp/test"),
         session_id.clone(),
         PathBuf::from("/tmp/test/.planning-agent/test-feature.json"),
-        state,
         ui_state,
         0,
         saved_at,
         "claude-only".to_string(),
-        None,
+        workflow_view,
         0,
     );
 
@@ -259,7 +218,10 @@ fn test_save_and_load_session_centric_snapshot() {
     let loaded = load_result.unwrap();
 
     assert_eq!(loaded.workflow_session_id, session_id);
-    assert_eq!(loaded.workflow_state.feature_name, "test-feature");
+    assert_eq!(
+        loaded.workflow_view.feature_name.as_ref().unwrap().0,
+        "test-feature"
+    );
 
     let _ = delete_snapshot(&session_id);
 }

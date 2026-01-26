@@ -45,9 +45,10 @@ pub fn draw_main(
     // Split right column into Objective (top), CLI Instances (middle), and Stats (bottom)
     let right_area = chunks[1];
     let objective_text = session
-        .workflow_state
+        .workflow_view
         .as_ref()
-        .map(|s| s.objective.as_str())
+        .and_then(|v| v.objective.as_ref())
+        .map(|o| o.as_str())
         .unwrap_or("");
 
     // Compute objective height based on content and available space

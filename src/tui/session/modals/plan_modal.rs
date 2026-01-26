@@ -14,13 +14,20 @@ impl Session {
             false
         } else {
             // Try to open the modal
-            if let Some(ref state) = self.workflow_state {
-                let plan_path = if state.plan_file.is_absolute() {
-                    state.plan_file.clone()
-                } else {
-                    working_dir.join(&state.plan_file)
-                };
+            let plan_path_opt = self
+                .workflow_view
+                .as_ref()
+                .and_then(|v| v.plan_path.as_ref())
+                .map(|p| {
+                    let path = p.as_path();
+                    if path.is_absolute() {
+                        path.to_path_buf()
+                    } else {
+                        working_dir.join(path)
+                    }
+                });
 
+            if let Some(plan_path) = plan_path_opt {
                 match std::fs::read_to_string(&plan_path) {
                     Ok(content) => {
                         self.plan_modal_content = content;
@@ -40,7 +47,7 @@ impl Session {
                     }
                 }
             } else {
-                // No workflow state, cannot open modal
+                // No workflow view or plan path, cannot open modal
                 false
             }
         }

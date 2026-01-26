@@ -13,9 +13,9 @@ pub use cli_instances::{CliInstance, CliInstanceId};
 
 use crate::app::AccountUsage;
 use crate::app::WorkflowResult;
+use crate::domain::types::{AgentId, ImplementationPhase, Phase, UiMode};
 use crate::domain::view::WorkflowView;
 use crate::phases::implementing_conversation_key;
-use crate::state::{ImplementationPhase, Phase, State, UiMode};
 use crate::tui::event::{TokenUsage, WorkflowCommand};
 use crate::tui::mention::MentionState;
 use crate::tui::slash::SlashState;
@@ -80,9 +80,7 @@ pub struct Session {
     pub streaming_follow_mode: bool,
     pub focused_panel: FocusedPanel,
 
-    /// Full workflow state (legacy, for persistence).
-    pub workflow_state: Option<State>,
-    /// Event-sourced workflow view (replaces workflow_state in CQRS mode).
+    /// Event-sourced workflow view for UI state.
     pub workflow_view: Option<WorkflowView>,
     pub start_time: Instant,
     pub total_cost: f64,
@@ -220,8 +218,7 @@ impl Session {
             streaming_follow_mode: true,
             focused_panel: FocusedPanel::default(),
 
-            workflow_state: None,
-            workflow_view: None, // Set when CQRS workflow sends view updates
+            workflow_view: None,
             start_time: Instant::now(),
             total_cost: 0.0,
             running: true,
@@ -331,17 +328,12 @@ impl Session {
         self.error_scroll = 0;
     }
 
-    /// Returns the feature name from workflow view, workflow state, or session name.
+    /// Returns the feature name from workflow view or session name.
     pub fn feature_name(&self) -> &str {
         self.workflow_view
             .as_ref()
             .and_then(|v| v.feature_name.as_ref())
             .map(|f| f.as_str())
-            .or_else(|| {
-                self.workflow_state
-                    .as_ref()
-                    .map(|s| s.feature_name.as_str())
-            })
             .unwrap_or(&self.name)
     }
 
@@ -482,10 +474,10 @@ impl Session {
 
     /// Returns true if implementation follow-up interaction is available.
     pub fn can_interact_with_implementation(&self) -> bool {
-        let Some(state) = self.workflow_state.as_ref() else {
+        let Some(view) = self.workflow_view.as_ref() else {
             return false;
         };
-        let Some(impl_state) = state.implementation_state.as_ref() else {
+        let Some(impl_state) = view.implementation_state.as_ref() else {
             return false;
         };
         if impl_state.phase != ImplementationPhase::Complete {
@@ -501,9 +493,9 @@ impl Session {
             return false;
         };
         let conversation_key = implementing_conversation_key(agent_name);
-        state
-            .agent_conversations
-            .get(&conversation_key)
+        let agent_id = AgentId::from(conversation_key.as_str());
+        view.agent_conversations
+            .get(&agent_id)
             .and_then(|conv| conv.conversation_id.as_ref())
             .is_some()
     }
@@ -511,28 +503,29 @@ impl Session {
     /// Returns the current UI mode (Planning or Implementation).
     /// Used by the theme system to determine which color palette to use.
     pub fn ui_mode(&self) -> UiMode {
-        match &self.workflow_state {
-            Some(state) => state.workflow_stage(),
-            None => UiMode::Planning,
-        }
+        self.workflow_view
+            .as_ref()
+            .map(|v| v.ui_mode())
+            .unwrap_or(UiMode::Planning)
     }
 
     pub fn phase_name(&self) -> &str {
-        match &self.workflow_state {
-            Some(state) => {
+        match &self.workflow_view {
+            Some(view) => {
                 // If implementation is active, show implementation sub-phase
-                if let Some(impl_state) = &state.implementation_state {
+                if let Some(impl_state) = &view.implementation_state {
                     if impl_state.phase != ImplementationPhase::Complete {
                         return impl_state.phase.label();
                     }
                 }
                 // Otherwise show planning workflow phase
-                match state.phase {
-                    Phase::Planning => "Planning",
-                    Phase::Reviewing => "Reviewing",
-                    Phase::Revising => "Revising",
-                    Phase::AwaitingPlanningDecision => "Awaiting Decision",
-                    Phase::Complete => "Complete",
+                match view.planning_phase {
+                    Some(Phase::Planning) => "Planning",
+                    Some(Phase::Reviewing) => "Reviewing",
+                    Some(Phase::Revising) => "Revising",
+                    Some(Phase::AwaitingPlanningDecision) => "Awaiting Decision",
+                    Some(Phase::Complete) => "Complete",
+                    None => "Initializing",
                 }
             }
             None => "Initializing",
@@ -540,16 +533,18 @@ impl Session {
     }
 
     pub fn iteration(&self) -> (u32, u32) {
-        match &self.workflow_state {
-            Some(state) => {
+        match &self.workflow_view {
+            Some(view) => {
                 // If implementation is active, show implementation iteration
-                if let Some(impl_state) = &state.implementation_state {
+                if let Some(impl_state) = &view.implementation_state {
                     if impl_state.phase != ImplementationPhase::Complete {
-                        return (impl_state.iteration, impl_state.max_iterations);
+                        return (impl_state.iteration.0, impl_state.max_iterations.0);
                     }
                 }
                 // Otherwise show planning workflow iteration
-                (state.iteration, state.max_iterations)
+                let iter = view.iteration.map(|i| i.0).unwrap_or(0);
+                let max = view.max_iterations.map(|m| m.0).unwrap_or(0);
+                (iter, max)
             }
             None => (0, 0),
         }

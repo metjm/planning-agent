@@ -7,8 +7,8 @@ pub mod protocol;
 pub mod runner;
 
 use crate::config::AgentConfig;
+use crate::domain::types::ResumeStrategy;
 use crate::session_daemon::SessionLogger;
-use crate::state::ResumeStrategy;
 use crate::tui::SessionEventSender;
 use anyhow::Result;
 use prompt::{prepare_prompt, AgentCapabilities, PreparedPrompt, PromptRequest};

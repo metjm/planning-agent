@@ -7,15 +7,12 @@
 use crate::app::util::build_resume_command;
 use crate::app::workflow::{WorkflowResult, WorkflowRunConfig};
 use crate::config::WorkflowConfig;
-use crate::planning_paths;
-// Note: WorkflowConfig is still needed for start_resumed_workflow's parameter
-use crate::state::{Phase, State};
+use crate::domain::{WorkflowInput, WorkflowView};
 use crate::tui::session::context::compute_effective_working_dir;
 use crate::tui::{Session, SessionStatus, TabManager, UserApprovalResponse, WorkflowCommand};
 use std::path::{Path, PathBuf};
 use tokio::sync::mpsc;
 
-use super::snapshot_helper::create_and_save_snapshot;
 use super::{run_workflow_with_config, ResumableSession};
 
 /// Starts a workflow for a resumed session.
@@ -33,13 +30,13 @@ use super::{run_workflow_with_config, ResumableSession};
 /// - Falls back to `working_dir` parameter if context is not set
 pub fn start_resumed_workflow(
     session: &mut Session,
-    state: State,
-    state_path: PathBuf,
+    input: WorkflowInput,
+    view: WorkflowView,
     working_dir: &Path,
     workflow_config: &WorkflowConfig,
     output_tx: &mpsc::UnboundedSender<crate::tui::Event>,
 ) {
-    session.workflow_state = Some(state.clone());
+    session.workflow_view = Some(view.clone());
     session.status = SessionStatus::Planning;
     session.running = true;
 
@@ -53,14 +50,12 @@ pub fn start_resumed_workflow(
     let run_id = session.current_run_id;
 
     // Use effective_working_dir from session context if available,
-    // otherwise compute from state's worktree_info or fall back to working_dir
+    // otherwise compute from view's worktree_info or fall back to working_dir
     let effective_working_dir = session
         .context
         .as_ref()
         .map(|ctx| ctx.effective_working_dir.clone())
-        .unwrap_or_else(|| {
-            compute_effective_working_dir(working_dir, state.worktree_info.as_ref())
-        });
+        .unwrap_or_else(|| compute_effective_working_dir(working_dir, view.worktree_info.as_ref()));
 
     let cfg = workflow_config.clone();
     let workflow_handle = tokio::spawn({
@@ -69,10 +64,9 @@ pub fn start_resumed_workflow(
         let sid = session.id;
         async move {
             run_workflow_with_config(
-                state,
+                input,
                 WorkflowRunConfig {
                     working_dir,
-                    state_path,
                     config: cfg,
                     output_tx: tx,
                     approval_rx: new_approval_rx,
@@ -89,6 +83,20 @@ pub fn start_resumed_workflow(
     session.workflow_handle = Some(workflow_handle);
 }
 
+/// Result from initialization task containing all data needed to start a workflow.
+pub struct InitResult {
+    /// The workflow input (New or Resume).
+    pub input: WorkflowInput,
+    /// Initial workflow view (empty for new workflows, populated for resume).
+    pub view: WorkflowView,
+    /// Path to store workflow state.
+    pub state_path: PathBuf,
+    /// Human-readable feature name.
+    pub feature_name: String,
+    /// Effective working directory (may differ from base if using worktrees).
+    pub effective_working_dir: PathBuf,
+}
+
 /// Handles the completion of session initialization.
 ///
 /// This is called when an init task (loading state, extracting feature name, etc.)
@@ -98,13 +106,21 @@ pub fn start_resumed_workflow(
 /// for base_working_dir, ensuring that /workflow selections are always respected.
 pub async fn handle_init_completion(
     session_id: usize,
-    handle: tokio::task::JoinHandle<anyhow::Result<(State, PathBuf, String, PathBuf)>>,
+    handle: tokio::task::JoinHandle<anyhow::Result<InitResult>>,
     tab_manager: &mut TabManager,
     base_working_dir: &Path,
     output_tx: &mpsc::UnboundedSender<crate::tui::Event>,
 ) {
     match handle.await {
-        Ok(Ok((state, state_path, feature_name, effective_working_dir))) => {
+        Ok(Ok(init_result)) => {
+            let InitResult {
+                input,
+                view,
+                state_path,
+                feature_name,
+                effective_working_dir,
+            } = init_result;
+
             if let Some(session) = tab_manager.session_by_id_mut(session_id) {
                 // Load workflow config from persisted selection for this working directory
                 // This ensures /workflow changes are respected for new sessions
@@ -114,7 +130,7 @@ pub async fn handle_init_completion(
                     );
 
                 session.name = feature_name;
-                session.workflow_state = Some(state.clone());
+                session.workflow_view = Some(view.clone());
 
                 // Set up session context with computed effective_working_dir
                 session.context = Some(crate::tui::SessionContext::new(
@@ -124,8 +140,8 @@ pub async fn handle_init_completion(
                     workflow_config.clone(),
                 ));
 
-                // Check if state has a failure that needs recovery (from stopped sessions)
-                if let Some(ref failure) = state.last_failure {
+                // Check if view has a failure that needs recovery (from stopped sessions)
+                if let Some(ref failure) = view.last_failure {
                     let summary = crate::app::util::build_resume_failure_summary(failure);
                     if matches!(
                         failure.kind,
@@ -160,10 +176,9 @@ pub async fn handle_init_completion(
                     let sid = session_id;
                     async move {
                         run_workflow_with_config(
-                            state,
+                            input,
                             WorkflowRunConfig {
                                 working_dir,
-                                state_path,
                                 config: cfg,
                                 output_tx: tx,
                                 approval_rx: new_approval_rx,
@@ -280,18 +295,18 @@ fn handle_workflow_restart(
                 ctx.effective_working_dir.clone(),
                 ctx.workflow_config.clone(),
             )
-        } else if let Some(ref state) = session.workflow_state {
-            // No context but have state - compute effective_working_dir from worktree_info
+        } else if let Some(ref view) = session.workflow_view {
+            // No context but have view - compute effective_working_dir from worktree_info
             // and load workflow config from current selection
             let effective =
-                compute_effective_working_dir(global_working_dir, state.worktree_info.as_ref());
+                compute_effective_working_dir(global_working_dir, view.worktree_info.as_ref());
             let workflow_config =
                 crate::app::tui_runner::workflow_loading::load_workflow_from_selection(
                     global_working_dir,
                 );
             (global_working_dir.to_path_buf(), effective, workflow_config)
         } else {
-            // No context and no state - use global working dir and load from selection
+            // No context and no view - use global working dir and load from selection
             let workflow_config =
                 crate::app::tui_runner::workflow_loading::load_workflow_from_selection(
                     global_working_dir,
@@ -318,71 +333,73 @@ fn handle_workflow_restart(
         base_working_dir.clone()
     };
 
-    if let Some(ref mut state) = session.workflow_state {
-        state.phase = Phase::Planning;
-        // Note: iteration is intentionally preserved across restarts.
-        // User feedback refines the current iteration, not starts fresh.
-        // This also ensures max_iterations is properly enforced.
-        state.approval_overridden = false;
-        state.objective = format!(
-            "{}\n\nUSER FEEDBACK: The previous plan was reviewed and needs changes:\n{}",
-            state.objective, user_feedback
-        );
+    // Get workflow_id and feature_name from view for resume
+    let Some(ref view) = session.workflow_view else {
+        session.handle_error("No workflow view available for restart");
+        return;
+    };
 
-        // Use base_working_dir for state_path computation (consistent with how sessions are stored)
-        let state_path = session
-            .context
-            .as_ref()
-            .map(|ctx| ctx.state_path.clone())
-            .or_else(|| planning_paths::state_path(&base_working_dir, &state.feature_name).ok());
+    let Some(ref workflow_id) = view.workflow_id else {
+        session.handle_error("No workflow ID available for restart");
+        return;
+    };
 
-        let state_path = match state_path {
-            Some(p) => p,
-            None => {
-                session.handle_error("Failed to get state path");
-                return;
-            }
-        };
+    let feature_name = view
+        .feature_name
+        .as_ref()
+        .map(|f| f.0.clone())
+        .unwrap_or_default();
 
-        state.set_updated_at();
-        let _ = state.save(&state_path);
+    // Use base_working_dir for state_path computation (consistent with how sessions are stored)
+    let _state_path = session
+        .context
+        .as_ref()
+        .map(|ctx| ctx.state_path.clone())
+        .or_else(|| crate::planning_paths::state_path(&base_working_dir, &feature_name).ok());
 
-        let (new_approval_tx, new_approval_rx) = mpsc::channel::<UserApprovalResponse>(1);
-        session.approval_tx = Some(new_approval_tx);
+    let Some(_state_path) = _state_path else {
+        session.handle_error("Failed to get state path");
+        return;
+    };
 
-        let (new_control_tx, new_control_rx) = mpsc::channel::<WorkflowCommand>(1);
-        session.workflow_control_tx = Some(new_control_tx);
+    // Create resume input - the workflow engine will handle the restart logic
+    let input = WorkflowInput::Resume(crate::domain::ResumeWorkflowInput {
+        workflow_id: workflow_id.clone(),
+    });
 
-        session.current_run_id += 1;
-        let run_id = session.current_run_id;
+    let (new_approval_tx, new_approval_rx) = mpsc::channel::<UserApprovalResponse>(1);
+    session.approval_tx = Some(new_approval_tx);
 
-        let cfg = workflow_config;
-        let new_handle = tokio::spawn({
-            let state = state.clone();
-            let working_dir = effective_working_dir;
-            let tx = output_tx.clone();
-            let sid = session.id;
-            async move {
-                run_workflow_with_config(
-                    state,
-                    WorkflowRunConfig {
-                        working_dir,
-                        state_path,
-                        config: cfg,
-                        output_tx: tx,
-                        approval_rx: new_approval_rx,
-                        control_rx: new_control_rx,
-                        session_id: sid,
-                        run_id,
-                        no_daemon: false,
-                    },
-                )
-                .await
-            }
-        });
+    let (new_control_tx, new_control_rx) = mpsc::channel::<WorkflowCommand>(1);
+    session.workflow_control_tx = Some(new_control_tx);
 
-        session.workflow_handle = Some(new_handle);
-    }
+    session.current_run_id += 1;
+    let run_id = session.current_run_id;
+
+    let cfg = workflow_config;
+    let new_handle = tokio::spawn({
+        let working_dir = effective_working_dir;
+        let tx = output_tx.clone();
+        let sid = session.id;
+        async move {
+            run_workflow_with_config(
+                input,
+                WorkflowRunConfig {
+                    working_dir,
+                    config: cfg,
+                    output_tx: tx,
+                    approval_rx: new_approval_rx,
+                    control_rx: new_control_rx,
+                    session_id: sid,
+                    run_id,
+                    no_daemon: false,
+                },
+            )
+            .await
+        }
+    });
+
+    session.workflow_handle = Some(new_handle);
 }
 
 /// Handles a workflow that was stopped by the user.
@@ -402,18 +419,8 @@ fn handle_workflow_stopped(
         .map(|ctx| ctx.base_working_dir.clone())
         .unwrap_or_else(|| global_working_dir.to_path_buf());
 
-    let mut snapshot_saved = false;
-    if let Some(ref state) = session.workflow_state {
-        match create_and_save_snapshot(session, state, &base_working_dir) {
-            Ok(path) => {
-                session.add_output(format!("[planning] Session saved: {}", path.display()));
-                snapshot_saved = true;
-            }
-            Err(e) => {
-                session.add_output(format!("[planning] Warning: Failed to save: {}", e));
-            }
-        }
-    }
+    // Note: Snapshot saving with the new CQRS model uses the event store,
+    // so we don't need to save explicit state here. The event log is the source of truth.
 
     session.status = SessionStatus::Stopped;
     session.running = false;
@@ -421,11 +428,11 @@ fn handle_workflow_stopped(
     session.add_output("".to_string());
     session.add_output("=== SESSION STOPPED ===".to_string());
 
-    let session_info = session.workflow_state.as_ref().map(|state| {
-        (
-            state.workflow_session_id.clone(),
-            state.feature_name.clone(),
-        )
+    // Extract session info from workflow_view
+    let session_info = session.workflow_view.as_ref().and_then(|view| {
+        let workflow_id = view.workflow_id.as_ref()?.to_string();
+        let feature_name = view.feature_name.as_ref()?.0.clone();
+        Some((workflow_id, feature_name))
     });
 
     if let Some((workflow_session_id, feature_name)) = session_info {
@@ -433,13 +440,11 @@ fn handle_workflow_stopped(
         let resume_cmd = build_resume_command(&workflow_session_id, &base_working_dir);
         session.add_output(format!("To resume: {}", resume_cmd));
 
-        if snapshot_saved {
-            return Some(ResumableSession {
-                feature_name,
-                session_id: workflow_session_id,
-                working_dir: base_working_dir,
-            });
-        }
+        return Some(ResumableSession {
+            feature_name,
+            session_id: workflow_session_id,
+            working_dir: base_working_dir,
+        });
     }
 
     None

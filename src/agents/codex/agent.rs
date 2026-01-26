@@ -7,7 +7,7 @@ use crate::agents::runner::{
 };
 use crate::agents::{AgentContext, AgentResult};
 use crate::config::AgentConfig;
-use crate::state::ResumeStrategy;
+use crate::domain::types::ResumeStrategy;
 use anyhow::Result;
 use std::path::PathBuf;
 use std::time::Duration;

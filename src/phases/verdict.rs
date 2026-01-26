@@ -25,17 +25,6 @@ impl VerificationVerdictResult {
                 | VerificationVerdictResult::ParseFailure { .. }
         )
     }
-
-    /// Converts the verdict to a string representation for state storage.
-    pub fn to_state_string(&self) -> String {
-        match self {
-            VerificationVerdictResult::Approved => "APPROVED".to_string(),
-            VerificationVerdictResult::NeedsRevision => "NEEDS_REVISION".to_string(),
-            VerificationVerdictResult::ParseFailure { reason } => {
-                format!("PARSE_FAILURE: {}", reason)
-            }
-        }
-    }
 }
 
 /// Parses the verification verdict from a verification/review report.

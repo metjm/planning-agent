@@ -84,24 +84,18 @@ pub async fn process_event(
         Event::Output(line) => {
             handle_legacy_output(first_session_id, line, tab_manager);
         }
-        Event::StateUpdate(new_state) => {
-            if let Some(session) = tab_manager.session_by_id_mut(first_session_id) {
-                session.name = new_state.feature_name.clone();
-                session.workflow_state = Some(new_state);
-            }
-        }
         Event::SnapshotRequest => {
             // Save snapshot for all active sessions (periodic auto-save)
             // Use each session's context base_working_dir if available
             for session in tab_manager.sessions_mut() {
                 if session.workflow_handle.is_some() {
-                    if let Some(ref state) = session.workflow_state {
+                    if let Some(ref view) = session.workflow_view {
                         let base_working_dir = session
                             .context
                             .as_ref()
                             .map(|ctx| ctx.base_working_dir.as_path())
                             .unwrap_or(working_dir);
-                        let _ = create_and_save_snapshot(session, state, base_working_dir);
+                        let _ = create_and_save_snapshot(session, view, base_working_dir);
                     }
                 }
             }

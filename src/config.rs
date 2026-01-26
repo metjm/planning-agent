@@ -1,6 +1,6 @@
 use crate::config_modes::{ClaudeModeConfig, CodexModeConfig, GeminiModeConfig};
 use crate::domain::failure::FailurePolicy;
-use crate::state::ResumeStrategy;
+use crate::domain::types::ResumeStrategy;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

@@ -14,7 +14,6 @@ pub mod prompt_format;
 mod rpc;
 mod session_daemon;
 mod skills;
-mod state;
 pub mod structured_logger;
 mod tui;
 mod update;

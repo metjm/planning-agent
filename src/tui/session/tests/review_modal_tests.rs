@@ -1,15 +1,20 @@
 use super::*;
+use crate::domain::types::WorkflowId;
+use crate::domain::view::WorkflowView;
 use crate::planning_paths::{session_dir, set_home_for_test};
-use crate::state::State;
 use std::path::Path;
 use tempfile::tempdir;
 
-fn setup_session(session_id: &str) -> Session {
+/// Creates a session with a workflow_view that has a random workflow_id.
+/// Returns (session, session_id_string) where session_id_string is the
+/// UUID string that should be used for session_dir().
+fn setup_session() -> (Session, String) {
     let mut session = Session::new(0);
-    let mut state = State::new("test-feature", "objective", 1).expect("state");
-    state.workflow_session_id = session_id.to_string();
-    session.workflow_state = Some(state);
-    session
+    let workflow_id = uuid::Uuid::new_v4();
+    let mut view = WorkflowView::default();
+    view.workflow_id = Some(WorkflowId(workflow_id));
+    session.workflow_view = Some(view);
+    (session, workflow_id.to_string())
 }
 
 #[test]
@@ -17,8 +22,8 @@ fn test_review_modal_loads_plan_and_implementation_reviews() {
     let temp = tempdir().expect("tempdir");
     let _guard = set_home_for_test(temp.path().to_path_buf());
 
-    let session_id = "session-1";
-    let dir = session_dir(session_id).expect("session dir");
+    let (mut session, session_id) = setup_session();
+    let dir = session_dir(&session_id).expect("session dir");
     fs::create_dir_all(&dir).expect("create dir");
     fs::write(dir.join("feedback_1.md"), "Plan review").expect("write plan");
     fs::write(
@@ -26,8 +31,6 @@ fn test_review_modal_loads_plan_and_implementation_reviews() {
         "Implementation review",
     )
     .expect("write implementation");
-
-    let mut session = setup_session(session_id);
 
     assert!(session.toggle_review_modal(Path::new(".")));
 
@@ -45,8 +48,8 @@ fn test_review_modal_orders_by_iteration() {
     let temp = tempdir().expect("tempdir");
     let _guard = set_home_for_test(temp.path().to_path_buf());
 
-    let session_id = "session-2";
-    let dir = session_dir(session_id).expect("session dir");
+    let (mut session, session_id) = setup_session();
+    let dir = session_dir(&session_id).expect("session dir");
     fs::create_dir_all(&dir).expect("create dir");
     fs::write(dir.join("feedback_1.md"), "Plan review").expect("write plan");
     fs::write(
@@ -54,8 +57,6 @@ fn test_review_modal_orders_by_iteration() {
         "Implementation review",
     )
     .expect("write implementation");
-
-    let mut session = setup_session(session_id);
 
     assert!(session.toggle_review_modal(Path::new(".")));
 

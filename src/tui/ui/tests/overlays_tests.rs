@@ -1,49 +1,37 @@
 use super::overlays::{build_phase_spans, PhaseDisplayMode};
 use super::theme::Theme;
-use crate::state::{ImplementationPhase, ImplementationPhaseState, Phase, State};
+use crate::domain::types::{
+    ImplementationPhase, ImplementationPhaseState, Iteration, MaxIterations, Phase,
+};
+use crate::domain::view::WorkflowView;
 use crate::tui::session::Session;
-use std::path::PathBuf;
 
-fn make_test_state(phase: Phase) -> State {
-    State {
-        phase,
-        iteration: 1,
-        max_iterations: 3,
-        feature_name: "test".to_string(),
-        objective: "test".to_string(),
-        plan_file: PathBuf::from("/tmp/plan.md"),
-        feedback_file: PathBuf::from("/tmp/feedback.md"),
-        last_feedback_status: None,
-        approval_overridden: false,
-        workflow_session_id: "test".to_string(),
-        agent_conversations: Default::default(),
-        invocations: Default::default(),
-        updated_at: Default::default(),
-        last_failure: None,
-        failure_history: Default::default(),
-        worktree_info: None,
-        implementation_state: None,
-        sequential_review: None,
+fn make_test_view(phase: Phase) -> WorkflowView {
+    WorkflowView {
+        planning_phase: Some(phase),
+        iteration: Some(Iteration(1)),
+        max_iterations: Some(MaxIterations(3)),
+        ..Default::default()
     }
 }
 
 fn make_test_session_with_phase(phase: Phase) -> Session {
     let mut session = Session::default();
-    session.workflow_state = Some(make_test_state(phase));
+    session.workflow_view = Some(make_test_view(phase));
     session
 }
 
 fn make_test_session_with_impl_phase(impl_phase: ImplementationPhase) -> Session {
     let mut session = Session::default();
-    let mut state = make_test_state(Phase::Complete);
-    state.implementation_state = Some(ImplementationPhaseState {
+    let mut view = make_test_view(Phase::Complete);
+    view.implementation_state = Some(ImplementationPhaseState {
         phase: impl_phase,
-        iteration: 1,
-        max_iterations: 3,
+        iteration: Iteration(1),
+        max_iterations: MaxIterations(3),
         last_verdict: None,
         last_feedback: None,
     });
-    session.workflow_state = Some(state);
+    session.workflow_view = Some(view);
     session
 }
 
@@ -138,8 +126,7 @@ fn test_awaiting_planning_decision_maps_to_reviewing_current() {
 
 #[test]
 fn test_awaiting_max_iterations_decision_shows_deciding_active() {
-    let session =
-        make_test_session_with_impl_phase(ImplementationPhase::AwaitingMaxIterationsDecision);
+    let session = make_test_session_with_impl_phase(ImplementationPhase::AwaitingDecision);
     let theme = Theme::implementation();
     let spans = build_phase_spans(
         &session,

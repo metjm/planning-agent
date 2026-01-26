@@ -97,18 +97,15 @@ pub(crate) async fn dispatch_domain_command(
 
 use crate::app::implementation::{run_implementation_workflow, ImplementationContext};
 use crate::app::workflow_decisions::{
-    apply_planning_decision, await_max_iterations_decision,
-    build_max_iterations_summary_from_state, IterativePhase, MaxIterationsDecision,
+    await_max_iterations_decision, IterativePhase, MaxIterationsDecision,
 };
 use crate::config::WorkflowConfig;
 use crate::domain::actor::{create_actor_args, WorkflowActor};
-use crate::domain::types::{
-    FeatureName, FeedbackPath, MaxIterations, Objective, PlanPath, WorkingDir,
-};
+use crate::domain::input::WorkflowInput;
+use crate::domain::types::{FeedbackPath, Iteration, Phase, PlanPath, WorkingDir};
 use crate::planning_paths;
 use crate::session_daemon::create_session_logger;
 use crate::session_daemon::SessionTracker;
-use crate::state::{Phase, State};
 use crate::structured_logger::StructuredLogger;
 use crate::tui::{
     CancellationError, Event, SessionEventSender, UserApprovalResponse, WorkflowCommand,
@@ -121,7 +118,10 @@ use tokio::sync::mpsc;
 
 use completion::handle_completion;
 use planning::run_planning_phase;
-use reviewing::{run_reviewing_phase, run_sequential_reviewing_phase, WorkflowPhaseContext};
+use reviewing::{
+    build_max_iterations_summary_from_view, run_reviewing_phase, run_sequential_reviewing_phase,
+    WorkflowPhaseContext,
+};
 use revising::run_revising_phase;
 
 pub enum WorkflowResult {
@@ -140,7 +140,6 @@ pub enum WorkflowResult {
 
 pub struct WorkflowRunConfig {
     pub working_dir: PathBuf,
-    pub state_path: PathBuf,
     pub config: WorkflowConfig,
     pub output_tx: mpsc::UnboundedSender<Event>,
     pub approval_rx: mpsc::Receiver<UserApprovalResponse>,
@@ -152,12 +151,11 @@ pub struct WorkflowRunConfig {
 }
 
 pub async fn run_workflow_with_config(
-    mut state: State,
+    input: WorkflowInput,
     run_config: WorkflowRunConfig,
 ) -> Result<WorkflowResult> {
     let WorkflowRunConfig {
         working_dir,
-        state_path,
         config,
         output_tx,
         mut approval_rx,
@@ -169,8 +167,12 @@ pub async fn run_workflow_with_config(
 
     let sender = SessionEventSender::new(session_id, run_id, output_tx);
 
+    // Get workflow session ID from input
+    let workflow_session_id = input.workflow_session_id();
+    let workflow_session_id_str = workflow_session_id.to_string();
+
     // Create session logger for workflow events
-    let session_logger = create_session_logger(&state.workflow_session_id)?;
+    let session_logger = create_session_logger(&workflow_session_id_str)?;
     session_logger.log(
         LogLevel::Info,
         LogCategory::Workflow,
@@ -179,24 +181,24 @@ pub async fn run_workflow_with_config(
 
     // Create structured JSONL logger for debugging
     let structured_logger = {
-        let logs_dir = planning_paths::session_logs_dir(&state.workflow_session_id)?;
-        Arc::new(StructuredLogger::new(
-            &state.workflow_session_id,
-            &logs_dir,
-        )?)
+        let logs_dir = planning_paths::session_logs_dir(&workflow_session_id_str)?;
+        Arc::new(StructuredLogger::new(&workflow_session_id_str, &logs_dir)?)
     };
     structured_logger.log_workflow_spawn(false);
 
     // Initialize CQRS actor for event-sourced state management
-    let session_dir = planning_paths::session_dir(&state.workflow_session_id)?;
-    let (actor_args, mut view_rx, event_rx) = create_actor_args(&state.workflow_session_id)?;
+    let session_dir = planning_paths::session_dir(&workflow_session_id_str)?;
+    let (actor_args, view_rx, event_rx) = create_actor_args(&workflow_session_id_str)?;
     let (actor_ref, _actor_handle) = WorkflowActor::spawn(None, WorkflowActor, actor_args)
         .await
         .map_err(|e| anyhow::anyhow!("Failed to spawn workflow actor: {}", e))?;
 
-    // Spawn task to forward CQRS view updates to TUI
+    // Keep view_rx for reading current view in the main loop
+    // Also spawn a task to forward CQRS view updates to TUI
+    let view_rx_for_loop = view_rx.clone();
     let view_sender = sender.clone();
     tokio::spawn(async move {
+        let mut view_rx = view_rx;
         while view_rx.changed().await.is_ok() {
             let view = view_rx.borrow().clone();
             view_sender.send_view_update(view);
@@ -208,13 +210,15 @@ pub async fn run_workflow_with_config(
 
     // Spawn task to forward CQRS events to daemon for broadcasting to subscribers
     {
-        let session_id = state.workflow_session_id.clone();
+        let session_id_for_events = workflow_session_id_str.clone();
         let tracker_clone = tracker.clone();
         let mut event_rx = event_rx;
         tokio::spawn(async move {
             while let Ok(event) = event_rx.recv().await {
                 // Forward event to daemon (ignore errors - daemon may not be running)
-                let _ = tracker_clone.workflow_event(&session_id, event).await;
+                let _ = tracker_clone
+                    .workflow_event(&session_id_for_events, event)
+                    .await;
             }
         });
     }
@@ -225,16 +229,19 @@ pub async fn run_workflow_with_config(
         "CQRS workflow actor initialized",
     );
 
-    // Send CreateWorkflow command for new workflows (iteration == 1 at Planning phase)
+    // For new workflows, send CreateWorkflow command
     // For resumed workflows, the aggregate state is replayed from the event log
-    if state.phase == Phase::Planning && state.iteration == 1 {
+    if let WorkflowInput::New(ref new_input) = input {
+        let plan_path = planning_paths::session_plan_path(&workflow_session_id_str)?;
+        let feedback_path = planning_paths::session_feedback_path(&workflow_session_id_str, 1)?;
+
         let create_cmd = DomainCommand::CreateWorkflow {
-            feature_name: FeatureName::from(state.feature_name.as_str()),
-            objective: Objective::from(state.objective.as_str()),
+            feature_name: new_input.feature_name.clone(),
+            objective: new_input.objective.clone(),
             working_dir: WorkingDir::from(working_dir.as_path()),
-            max_iterations: MaxIterations(state.max_iterations),
-            plan_path: PlanPath::from(state.plan_file.clone()),
-            feedback_path: FeedbackPath::from(state.feedback_file.clone()),
+            max_iterations: new_input.max_iterations,
+            plan_path: PlanPath::from(plan_path),
+            feedback_path: FeedbackPath::from(feedback_path),
         };
         let (reply_tx, reply_rx) = oneshot::channel();
         actor_ref
@@ -286,14 +293,10 @@ pub async fn run_workflow_with_config(
         }
 
         // Dispatch AttachWorktree command if worktree info is present
-        if let Some(ref wt_info) = state.worktree_info {
-            let worktree_state = crate::domain::types::WorktreeState {
-                worktree_path: wt_info.worktree_path.clone(),
-                branch_name: wt_info.branch_name.clone(),
-                source_branch: wt_info.source_branch.clone(),
-                original_dir: wt_info.original_dir.clone(),
+        if let Some(ref wt_info) = new_input.worktree_info {
+            let attach_cmd = DomainCommand::AttachWorktree {
+                worktree_state: wt_info.clone(),
             };
-            let attach_cmd = DomainCommand::AttachWorktree { worktree_state };
             let (reply_tx, reply_rx) = oneshot::channel();
             if let Err(e) =
                 actor_ref.send_message(WorkflowMessage::Command(Box::new(attach_cmd), reply_tx))
@@ -313,16 +316,31 @@ pub async fn run_workflow_with_config(
         }
     }
 
+    // Get the initial view from the actor
+    let view = view_rx_for_loop.borrow().clone();
+
+    // Extract feature_name for daemon registration (from input for new, from view for resume)
+    let feature_name_for_daemon = match &input {
+        WorkflowInput::New(new_input) => new_input.feature_name.0.clone(),
+        WorkflowInput::Resume(_) => view
+            .feature_name
+            .as_ref()
+            .map(|f| f.0.clone())
+            .unwrap_or_default(),
+    };
+    let initial_phase = view.planning_phase.unwrap_or(Phase::Planning);
+    let initial_iteration = view.iteration.unwrap_or(Iteration::first()).0;
+
     // Register session with daemon (now passing session_dir instead of state_path)
     if let Err(e) = tracker
         .register(
-            state.workflow_session_id.clone(),
-            state.feature_name.clone(),
+            workflow_session_id_str.clone(),
+            feature_name_for_daemon,
             working_dir.clone(),
             session_dir.clone(),
-            format!("{:?}", state.phase),
-            state.iteration,
-            format!("{:?}", state.phase),
+            format!("{:?}", initial_phase),
+            initial_iteration,
+            format!("{:?}", initial_phase),
         )
         .await
     {
@@ -338,13 +356,12 @@ pub async fn run_workflow_with_config(
         LogCategory::Workflow,
         &format!(
             "=== WORKFLOW START: phase={:?}, iteration={} ===",
-            state.phase, state.iteration
+            initial_phase, initial_iteration
         ),
     );
 
     let phase_context = WorkflowPhaseContext {
         working_dir: &working_dir,
-        state_path: &state_path,
         config: &config,
         sender: &sender,
         session_logger: session_logger.clone(),
@@ -354,16 +371,19 @@ pub async fn run_workflow_with_config(
     let mut last_reviews: Vec<crate::phases::ReviewResult> = Vec::new();
 
     loop {
-        if !state.should_continue() {
+        // Get the current view at the start of each loop iteration
+        let view = view_rx_for_loop.borrow().clone();
+
+        if !view.should_continue() {
             break;
         }
 
-        match state.phase {
+        let current_phase = view.planning_phase.unwrap_or(Phase::Planning);
+        match current_phase {
             Phase::Planning => {
                 let result = run_planning_phase(
-                    &mut state,
+                    &view,
                     &working_dir,
-                    &state_path,
                     &config,
                     &sender,
                     &mut approval_rx,
@@ -375,24 +395,24 @@ pub async fn run_workflow_with_config(
 
                 match result {
                     Ok(Some(workflow_result)) => {
-                        let _ = tracker.mark_stopped(&state.workflow_session_id).await;
+                        let _ = tracker.mark_stopped(&workflow_session_id_str).await;
                         return Ok(workflow_result);
                     }
                     Ok(None) => {
-                        // Phase completed - dispatch PlanningCompleted command
-                        phase_context
-                            .dispatch_command(DomainCommand::PlanningCompleted {
-                                plan_path: PlanPath::from(state.plan_file.clone()),
-                            })
-                            .await;
+                        // Phase completed - PlanningCompleted already dispatched by run_planning_phase
+                        // Get updated view for tracker
+                        let updated_view = view_rx_for_loop.borrow().clone();
+                        let updated_phase = updated_view.planning_phase.unwrap_or(Phase::Reviewing);
+                        let updated_iteration =
+                            updated_view.iteration.unwrap_or(Iteration::first()).0;
 
                         // Update session state
                         let _ = tracker
                             .update(
-                                &state.workflow_session_id,
-                                format!("{:?}", state.phase),
-                                state.iteration,
-                                format!("{:?}", state.phase),
+                                &workflow_session_id_str,
+                                format!("{:?}", updated_phase),
+                                updated_iteration,
+                                format!("{:?}", updated_phase),
                             )
                             .await;
                     }
@@ -416,13 +436,13 @@ pub async fn run_workflow_with_config(
                                         LogCategory::Workflow,
                                         "Planning phase cancelled for stop",
                                     );
-                                    let _ = tracker.mark_stopped(&state.workflow_session_id).await;
+                                    let _ = tracker.mark_stopped(&workflow_session_id_str).await;
                                     return Ok(WorkflowResult::Stopped);
                                 }
                             }
                         }
                         // Cancellation without command - shouldn't happen, but treat as abort
-                        let _ = tracker.mark_stopped(&state.workflow_session_id).await;
+                        let _ = tracker.mark_stopped(&workflow_session_id_str).await;
                         return Ok(WorkflowResult::Aborted {
                             reason: "Cancelled without feedback".to_string(),
                         });
@@ -435,7 +455,7 @@ pub async fn run_workflow_with_config(
                 // Choose sequential or parallel review based on config
                 let result = if config.workflow.reviewing.sequential {
                     run_sequential_reviewing_phase(
-                        &mut state,
+                        &view,
                         &phase_context,
                         &mut approval_rx,
                         &mut control_rx,
@@ -444,7 +464,7 @@ pub async fn run_workflow_with_config(
                     .await
                 } else {
                     run_reviewing_phase(
-                        &mut state,
+                        &view,
                         &phase_context,
                         &mut approval_rx,
                         &mut control_rx,
@@ -455,20 +475,26 @@ pub async fn run_workflow_with_config(
 
                 match result {
                     Ok(Some(workflow_result)) => {
-                        let _ = tracker.mark_stopped(&state.workflow_session_id).await;
+                        let _ = tracker.mark_stopped(&workflow_session_id_str).await;
                         return Ok(workflow_result);
                     }
                     Ok(None) => {
-                        // Phase completed - update session state
+                        // Phase completed - get updated view for tracker
+                        let updated_view = view_rx_for_loop.borrow().clone();
+                        let updated_phase = updated_view.planning_phase.unwrap_or(Phase::Complete);
+                        let updated_iteration =
+                            updated_view.iteration.unwrap_or(Iteration::first()).0;
+
+                        // Update session state
                         let _ = tracker
                             .update(
-                                &state.workflow_session_id,
-                                format!("{:?}", state.phase),
-                                state.iteration,
-                                format!("{:?}", state.phase),
+                                &workflow_session_id_str,
+                                format!("{:?}", updated_phase),
+                                updated_iteration,
+                                format!("{:?}", updated_phase),
                             )
                             .await;
-                        if state.phase == Phase::Complete {
+                        if updated_phase == Phase::Complete {
                             break;
                         }
                     }
@@ -491,12 +517,12 @@ pub async fn run_workflow_with_config(
                                         LogCategory::Workflow,
                                         "Reviewing phase cancelled for stop",
                                     );
-                                    let _ = tracker.mark_stopped(&state.workflow_session_id).await;
+                                    let _ = tracker.mark_stopped(&workflow_session_id_str).await;
                                     return Ok(WorkflowResult::Stopped);
                                 }
                             }
                         }
-                        let _ = tracker.mark_stopped(&state.workflow_session_id).await;
+                        let _ = tracker.mark_stopped(&workflow_session_id_str).await;
                         return Ok(WorkflowResult::Aborted {
                             reason: "Cancelled without feedback".to_string(),
                         });
@@ -507,9 +533,8 @@ pub async fn run_workflow_with_config(
 
             Phase::Revising => {
                 let result = run_revising_phase(
-                    &mut state,
+                    &view,
                     &working_dir,
-                    &state_path,
                     &config,
                     &sender,
                     &mut approval_rx,
@@ -522,24 +547,24 @@ pub async fn run_workflow_with_config(
 
                 match result {
                     Ok(Some(workflow_result)) => {
-                        let _ = tracker.mark_stopped(&state.workflow_session_id).await;
+                        let _ = tracker.mark_stopped(&workflow_session_id_str).await;
                         return Ok(workflow_result);
                     }
                     Ok(None) => {
-                        // Phase completed - dispatch RevisionCompleted command
-                        phase_context
-                            .dispatch_command(DomainCommand::RevisionCompleted {
-                                plan_path: PlanPath::from(state.plan_file.clone()),
-                            })
-                            .await;
+                        // Phase completed - RevisionCompleted already dispatched by run_revising_phase
+                        // Get updated view for tracker
+                        let updated_view = view_rx_for_loop.borrow().clone();
+                        let updated_phase = updated_view.planning_phase.unwrap_or(Phase::Reviewing);
+                        let updated_iteration =
+                            updated_view.iteration.unwrap_or(Iteration::first()).0;
 
                         // Update session state
                         let _ = tracker
                             .update(
-                                &state.workflow_session_id,
-                                format!("{:?}", state.phase),
-                                state.iteration,
-                                format!("{:?}", state.phase),
+                                &workflow_session_id_str,
+                                format!("{:?}", updated_phase),
+                                updated_iteration,
+                                format!("{:?}", updated_phase),
                             )
                             .await;
                     }
@@ -562,12 +587,12 @@ pub async fn run_workflow_with_config(
                                         LogCategory::Workflow,
                                         "Revising phase cancelled for stop",
                                     );
-                                    let _ = tracker.mark_stopped(&state.workflow_session_id).await;
+                                    let _ = tracker.mark_stopped(&workflow_session_id_str).await;
                                     return Ok(WorkflowResult::Stopped);
                                 }
                             }
                         }
-                        let _ = tracker.mark_stopped(&state.workflow_session_id).await;
+                        let _ = tracker.mark_stopped(&workflow_session_id_str).await;
                         return Ok(WorkflowResult::Aborted {
                             reason: "Cancelled without feedback".to_string(),
                         });
@@ -578,7 +603,7 @@ pub async fn run_workflow_with_config(
 
             Phase::AwaitingPlanningDecision => {
                 // Re-display the max iterations modal on resume
-                let summary = build_max_iterations_summary_from_state(&state, &last_reviews);
+                let summary = build_max_iterations_summary_from_view(&view, &last_reviews);
 
                 let decision = await_max_iterations_decision(
                     IterativePhase::Planning,
@@ -590,8 +615,8 @@ pub async fn run_workflow_with_config(
                 )
                 .await?;
 
-                // Dispatch domain commands for user decisions
-                match &decision {
+                // Apply the decision using command dispatch
+                match decision {
                     MaxIterationsDecision::ProceedWithoutApproval => {
                         phase_context
                             .dispatch_command(DomainCommand::UserOverrideApproval {
@@ -600,6 +625,31 @@ pub async fn run_workflow_with_config(
                                         .to_string(),
                             })
                             .await;
+                        sender.send_output(
+                            "[planning] Proceeding without AI approval...".to_string(),
+                        );
+                        // Transition handled by command - loop will pick up Phase::Complete
+                    }
+                    MaxIterationsDecision::Continue => {
+                        // Increment max_iterations and continue to revising
+                        phase_context
+                            .dispatch_command(DomainCommand::RevisingStarted {
+                                feedback_summary: String::new(),
+                            })
+                            .await;
+                        sender.send_output(
+                            "[planning] Continuing with another review cycle...".to_string(),
+                        );
+                    }
+                    MaxIterationsDecision::RestartWithFeedback(feedback) => {
+                        sender.send_output(format!(
+                            "[planning] Restarting with feedback: {}",
+                            feedback
+                        ));
+                        let _ = tracker.mark_stopped(&workflow_session_id_str).await;
+                        return Ok(WorkflowResult::NeedsRestart {
+                            user_feedback: feedback,
+                        });
                     }
                     MaxIterationsDecision::Abort => {
                         phase_context
@@ -607,18 +657,17 @@ pub async fn run_workflow_with_config(
                                 reason: "User aborted workflow at max iterations".to_string(),
                             })
                             .await;
+                        sender.send_output("[planning] Workflow aborted by user".to_string());
+                        let _ = tracker.mark_stopped(&workflow_session_id_str).await;
+                        return Ok(WorkflowResult::Aborted {
+                            reason: "User aborted workflow at max iterations".to_string(),
+                        });
                     }
-                    _ => {}
+                    MaxIterationsDecision::Stopped => {
+                        let _ = tracker.mark_stopped(&workflow_session_id_str).await;
+                        return Ok(WorkflowResult::Stopped);
+                    }
                 }
-
-                // Apply the decision using the shared helper
-                if let Some(result) =
-                    apply_planning_decision(decision, &mut state, &state_path, &sender)?
-                {
-                    let _ = tracker.mark_stopped(&state.workflow_session_id).await;
-                    return Ok(result);
-                }
-                sender.send_state_update(state.clone());
             }
 
             Phase::Complete => {
@@ -627,18 +676,23 @@ pub async fn run_workflow_with_config(
         }
     }
 
+    // Get final view for logging
+    let final_view = view_rx_for_loop.borrow().clone();
+    let final_phase = final_view.planning_phase.unwrap_or(Phase::Complete);
+    let final_iteration = final_view.iteration.unwrap_or(Iteration::first()).0;
+
     session_logger.log(
         LogLevel::Info,
         LogCategory::Workflow,
         &format!(
             "=== WORKFLOW END: phase={:?}, iteration={} ===",
-            state.phase, state.iteration
+            final_phase, final_iteration
         ),
     );
 
-    if state.phase == Phase::Complete {
+    if final_phase == Phase::Complete {
         let result = handle_completion(
-            &state,
+            &final_view,
             &session_logger,
             &sender,
             &mut approval_rx,
@@ -677,7 +731,6 @@ pub async fn run_workflow_with_config(
             );
 
             let impl_ctx = ImplementationContext {
-                state_path: &state_path,
                 session_sender: sender.clone(),
                 session_logger: session_logger.clone(),
                 approval_rx: &mut approval_rx,
@@ -685,7 +738,7 @@ pub async fn run_workflow_with_config(
                 actor_ref: phase_context.actor_ref.clone(),
             };
             let impl_result = run_implementation_workflow(
-                &mut state,
+                &final_view,
                 &config,
                 &working_dir,
                 impl_ctx,
@@ -694,7 +747,7 @@ pub async fn run_workflow_with_config(
             .await;
 
             // Mark session stopped after implementation
-            let _ = tracker.mark_stopped(&state.workflow_session_id).await;
+            let _ = tracker.mark_stopped(&workflow_session_id_str).await;
 
             match impl_result {
                 Ok(impl_outcome) => {
@@ -749,7 +802,7 @@ pub async fn run_workflow_with_config(
         }
 
         // Mark session stopped after completion handling
-        let _ = tracker.mark_stopped(&state.workflow_session_id).await;
+        let _ = tracker.mark_stopped(&workflow_session_id_str).await;
         return Ok(result);
     }
 
@@ -758,6 +811,6 @@ pub async fn run_workflow_with_config(
     sender.send_output("Max iterations reached. Manual review recommended.".to_string());
 
     // Mark session stopped
-    let _ = tracker.mark_stopped(&state.workflow_session_id).await;
+    let _ = tracker.mark_stopped(&workflow_session_id_str).await;
     Ok(WorkflowResult::Accepted)
 }

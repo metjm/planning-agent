@@ -10,7 +10,6 @@ use tokio::sync::mpsc;
 
 use crate::app::workflow_decisions::IterativePhase;
 use crate::domain::view::WorkflowView;
-use crate::state::State;
 use crate::tui::session::{CliInstanceId, ReviewKind, TodoItem, ToolResultSummary};
 
 use super::event::{Event, TokenUsage};
@@ -51,18 +50,11 @@ impl SessionEventSender {
         });
     }
 
-    pub fn send_state_update(&self, state: State) {
-        let _ = self.inner.send(Event::SessionStateUpdate {
-            session_id: self.session_id,
-            state,
-        });
-    }
-
-    /// Send a CQRS view update (event-sourced replacement for send_state_update).
+    /// Send a CQRS view update (event-sourced replacement for legacy state updates).
     pub fn send_view_update(&self, view: WorkflowView) {
         let _ = self.inner.send(Event::SessionViewUpdate {
             session_id: self.session_id,
-            view,
+            view: Box::new(view),
         });
     }
 

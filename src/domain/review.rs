@@ -53,13 +53,13 @@ impl SequentialReviewState {
     }
 
     /// Called when a reviewer approves - records their approval and stores the review.
-    pub fn record_approval(&mut self, reviewer_id: &AgentId, review: &SerializableReviewResult) {
-        self.approvals
-            .insert(reviewer_id.clone(), self.plan_version);
+    pub fn record_approval(&mut self, reviewer_id: &str, review: &SerializableReviewResult) {
+        let agent_id = AgentId::from(reviewer_id);
+        self.approvals.insert(agent_id.clone(), self.plan_version);
         // Remove any existing review from this reviewer
-        self.accumulated_reviews.retain(|(id, _)| id != reviewer_id);
         self.accumulated_reviews
-            .push((reviewer_id.clone(), review.clone()));
+            .retain(|(id, _)| id.as_str() != reviewer_id);
+        self.accumulated_reviews.push((agent_id, review.clone()));
     }
 
     /// Called after revision - increments version and clears stale approvals.
@@ -70,10 +70,11 @@ impl SequentialReviewState {
     }
 
     /// Checks if all reviewers have approved the current plan version.
-    pub fn all_approved(&self, reviewer_ids: &[&AgentId]) -> bool {
-        reviewer_ids
-            .iter()
-            .all(|id| self.approvals.get(*id) == Some(&self.plan_version))
+    pub fn all_approved(&self, reviewer_ids: &[&str]) -> bool {
+        reviewer_ids.iter().all(|id| {
+            let agent_id = AgentId::from(*id);
+            self.approvals.get(&agent_id) == Some(&self.plan_version)
+        })
     }
 
     /// Resets to first reviewer for a new cycle.
@@ -88,35 +89,34 @@ impl SequentialReviewState {
     }
 
     /// Increments the run count for a reviewer.
-    pub fn increment_run_count(&mut self, reviewer_id: &AgentId) {
-        *self
-            .reviewer_run_counts
-            .entry(reviewer_id.clone())
-            .or_insert(0) += 1;
+    pub fn increment_run_count(&mut self, reviewer_id: &str) {
+        let agent_id = AgentId::from(reviewer_id);
+        *self.reviewer_run_counts.entry(agent_id).or_insert(0) += 1;
     }
 
     /// Returns the run count for a reviewer (0 if never run).
-    pub fn get_run_count(&self, reviewer_id: &AgentId) -> u32 {
+    pub fn get_run_count(&self, reviewer_id: &str) -> u32 {
+        let agent_id = AgentId::from(reviewer_id);
         self.reviewer_run_counts
-            .get(reviewer_id)
+            .get(&agent_id)
             .copied()
             .unwrap_or(0)
     }
 
     /// Records which reviewer rejected the plan.
-    pub fn record_rejection(&mut self, reviewer_id: &AgentId) {
-        self.last_rejecting_reviewer = Some(reviewer_id.clone());
+    pub fn record_rejection(&mut self, reviewer_id: &str) {
+        self.last_rejecting_reviewer = Some(AgentId::from(reviewer_id));
     }
 
     /// Starts a new review cycle by computing and storing the sorted reviewer order.
-    pub fn start_new_cycle(&mut self, reviewer_ids: &[&AgentId]) -> Option<AgentId> {
-        let mut sorted: Vec<AgentId> = reviewer_ids.iter().map(|s| (*s).clone()).collect();
+    pub fn start_new_cycle(&mut self, reviewer_ids: &[&str]) -> Option<AgentId> {
+        let mut sorted: Vec<AgentId> = reviewer_ids.iter().map(|s| AgentId::from(*s)).collect();
         let last_rejector = self.last_rejecting_reviewer.take();
         let tiebreaker_used = last_rejector.clone();
 
         sorted.sort_by(|a, b| {
-            let count_a = self.get_run_count(a);
-            let count_b = self.get_run_count(b);
+            let count_a = self.get_run_count(a.as_str());
+            let count_b = self.get_run_count(b.as_str());
 
             match count_a.cmp(&count_b) {
                 std::cmp::Ordering::Equal => match (&last_rejector, a, b) {
@@ -143,46 +143,37 @@ impl SequentialReviewState {
     pub fn needs_cycle_start(&self) -> bool {
         self.current_cycle_order.is_empty()
     }
-}
 
-/// Converts from the state module's SequentialReviewState to the domain version.
-impl From<crate::state::SequentialReviewState> for SequentialReviewState {
-    fn from(state: crate::state::SequentialReviewState) -> Self {
-        Self {
-            current_reviewer_index: state.current_reviewer_index,
-            plan_version: state.plan_version,
-            approvals: state
-                .approvals
-                .into_iter()
-                .map(|(k, v)| (AgentId::from(k), v))
-                .collect(),
-            accumulated_reviews: state
-                .accumulated_reviews
-                .into_iter()
-                .map(|(id, review)| {
-                    (
-                        AgentId::from(id),
-                        SerializableReviewResult {
-                            agent_name: review.agent_name,
-                            needs_revision: review.needs_revision,
-                            feedback: review.feedback,
-                            summary: review.summary,
-                        },
-                    )
-                })
-                .collect(),
-            reviewer_run_counts: state
-                .reviewer_run_counts
-                .into_iter()
-                .map(|(k, v)| (AgentId::from(k), v))
-                .collect(),
-            current_cycle_order: state
-                .current_cycle_order
-                .into_iter()
-                .map(AgentId::from)
-                .collect(),
-            last_rejecting_reviewer: state.last_rejecting_reviewer.map(AgentId::from),
+    /// Validates that the current state is consistent with the given reviewer IDs.
+    /// Returns true if state was reset (config changed), false if valid.
+    pub fn validate_reviewer_state(&mut self, reviewer_ids: &[&str]) -> bool {
+        // Check if stored cycle order contains reviewers not in current config
+        let current_ids: std::collections::HashSet<&str> = reviewer_ids.iter().copied().collect();
+        let stored_ids: std::collections::HashSet<&str> = self
+            .current_cycle_order
+            .iter()
+            .map(|id| id.as_str())
+            .collect();
+
+        // If cycle order is non-empty and doesn't match config, reset
+        if !self.current_cycle_order.is_empty() && stored_ids != current_ids {
+            self.reset_to_first_reviewer();
+            return true;
         }
+        false
+    }
+
+    /// Returns accumulated reviews as ReviewResult references for summary generation.
+    pub fn get_accumulated_reviews_for_summary(&self) -> Vec<crate::phases::ReviewResult> {
+        self.accumulated_reviews
+            .iter()
+            .map(|(_, r)| crate::phases::ReviewResult {
+                agent_name: r.agent_name.clone(),
+                needs_revision: r.needs_revision,
+                feedback: r.feedback.clone(),
+                summary: r.summary.clone(),
+            })
+            .collect()
     }
 }
 

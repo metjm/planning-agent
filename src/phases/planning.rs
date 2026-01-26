@@ -2,14 +2,14 @@ use crate::agents::{AgentContext, AgentType};
 use crate::config::WorkflowConfig;
 use crate::domain::actor::WorkflowMessage;
 use crate::domain::types::{
-    AgentId, ConversationId, PhaseLabel, ResumeStrategy as DomainResumeStrategy,
+    AgentId, ConversationId, PhaseLabel, ResumeStrategy as DomainResumeStrategy, ResumeStrategy,
 };
+use crate::domain::view::WorkflowView;
 use crate::domain::WorkflowCommand as DomainCommand;
 use crate::phases::planning_conversation_key;
 use crate::planning_paths;
 use crate::prompt_format::PromptBuilder;
 use crate::session_daemon::{LogCategory, LogLevel, SessionLogger};
-use crate::state::{ResumeStrategy, State};
 use crate::tui::SessionEventSender;
 use anyhow::Result;
 use ractor::ActorRef;
@@ -22,11 +22,10 @@ pub const PLANNING_SYSTEM_PROMPT: &str =
     r#"Use the "planning" skill to create the plan. Write your plan to the plan-output-path file."#;
 
 pub async fn run_planning_phase_with_context(
-    state: &mut State,
+    view: &WorkflowView,
     working_dir: &Path,
     config: &WorkflowConfig,
     session_sender: SessionEventSender,
-    state_path: &Path,
     session_logger: Arc<SessionLogger>,
     actor_ref: Option<ActorRef<WorkflowMessage>>,
 ) -> Result<()> {
@@ -42,28 +41,30 @@ pub async fn run_planning_phase_with_context(
 
     let agent = AgentType::from_config(agent_name, agent_config, working_dir.to_path_buf())?;
 
-    let prompt = build_planning_prompt(state, working_dir);
+    let prompt = build_planning_prompt(view, working_dir);
 
     // Planning always uses ConversationResume to enable revision continuity.
     // The agent will capture its conversation ID on first run, then resume on revision.
     let configured_strategy = ResumeStrategy::ConversationResume;
     // Use namespaced session key to avoid collisions with reviewer sessions
     let conversation_id_name = planning_conversation_key(agent_name);
-    let agent_session =
-        state.get_or_create_agent_session(&conversation_id_name, configured_strategy);
-    let conversation_id = agent_session.conversation_id.clone();
-    let resume_strategy = agent_session.resume_strategy.clone();
 
-    state.record_invocation(&conversation_id_name, "Planning");
-    state.set_updated_at();
-    state.save_atomic(state_path)?;
+    // Get conversation state from view if it exists
+    let agent_id = AgentId::from(conversation_id_name.as_str());
+    let (conversation_id, resume_strategy) = match view.agent_conversations.get(&agent_id) {
+        Some(state) => (
+            state.conversation_id.as_ref().map(|c| c.0.clone()),
+            state.resume_strategy,
+        ),
+        None => (None, configured_strategy),
+    };
 
-    // Dispatch RecordInvocation command to CQRS actor
+    // Dispatch RecordInvocation command to CQRS actor (caller handles state persistence)
     dispatch_planning_command(
         &actor_ref,
         &session_logger,
         DomainCommand::RecordInvocation {
-            agent_id: AgentId::from(conversation_id_name.as_str()),
+            agent_id: agent_id.clone(),
             phase: PhaseLabel::Planning,
             conversation_id: conversation_id.clone().map(ConversationId::from),
             resume_strategy: to_domain_resume_strategy(&resume_strategy),
@@ -91,16 +92,12 @@ pub async fn run_planning_phase_with_context(
 
     // Store captured conversation ID for future resume (e.g., in revising phase)
     if let Some(ref captured_id) = result.conversation_id {
-        state.update_agent_conversation_id(&conversation_id_name, captured_id.clone());
-        state.set_updated_at();
-        state.save_atomic(state_path)?;
-
-        // Dispatch RecordAgentConversation command to CQRS actor
+        // Dispatch RecordAgentConversation command to CQRS actor (caller handles state persistence)
         dispatch_planning_command(
             &actor_ref,
             &session_logger,
             DomainCommand::RecordAgentConversation {
-                agent_id: AgentId::from(conversation_id_name.as_str()),
+                agent_id,
                 resume_strategy: DomainResumeStrategy::ConversationResume,
                 conversation_id: Some(ConversationId::from(captured_id.clone())),
             },
@@ -125,34 +122,50 @@ pub async fn run_planning_phase_with_context(
     Ok(())
 }
 
-fn build_planning_prompt(state: &State, working_dir: &Path) -> String {
-    // state.plan_file is now an absolute path (in ~/.planning-agent/sessions/)
-    let plan_path = state.plan_file.display().to_string();
+fn build_planning_prompt(view: &WorkflowView, working_dir: &Path) -> String {
+    // Get plan path from view (absolute path in ~/.planning-agent/sessions/)
+    let plan_path = view
+        .plan_path
+        .as_ref()
+        .map(|p| p.0.display().to_string())
+        .unwrap_or_default();
 
     // Get session folder path for supplementary files
     // session_dir() creates the directory if it doesn't exist; only fails if home dir unavailable
-    let session_folder = planning_paths::session_dir(&state.workflow_session_id)
+    let workflow_id_str = view
+        .workflow_id
+        .as_ref()
+        .map(|id| id.0.to_string())
+        .unwrap_or_default();
+    let session_folder = planning_paths::session_dir(&workflow_id_str)
         .map(|p| p.display().to_string())
         .unwrap_or_else(|_| {
-            // Defensive fallback: derive from plan_file parent
-            state
-                .plan_file
-                .parent()
+            // Defensive fallback: derive from plan_path parent
+            view.plan_path
+                .as_ref()
+                .and_then(|p| p.0.parent())
                 .map(|p| p.display().to_string())
                 .unwrap_or_default()
         });
+
+    let feature_name = view
+        .feature_name
+        .as_ref()
+        .map(|f| f.0.as_str())
+        .unwrap_or("");
+    let objective = view.objective.as_ref().map(|o| o.0.as_str()).unwrap_or("");
 
     let mut builder = PromptBuilder::new()
         .phase("planning")
         .instructions(r#"Use the "planning" skill to create the plan. Write your plan to the plan-output-path file."#)
         .input("workspace-root", &working_dir.display().to_string())
-        .input("feature-name", &state.feature_name)
-        .input("objective", &state.objective)
+        .input("feature-name", feature_name)
+        .input("objective", objective)
         .input("plan-output-path", &plan_path)
         .input("session-folder-path", &session_folder);
 
     // Add worktree context if applicable
-    if let Some(ref wt_state) = state.worktree_info {
+    if let Some(ref wt_state) = view.worktree_info {
         builder = builder
             .input(
                 "worktree-path",

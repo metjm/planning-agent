@@ -4,8 +4,8 @@
 //! snapshot persistence.
 
 use super::Session;
+use crate::domain::view::WorkflowView;
 use crate::session_daemon::SessionUiState;
-use crate::state::State;
 use crate::tui::mention::MentionState;
 use crate::tui::slash::SlashState;
 use std::collections::HashMap;
@@ -77,7 +77,7 @@ impl Session {
 
     /// Creates a session from a snapshot's UI state.
     /// Runtime fields (handles, channels, Instant) are initialized fresh.
-    pub fn from_ui_state(ui_state: SessionUiState, workflow_state: Option<State>) -> Self {
+    pub fn from_ui_state(ui_state: SessionUiState, workflow_view: Option<WorkflowView>) -> Self {
         Self {
             id: ui_state.id,
             name: ui_state.name,
@@ -89,8 +89,7 @@ impl Session {
             streaming_scroll_position: ui_state.streaming_scroll_position,
             streaming_follow_mode: ui_state.streaming_follow_mode,
             focused_panel: ui_state.focused_panel,
-            workflow_state,
-            workflow_view: None, // Will be populated from event log on resume
+            workflow_view,
             start_time: Instant::now(), // Reset to now
             total_cost: ui_state.total_cost,
             running: false,                        // Will be set when workflow resumes
