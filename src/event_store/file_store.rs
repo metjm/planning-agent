@@ -94,8 +94,7 @@ impl EventStore<WorkflowAggregate> for FileEventStore {
             Err(e) => return Err(AggregateError::UnexpectedError(Box::new(e))),
         };
 
-        file.lock_shared()
-            .map_err(|e| AggregateError::UnexpectedError(Box::new(e)))?;
+        FileExt::lock_shared(&file).map_err(|e| AggregateError::UnexpectedError(Box::new(e)))?;
 
         let reader = BufReader::new(file);
         let mut envelopes = Vec::new();
@@ -183,8 +182,7 @@ impl EventStore<WorkflowAggregate> for FileEventStore {
             .map_err(|e| AggregateError::UnexpectedError(Box::new(e)))?;
 
         // Acquire exclusive lock for writing
-        file.lock_exclusive()
-            .map_err(|e| AggregateError::UnexpectedError(Box::new(e)))?;
+        FileExt::lock_exclusive(&file).map_err(|e| AggregateError::UnexpectedError(Box::new(e)))?;
 
         let FileAggregateContext {
             aggregate_id,

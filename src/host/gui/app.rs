@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::{mpsc, Mutex};
 
-use super::session_table::{DisplaySessionRow, LivenessDisplay};
+use super::session_table::DisplaySessionRow;
 
 /// Maximum number of log entries to keep.
 const MAX_LOG_ENTRIES: usize = 200;
@@ -138,8 +138,13 @@ impl HostApp {
     }
 
     fn sync_display_data(&mut self) {
-        // Use try_lock to avoid blocking GUI
-        if let Ok(mut state) = self.state.try_lock() {
+        // Collect all data from state first, then release lock before mutating self
+        let collected = {
+            // Use try_lock to avoid blocking GUI
+            let Ok(state) = self.state.try_lock() else {
+                return;
+            };
+
             // Get container count before sessions() to avoid borrow conflict
             let container_count = state.containers.len();
             // Debug: collect session counts per container before mutable borrow
@@ -152,19 +157,8 @@ impl HostApp {
                 .map(|(id, c)| (id.clone(), c.sessions.len()))
                 .collect();
             let sessions = state.sessions();
-            // Log session count for debugging (only when it changes)
-            let new_count = sessions.len();
-            if new_count != self.display_data.sessions.len() {
-                eprintln!(
-                    "[host-gui] sync_display_data: {} sessions (raw: {}) from {} containers",
-                    new_count, total_sessions_in_containers, container_count
-                );
-                // Log per-container session counts for debugging
-                for (id, count) in &container_session_counts {
-                    eprintln!("[host-gui]   container '{}': {} sessions", id, count);
-                }
-            }
-            self.display_data.sessions = sessions
+
+            let session_rows: Vec<DisplaySessionRow> = sessions
                 .iter()
                 .map(|s| DisplaySessionRow {
                     session_id: s.session.session_id.clone(),
@@ -178,8 +172,8 @@ impl HostApp {
                     updated_ago: format_relative_time(&s.session.updated_at),
                 })
                 .collect();
-            // Collect container info with enhanced display data
-            self.display_data.containers = state
+
+            let container_rows: Vec<DisplayContainerRow> = state
                 .containers
                 .iter()
                 .map(|(id, c)| {
@@ -200,13 +194,16 @@ impl HostApp {
                     }
                 })
                 .collect();
-            self.display_data.active_count = state.active_count();
-            self.display_data.approval_count = state.approval_count();
-            self.display_data.container_count = state.containers.len();
-            self.display_data.last_update_elapsed_secs = state.last_update.elapsed().as_secs();
-            // Update account usage display
-            let mut rows: Vec<DisplayAccountRow> = Vec::new();
+
+            let active_count = state.active_count();
+            let approval_count = state.approval_count();
+            let last_update_elapsed_secs = state.last_update.elapsed().as_secs();
+
+            // Collect account usage data
+            let mut account_rows: Vec<DisplayAccountRow> = Vec::new();
             let mut seen_accounts: HashSet<AccountId> = HashSet::new();
+            let mut errors_to_log: Vec<(AccountId, String, String, String)> = Vec::new();
+            let mut accounts_to_clear: Vec<AccountId> = Vec::new();
 
             for record in state.usage_store.get_all_accounts() {
                 let usage = match &record.current_usage {
@@ -217,16 +214,16 @@ impl HostApp {
                 seen_accounts.insert(record.account_id.clone());
 
                 if let Some(error) = &usage.error {
-                    self.log_account_error_once(
-                        &record.account_id,
-                        &record.provider,
-                        &record.email,
-                        error,
-                    );
+                    errors_to_log.push((
+                        record.account_id.clone(),
+                        record.provider.clone(),
+                        record.email.clone(),
+                        error.clone(),
+                    ));
                     continue;
                 }
 
-                self.account_error_cache.remove(&record.account_id);
+                accounts_to_clear.push(record.account_id.clone());
 
                 let provider = match AccountProvider::try_from_str(&record.provider) {
                     Some(provider) => provider,
@@ -239,7 +236,7 @@ impl HostApp {
                     }
                 };
 
-                rows.push(DisplayAccountRow {
+                account_rows.push(DisplayAccountRow {
                     account_id: record.account_id.clone(),
                     provider,
                     email: record.email.clone(),
@@ -259,15 +256,73 @@ impl HostApp {
                 });
             }
 
-            rows.sort_by(|a, b| {
+            account_rows.sort_by(|a, b| {
                 (a.provider.order_index(), &a.email).cmp(&(b.provider.order_index(), &b.email))
             });
 
-            self.account_error_cache
-                .retain(|account_id, _| seen_accounts.contains(account_id));
-            self.display_data.accounts = rows;
-            self.last_sync = Instant::now();
+            // Return collected data - state lock is released here
+            (
+                session_rows,
+                container_rows,
+                active_count,
+                approval_count,
+                container_count,
+                last_update_elapsed_secs,
+                account_rows,
+                seen_accounts,
+                errors_to_log,
+                accounts_to_clear,
+                sessions.len(),
+                total_sessions_in_containers,
+                container_session_counts,
+            )
+        };
+
+        // Now state lock is released - safe to mutate self
+        let (
+            session_rows,
+            container_rows,
+            active_count,
+            approval_count,
+            container_count,
+            last_update_elapsed_secs,
+            account_rows,
+            seen_accounts,
+            errors_to_log,
+            accounts_to_clear,
+            new_count,
+            total_sessions_in_containers,
+            container_session_counts,
+        ) = collected;
+
+        // Log session count for debugging (only when it changes)
+        if new_count != self.display_data.sessions.len() {
+            eprintln!(
+                "[host-gui] sync_display_data: {} sessions (raw: {}) from {} containers",
+                new_count, total_sessions_in_containers, container_count
+            );
+            for (id, count) in &container_session_counts {
+                eprintln!("[host-gui]   container '{}': {} sessions", id, count);
+            }
         }
+
+        self.display_data.sessions = session_rows;
+        self.display_data.containers = container_rows;
+        self.display_data.active_count = active_count;
+        self.display_data.approval_count = approval_count;
+        self.display_data.container_count = container_count;
+        self.display_data.last_update_elapsed_secs = last_update_elapsed_secs;
+
+        for (account_id, provider, email, error) in errors_to_log {
+            self.log_account_error_once(&account_id, &provider, &email, &error);
+        }
+        for account_id in accounts_to_clear {
+            self.account_error_cache.remove(&account_id);
+        }
+        self.account_error_cache
+            .retain(|account_id, _| seen_accounts.contains(account_id));
+        self.display_data.accounts = account_rows;
+        self.last_sync = Instant::now();
     }
 
     fn log_account_error_once(
