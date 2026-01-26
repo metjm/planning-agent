@@ -3,19 +3,19 @@
 //! This module provides the `run_implementation_workflow` function that manages
 //! the implementation -> review loop until approval or max iterations.
 
+use crate::app::compute_change_fingerprint;
 use crate::app::workflow_decisions::{
     await_max_iterations_decision, IterativePhase, MaxIterationsDecision,
 };
-use crate::change_fingerprint::compute_change_fingerprint;
 use crate::config::WorkflowConfig;
 use crate::domain::actor::WorkflowMessage;
-use crate::domain::commands::WorkflowCommand as DomainCommand;
 use crate::domain::types::{ImplementationVerdict, Iteration};
+use crate::domain::WorkflowCommand as DomainCommand;
 use crate::phases::implementation::run_implementation_phase;
 use crate::phases::implementation_review::run_implementation_review_phase;
 use crate::phases::implementing_conversation_key;
 use crate::phases::verdict::VerificationVerdictResult;
-use crate::session_logger::{LogCategory, LogLevel, SessionLogger};
+use crate::session_daemon::{LogCategory, LogLevel, SessionLogger};
 use crate::state::{ImplementationPhase, ImplementationPhaseState, ResumeStrategy, State};
 use crate::tui::{SessionEventSender, UserApprovalResponse, WorkflowCommand};
 use anyhow::{Context, Result};
@@ -614,20 +614,5 @@ fn apply_implementation_decision(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_implementation_workflow_result_variants() {
-        // Just verify the enum variants compile
-        let _approved = ImplementationWorkflowResult::Approved;
-        let _approved_overridden =
-            ImplementationWorkflowResult::ApprovedOverridden { iterations_used: 3 };
-        let _failed = ImplementationWorkflowResult::Failed {
-            iterations_used: 3,
-            last_feedback: Some("Fix bugs".to_string()),
-        };
-        let _cancelled = ImplementationWorkflowResult::Cancelled { iterations_used: 1 };
-        let _no_changes = ImplementationWorkflowResult::NoChanges { iterations_used: 2 };
-    }
-}
+#[path = "tests/implementation_tests.rs"]
+mod tests;

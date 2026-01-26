@@ -1,6 +1,6 @@
 use crate::app::workflow::WorkflowResult;
 use crate::phases::ReviewResult;
-use crate::session_logger::{LogCategory, LogLevel, SessionLogger};
+use crate::session_daemon::{LogCategory, LogLevel, SessionLogger};
 use crate::state::{Phase, State};
 use crate::tui::{SessionEventSender, UserApprovalResponse, WorkflowCommand};
 use anyhow::Result;

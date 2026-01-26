@@ -1,23 +1,19 @@
-mod approval_input;
 mod events;
 mod input;
 mod input_naming;
-mod mouse_input;
-mod session_browser_input;
 mod session_events;
 pub mod slash_commands;
 pub mod snapshot_helper;
-mod workflow_browser_input;
 mod workflow_lifecycle;
 mod workflow_loading;
 
+use super::cli_usage;
 use crate::app::cli::Cli;
 use crate::app::util::{
     build_resume_command, debug_log, extract_feature_name, format_window_title,
 };
 use crate::app::workflow::run_workflow_with_config;
 use crate::app::workflow_common::pre_create_session_folder_with_working_dir;
-use crate::cli_usage;
 use crate::planning_paths;
 use crate::state::State;
 use crate::tui::{
@@ -317,7 +313,7 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
         debug_log(start, &format!("resuming session: {}", session_id));
 
         // Load the snapshot
-        let snapshot = match crate::session_store::load_snapshot(session_id) {
+        let snapshot = match crate::session_daemon::load_snapshot(session_id) {
             Ok(s) => s,
             Err(e) => {
                 restore_terminal(&mut terminal)?;
@@ -329,7 +325,7 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
         if snapshot.state_path.exists() {
             let current_state = State::load(&snapshot.state_path).ok();
             if let Some(ref cs) = current_state {
-                if let Some(conflict_msg) = crate::session_store::check_conflict(&snapshot, cs) {
+                if let Some(conflict_msg) = crate::session_daemon::check_conflict(&snapshot, cs) {
                     let first_session = tab_manager.active_mut();
                     first_session.add_output(format!("[warning] {}", conflict_msg));
                     first_session.add_output(

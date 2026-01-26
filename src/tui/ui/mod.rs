@@ -1,19 +1,15 @@
-mod approval_overlay;
 mod chat;
 mod cli_instances;
 mod dropdowns;
-mod error_overlay;
 mod objective;
 mod overlays;
 mod panels;
-mod session_browser_overlay;
 mod stats;
-mod success_overlay;
 pub mod theme;
 pub mod util;
-mod workflow_browser_overlay;
 
 #[cfg(test)]
+#[path = "tests/overlays_tests.rs"]
 mod overlays_tests;
 
 use crate::tui::scroll_regions::ScrollableRegions;
@@ -156,20 +152,20 @@ pub fn draw(frame: &mut Frame, tab_manager: &TabManager, scroll_regions: &mut Sc
     }
     // Render session browser overlay
     if tab_manager.session_browser.open {
-        session_browser_overlay::draw_session_browser_overlay(frame, tab_manager);
+        overlays::draw_session_browser_overlay(frame, tab_manager);
     }
     // Render workflow browser overlay
     if tab_manager.workflow_browser.open {
-        workflow_browser_overlay::draw_workflow_browser_overlay(frame, tab_manager);
+        overlays::draw_workflow_browser_overlay(frame, tab_manager);
     }
     // Render implementation success modal after session browser, before error overlay
     let session = tab_manager.active();
     if session.implementation_success_modal.is_some() {
-        success_overlay::draw_implementation_success_overlay(frame, session);
+        overlays::draw_implementation_success_overlay(frame, session);
     }
     let session = tab_manager.active();
     if session.error_state.is_some() {
-        error_overlay::draw_error_overlay(frame, session, scroll_regions);
+        overlays::draw_error_overlay(frame, session, scroll_regions);
     }
 }
 

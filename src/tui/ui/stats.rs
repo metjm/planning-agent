@@ -111,10 +111,9 @@ pub fn draw_stats(frame: &mut Frame, session: &Session, area: Rect, show_live_to
 
     // Show workflow indicator when session context is available
     if let Some(ref ctx) = session.context {
-        let workflow_name =
-            crate::workflow_selection::WorkflowSelection::load(&ctx.base_working_dir)
-                .map(|s| s.workflow)
-                .unwrap_or_else(|_| "claude-only".to_string());
+        let workflow_name = crate::app::WorkflowSelection::load(&ctx.base_working_dir)
+            .map(|s| s.workflow)
+            .unwrap_or_else(|_| "claude-only".to_string());
 
         stats_text.push(Line::from(vec![
             Span::styled(" Workflow: ", Style::default().fg(theme.muted)),

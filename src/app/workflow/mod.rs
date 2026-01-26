@@ -41,8 +41,8 @@ mod reviewing;
 mod revising;
 
 use crate::domain::actor::WorkflowMessage;
-use crate::domain::commands::WorkflowCommand as DomainCommand;
-use crate::session_logger::{LogCategory, LogLevel, SessionLogger};
+use crate::domain::WorkflowCommand as DomainCommand;
+use crate::session_daemon::{LogCategory, LogLevel, SessionLogger};
 use ractor::ActorRef;
 use tokio::sync::oneshot;
 
@@ -106,8 +106,8 @@ use crate::domain::types::{
     FeatureName, FeedbackPath, MaxIterations, Objective, PlanPath, WorkingDir,
 };
 use crate::planning_paths;
-use crate::session_logger::create_session_logger;
-use crate::session_tracking::SessionTracker;
+use crate::session_daemon::create_session_logger;
+use crate::session_daemon::SessionTracker;
 use crate::state::{Phase, State};
 use crate::structured_logger::StructuredLogger;
 use crate::tui::{

@@ -286,21 +286,20 @@ pub(crate) async fn handle_naming_tab_input(
                                 Some(name) => {
                                     // Select the specified workflow
                                     let workflows =
-                                        crate::workflow_selection::list_available_workflows_for_display()
+                                        crate::app::list_available_workflows_for_display()
                                             .unwrap_or_default();
 
                                     if let Some(found) = workflows.iter().find(|w| w.name == name) {
-                                        let selection =
-                                            crate::workflow_selection::WorkflowSelection {
-                                                workflow: name.clone(),
-                                            };
+                                        let selection = crate::app::WorkflowSelection {
+                                            workflow: name.clone(),
+                                        };
                                         if let Err(e) = selection.save(&base_working_dir) {
                                             tab_manager.command_error =
                                                 Some(format!("Failed to save selection: {}", e));
                                         } else {
                                             // Also update the active session's workflow config
                                             if let Some(ref mut ctx) = session.context {
-                                                match crate::workflow_selection::load_workflow_by_name(&name) {
+                                                match crate::app::load_workflow_by_name(&name) {
                                                     Ok(config) => {
                                                         ctx.workflow_config = config;
                                                         tab_manager.command_notice = Some(format!(

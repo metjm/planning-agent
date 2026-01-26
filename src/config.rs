@@ -406,9 +406,9 @@ impl WorkflowConfig {
 }
 
 #[cfg(test)]
-#[path = "config_tests.rs"]
+#[path = "tests/config_tests/config_tests.rs"]
 mod config_tests;
 
 #[cfg(test)]
-#[path = "config_inline_tests.rs"]
+#[path = "tests/config_tests/config_inline_tests.rs"]
 mod tests;

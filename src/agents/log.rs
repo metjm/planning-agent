@@ -1,4 +1,4 @@
-use crate::session_logger::SessionLogger;
+use crate::session_daemon::SessionLogger;
 use std::sync::Arc;
 
 /// Agent logger that uses SessionLogger for all agent output logging.

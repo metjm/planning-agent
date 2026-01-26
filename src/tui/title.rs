@@ -42,12 +42,5 @@ impl Default for TerminalTitleManager {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_title_manager_creation() {
-        let manager = TerminalTitleManager::new();
-        let _ = manager.is_supported;
-    }
-}
+#[path = "tests/title_tests.rs"]
+mod tests;

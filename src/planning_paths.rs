@@ -408,5 +408,5 @@ impl SessionInfo {
 }
 
 #[cfg(test)]
-#[path = "planning_paths_tests.rs"]
+#[path = "tests/planning_paths_tests.rs"]
 mod tests;

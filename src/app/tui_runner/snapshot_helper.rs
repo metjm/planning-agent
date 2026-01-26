@@ -4,7 +4,7 @@
 //! used by both explicit stop handling and workflow completion.
 
 use crate::planning_paths;
-use crate::session_store::{save_snapshot, SessionSnapshot};
+use crate::session_daemon::{save_snapshot, SessionSnapshot};
 use crate::state::State;
 use crate::tui::Session;
 use anyhow::Result;
@@ -43,7 +43,7 @@ pub fn create_and_save_snapshot(
         .map(|ctx| ctx.workflow_config.name.clone())
         .filter(|name| !name.is_empty())
         .unwrap_or_else(|| {
-            crate::workflow_selection::WorkflowSelection::load(working_dir)
+            crate::app::WorkflowSelection::load(working_dir)
                 .map(|s| s.workflow)
                 .unwrap_or_else(|_| "claude-only".to_string())
         });

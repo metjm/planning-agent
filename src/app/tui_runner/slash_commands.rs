@@ -579,5 +579,5 @@ fn update_gemini_settings(path: &std::path::Path) -> Result<bool, String> {
 }
 
 #[cfg(test)]
-#[path = "slash_commands_tests.rs"]
+#[path = "tests/slash_commands_tests.rs"]
 mod tests;

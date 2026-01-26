@@ -4,7 +4,7 @@
 //! snapshot persistence.
 
 use super::Session;
-use crate::session_store::SessionUiState;
+use crate::session_daemon::SessionUiState;
 use crate::state::State;
 use crate::tui::mention::MentionState;
 use crate::tui::slash::SlashState;

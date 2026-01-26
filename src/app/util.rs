@@ -429,3 +429,7 @@ Example outputs: "sharing-permissions", "user-auth", "api-rate-limiting""#)
         Ok(name)
     }
 }
+
+#[cfg(test)]
+#[path = "tests/util_tests.rs"]
+mod tests;

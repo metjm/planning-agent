@@ -12,7 +12,11 @@
 #[cfg(feature = "host-gui")]
 pub mod gui;
 
+pub mod host_protocol;
+
 #[cfg(any(feature = "host-gui", test))]
 pub mod rpc_server;
 #[cfg(any(feature = "host-gui", test))]
 pub mod state;
+
+pub use host_protocol::*;

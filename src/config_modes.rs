@@ -449,13 +449,13 @@ impl WorkflowConfig {
 }
 
 #[cfg(test)]
-#[path = "config_claude_mode_tests.rs"]
+#[path = "tests/config_tests/config_claude_mode_tests.rs"]
 mod config_claude_mode_tests;
 
 #[cfg(test)]
-#[path = "config_codex_mode_tests.rs"]
+#[path = "tests/config_tests/config_codex_mode_tests.rs"]
 mod config_codex_mode_tests;
 
 #[cfg(test)]
-#[path = "config_gemini_mode_tests.rs"]
+#[path = "tests/config_tests/config_gemini_mode_tests.rs"]
 mod config_gemini_mode_tests;

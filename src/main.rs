@@ -1,34 +1,24 @@
 mod account_usage;
 mod agents;
 mod app;
-mod change_fingerprint;
-mod cli_usage;
 mod config;
 mod config_modes;
 mod daemon_log;
-mod diagnostics;
 pub mod domain;
 pub mod event_store;
 mod git_worktree;
 mod host;
-mod host_protocol;
 mod phases;
 mod planning_paths;
 pub mod prompt_format;
 mod rpc;
 mod session_daemon;
-mod session_logger;
-mod session_store;
-mod session_tracking;
-#[cfg(all(test, unix))]
-mod session_tracking_tests;
 mod skills;
 mod state;
 pub mod structured_logger;
 mod tui;
 mod update;
 mod usage_reset;
-mod workflow_selection;
 
 use anyhow::Result;
 use app::{cli::Cli, tui_runner::run_tui};
@@ -60,12 +50,12 @@ async fn async_main() -> Result<()> {
     // Log startup message to session-scoped startup log (merged into session log later)
     {
         let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
-        session_logger::log_startup(&format!("=== NEW RUN {} ===", now));
+        session_daemon::log_startup(&format!("=== NEW RUN {} ===", now));
     }
-    session_logger::log_startup("main starting");
+    session_daemon::log_startup("main starting");
 
     let cli = Cli::parse();
-    session_logger::log_startup("cli parsed");
+    session_daemon::log_startup("cli parsed");
 
     // Handle session daemon mode (internal, used by connect-or-spawn)
     if cli.session_daemon {
@@ -93,7 +83,7 @@ async fn async_main() -> Result<()> {
 
     // Run TUI workflow
     let result = run_tui(cli, start).await;
-    session_logger::log_startup("main function returning");
+    session_daemon::log_startup("main function returning");
     result
 }
 
@@ -174,7 +164,7 @@ async fn list_sessions(_working_dir: &Path) -> Result<()> {
     }
 
     // Load disk snapshots and merge (add ones not already in live list)
-    if let Ok(snapshots) = session_store::list_snapshots() {
+    if let Ok(snapshots) = session_daemon::list_snapshots() {
         for snapshot in snapshots {
             if !seen_ids.contains(&snapshot.workflow_session_id) {
                 seen_ids.insert(snapshot.workflow_session_id.clone());
@@ -243,7 +233,7 @@ async fn list_sessions(_working_dir: &Path) -> Result<()> {
 /// Cleans up old session snapshots
 fn cleanup_sessions(_working_dir: &Path, older_than: Option<u32>) -> Result<()> {
     let days = older_than.unwrap_or(30);
-    let deleted = session_store::cleanup_old_snapshots(days)?;
+    let deleted = session_daemon::cleanup_old_snapshots(days)?;
 
     if deleted.is_empty() {
         println!("No sessions older than {} days found.", days);

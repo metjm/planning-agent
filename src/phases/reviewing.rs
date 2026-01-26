@@ -1,13 +1,13 @@
 use crate::agents::{AgentContext, AgentType};
 use crate::app::workflow_common::is_network_error;
+use crate::app::{create_review_bundle, AttemptTimestamp, BundleConfig};
 use crate::config::{AgentRef, AggregationMode, WorkflowConfig};
-use crate::diagnostics::{create_review_bundle, AttemptTimestamp, BundleConfig};
 use crate::domain::actor::WorkflowMessage;
-use crate::domain::commands::WorkflowCommand as DomainCommand;
 use crate::domain::failure::FailureKind;
 use crate::domain::types::{
     AgentId, ConversationId, PhaseLabel, ResumeStrategy as DomainResumeStrategy,
 };
+use crate::domain::WorkflowCommand as DomainCommand;
 use crate::phases::review_parser::parse_review_feedback;
 use crate::phases::review_prompts::{
     build_review_prompt_for_agent, build_review_recovery_prompt_for_agent, REVIEW_SYSTEM_PROMPT,
@@ -15,7 +15,7 @@ use crate::phases::review_prompts::{
 use crate::phases::review_schema::SubmittedReview;
 use crate::phases::reviewing_conversation_key;
 use crate::planning_paths;
-use crate::session_logger::{LogCategory, LogLevel, SessionLogger};
+use crate::session_daemon::{LogCategory, LogLevel, SessionLogger};
 use crate::state::{FeedbackStatus, ResumeStrategy, State};
 use crate::tui::{ReviewKind, SessionEventSender};
 use anyhow::Result;
@@ -549,10 +549,10 @@ pub async fn run_multi_agent_review_with_context(
 fn try_parse_feedback_file(
     feedback_path: &Path,
     require_tags: bool,
-) -> Result<SubmittedReview, crate::diagnostics::ParseFailureInfo> {
+) -> Result<SubmittedReview, crate::app::ParseFailureInfo> {
     // Check if the file exists
     if !feedback_path.exists() {
-        return Err(crate::diagnostics::ParseFailureInfo {
+        return Err(crate::app::ParseFailureInfo {
             error: format!("Feedback file not found: {}", feedback_path.display()),
             plan_feedback_found: false,
             verdict_found: false,
@@ -563,7 +563,7 @@ fn try_parse_feedback_file(
     let content = match fs::read_to_string(feedback_path) {
         Ok(c) => c,
         Err(e) => {
-            return Err(crate::diagnostics::ParseFailureInfo {
+            return Err(crate::app::ParseFailureInfo {
                 error: format!("Failed to read feedback file: {}", e),
                 plan_feedback_found: false,
                 verdict_found: false,
@@ -572,7 +572,7 @@ fn try_parse_feedback_file(
     };
 
     if content.trim().is_empty() {
-        return Err(crate::diagnostics::ParseFailureInfo {
+        return Err(crate::app::ParseFailureInfo {
             error: "Feedback file is empty".to_string(),
             plan_feedback_found: false,
             verdict_found: false,
@@ -831,7 +831,5 @@ fn to_domain_resume_strategy(strategy: &ResumeStrategy) -> DomainResumeStrategy 
 }
 
 #[cfg(test)]
-#[path = "reviewing_tests.rs"]
-mod reviewing_tests;
-
-// Tests moved to reviewing_tests.rs to keep this file under the line limit
+#[path = "tests/reviewing_tests.rs"]
+mod tests;

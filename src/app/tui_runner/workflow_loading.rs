@@ -42,11 +42,11 @@ pub fn restore_terminal(
 /// 2. `./workflow.yaml` in working directory
 /// 3. Fallback to claude_only_config()
 pub fn load_workflow_from_snapshot(
-    snapshot: &crate::session_store::SessionSnapshot,
+    snapshot: &crate::session_daemon::SessionSnapshot,
 ) -> WorkflowConfig {
     // Try to load from stored workflow name first
     if !snapshot.workflow_name.is_empty() {
-        match crate::workflow_selection::load_workflow_by_name(&snapshot.workflow_name) {
+        match crate::app::load_workflow_by_name(&snapshot.workflow_name) {
             Ok(config) => return config,
             Err(e) => {
                 eprintln!(
@@ -72,8 +72,8 @@ pub fn load_workflow_from_snapshot(
 /// (e.g., after user explicitly selects a workflow via `/workflow`).
 pub fn load_workflow_from_selection(working_dir: &Path) -> WorkflowConfig {
     // Check for persisted workflow selection (per-working-directory)
-    if let Ok(selection) = crate::workflow_selection::WorkflowSelection::load(working_dir) {
-        match crate::workflow_selection::load_workflow_by_name(&selection.workflow) {
+    if let Ok(selection) = crate::app::WorkflowSelection::load(working_dir) {
+        match crate::app::load_workflow_by_name(&selection.workflow) {
             Ok(cfg) => {
                 return cfg;
             }
@@ -132,7 +132,7 @@ pub fn get_workflow_config_for_session(
 /// 6. Fallback to claude_only_config()
 pub fn load_workflow_config_for_resume(
     cli: &Cli,
-    snapshot: &crate::session_store::SessionSnapshot,
+    snapshot: &crate::session_daemon::SessionSnapshot,
     start: std::time::Instant,
 ) -> WorkflowConfig {
     // --claude flag takes priority over any config file or snapshot workflow

@@ -178,6 +178,41 @@ The build script (`build.rs`) enforces several code quality rules. Violations fa
 
 6. **Code Formatting**: All code must pass `cargo fmt --check`.
 
+7. **Max Files Per Folder**: No folder can contain more than 10 `.rs` files. Split large modules into subfolders.
+
+8. **Tests Must Be in Test Folders**: All tests must be in folders whose name contains "test". See the Test Location Pattern below.
+
+### Test Location Pattern
+
+Tests must live in folders with "test" in the name (e.g., `src/foo/tests/`). Use the `#[path]` attribute to keep tests as child modules while placing them in a separate folder:
+
+```rust
+// src/foo/bar.rs
+fn private_fn() { }  // stays private - no visibility change needed
+
+#[cfg(test)]
+#[path = "tests/bar.rs"]
+mod tests;
+```
+
+Then in `src/foo/tests/bar.rs`:
+```rust
+use super::*;  // Can access private items - this is still a child module!
+
+#[test]
+fn test_private_fn() {
+    private_fn();  // Works because tests is a child of bar
+}
+```
+
+**Why this pattern:**
+- Tests live in a `tests/` folder (satisfies build check)
+- Tests can access private items via `super::*` (no `pub(crate)` needed)
+- Clear separation between production and test code
+- No visibility changes required for internal functions
+
+**Migration:** Use `SKIP_FOLDER_CHECK=1 SKIP_TEST_FOLDER_CHECK=1` during migration.
+
 ### Refactoring is Encouraged
 
 **Never be afraid to change a lot of code if it improves things.**

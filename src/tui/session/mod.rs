@@ -3,18 +3,16 @@ mod chat;
 mod cli_instances;
 pub mod context;
 mod input;
+mod modals;
 pub mod model;
 mod paste;
-mod plan_modal;
-mod review_history;
-mod review_modal;
 mod snapshot;
 mod tools;
 
 pub use cli_instances::{CliInstance, CliInstanceId};
 
+use crate::app::AccountUsage;
 use crate::app::WorkflowResult;
-use crate::cli_usage::AccountUsage;
 use crate::domain::view::WorkflowView;
 use crate::phases::implementing_conversation_key;
 use crate::state::{ImplementationPhase, Phase, State, UiMode};
@@ -713,7 +711,9 @@ impl Default for Session {
 }
 
 #[cfg(test)]
+#[path = "tests/mod.rs"]
 mod tests;
 
 #[cfg(test)]
+#[path = "tests/tools_tests.rs"]
 mod tests_tools;

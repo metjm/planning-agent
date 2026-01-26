@@ -5,7 +5,7 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 
 use crate::app::workflow_decisions::IterativePhase;
-use crate::cli_usage::AccountUsage;
+use crate::app::AccountUsage;
 use crate::domain::view::WorkflowView;
 use crate::state::State;
 use crate::tui::file_index::FileIndex;

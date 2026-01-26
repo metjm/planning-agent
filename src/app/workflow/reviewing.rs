@@ -8,14 +8,14 @@ use crate::app::workflow_decisions::{
 };
 use crate::config::{AgentRef, WorkflowConfig};
 use crate::domain::actor::WorkflowMessage;
-use crate::domain::commands::WorkflowCommand as DomainCommand;
 use crate::domain::review::ReviewMode;
 use crate::domain::types::AgentId;
+use crate::domain::WorkflowCommand as DomainCommand;
 use crate::phases::{
     self, aggregate_reviews, merge_feedback, run_multi_agent_review_with_context,
     write_feedback_files,
 };
-use crate::session_logger::{LogCategory, LogLevel, SessionLogger};
+use crate::session_daemon::{LogCategory, LogLevel, SessionLogger};
 use crate::state::{FeedbackStatus, Phase, SequentialReviewState, SerializableReviewResult, State};
 use crate::tui::{
     CancellationError, ReviewKind, SessionEventSender, UserApprovalResponse, WorkflowCommand,

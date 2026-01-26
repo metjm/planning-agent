@@ -3,7 +3,7 @@
 use super::WorkflowResult;
 use crate::app::util::build_approval_summary;
 use crate::git_worktree;
-use crate::session_logger::{LogCategory, LogLevel, SessionLogger};
+use crate::session_daemon::{LogCategory, LogLevel, SessionLogger};
 use crate::state::State;
 use crate::tui::{SessionEventSender, UserApprovalResponse, WorkflowCommand};
 use anyhow::Result;

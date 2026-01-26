@@ -300,5 +300,5 @@ pub async fn run_host_rpc_server(
 }
 
 #[cfg(test)]
-#[path = "rpc_server_tests.rs"]
+#[path = "tests/rpc_server_tests.rs"]
 mod tests;

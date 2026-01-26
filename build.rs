@@ -2,7 +2,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 const MAX_LINES: usize = 750;
-const MAX_RS_FILES_PER_FOLDER: usize = 10;
+const MAX_RS_FILES_PER_FOLDER: usize = 12;
+const MAX_SUBFOLDERS_PER_FOLDER: usize = 12;
 
 const CHECKED_EXTENSIONS: &[&str] = &["rs", "md", "yaml", "toml"];
 
@@ -74,6 +75,7 @@ fn main() {
     enforce_formatting();
     enforce_line_limits();
     enforce_max_files_per_folder();
+    enforce_max_subfolders_per_folder();
     enforce_tests_in_test_paths();
     enforce_no_dead_code_allows();
     enforce_no_ignored_tests();
@@ -213,15 +215,100 @@ fn enforce_max_files_per_folder() {
     }
 }
 
-/// Enforces that all tests are in folders whose name contains "test".
+/// Enforces that no folder contains more than MAX_SUBFOLDERS_PER_FOLDER subfolders.
+///
+/// This prevents excessive nesting and encourages consolidation of related modules.
+fn enforce_max_subfolders_per_folder() {
+    // Skip check if SKIP_FOLDER_CHECK is set (useful during migration)
+    if std::env::var("SKIP_FOLDER_CHECK").is_ok() {
+        return;
+    }
+
+    use std::collections::HashMap;
+
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR must be set");
+    let root = PathBuf::from(&manifest_dir);
+    let src_dir = root.join("src");
+
+    // Count subfolders per folder (only in src/)
+    let mut subfolders_per_folder: HashMap<PathBuf, Vec<PathBuf>> = HashMap::new();
+
+    fn count_subfolders(dir: &Path, subfolders_map: &mut HashMap<PathBuf, Vec<PathBuf>>) {
+        let entries = match std::fs::read_dir(dir) {
+            Ok(e) => e,
+            Err(_) => return,
+        };
+
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                // Skip hidden folders, target, tests folders (tests are allowed to have many subfolders)
+                if name.starts_with('.') || name == "target" || name.contains("test") {
+                    continue;
+                }
+
+                subfolders_map
+                    .entry(dir.to_path_buf())
+                    .or_default()
+                    .push(path.clone());
+
+                // Recurse
+                count_subfolders(&path, subfolders_map);
+            }
+        }
+    }
+
+    count_subfolders(&src_dir, &mut subfolders_per_folder);
+
+    // Find violations
+    let mut violations: Vec<(PathBuf, usize)> = Vec::new();
+    for (folder, subfolders) in &subfolders_per_folder {
+        if subfolders.len() > MAX_SUBFOLDERS_PER_FOLDER {
+            let rel_path = folder.strip_prefix(&root).unwrap_or(folder).to_path_buf();
+            violations.push((rel_path, subfolders.len()));
+        }
+    }
+
+    if !violations.is_empty() {
+        violations.sort_by(|a, b| b.1.cmp(&a.1)); // Sort by count descending
+
+        eprintln!("\n========================================");
+        eprintln!(
+            "TOO MANY SUBFOLDERS PER FOLDER (max {} subfolders)",
+            MAX_SUBFOLDERS_PER_FOLDER
+        );
+        eprintln!("========================================");
+        for (path, count) in &violations {
+            eprintln!(
+                "  {} - {} subfolders (exceeds by {})",
+                path.display(),
+                count,
+                count - MAX_SUBFOLDERS_PER_FOLDER
+            );
+        }
+        eprintln!("========================================\n");
+        eprintln!("Please consolidate related modules together.");
+        eprintln!("For example, merge small related modules or use feature groupings.");
+        eprintln!("\n========================================\n");
+        panic!(
+            "Build failed: {} folder(s) exceed the {} subfolder limit",
+            violations.len(),
+            MAX_SUBFOLDERS_PER_FOLDER
+        );
+    }
+}
+
+/// Enforces that all tests are in folders whose name contains "test" AND the file
+/// itself contains "test" in its name.
 ///
 /// This ensures a clear separation between production code and test code.
-/// The parent folder of any file containing tests must have "test" in its name.
 /// Examples:
-///   - `src/foo/tests/helpers.rs` - OK (parent "tests" contains "test")
-///   - `src/foo/foo_tests/bar.rs` - OK (parent "foo_tests" contains "test")
-///   - `tests/integration.rs` - OK (parent "tests" contains "test")
-///   - `src/foo/bar.rs` - NOT OK (parent "foo" doesn't contain "test")
+///   - `src/foo/tests/bar_tests.rs` - OK (parent has "test", file has "test")
+///   - `src/foo/tests/mod.rs` - OK (parent has "test", mod.rs is special-cased)
+///   - `tests/integration_tests.rs` - OK
+///   - `src/foo/tests/bar.rs` - NOT OK (file doesn't have "test")
+///   - `src/foo/bar_tests.rs` - NOT OK (parent doesn't have "test")
 fn enforce_tests_in_test_paths() {
     // Skip check if SKIP_TEST_FOLDER_CHECK is set (useful during migration)
     if std::env::var("SKIP_TEST_FOLDER_CHECK").is_ok() {
@@ -253,8 +340,12 @@ fn enforce_tests_in_test_paths() {
             .map(|name| name.to_lowercase().contains("test"))
             .unwrap_or(false);
 
-        if parent_has_test {
-            // This file is in a test folder, allowed to have tests
+        // Check if filename contains "test" (or is mod.rs which is allowed)
+        let filename = rel_path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        let file_has_test = filename.to_lowercase().contains("test") || filename == "mod.rs";
+
+        if parent_has_test && file_has_test {
+            // This file is in a test folder AND has test in its name
             continue;
         }
 
@@ -306,18 +397,19 @@ fn enforce_tests_in_test_paths() {
         }
         eprintln!("========================================");
         eprintln!();
-        eprintln!("Tests must be in folders whose name contains \"test\".");
+        eprintln!("Tests must be in folders with \"test\" in the name AND");
+        eprintln!("the file itself must have \"test\" in its name.");
         eprintln!();
         eprintln!("Valid locations:");
-        eprintln!("  - src/foo/tests/bar.rs      (parent: tests)");
-        eprintln!("  - src/foo/foo_tests/bar.rs  (parent: foo_tests)");
-        eprintln!("  - tests/integration.rs      (parent: tests)");
+        eprintln!("  - src/foo/tests/bar_tests.rs  (folder + file both have 'test')");
+        eprintln!("  - src/foo/tests/mod.rs        (mod.rs is allowed in test folders)");
+        eprintln!("  - tests/integration_tests.rs  (both have 'test')");
         eprintln!();
         eprintln!("Invalid locations:");
-        eprintln!("  - src/foo/bar_tests.rs      (parent: foo - no 'test')");
-        eprintln!("  - src/foo/tests.rs          (parent: foo - no 'test')");
+        eprintln!("  - src/foo/tests/bar.rs        (file missing 'test')");
+        eprintln!("  - src/foo/bar_tests.rs        (folder missing 'test')");
         eprintln!();
-        eprintln!("Move tests into a folder with 'test' in its name.");
+        eprintln!("Move tests to: src/foo/tests/bar_tests.rs");
         eprintln!();
         eprintln!("========================================\n");
         panic!(
@@ -340,7 +432,8 @@ fn collect_files_to_check(root: &Path) -> Vec<PathBuf> {
             if let Ok(stdout) = String::from_utf8(output.stdout) {
                 for line in stdout.lines() {
                     let path = root.join(line);
-                    if should_check_file(&path, root) {
+                    // Skip files that don't exist (e.g., deleted but not yet committed)
+                    if path.exists() && should_check_file(&path, root) {
                         files.push(path);
                     }
                 }

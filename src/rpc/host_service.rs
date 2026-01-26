@@ -7,7 +7,7 @@ use std::path::PathBuf;
 // Re-export existing types from host_protocol
 // Note: Allow unused for now - will be used by RPC upstream/server implementations
 #[allow(unused_imports)]
-pub use crate::host_protocol::{SessionInfo, PROTOCOL_VERSION};
+pub use crate::host::{SessionInfo, PROTOCOL_VERSION};
 
 /// Container identification for host connection handshake.
 #[derive(Debug, Clone, Serialize, Deserialize)]

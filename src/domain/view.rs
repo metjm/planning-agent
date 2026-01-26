@@ -3,8 +3,7 @@
 //! The WorkflowView is derived from WorkflowEvent only (no direct mutation)
 //! and contains only the data required for UI, session tracking, and resume.
 
-use crate::domain::aggregate::WorkflowAggregate;
-use crate::domain::events::WorkflowEvent;
+use crate::domain::cqrs::WorkflowAggregate;
 use crate::domain::failure::{FailureContext, MAX_FAILURE_HISTORY};
 use crate::domain::review::ReviewMode;
 use crate::domain::types::{
@@ -12,6 +11,7 @@ use crate::domain::types::{
     ImplementationPhase, ImplementationPhaseState, InvocationRecord, Iteration, MaxIterations,
     Objective, PlanPath, PlanningPhase, UiMode, WorkflowId, WorkingDir, WorktreeState,
 };
+use crate::domain::WorkflowEvent;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use uuid::Uuid;

@@ -25,26 +25,22 @@
 //! ```
 
 pub mod actor;
-pub mod aggregate;
-pub mod commands;
+pub mod cqrs;
 pub mod errors;
-pub mod events;
 pub mod failure;
-pub mod query;
 pub mod review;
 pub mod services;
 pub mod supervisor;
 pub mod types;
 pub mod view;
 
+// Re-export CQRS types
+pub use cqrs::*;
+
 // Re-export commonly used types for convenience
 pub use actor::{create_actor_args, WorkflowActor, WorkflowActorArgs, WorkflowMessage};
-pub use aggregate::{WorkflowAggregate, WorkflowData, WorkflowState};
-pub use commands::WorkflowCommand;
 pub use errors::WorkflowError;
-pub use events::WorkflowEvent;
 pub use failure::{FailureContext, FailureKind, FailurePolicy, RecoveryAction};
-pub use query::WorkflowQuery;
 pub use review::{ReviewMode, SequentialReviewState, SerializableReviewResult};
 pub use services::{WorkflowClock, WorkflowServices};
 pub use supervisor::{SupervisorMsg, WorkflowSupervisor};
@@ -55,6 +51,3 @@ pub use types::{
     TimestampUtc, UiMode, WorkflowId, WorkingDir, WorktreeState,
 };
 pub use view::{WorkflowEventEnvelope, WorkflowView};
-
-#[cfg(test)]
-mod aggregate_tests;

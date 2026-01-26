@@ -21,8 +21,12 @@ pub mod rpc_server;
 pub mod rpc_subscription;
 pub mod rpc_upstream;
 pub mod server;
+pub mod session_logger;
+pub mod session_store;
+pub mod session_tracking;
 
 #[cfg(test)]
+#[path = "tests/server_tests.rs"]
 mod server_tests;
 
 #[cfg(test)]
@@ -31,6 +35,9 @@ pub(crate) mod rpc_tests;
 pub use protocol::{LivenessState, SessionRecord};
 pub use rpc_client::RpcClient;
 pub use rpc_server::run_daemon_rpc;
+pub use session_logger::*;
+pub use session_store::*;
+pub use session_tracking::*;
 
 // Re-export WorkflowEventEnvelope for session tracking
 pub use crate::rpc::WorkflowEventEnvelope;

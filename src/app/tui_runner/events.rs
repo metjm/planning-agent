@@ -5,8 +5,8 @@ use std::path::Path;
 use tokio::sync::mpsc;
 
 use super::input::handle_key_event;
+use super::input::mouse_input::{handle_mouse_click, handle_mouse_scroll};
 use super::input::{is_summary_panel_visible, is_todo_panel_visible};
-use super::mouse_input::{handle_mouse_click, handle_mouse_scroll};
 use super::session_events::handle_session_event;
 use super::snapshot_helper::create_and_save_snapshot;
 use super::InitHandle;
