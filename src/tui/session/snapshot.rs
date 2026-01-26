@@ -90,7 +90,7 @@ impl Session {
             streaming_follow_mode: ui_state.streaming_follow_mode,
             focused_panel: ui_state.focused_panel,
             workflow_state,
-            state_snapshot: None,       // Will be populated when workflow spawns
+            workflow_view: None, // Will be populated from event log on resume
             start_time: Instant::now(), // Reset to now
             total_cost: ui_state.total_cost,
             running: false,                        // Will be set when workflow resumes

@@ -58,6 +58,14 @@ async fn test_subscription_callback_end_to_end() {
         async fn ping(self, _: tarpc::context::Context) -> bool {
             true
         }
+
+        async fn workflow_event(
+            self,
+            _: tarpc::context::Context,
+            _session_id: String,
+            _event: crate::domain::view::WorkflowEventEnvelope,
+        ) {
+        }
     }
 
     let subscriber_addr = format!("127.0.0.1:{}", server.subscriber_port);
@@ -126,6 +134,14 @@ async fn test_subscription_receives_multiple_events() {
 
         async fn ping(self, _: tarpc::context::Context) -> bool {
             true
+        }
+
+        async fn workflow_event(
+            self,
+            _: tarpc::context::Context,
+            _session_id: String,
+            _event: crate::domain::view::WorkflowEventEnvelope,
+        ) {
         }
     }
 
@@ -213,6 +229,14 @@ async fn test_multiple_subscribers_receive_events() {
         async fn ping(self, _: tarpc::context::Context) -> bool {
             true
         }
+
+        async fn workflow_event(
+            self,
+            _: tarpc::context::Context,
+            _session_id: String,
+            _event: crate::domain::view::WorkflowEventEnvelope,
+        ) {
+        }
     }
 
     let addr = format!("127.0.0.1:{}", server.subscriber_port);
@@ -298,6 +322,14 @@ async fn test_daemon_restarting_callback_end_to_end() {
         async fn ping(self, _: tarpc::context::Context) -> bool {
             true
         }
+
+        async fn workflow_event(
+            self,
+            _: tarpc::context::Context,
+            _session_id: String,
+            _event: crate::domain::view::WorkflowEventEnvelope,
+        ) {
+        }
     }
 
     let subscriber_addr = format!("127.0.0.1:{}", server.subscriber_port);
@@ -364,6 +396,14 @@ async fn test_subscriber_partial_failure_cleanup() {
 
         async fn ping(self, _: tarpc::context::Context) -> bool {
             true
+        }
+
+        async fn workflow_event(
+            self,
+            _: tarpc::context::Context,
+            _session_id: String,
+            _event: crate::domain::view::WorkflowEventEnvelope,
+        ) {
         }
     }
 
@@ -455,6 +495,14 @@ async fn test_subscriber_ping_detects_healthy_subscriber() {
 
         async fn ping(self, _: tarpc::context::Context) -> bool {
             true
+        }
+
+        async fn workflow_event(
+            self,
+            _: tarpc::context::Context,
+            _session_id: String,
+            _event: crate::domain::view::WorkflowEventEnvelope,
+        ) {
         }
     }
 

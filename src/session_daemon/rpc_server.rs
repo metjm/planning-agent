@@ -5,7 +5,9 @@
 use crate::daemon_log::daemon_log;
 use crate::planning_paths;
 use crate::rpc::daemon_service::{DaemonService, SubscriberCallbackClient};
-use crate::rpc::{DaemonError, DaemonResult, LivenessState, PortFileContent, SessionRecord};
+use crate::rpc::{
+    DaemonError, DaemonResult, LivenessState, PortFileContent, SessionRecord, WorkflowEventEnvelope,
+};
 use crate::session_daemon::rpc_upstream::UpstreamEvent;
 use crate::session_daemon::server::DaemonState;
 use crate::update::{BUILD_SHA, BUILD_TIMESTAMP};
@@ -86,6 +88,28 @@ impl SubscriberRegistry {
     /// Get count of active subscribers.
     pub fn count(&self) -> usize {
         self.subscribers.len()
+    }
+
+    /// Broadcast a workflow event to all subscribers.
+    /// Returns IDs of failed subscribers for cleanup.
+    pub async fn broadcast_workflow_event(
+        &self,
+        session_id: String,
+        event: WorkflowEventEnvelope,
+    ) -> Vec<SubscriberId> {
+        let mut failed = Vec::new();
+
+        for (id, client) in &self.subscribers {
+            if client
+                .workflow_event(tarpc::context::current(), session_id.clone(), event.clone())
+                .await
+                .is_err()
+            {
+                failed.push(*id);
+            }
+        }
+
+        failed
     }
 
     /// Ping all subscribers to check if they're alive.
@@ -411,6 +435,37 @@ impl DaemonService for DaemonServer {
             );
             false
         }
+    }
+
+    async fn workflow_event(
+        self,
+        _: tarpc::context::Context,
+        session_id: String,
+        event: WorkflowEventEnvelope,
+    ) -> DaemonResult<()> {
+        self.check_authenticated().await?;
+
+        // Broadcast to all subscribers
+        let failed = {
+            let registry = self.subscribers.read().await;
+            registry
+                .broadcast_workflow_event(session_id.clone(), event)
+                .await
+        };
+
+        // Clean up dead subscribers
+        if !failed.is_empty() {
+            let mut registry = self.subscribers.write().await;
+            for id in failed {
+                registry.remove(&id);
+                daemon_log(
+                    "rpc_server",
+                    &format!("Removed dead subscriber during workflow_event: {}", id),
+                );
+            }
+        }
+
+        Ok(())
     }
 }
 

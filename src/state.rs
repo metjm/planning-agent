@@ -1,4 +1,4 @@
-use crate::app::failure::{FailureContext, MAX_FAILURE_HISTORY};
+use crate::domain::failure::{FailureContext, MAX_FAILURE_HISTORY};
 use crate::planning_paths;
 use anyhow::{Context, Result};
 use chrono::Utc;
@@ -92,19 +92,6 @@ impl ImplementationPhaseState {
         self.phase != ImplementationPhase::Complete && self.iteration <= self.max_iterations
     }
 
-    /// Returns true if the last verdict was APPROVED.
-    pub fn is_approved(&self) -> bool {
-        self.last_verdict
-            .as_ref()
-            .map(|v| v == "APPROVED")
-            .unwrap_or(false)
-    }
-
-    /// Transitions to the next phase.
-    pub fn advance_to_review(&mut self) {
-        self.phase = ImplementationPhase::ImplementationReview;
-    }
-
     /// Transitions back to implementing for another round.
     pub fn advance_to_next_iteration(&mut self) {
         self.iteration += 1;
@@ -114,71 +101,6 @@ impl ImplementationPhaseState {
     /// Marks implementation as complete.
     pub fn mark_complete(&mut self) {
         self.phase = ImplementationPhase::Complete;
-    }
-}
-
-impl Phase {
-    /// Get a UI-friendly label for the phase.
-    pub fn label(&self) -> PhaseLabel {
-        match self {
-            Phase::Planning => PhaseLabel::Planning,
-            Phase::Reviewing => PhaseLabel::Reviewing,
-            Phase::Revising => PhaseLabel::Revising,
-            Phase::AwaitingPlanningDecision => PhaseLabel::AwaitingDecision,
-            Phase::Complete => PhaseLabel::Complete,
-        }
-    }
-}
-
-/// Human-readable phase labels for UI/logging purposes.
-///
-/// Unlike `Phase`, which is used for state machine transitions,
-/// `PhaseLabel` provides display-friendly formatting.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PhaseLabel {
-    Planning,
-    Reviewing,
-    Revising,
-    AwaitingDecision,
-    Complete,
-}
-
-impl PhaseLabel {
-    /// Short label for compact display (e.g., status bars).
-    pub fn short(&self) -> &'static str {
-        match self {
-            PhaseLabel::Planning => "Plan",
-            PhaseLabel::Reviewing => "Review",
-            PhaseLabel::Revising => "Revise",
-            PhaseLabel::AwaitingDecision => "Decide",
-            PhaseLabel::Complete => "Done",
-        }
-    }
-
-    /// Full label for verbose display.
-    pub fn full(&self) -> &'static str {
-        match self {
-            PhaseLabel::Planning => "Planning",
-            PhaseLabel::Reviewing => "Reviewing",
-            PhaseLabel::Revising => "Revising",
-            PhaseLabel::AwaitingDecision => "Awaiting Decision",
-            PhaseLabel::Complete => "Complete",
-        }
-    }
-
-    /// Label with iteration number for review/revise phases.
-    pub fn with_iteration(&self, iteration: u32) -> String {
-        match self {
-            PhaseLabel::Reviewing if iteration > 1 => format!("Reviewing #{}", iteration),
-            PhaseLabel::Revising => format!("Revising #{}", iteration),
-            _ => self.full().to_string(),
-        }
-    }
-}
-
-impl std::fmt::Display for PhaseLabel {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.full())
     }
 }
 
@@ -695,11 +617,6 @@ impl State {
     /// The failure remains in history for auditing.
     pub fn clear_failure(&mut self) {
         self.last_failure = None;
-    }
-
-    /// Returns true if there's an active failure requiring recovery.
-    pub fn has_failure(&self) -> bool {
-        self.last_failure.is_some()
     }
 
     /// Returns the current UI mode based on implementation state.

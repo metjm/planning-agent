@@ -80,7 +80,6 @@ pub fn start_resumed_workflow(
                     session_id: sid,
                     run_id,
                     no_daemon: false,
-                    snapshot_tx: None, // Legacy mode - state updates via Event::SessionStateUpdate
                 },
             )
             .await
@@ -130,7 +129,7 @@ pub async fn handle_init_completion(
                     let summary = crate::app::util::build_resume_failure_summary(failure);
                     if matches!(
                         failure.kind,
-                        crate::app::failure::FailureKind::AllReviewersFailed
+                        crate::domain::failure::FailureKind::AllReviewersFailed
                     ) {
                         session.start_all_reviewers_failed(summary);
                     } else {
@@ -172,7 +171,6 @@ pub async fn handle_init_completion(
                                 session_id: sid,
                                 run_id,
                                 no_daemon: false,
-                                snapshot_tx: None,
                             },
                         )
                         .await
@@ -377,7 +375,6 @@ fn handle_workflow_restart(
                         session_id: sid,
                         run_id,
                         no_daemon: false,
-                        snapshot_tx: None, // Legacy mode - state updates via Event::SessionStateUpdate
                     },
                 )
                 .await

@@ -1,8 +1,13 @@
 use crate::agents::{AgentContext, AgentType};
-use crate::app::failure::FailureKind;
 use crate::app::workflow_common::is_network_error;
 use crate::config::{AgentRef, AggregationMode, WorkflowConfig};
 use crate::diagnostics::{create_review_bundle, AttemptTimestamp, BundleConfig};
+use crate::domain::actor::WorkflowMessage;
+use crate::domain::commands::WorkflowCommand as DomainCommand;
+use crate::domain::failure::FailureKind;
+use crate::domain::types::{
+    AgentId, ConversationId, PhaseLabel, ResumeStrategy as DomainResumeStrategy,
+};
 use crate::phases::review_parser::parse_review_feedback;
 use crate::phases::review_prompts::{
     build_review_prompt_for_agent, build_review_recovery_prompt_for_agent, REVIEW_SYSTEM_PROMPT,
@@ -10,13 +15,15 @@ use crate::phases::review_prompts::{
 use crate::phases::review_schema::SubmittedReview;
 use crate::phases::reviewing_conversation_key;
 use crate::planning_paths;
-use crate::session_logger::SessionLogger;
+use crate::session_logger::{LogCategory, LogLevel, SessionLogger};
 use crate::state::{FeedbackStatus, ResumeStrategy, State};
 use crate::tui::{ReviewKind, SessionEventSender};
 use anyhow::Result;
+use ractor::ActorRef;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use tokio::sync::oneshot;
 
 // Re-export VerdictParseResult and parse_verdict for external use (used in tests)
 #[allow(unused_imports)]
@@ -97,6 +104,7 @@ pub async fn run_multi_agent_review_with_context(
     state_path: &Path,
     session_logger: Arc<SessionLogger>,
     emit_round_started: bool,
+    actor_ref: Option<ActorRef<WorkflowMessage>>,
 ) -> Result<ReviewBatchResult> {
     if agent_refs.is_empty() {
         anyhow::bail!("No reviewers configured");
@@ -139,13 +147,31 @@ pub async fn run_multi_agent_review_with_context(
         let conversation_id_name = reviewing_conversation_key(&display_id);
         let agent_session =
             state.get_or_create_agent_session(&conversation_id_name, resume_strategy.clone());
+
+        // Clone values before further state mutations
+        let conv_id = agent_session.conversation_id.clone();
+        let conv_resume_strategy = agent_session.resume_strategy.clone();
+
         agent_contexts.push((
             display_id.clone(),
-            agent_session.conversation_id.clone(),
-            agent_session.resume_strategy.clone(),
+            conv_id.clone(),
+            conv_resume_strategy.clone(),
             custom_prompt,
         ));
         state.record_invocation(&conversation_id_name, &phase_name);
+
+        // Dispatch RecordInvocation command to CQRS actor
+        dispatch_reviewing_command(
+            &actor_ref,
+            &session_logger,
+            DomainCommand::RecordInvocation {
+                agent_id: AgentId::from(conversation_id_name.as_str()),
+                phase: PhaseLabel::Reviewing,
+                conversation_id: conv_id.clone().map(ConversationId::from),
+                resume_strategy: to_domain_resume_strategy(&conv_resume_strategy),
+            },
+        )
+        .await;
     }
     state.set_updated_at();
     state.save_atomic(state_path)?;
@@ -755,6 +781,53 @@ pub fn merge_feedback(reviews: &[ReviewResult], output_path: &Path) -> Result<()
     );
 
     write_atomic(output_path, &format!("{}{}", header, merged))
+}
+
+/// Helper to dispatch reviewing commands to the CQRS actor.
+async fn dispatch_reviewing_command(
+    actor_ref: &Option<ActorRef<WorkflowMessage>>,
+    session_logger: &Arc<SessionLogger>,
+    cmd: DomainCommand,
+) {
+    if let Some(ref actor) = actor_ref {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        if let Err(e) =
+            actor.send_message(WorkflowMessage::Command(Box::new(cmd.clone()), reply_tx))
+        {
+            session_logger.log(
+                LogLevel::Warn,
+                LogCategory::Workflow,
+                &format!("Failed to send reviewing command: {}", e),
+            );
+            return;
+        }
+        match reply_rx.await {
+            Ok(Ok(_)) => {}
+            Ok(Err(e)) => {
+                session_logger.log(
+                    LogLevel::Warn,
+                    LogCategory::Workflow,
+                    &format!("Reviewing command rejected: {}", e),
+                );
+            }
+            Err(_) => {
+                session_logger.log(
+                    LogLevel::Warn,
+                    LogCategory::Workflow,
+                    "Reviewing command reply channel closed",
+                );
+            }
+        }
+    }
+}
+
+/// Convert state ResumeStrategy to domain ResumeStrategy.
+fn to_domain_resume_strategy(strategy: &ResumeStrategy) -> DomainResumeStrategy {
+    match strategy {
+        ResumeStrategy::Stateless => DomainResumeStrategy::Stateless,
+        ResumeStrategy::ConversationResume => DomainResumeStrategy::ConversationResume,
+        ResumeStrategy::ResumeLatest => DomainResumeStrategy::ResumeLatest,
+    }
 }
 
 #[cfg(test)]

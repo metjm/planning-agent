@@ -7,6 +7,10 @@ use crate::app::workflow_decisions::{
     AllReviewersFailedDecision, ReviewDecision,
 };
 use crate::config::{AgentRef, WorkflowConfig};
+use crate::domain::actor::WorkflowMessage;
+use crate::domain::commands::WorkflowCommand as DomainCommand;
+use crate::domain::review::ReviewMode;
+use crate::domain::types::AgentId;
 use crate::phases::{
     self, aggregate_reviews, merge_feedback, run_multi_agent_review_with_context,
     write_feedback_files,
@@ -17,10 +21,11 @@ use crate::tui::{
     CancellationError, ReviewKind, SessionEventSender, UserApprovalResponse, WorkflowCommand,
 };
 use anyhow::Result;
+use ractor::ActorRef;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 
 pub struct WorkflowPhaseContext<'a> {
     pub working_dir: &'a Path,
@@ -29,6 +34,8 @@ pub struct WorkflowPhaseContext<'a> {
     pub sender: &'a SessionEventSender,
     /// Session logger for workflow events.
     pub session_logger: Arc<SessionLogger>,
+    /// Actor reference for dispatching domain commands.
+    pub actor_ref: Option<ActorRef<WorkflowMessage>>,
 }
 
 impl<'a> WorkflowPhaseContext<'a> {
@@ -36,6 +43,33 @@ impl<'a> WorkflowPhaseContext<'a> {
     pub fn log_workflow(&self, message: &str) {
         self.session_logger
             .log(LogLevel::Info, LogCategory::Workflow, message);
+    }
+
+    /// Dispatches a domain command to the workflow actor.
+    /// Returns Ok(()) if the command was sent successfully, or an error message if not.
+    /// This is fire-and-forget for now - we don't wait for the result.
+    pub async fn dispatch_command(&self, cmd: DomainCommand) {
+        if let Some(ref actor) = self.actor_ref {
+            let (reply_tx, reply_rx) = oneshot::channel();
+            if let Err(e) =
+                actor.send_message(WorkflowMessage::Command(Box::new(cmd.clone()), reply_tx))
+            {
+                self.log_workflow(&format!("Failed to dispatch command {:?}: {}", cmd, e));
+                return;
+            }
+            // Wait for reply to ensure command was processed
+            match reply_rx.await {
+                Ok(Ok(_view)) => {
+                    self.log_workflow(&format!("Command dispatched: {:?}", cmd));
+                }
+                Ok(Err(e)) => {
+                    self.log_workflow(&format!("Command rejected: {:?}: {:?}", cmd, e));
+                }
+                Err(_) => {
+                    self.log_workflow(&format!("Command reply channel dropped: {:?}", cmd));
+                }
+            }
+        }
     }
 }
 
@@ -68,6 +102,18 @@ pub async fn run_reviewing_phase(
         .map(|r| r.display_id())
         .collect();
     sender.send_output(format!("Reviewers: {}", reviewer_display_names.join(", ")));
+
+    // Dispatch ReviewCycleStarted command to CQRS actor
+    let reviewer_ids: Vec<AgentId> = reviewer_display_names
+        .iter()
+        .map(|s| AgentId::from(*s))
+        .collect();
+    context
+        .dispatch_command(DomainCommand::ReviewCycleStarted {
+            mode: ReviewMode::Parallel,
+            reviewers: reviewer_ids,
+        })
+        .await;
 
     let mut reviews_by_agent: HashMap<String, phases::ReviewResult> = HashMap::new();
     let mut pending_reviewers: Vec<AgentRef> = config.workflow.reviewing.agents.clone();
@@ -108,6 +154,7 @@ pub async fn run_reviewing_phase(
             state_path,
             context.session_logger.clone(),
             true, // emit_round_started: parallel mode always emits
+            context.actor_ref.clone(),
         )
         .await;
 
@@ -190,9 +237,14 @@ pub async fn run_reviewing_phase(
                 }
                 AllReviewersFailedDecision::Abort => {
                     context.log_workflow("User chose to abort after all reviewers failed");
-                    return Ok(Some(WorkflowResult::Aborted {
-                        reason: "All reviewers failed - user chose to abort".to_string(),
-                    }));
+                    // Dispatch UserAborted command
+                    let reason = "All reviewers failed - user chose to abort".to_string();
+                    context
+                        .dispatch_command(DomainCommand::UserAborted {
+                            reason: reason.clone(),
+                        })
+                        .await;
+                    return Ok(Some(WorkflowResult::Aborted { reason }));
                 }
                 AllReviewersFailedDecision::Stopped => {
                     context.log_workflow("Workflow stopped during all reviewers failed decision");
@@ -234,9 +286,33 @@ pub async fn run_reviewing_phase(
     let status = aggregate_reviews(&reviews, &config.workflow.reviewing.aggregation);
     context.log_workflow(&format!("Aggregated status: {:?}", status));
 
+    // Dispatch ReviewerApproved/ReviewerRejected for each reviewer
+    for review in &reviews {
+        let reviewer_id = AgentId::from(review.agent_name.as_str());
+        if review.needs_revision {
+            context
+                .dispatch_command(DomainCommand::ReviewerRejected {
+                    reviewer_id,
+                    feedback_path: crate::domain::types::FeedbackPath::from(feedback_path.clone()),
+                })
+                .await;
+        } else {
+            context
+                .dispatch_command(DomainCommand::ReviewerApproved { reviewer_id })
+                .await;
+        }
+    }
+
     // Signal round completion for review history UI
     let round_approved = matches!(status, FeedbackStatus::Approved);
     sender.send_review_round_completed(ReviewKind::Plan, state.iteration, round_approved);
+
+    // Dispatch ReviewCycleCompleted command to CQRS actor
+    context
+        .dispatch_command(DomainCommand::ReviewCycleCompleted {
+            approved: round_approved,
+        })
+        .await;
 
     *last_reviews = reviews;
     state.last_feedback_status = Some(status.clone());
@@ -261,6 +337,11 @@ pub async fn run_reviewing_phase(
         FeedbackStatus::NeedsRevision => {
             sender.send_output("[planning] Plan needs revision".to_string());
             if state.iteration >= state.max_iterations {
+                // Dispatch PlanningMaxIterationsReached command
+                context
+                    .dispatch_command(DomainCommand::PlanningMaxIterationsReached)
+                    .await;
+
                 let result = handle_max_iterations(
                     state,
                     &context.session_logger,
@@ -347,6 +428,15 @@ pub async fn run_sequential_reviewing_phase(
             "[sequential] Reviewer configuration changed - restarting cycle".to_string(),
         );
     }
+
+    // Dispatch ReviewCycleStarted command to CQRS actor (sequential mode)
+    let reviewer_agent_ids: Vec<AgentId> = reviewer_ids.iter().map(|s| AgentId::from(*s)).collect();
+    context
+        .dispatch_command(DomainCommand::ReviewCycleStarted {
+            mode: ReviewMode::Sequential(seq_state.clone().into()),
+            reviewers: reviewer_agent_ids,
+        })
+        .await;
 
     context.log_workflow(&format!(
         ">>> ENTERING Sequential Reviewing phase (iteration {}, reviewer {}/{}, plan version {})",
@@ -448,6 +538,7 @@ pub async fn run_sequential_reviewing_phase(
             state_path,
             context.session_logger.clone(),
             false, // DO NOT emit round_started, we handle it above
+            context.actor_ref.clone(),
         )
         .await;
 
@@ -521,9 +612,14 @@ pub async fn run_sequential_reviewing_phase(
                         "User chose to abort after reviewer {} failed",
                         reviewer_id
                     ));
-                    return Ok(Some(WorkflowResult::Aborted {
-                        reason: format!("Reviewer {} failed - user chose to abort", reviewer_id),
-                    }));
+                    // Dispatch UserAborted command
+                    let reason = format!("Reviewer {} failed - user chose to abort", reviewer_id);
+                    context
+                        .dispatch_command(DomainCommand::UserAborted {
+                            reason: reason.clone(),
+                        })
+                        .await;
+                    return Ok(Some(WorkflowResult::Aborted { reason }));
                 }
                 AllReviewersFailedDecision::Stopped => {
                     context.log_workflow("Workflow stopped during failure decision");
@@ -565,13 +661,31 @@ pub async fn run_sequential_reviewing_phase(
             reviewer_id
         ));
 
+        // Dispatch ReviewerRejected command to CQRS actor
+        context
+            .dispatch_command(DomainCommand::ReviewerRejected {
+                reviewer_id: AgentId::from(reviewer_id),
+                feedback_path: crate::domain::types::FeedbackPath::from(feedback_path.clone()),
+            })
+            .await;
+
         // Signal round completion (rejected)
         sender.send_review_round_completed(ReviewKind::Plan, state.iteration, false);
+
+        // Dispatch ReviewCycleCompleted command (rejected)
+        context
+            .dispatch_command(DomainCommand::ReviewCycleCompleted { approved: false })
+            .await;
 
         state.last_feedback_status = Some(FeedbackStatus::NeedsRevision);
 
         // Check iteration limit
         if state.iteration >= state.max_iterations {
+            // Dispatch PlanningMaxIterationsReached command
+            context
+                .dispatch_command(DomainCommand::PlanningMaxIterationsReached)
+                .await;
+
             return handle_max_iterations(
                 state,
                 &context.session_logger,
@@ -604,6 +718,13 @@ pub async fn run_sequential_reviewing_phase(
             reviewer_id, seq_state.plan_version
         ));
 
+        // Dispatch ReviewerApproved command to CQRS actor
+        context
+            .dispatch_command(DomainCommand::ReviewerApproved {
+                reviewer_id: AgentId::from(reviewer_id),
+            })
+            .await;
+
         // Extract reviewer IDs for all_approved check (avoids circular dependency)
         let reviewer_ids: Vec<&str> = reviewers.iter().map(|r| r.display_id()).collect();
 
@@ -615,6 +736,11 @@ pub async fn run_sequential_reviewing_phase(
 
             // Signal round completion (approved)
             sender.send_review_round_completed(ReviewKind::Plan, state.iteration, true);
+
+            // Dispatch ReviewCycleCompleted command (approved)
+            context
+                .dispatch_command(DomainCommand::ReviewCycleCompleted { approved: true })
+                .await;
 
             // NOW write merged feedback with ALL accumulated reviews
             let all_reviews = seq_state.get_accumulated_reviews_for_summary();

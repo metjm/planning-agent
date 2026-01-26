@@ -1,15 +1,18 @@
 //! Planning phase execution.
 
-use super::WorkflowResult;
+use super::{dispatch_domain_command, WorkflowResult};
 use crate::app::util::build_plan_failure_summary;
 use crate::app::workflow_common::plan_file_has_content;
 use crate::app::workflow_decisions::{wait_for_plan_failure_decision, PlanFailureDecision};
 use crate::config::WorkflowConfig;
+use crate::domain::actor::WorkflowMessage;
+use crate::domain::commands::WorkflowCommand as DomainCommand;
 use crate::phases::{self, run_planning_phase_with_context};
 use crate::session_logger::{LogCategory, LogLevel, SessionLogger};
 use crate::state::{Phase, State};
 use crate::tui::{CancellationError, SessionEventSender, UserApprovalResponse, WorkflowCommand};
 use anyhow::Result;
+use ractor::ActorRef;
 use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -24,6 +27,7 @@ pub async fn run_planning_phase(
     approval_rx: &mut mpsc::Receiver<UserApprovalResponse>,
     control_rx: &mut mpsc::Receiver<WorkflowCommand>,
     session_logger: Arc<SessionLogger>,
+    actor_ref: Option<ActorRef<WorkflowMessage>>,
 ) -> Result<Option<WorkflowResult>> {
     session_logger.log(
         LogLevel::Info,
@@ -79,6 +83,7 @@ pub async fn run_planning_phase(
             sender.clone(),
             state_path,
             session_logger.clone(),
+            actor_ref.clone(),
         )
         .await;
 
@@ -137,9 +142,17 @@ pub async fn run_planning_phase(
                                 LogCategory::Workflow,
                                 "User aborted after plan file empty",
                             );
-                            return Ok(Some(WorkflowResult::Aborted {
-                                reason: "User aborted: plan file has no content".to_string(),
-                            }));
+                            // Dispatch UserAborted command
+                            let reason = "User aborted: plan file has no content".to_string();
+                            dispatch_domain_command(
+                                &actor_ref,
+                                DomainCommand::UserAborted {
+                                    reason: reason.clone(),
+                                },
+                                &session_logger,
+                            )
+                            .await;
+                            return Ok(Some(WorkflowResult::Aborted { reason }));
                         }
                         PlanFailureDecision::Stopped => {
                             session_logger.log(
@@ -212,9 +225,17 @@ pub async fn run_planning_phase(
                             LogCategory::Workflow,
                             "User aborted after planning error",
                         );
-                        return Ok(Some(WorkflowResult::Aborted {
-                            reason: format!("User aborted: {}", error_msg),
-                        }));
+                        // Dispatch UserAborted command
+                        let reason = format!("User aborted: {}", error_msg);
+                        dispatch_domain_command(
+                            &actor_ref,
+                            DomainCommand::UserAborted {
+                                reason: reason.clone(),
+                            },
+                            &session_logger,
+                        )
+                        .await;
+                        return Ok(Some(WorkflowResult::Aborted { reason }));
                     }
                     PlanFailureDecision::Stopped => {
                         session_logger.log(

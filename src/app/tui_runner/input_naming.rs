@@ -224,9 +224,6 @@ pub(crate) async fn handle_naming_tab_input(
                             if let Some(ref mut state) = session.workflow_state {
                                 let old_value = state.max_iterations;
                                 state.max_iterations = n;
-                                if let Some(ref mut snapshot) = session.state_snapshot {
-                                    snapshot.max_iterations = n;
-                                }
                                 tab_manager.command_notice = Some(format!(
                                     "max-iterations: {} -> {} (effective at next iteration)",
                                     old_value, n

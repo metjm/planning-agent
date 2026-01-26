@@ -6,7 +6,7 @@
 use crate::daemon_log::daemon_log;
 use crate::planning_paths;
 use crate::rpc::daemon_service::DaemonServiceClient;
-use crate::rpc::{DaemonError, PortFileContent, SessionRecord};
+use crate::rpc::{DaemonError, PortFileContent, SessionRecord, WorkflowEventEnvelope};
 use anyhow::{Context, Result};
 use fs2::FileExt;
 use std::sync::Arc;
@@ -215,6 +215,31 @@ impl RpcClient {
                 self.degraded = true;
                 Err(e)
             }
+        }
+    }
+
+    /// Forwards a workflow event to the daemon for broadcasting.
+    pub async fn workflow_event(
+        &self,
+        session_id: &str,
+        event: WorkflowEventEnvelope,
+    ) -> Result<()> {
+        if self.degraded {
+            return Ok(());
+        }
+
+        let mut guard = self.inner.lock().await;
+        let state = guard.as_mut().context("Not connected to daemon")?;
+
+        self.ensure_authenticated(state).await?;
+
+        match state
+            .client
+            .workflow_event(tarpc::context::current(), session_id.to_string(), event)
+            .await?
+        {
+            Ok(()) => Ok(()),
+            Err(e) => anyhow::bail!("Daemon error: {}", e),
         }
     }
 

@@ -1,9 +1,7 @@
 //! Centralized home-based storage paths for all planning-agent persistence.
 //!
 //! This module provides helpers for unified storage under `~/.planning-agent/`:
-//! - `plans/` - Plan and feedback files
-//! - `sessions/` - Session snapshots
-//! - `state/<wd-hash>/` - Workflow state files (qualified by working directory)
+//! - `sessions/` - Session data including event logs, snapshots, plans, and feedback
 //! - `logs/<wd-hash>/` - Workflow and agent logs (qualified by working directory)
 //! - `logs/debug.log` - Debug log
 //! - `update-installed` - Update marker
@@ -231,9 +229,25 @@ pub fn session_feedback_path(session_id: &str, round: u32) -> Result<PathBuf> {
     Ok(session_dir(session_id)?.join(format!("feedback_{}.md", round)))
 }
 
-/// Returns the session snapshot file: `~/.planning-agent/sessions/<session-id>/session.json`
+/// Returns the session resume snapshot file: `~/.planning-agent/sessions/<session-id>/session.json`
+///
+/// This file contains the TUI session state for resume functionality.
 pub fn session_snapshot_path(session_id: &str) -> Result<PathBuf> {
     Ok(session_dir(session_id)?.join("session.json"))
+}
+
+/// Returns the session event log file: `~/.planning-agent/sessions/<session-id>/events.jsonl`
+///
+/// This file contains the CQRS event log in JSONL format.
+pub fn session_event_log_path(session_id: &str) -> Result<PathBuf> {
+    Ok(session_dir(session_id)?.join("events.jsonl"))
+}
+
+/// Returns the session aggregate snapshot file: `~/.planning-agent/sessions/<session-id>/snapshot.json`
+///
+/// This file contains the CQRS aggregate state snapshot for faster event replay.
+pub fn session_aggregate_snapshot_path(session_id: &str) -> Result<PathBuf> {
+    Ok(session_dir(session_id)?.join("snapshot.json"))
 }
 
 /// Returns the session logs directory: `~/.planning-agent/sessions/<session-id>/logs/`

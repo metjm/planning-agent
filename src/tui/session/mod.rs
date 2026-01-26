@@ -15,6 +15,7 @@ pub use cli_instances::{CliInstance, CliInstanceId};
 
 use crate::app::WorkflowResult;
 use crate::cli_usage::AccountUsage;
+use crate::domain::view::WorkflowView;
 use crate::phases::implementing_conversation_key;
 use crate::state::{ImplementationPhase, Phase, State, UiMode};
 use crate::tui::event::{TokenUsage, WorkflowCommand};
@@ -81,10 +82,10 @@ pub struct Session {
     pub streaming_follow_mode: bool,
     pub focused_panel: FocusedPanel,
 
-    /// Full workflow state (legacy, for persistence). Use state_snapshot for display.
+    /// Full workflow state (legacy, for persistence).
     pub workflow_state: Option<State>,
-    /// Read-only snapshot for TUI display. Updated via watch channel.
-    pub state_snapshot: Option<crate::state_machine::StateSnapshot>,
+    /// Event-sourced workflow view (replaces workflow_state in CQRS mode).
+    pub workflow_view: Option<WorkflowView>,
     pub start_time: Instant,
     pub total_cost: f64,
     pub running: bool,
@@ -222,7 +223,7 @@ impl Session {
             focused_panel: FocusedPanel::default(),
 
             workflow_state: None,
-            state_snapshot: None, // Will be set when workflow spawns
+            workflow_view: None, // Set when CQRS workflow sends view updates
             start_time: Instant::now(),
             total_cost: 0.0,
             running: true,
@@ -332,11 +333,12 @@ impl Session {
         self.error_scroll = 0;
     }
 
-    /// Returns the feature name from state snapshot, workflow state, or session name.
+    /// Returns the feature name from workflow view, workflow state, or session name.
     pub fn feature_name(&self) -> &str {
-        self.state_snapshot
+        self.workflow_view
             .as_ref()
-            .map(|s| s.feature_name.as_str())
+            .and_then(|v| v.feature_name.as_ref())
+            .map(|f| f.as_str())
             .or_else(|| {
                 self.workflow_state
                     .as_ref()

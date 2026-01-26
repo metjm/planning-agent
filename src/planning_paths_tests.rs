@@ -163,6 +163,30 @@ fn test_session_snapshot_path() {
 }
 
 #[test]
+fn test_session_event_log_path() {
+    let (_temp_dir, _guard) = test_env();
+
+    let session_id = format!("test-session-{}", uuid::Uuid::new_v4());
+    let result = session_event_log_path(&session_id);
+    assert!(result.is_ok());
+    let path = result.unwrap();
+    assert!(path.ends_with("events.jsonl"));
+    assert!(path.to_string_lossy().contains(&session_id));
+}
+
+#[test]
+fn test_session_aggregate_snapshot_path() {
+    let (_temp_dir, _guard) = test_env();
+
+    let session_id = format!("test-session-{}", uuid::Uuid::new_v4());
+    let result = session_aggregate_snapshot_path(&session_id);
+    assert!(result.is_ok());
+    let path = result.unwrap();
+    assert!(path.ends_with("snapshot.json"));
+    assert!(path.to_string_lossy().contains(&session_id));
+}
+
+#[test]
 fn test_session_logs_dir() {
     let (_temp_dir, _guard) = test_env();
 

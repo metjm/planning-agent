@@ -1,4 +1,4 @@
-use crate::app::failure::NETWORK_ERROR_PATTERN;
+use crate::domain::failure::NETWORK_ERROR_PATTERN;
 use crate::planning_paths::SessionInfo;
 use crate::state::State;
 use regex::Regex;

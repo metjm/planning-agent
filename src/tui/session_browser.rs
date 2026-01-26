@@ -614,7 +614,7 @@ mod tests {
             id.to_string(),
             format!("{}-feature", id),
             PathBuf::from("/tmp/test"),
-            PathBuf::from("/tmp/test/state.json"),
+            PathBuf::from("/tmp/sessions").join(id),
             phase.to_string(),
             iteration,
             phase.to_string(),

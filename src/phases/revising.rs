@@ -1,15 +1,22 @@
 use crate::agents::{AgentContext, AgentType};
 use crate::config::WorkflowConfig;
+use crate::domain::actor::WorkflowMessage;
+use crate::domain::commands::WorkflowCommand as DomainCommand;
+use crate::domain::types::{
+    AgentId, ConversationId, PhaseLabel, ResumeStrategy as DomainResumeStrategy,
+};
 use crate::phases::planning_conversation_key;
 use crate::phases::ReviewResult;
 use crate::planning_paths;
 use crate::prompt_format::PromptBuilder;
-use crate::session_logger::SessionLogger;
+use crate::session_logger::{LogCategory, LogLevel, SessionLogger};
 use crate::state::{ResumeStrategy, State};
 use crate::tui::SessionEventSender;
 use anyhow::Result;
+use ractor::ActorRef;
 use std::path::Path;
 use std::sync::Arc;
+use tokio::sync::oneshot;
 
 const REVISION_SYSTEM_PROMPT: &str = r#"You are revising an implementation plan based on reviewer feedback.
 Focus on addressing all blocking issues first, then important improvements.
@@ -29,6 +36,7 @@ pub async fn run_revision_phase_with_context(
     iteration: u32,
     state_path: &Path,
     session_logger: Arc<SessionLogger>,
+    actor_ref: Option<ActorRef<WorkflowMessage>>,
 ) -> Result<()> {
     // Revision uses the planning agent - this enables session continuity
     let planning_config = &config.workflow.planning;
@@ -77,10 +85,33 @@ pub async fn run_revision_phase_with_context(
     let agent_session =
         state.get_or_create_agent_session(&conversation_id_name, resume_strategy.clone());
     let conversation_id = agent_session.conversation_id.clone();
+    let conv_resume_strategy = agent_session.resume_strategy.clone();
 
     state.record_invocation(&conversation_id_name, &phase_name);
     state.set_updated_at();
     state.save_atomic(state_path)?;
+
+    // Dispatch RevisingStarted command to CQRS actor
+    let feedback_summary = build_feedback_summary(reviews);
+    dispatch_revising_command(
+        &actor_ref,
+        &session_logger,
+        DomainCommand::RevisingStarted { feedback_summary },
+    )
+    .await;
+
+    // Dispatch RecordInvocation command to CQRS actor
+    dispatch_revising_command(
+        &actor_ref,
+        &session_logger,
+        DomainCommand::RecordInvocation {
+            agent_id: AgentId::from(conversation_id_name.as_str()),
+            phase: PhaseLabel::Revising,
+            conversation_id: conversation_id.clone().map(ConversationId::from),
+            resume_strategy: to_domain_resume_strategy(&conv_resume_strategy),
+        },
+    )
+    .await;
 
     let context = AgentContext {
         session_sender: session_sender.clone(),
@@ -88,7 +119,7 @@ pub async fn run_revision_phase_with_context(
         conversation_id,
         resume_strategy,
         cancel_rx: None,
-        session_logger,
+        session_logger: session_logger.clone(),
     };
 
     let result = agent
@@ -214,6 +245,71 @@ IMPORTANT: Update the plan file at: {}"#,
             .context(&context)
             .constraint("Use absolute paths for all file references in the revised plan")
             .build()
+    }
+}
+
+/// Build a summary of reviewer feedback for the RevisingStarted event.
+fn build_feedback_summary(reviews: &[ReviewResult]) -> String {
+    let mut summary = String::new();
+    for review in reviews {
+        if review.needs_revision {
+            if !summary.is_empty() {
+                summary.push_str("; ");
+            }
+            summary.push_str(&format!("{}: {}", review.agent_name, review.summary));
+        }
+    }
+    if summary.is_empty() {
+        "No revision feedback".to_string()
+    } else {
+        summary
+    }
+}
+
+/// Helper to dispatch revising commands to the CQRS actor.
+async fn dispatch_revising_command(
+    actor_ref: &Option<ActorRef<WorkflowMessage>>,
+    session_logger: &Arc<SessionLogger>,
+    cmd: DomainCommand,
+) {
+    if let Some(ref actor) = actor_ref {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        if let Err(e) =
+            actor.send_message(WorkflowMessage::Command(Box::new(cmd.clone()), reply_tx))
+        {
+            session_logger.log(
+                LogLevel::Warn,
+                LogCategory::Workflow,
+                &format!("Failed to send revising command: {}", e),
+            );
+            return;
+        }
+        match reply_rx.await {
+            Ok(Ok(_)) => {}
+            Ok(Err(e)) => {
+                session_logger.log(
+                    LogLevel::Warn,
+                    LogCategory::Workflow,
+                    &format!("Revising command rejected: {}", e),
+                );
+            }
+            Err(_) => {
+                session_logger.log(
+                    LogLevel::Warn,
+                    LogCategory::Workflow,
+                    "Revising command reply channel closed",
+                );
+            }
+        }
+    }
+}
+
+/// Convert state ResumeStrategy to domain ResumeStrategy.
+fn to_domain_resume_strategy(strategy: &ResumeStrategy) -> DomainResumeStrategy {
+    match strategy {
+        ResumeStrategy::Stateless => DomainResumeStrategy::Stateless,
+        ResumeStrategy::ConversationResume => DomainResumeStrategy::ConversationResume,
+        ResumeStrategy::ResumeLatest => DomainResumeStrategy::ResumeLatest,
     }
 }
 

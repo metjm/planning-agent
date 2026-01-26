@@ -170,6 +170,14 @@ fn create_bundle_internal(config: BundleConfig<'_>) -> Result<PathBuf> {
                 Err(_) => missing_files.push("session_snapshot.json".to_string()),
             }
         }
+
+        // Add CQRS event log (for event-sourced state debugging)
+        if let Ok(event_log_path) = planning_paths::session_event_log_path(session_id) {
+            match add_file_to_zip(&mut zip, &event_log_path, "events.jsonl", options) {
+                Ok(info) => included_files.push(info),
+                Err(_) => missing_files.push("events.jsonl".to_string()),
+            }
+        }
     }
 
     // Add workflow logs

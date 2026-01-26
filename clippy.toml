@@ -1,0 +1,20 @@
+# Clippy configuration for planning-agent
+#
+# These rules prevent reintroduction of legacy state types and methods
+# that have been replaced by the event-sourced CQRS architecture.
+
+# Disallow legacy state types to enforce CQRS architecture
+disallowed-types = [
+    # Legacy workflow state - use WorkflowView projection instead
+    { path = "crate::state::State", reason = "Use WorkflowView from the CQRS projection instead of direct State mutations" },
+    # Legacy state machine - use WorkflowAggregate commands instead
+    { path = "crate::state_machine::WorkflowStateMachine", reason = "Use WorkflowCommand/WorkflowEvent through the WorkflowAggregate instead" },
+]
+
+# Disallow legacy state mutation methods to enforce event sourcing
+disallowed-methods = [
+    # State persistence methods - all state changes go through event store
+    { path = "crate::state::State::save", reason = "State changes must go through WorkflowCommand dispatch and event store" },
+    { path = "crate::state::State::save_atomic", reason = "State changes must go through WorkflowCommand dispatch and event store" },
+    { path = "crate::state::State::transition", reason = "State transitions must go through WorkflowCommand dispatch" },
+]

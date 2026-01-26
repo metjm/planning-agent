@@ -8,17 +8,21 @@ use crate::app::workflow_decisions::{
 };
 use crate::change_fingerprint::compute_change_fingerprint;
 use crate::config::WorkflowConfig;
+use crate::domain::actor::WorkflowMessage;
+use crate::domain::commands::WorkflowCommand as DomainCommand;
+use crate::domain::types::{ImplementationVerdict, Iteration};
 use crate::phases::implementation::run_implementation_phase;
 use crate::phases::implementation_review::run_implementation_review_phase;
 use crate::phases::implementing_conversation_key;
 use crate::phases::verdict::VerificationVerdictResult;
-use crate::session_logger::SessionLogger;
+use crate::session_logger::{LogCategory, LogLevel, SessionLogger};
 use crate::state::{ImplementationPhase, ImplementationPhaseState, ResumeStrategy, State};
 use crate::tui::{SessionEventSender, UserApprovalResponse, WorkflowCommand};
 use anyhow::{Context, Result};
+use ractor::ActorRef;
 use std::path::Path;
 use std::sync::Arc;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 
 /// Context for the implementation workflow containing channels and paths.
 pub struct ImplementationContext<'a> {
@@ -27,6 +31,7 @@ pub struct ImplementationContext<'a> {
     pub session_logger: Arc<SessionLogger>,
     pub approval_rx: &'a mut mpsc::Receiver<UserApprovalResponse>,
     pub control_rx: &'a mut mpsc::Receiver<WorkflowCommand>,
+    pub actor_ref: Option<ActorRef<WorkflowMessage>>,
 }
 
 /// Result of the implementation workflow.
@@ -75,7 +80,53 @@ pub async fn run_implementation_workflow(
         session_logger,
         approval_rx,
         control_rx,
+        actor_ref,
     } = ctx;
+
+    // Helper to dispatch implementation commands
+    let dispatch_impl_cmd = |cmd: DomainCommand| {
+        let actor = actor_ref.clone();
+        let logger = session_logger.clone();
+        async move {
+            if let Some(ref actor) = actor {
+                let (reply_tx, reply_rx) = oneshot::channel();
+                if let Err(e) =
+                    actor.send_message(WorkflowMessage::Command(Box::new(cmd.clone()), reply_tx))
+                {
+                    logger.log(
+                        LogLevel::Warn,
+                        LogCategory::Workflow,
+                        &format!("Failed to dispatch implementation command: {}", e),
+                    );
+                    return;
+                }
+                match reply_rx.await {
+                    Ok(Ok(_)) => {
+                        logger.log(
+                            LogLevel::Info,
+                            LogCategory::Workflow,
+                            &format!("Implementation command dispatched: {:?}", cmd),
+                        );
+                    }
+                    Ok(Err(e)) => {
+                        logger.log(
+                            LogLevel::Warn,
+                            LogCategory::Workflow,
+                            &format!("Implementation command rejected: {:?}", e),
+                        );
+                    }
+                    Err(_) => {
+                        logger.log(
+                            LogLevel::Warn,
+                            LogCategory::Workflow,
+                            "Implementation command reply channel dropped",
+                        );
+                    }
+                }
+            }
+        }
+    };
+
     // Validate config
     let impl_config = &config.implementation;
     if !impl_config.enabled {
@@ -143,6 +194,23 @@ pub async fn run_implementation_workflow(
                 )
                 .await?;
 
+                // Dispatch domain commands for user decisions
+                match &decision {
+                    MaxIterationsDecision::Abort => {
+                        dispatch_impl_cmd(DomainCommand::ImplementationDeclined {
+                            reason: "User declined at max iterations".to_string(),
+                        })
+                        .await;
+                    }
+                    MaxIterationsDecision::Stopped => {
+                        dispatch_impl_cmd(DomainCommand::ImplementationCancelled {
+                            reason: "User stopped implementation workflow".to_string(),
+                        })
+                        .await;
+                    }
+                    _ => {}
+                }
+
                 // Apply the decision using the shared helper
                 if let Some(result) = apply_implementation_decision(
                     decision,
@@ -177,6 +245,12 @@ pub async fn run_implementation_workflow(
             iteration, max_iterations
         ));
 
+        // Dispatch ImplementationRoundStarted command
+        dispatch_impl_cmd(DomainCommand::ImplementationRoundStarted {
+            iteration: Iteration(iteration),
+        })
+        .await;
+
         // Ensure agent_conversations entry exists for implementing agent (for conversation ID capture)
         if let Some(agent_cfg) = impl_config.implementing.as_ref() {
             let key = implementing_conversation_key(&agent_cfg.agent);
@@ -197,6 +271,11 @@ pub async fn run_implementation_workflow(
 
         // Check if implementation was cancelled
         if impl_result.stop_reason.as_deref() == Some("cancelled") {
+            // Dispatch ImplementationCancelled command
+            dispatch_impl_cmd(DomainCommand::ImplementationCancelled {
+                reason: "Implementation cancelled by user".to_string(),
+            })
+            .await;
             let impl_state = state.implementation_state.as_mut().unwrap();
             impl_state.phase = ImplementationPhase::Complete;
             return Ok(ImplementationWorkflowResult::Cancelled {
@@ -223,6 +302,14 @@ pub async fn run_implementation_workflow(
                 state.update_agent_conversation_id(&key, conv_id);
             }
         }
+
+        // Dispatch ImplementationRoundCompleted command
+        let fingerprint = compute_change_fingerprint(working_dir).unwrap_or(0);
+        dispatch_impl_cmd(DomainCommand::ImplementationRoundCompleted {
+            iteration: Iteration(iteration),
+            fingerprint,
+        })
+        .await;
 
         // === Review Phase ===
         {
@@ -255,9 +342,26 @@ pub async fn run_implementation_workflow(
             impl_state.last_verdict = Some(review_result.verdict.to_state_string());
         }
 
+        // Dispatch ImplementationReviewCompleted command
+        let domain_verdict = match &review_result.verdict {
+            VerificationVerdictResult::Approved => ImplementationVerdict::Approved,
+            // NeedsRevision and ParseFailure both map to NeedsChanges
+            VerificationVerdictResult::NeedsRevision
+            | VerificationVerdictResult::ParseFailure { .. } => ImplementationVerdict::NeedsChanges,
+        };
+        dispatch_impl_cmd(DomainCommand::ImplementationReviewCompleted {
+            iteration: Iteration(iteration),
+            verdict: domain_verdict,
+            feedback: review_result.feedback.clone(),
+        })
+        .await;
+
         // Handle verdict
         match review_result.verdict {
             VerificationVerdictResult::Approved => {
+                // Dispatch ImplementationAccepted command
+                dispatch_impl_cmd(DomainCommand::ImplementationAccepted).await;
+
                 let impl_state = state.implementation_state.as_mut().unwrap();
                 impl_state.phase = ImplementationPhase::Complete;
                 impl_state.mark_complete();
@@ -298,6 +402,9 @@ pub async fn run_implementation_workflow(
 
                 // Check if we have more iterations
                 if iteration >= max_iterations {
+                    // Dispatch ImplementationMaxIterationsReached command
+                    dispatch_impl_cmd(DomainCommand::ImplementationMaxIterationsReached).await;
+
                     // Transition to awaiting decision state and persist
                     {
                         let impl_state = state.implementation_state.as_mut().unwrap();
@@ -321,6 +428,23 @@ pub async fn run_implementation_workflow(
                         summary,
                     )
                     .await?;
+
+                    // Dispatch domain commands for user decisions
+                    match &decision {
+                        MaxIterationsDecision::Abort => {
+                            dispatch_impl_cmd(DomainCommand::ImplementationDeclined {
+                                reason: "User declined at max iterations".to_string(),
+                            })
+                            .await;
+                        }
+                        MaxIterationsDecision::Stopped => {
+                            dispatch_impl_cmd(DomainCommand::ImplementationCancelled {
+                                reason: "User stopped implementation workflow".to_string(),
+                            })
+                            .await;
+                        }
+                        _ => {}
+                    }
 
                     // Apply the decision
                     if let Some(result) = apply_implementation_decision(

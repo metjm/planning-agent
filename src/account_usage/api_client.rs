@@ -454,9 +454,7 @@ mod tests {
 #[cfg(test)]
 mod integration_tests {
     use super::*;
-    use crate::account_usage::credentials::{
-        read_claude_credentials, read_codex_credentials, read_gemini_credentials,
-    };
+    use crate::account_usage::credentials::{read_claude_credentials, read_codex_credentials};
 
     #[test]
     fn test_real_claude_api() {
@@ -489,32 +487,6 @@ mod integration_tests {
             usage.session_window.used_percent.is_some(),
             "Should have session usage"
         );
-    }
-
-    #[test]
-    fn test_real_gemini_api() {
-        let creds = read_gemini_credentials()
-            .expect("Failed to read Gemini credentials")
-            .expect("Gemini credentials file not found");
-
-        eprintln!("Testing Gemini API with real credentials...");
-        let result = fetch_usage_for_provider("gemini", &creds);
-
-        eprintln!("Result:");
-        eprintln!("  token_valid: {}", result.token_valid);
-        if let Some(err) = &result.error {
-            eprintln!("  error: {}", err);
-        }
-        if let Some(usage) = &result.usage {
-            eprintln!("  email: {}", usage.email);
-            eprintln!("  session: {:?}%", usage.session_window.used_percent);
-        }
-
-        assert!(result.token_valid, "Token should be valid");
-        assert!(result.usage.is_some(), "Should have usage data");
-
-        let usage = result.usage.unwrap();
-        assert!(!usage.email.is_empty(), "Should have email");
     }
 
     #[test]

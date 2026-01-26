@@ -36,7 +36,7 @@ pub fn create_test_record(id: &str, pid: u32) -> SessionRecord {
         id.to_string(),
         "test-feature".to_string(),
         PathBuf::from("/test"),
-        PathBuf::from("/test/state.json"),
+        PathBuf::from("/test/sessions").join(id),
         "Planning".to_string(),
         1,
         "Planning".to_string(),

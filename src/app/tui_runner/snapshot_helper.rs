@@ -54,6 +54,13 @@ pub fn create_and_save_snapshot(
     state_copy.set_updated_at_with(&now);
     let elapsed = session.start_time.elapsed().as_millis() as u64;
 
+    // Include workflow view and event sequence from the session
+    let (workflow_view, last_event_sequence) = session
+        .workflow_view
+        .as_ref()
+        .map(|v| (Some(v.clone()), v.last_event_sequence))
+        .unwrap_or((None, 0));
+
     let snapshot = SessionSnapshot::new_with_timestamp(
         working_dir.to_path_buf(),
         state.workflow_session_id.clone(),
@@ -63,6 +70,8 @@ pub fn create_and_save_snapshot(
         elapsed,
         now,
         workflow_name,
+        workflow_view,
+        last_event_sequence,
     );
 
     save_snapshot(&snapshot)

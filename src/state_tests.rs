@@ -223,46 +223,6 @@ fn test_state_serialization_with_session_data() {
 }
 
 #[test]
-fn test_phase_label_short() {
-    assert_eq!(PhaseLabel::Planning.short(), "Plan");
-    assert_eq!(PhaseLabel::Reviewing.short(), "Review");
-    assert_eq!(PhaseLabel::Revising.short(), "Revise");
-    assert_eq!(PhaseLabel::Complete.short(), "Done");
-}
-
-#[test]
-fn test_phase_label_full() {
-    assert_eq!(PhaseLabel::Planning.full(), "Planning");
-    assert_eq!(PhaseLabel::Reviewing.full(), "Reviewing");
-    assert_eq!(PhaseLabel::Revising.full(), "Revising");
-    assert_eq!(PhaseLabel::Complete.full(), "Complete");
-}
-
-#[test]
-fn test_phase_label_with_iteration() {
-    assert_eq!(PhaseLabel::Planning.with_iteration(1), "Planning");
-    assert_eq!(PhaseLabel::Reviewing.with_iteration(1), "Reviewing");
-    assert_eq!(PhaseLabel::Reviewing.with_iteration(2), "Reviewing #2");
-    assert_eq!(PhaseLabel::Revising.with_iteration(1), "Revising #1");
-    assert_eq!(PhaseLabel::Revising.with_iteration(3), "Revising #3");
-    assert_eq!(PhaseLabel::Complete.with_iteration(5), "Complete");
-}
-
-#[test]
-fn test_phase_label_display() {
-    assert_eq!(format!("{}", PhaseLabel::Planning), "Planning");
-    assert_eq!(format!("{}", PhaseLabel::Reviewing), "Reviewing");
-}
-
-#[test]
-fn test_phase_to_label() {
-    assert_eq!(Phase::Planning.label(), PhaseLabel::Planning);
-    assert_eq!(Phase::Reviewing.label(), PhaseLabel::Reviewing);
-    assert_eq!(Phase::Revising.label(), PhaseLabel::Revising);
-    assert_eq!(Phase::Complete.label(), PhaseLabel::Complete);
-}
-
-#[test]
 fn test_new_state_has_updated_at() {
     let state = State::new("test", "test objective", 3).unwrap();
     assert!(!state.updated_at.is_empty());
@@ -292,43 +252,42 @@ fn test_set_updated_at_with() {
 
 #[test]
 fn test_set_failure() {
-    use crate::app::failure::{FailureContext, FailureKind};
+    use crate::domain::failure::{FailureContext, FailureKind};
+    use crate::domain::types::{AgentId, PhaseLabel};
 
     let mut state = State::new("test", "test objective", 3).unwrap();
-    assert!(!state.has_failure());
     assert!(state.last_failure.is_none());
     assert!(state.failure_history.is_empty());
 
     let failure = FailureContext::new(
         FailureKind::Network,
-        Phase::Reviewing,
-        Some("codex".to_string()),
+        PhaseLabel::Reviewing,
+        Some(AgentId::from("codex")),
         2,
     );
     state.set_failure(failure);
 
-    assert!(state.has_failure());
     assert!(state.last_failure.is_some());
     assert_eq!(state.failure_history.len(), 1);
 
     let last = state.last_failure.as_ref().unwrap();
     assert_eq!(last.kind, FailureKind::Network);
-    assert_eq!(last.phase, Phase::Reviewing);
-    assert_eq!(last.agent_name, Some("codex".to_string()));
+    assert_eq!(last.phase, PhaseLabel::Reviewing);
+    assert_eq!(last.agent_name.as_ref().map(|a| a.as_str()), Some("codex"));
 }
 
 #[test]
 fn test_clear_failure() {
-    use crate::app::failure::{FailureContext, FailureKind};
+    use crate::domain::failure::{FailureContext, FailureKind};
+    use crate::domain::types::PhaseLabel;
 
     let mut state = State::new("test", "test objective", 3).unwrap();
-    let failure = FailureContext::new(FailureKind::Timeout, Phase::Planning, None, 2);
+    let failure = FailureContext::new(FailureKind::Timeout, PhaseLabel::Planning, None, 2);
     state.set_failure(failure);
 
-    assert!(state.has_failure());
+    assert!(state.last_failure.is_some());
     state.clear_failure();
 
-    assert!(!state.has_failure());
     assert!(state.last_failure.is_none());
     // History should still have the failure
     assert_eq!(state.failure_history.len(), 1);
@@ -336,7 +295,8 @@ fn test_clear_failure() {
 
 #[test]
 fn test_failure_history_trimming() {
-    use crate::app::failure::{FailureContext, FailureKind, MAX_FAILURE_HISTORY};
+    use crate::domain::failure::{FailureContext, FailureKind, MAX_FAILURE_HISTORY};
+    use crate::domain::types::{AgentId, PhaseLabel};
 
     let mut state = State::new("test", "test objective", 3).unwrap();
 
@@ -344,8 +304,8 @@ fn test_failure_history_trimming() {
     for i in 0..(MAX_FAILURE_HISTORY + 10) {
         let failure = FailureContext::new(
             FailureKind::Network,
-            Phase::Reviewing,
-            Some(format!("agent-{}", i)),
+            PhaseLabel::Reviewing,
+            Some(AgentId::from(format!("agent-{}", i))),
             2,
         );
         state.set_failure(failure);
@@ -357,15 +317,24 @@ fn test_failure_history_trimming() {
     // The oldest failures should have been removed
     // The first remaining failure should be agent-10 (since we added 60 and kept 50)
     let first = &state.failure_history[0];
-    assert_eq!(first.agent_name, Some("agent-10".to_string()));
+    assert_eq!(
+        first.agent_name.as_ref().map(|a| a.as_str()),
+        Some("agent-10")
+    );
 }
 
 #[test]
 fn test_state_serialization_with_failure() {
-    use crate::app::failure::{FailureContext, FailureKind};
+    use crate::domain::failure::{FailureContext, FailureKind};
+    use crate::domain::types::PhaseLabel;
 
     let mut state = State::new("test", "test objective", 3).unwrap();
-    let failure = FailureContext::new(FailureKind::AllReviewersFailed, Phase::Reviewing, None, 3);
+    let failure = FailureContext::new(
+        FailureKind::AllReviewersFailed,
+        PhaseLabel::Reviewing,
+        None,
+        3,
+    );
     state.set_failure(failure);
 
     let json = serde_json::to_string(&state).unwrap();
@@ -405,23 +374,12 @@ fn test_implementation_phase_state_can_continue() {
 }
 
 #[test]
-fn test_implementation_phase_state_is_approved() {
-    let mut state = ImplementationPhaseState::new(3);
-    assert!(!state.is_approved());
-
-    state.last_verdict = Some("NEEDS_REVISION".to_string());
-    assert!(!state.is_approved());
-
-    state.last_verdict = Some("APPROVED".to_string());
-    assert!(state.is_approved());
-}
-
-#[test]
 fn test_implementation_phase_state_transitions() {
     let mut state = ImplementationPhaseState::new(3);
     assert_eq!(state.phase, ImplementationPhase::Implementing);
 
-    state.advance_to_review();
+    // Simulate transitioning to review manually
+    state.phase = ImplementationPhase::ImplementationReview;
     assert_eq!(state.phase, ImplementationPhase::ImplementationReview);
 
     state.advance_to_next_iteration();

@@ -1,5 +1,5 @@
-use crate::app::failure::FailurePolicy;
 use crate::config_modes::{ClaudeModeConfig, CodexModeConfig, GeminiModeConfig};
+use crate::domain::failure::FailurePolicy;
 use crate::state::ResumeStrategy;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};

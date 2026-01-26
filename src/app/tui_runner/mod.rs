@@ -225,6 +225,16 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                                 );
                                 break;
                             }
+                            SubscriptionEvent::WorkflowEvent { session_id, event } => {
+                                // CQRS workflow events - logged for debugging, not yet used in UI
+                                crate::daemon_log::daemon_log(
+                                    "tui_runner",
+                                    &format!(
+                                        "received workflow event for {}: {:?}",
+                                        session_id, event
+                                    ),
+                                );
+                            }
                         }
                     }
                     crate::daemon_log::daemon_log(

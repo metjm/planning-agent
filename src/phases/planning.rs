@@ -1,14 +1,21 @@
 use crate::agents::{AgentContext, AgentType};
 use crate::config::WorkflowConfig;
+use crate::domain::actor::WorkflowMessage;
+use crate::domain::commands::WorkflowCommand as DomainCommand;
+use crate::domain::types::{
+    AgentId, ConversationId, PhaseLabel, ResumeStrategy as DomainResumeStrategy,
+};
 use crate::phases::planning_conversation_key;
 use crate::planning_paths;
 use crate::prompt_format::PromptBuilder;
-use crate::session_logger::SessionLogger;
+use crate::session_logger::{LogCategory, LogLevel, SessionLogger};
 use crate::state::{ResumeStrategy, State};
 use crate::tui::SessionEventSender;
 use anyhow::Result;
+use ractor::ActorRef;
 use std::path::Path;
 use std::sync::Arc;
+use tokio::sync::oneshot;
 
 /// System prompt for planning phase - simple instruction to use the planning skill.
 pub const PLANNING_SYSTEM_PROMPT: &str =
@@ -21,6 +28,7 @@ pub async fn run_planning_phase_with_context(
     session_sender: SessionEventSender,
     state_path: &Path,
     session_logger: Arc<SessionLogger>,
+    actor_ref: Option<ActorRef<WorkflowMessage>>,
 ) -> Result<()> {
     let planning_config = &config.workflow.planning;
     let agent_name = &planning_config.agent;
@@ -50,13 +58,26 @@ pub async fn run_planning_phase_with_context(
     state.set_updated_at();
     state.save_atomic(state_path)?;
 
+    // Dispatch RecordInvocation command to CQRS actor
+    dispatch_planning_command(
+        &actor_ref,
+        &session_logger,
+        DomainCommand::RecordInvocation {
+            agent_id: AgentId::from(conversation_id_name.as_str()),
+            phase: PhaseLabel::Planning,
+            conversation_id: conversation_id.clone().map(ConversationId::from),
+            resume_strategy: to_domain_resume_strategy(&resume_strategy),
+        },
+    )
+    .await;
+
     let context = AgentContext {
         session_sender: session_sender.clone(),
         phase: "Planning".to_string(),
         conversation_id,
         resume_strategy,
         cancel_rx: None,
-        session_logger,
+        session_logger: session_logger.clone(),
     };
 
     let result = agent
@@ -73,6 +94,19 @@ pub async fn run_planning_phase_with_context(
         state.update_agent_conversation_id(&conversation_id_name, captured_id.clone());
         state.set_updated_at();
         state.save_atomic(state_path)?;
+
+        // Dispatch RecordAgentConversation command to CQRS actor
+        dispatch_planning_command(
+            &actor_ref,
+            &session_logger,
+            DomainCommand::RecordAgentConversation {
+                agent_id: AgentId::from(conversation_id_name.as_str()),
+                resume_strategy: DomainResumeStrategy::ConversationResume,
+                conversation_id: Some(ConversationId::from(captured_id.clone())),
+            },
+        )
+        .await;
+
         // Conversation IDs are ASCII identifiers, safe to slice at char boundary
         let id_preview = captured_id.get(..8).unwrap_or(captured_id);
         session_sender.send_output(format!(
@@ -132,6 +166,53 @@ fn build_planning_prompt(state: &State, working_dir: &Path) -> String {
     }
 
     builder.build()
+}
+
+/// Helper to dispatch planning commands to the CQRS actor.
+async fn dispatch_planning_command(
+    actor_ref: &Option<ActorRef<WorkflowMessage>>,
+    session_logger: &Arc<SessionLogger>,
+    cmd: DomainCommand,
+) {
+    if let Some(ref actor) = actor_ref {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        if let Err(e) =
+            actor.send_message(WorkflowMessage::Command(Box::new(cmd.clone()), reply_tx))
+        {
+            session_logger.log(
+                LogLevel::Warn,
+                LogCategory::Workflow,
+                &format!("Failed to send planning command: {}", e),
+            );
+            return;
+        }
+        match reply_rx.await {
+            Ok(Ok(_)) => {}
+            Ok(Err(e)) => {
+                session_logger.log(
+                    LogLevel::Warn,
+                    LogCategory::Workflow,
+                    &format!("Planning command rejected: {}", e),
+                );
+            }
+            Err(_) => {
+                session_logger.log(
+                    LogLevel::Warn,
+                    LogCategory::Workflow,
+                    "Planning command reply channel closed",
+                );
+            }
+        }
+    }
+}
+
+/// Convert state ResumeStrategy to domain ResumeStrategy.
+fn to_domain_resume_strategy(strategy: &ResumeStrategy) -> DomainResumeStrategy {
+    match strategy {
+        ResumeStrategy::Stateless => DomainResumeStrategy::Stateless,
+        ResumeStrategy::ConversationResume => DomainResumeStrategy::ConversationResume,
+        ResumeStrategy::ResumeLatest => DomainResumeStrategy::ResumeLatest,
+    }
 }
 
 #[cfg(test)]

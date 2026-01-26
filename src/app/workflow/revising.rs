@@ -1,18 +1,33 @@
 //! Revising phase execution.
 
-use super::WorkflowResult;
-use crate::app::failure::{FailureContext, FailureKind};
+use super::{dispatch_domain_command, WorkflowResult};
 use crate::app::util::build_workflow_failure_summary;
 use crate::app::workflow_decisions::{wait_for_workflow_failure_decision, WorkflowFailureDecision};
 use crate::config::WorkflowConfig;
+use crate::domain::actor::WorkflowMessage;
+use crate::domain::commands::WorkflowCommand as DomainCommand;
+use crate::domain::failure::{FailureContext, FailureKind};
+use crate::domain::types::PhaseLabel;
 use crate::phases::{self, run_revision_phase_with_context};
 use crate::session_logger::{LogCategory, LogLevel, SessionLogger};
 use crate::state::{Phase, State};
 use crate::tui::{CancellationError, SessionEventSender, UserApprovalResponse, WorkflowCommand};
 use anyhow::Result;
+use ractor::ActorRef;
 use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::mpsc;
+
+/// Converts a legacy Phase to a domain PhaseLabel.
+fn phase_to_label(phase: &Phase) -> PhaseLabel {
+    match phase {
+        Phase::Planning => PhaseLabel::Planning,
+        Phase::Reviewing => PhaseLabel::Reviewing,
+        Phase::Revising => PhaseLabel::Revising,
+        Phase::AwaitingPlanningDecision => PhaseLabel::AwaitingDecision,
+        Phase::Complete => PhaseLabel::Complete,
+    }
+}
 
 #[allow(clippy::too_many_arguments)]
 pub async fn run_revising_phase(
@@ -25,6 +40,7 @@ pub async fn run_revising_phase(
     control_rx: &mut mpsc::Receiver<WorkflowCommand>,
     last_reviews: &mut Vec<phases::ReviewResult>,
     session_logger: Arc<SessionLogger>,
+    actor_ref: Option<ActorRef<WorkflowMessage>>,
 ) -> Result<Option<WorkflowResult>> {
     // Check for commands before starting revision
     if let Ok(cmd) = control_rx.try_recv() {
@@ -88,6 +104,7 @@ pub async fn run_revising_phase(
             state.iteration,
             state_path,
             session_logger.clone(),
+            actor_ref.clone(),
         )
         .await;
 
@@ -160,15 +177,22 @@ pub async fn run_revising_phase(
                         );
                         // Save failure context for later recovery
                         // Uses planning agent for session continuity
-                        state.set_failure(FailureContext {
-                            kind: FailureKind::Unknown(error_msg),
-                            phase: state.phase.clone(),
-                            agent_name: Some(config.workflow.planning.agent.clone()),
-                            retry_count: retry_attempts as u32,
-                            max_retries: max_retries as u32,
-                            failed_at: chrono::Utc::now().to_rfc3339(),
-                            recovery_action: None,
-                        });
+                        let failure = FailureContext::new(
+                            FailureKind::Unknown(error_msg),
+                            phase_to_label(&state.phase),
+                            Some(config.workflow.planning.agent.clone().into()),
+                            max_retries as u32,
+                        );
+                        // Dispatch RecordFailure command
+                        dispatch_domain_command(
+                            &actor_ref,
+                            DomainCommand::RecordFailure {
+                                failure: failure.clone(),
+                            },
+                            &session_logger,
+                        )
+                        .await;
+                        state.set_failure(failure);
                         state.set_updated_at();
                         state.save_atomic(state_path)?;
                         return Ok(Some(WorkflowResult::Stopped));
@@ -179,9 +203,17 @@ pub async fn run_revising_phase(
                             LogCategory::Workflow,
                             "User chose to abort after revision failure",
                         );
-                        return Ok(Some(WorkflowResult::Aborted {
-                            reason: format!("Revision failed: {}", error_msg),
-                        }));
+                        // Dispatch UserAborted command
+                        let reason = format!("Revision failed: {}", error_msg);
+                        dispatch_domain_command(
+                            &actor_ref,
+                            DomainCommand::UserAborted {
+                                reason: reason.clone(),
+                            },
+                            &session_logger,
+                        )
+                        .await;
+                        return Ok(Some(WorkflowResult::Aborted { reason }));
                     }
                     WorkflowFailureDecision::Stopped => {
                         session_logger.log(

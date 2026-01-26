@@ -1,6 +1,6 @@
 //! Daemon service definitions for client ↔ daemon RPC.
 
-use crate::rpc::{DaemonResult, SessionRecord};
+use crate::rpc::{DaemonResult, SessionRecord, WorkflowEventEnvelope};
 
 /// Service exposed by the session daemon to clients.
 #[tarpc::service]
@@ -43,6 +43,11 @@ pub trait DaemonService {
     ///
     /// This prevents older clients from accidentally killing newer daemons.
     async fn request_upgrade(caller_timestamp: u64) -> bool;
+
+    /// Forward a workflow event for broadcasting to subscribers.
+    /// Called by workflow processes to push CQRS events to the daemon,
+    /// which then broadcasts them to all connected subscribers.
+    async fn workflow_event(session_id: String, event: WorkflowEventEnvelope) -> DaemonResult<()>;
 }
 
 /// Callback service for push notifications (daemon → subscriber).
@@ -57,4 +62,9 @@ pub trait SubscriberCallback {
 
     /// Ping to check if subscriber is still alive. Returns true if healthy.
     async fn ping() -> bool;
+
+    /// Called when a workflow emits an event (CQRS event sourcing).
+    /// The session_id identifies which workflow emitted the event.
+    /// Note: This is an optional extension - implementations may ignore it.
+    async fn workflow_event(session_id: String, event: WorkflowEventEnvelope);
 }

@@ -83,7 +83,7 @@ mod tests {
             "session-456".to_string(),
             "my-feature".to_string(),
             PathBuf::from("/work/dir"),
-            PathBuf::from("/work/state.json"),
+            PathBuf::from("/work/sessions/session-456"),
             "Reviewing".to_string(),
             2,
             "Under Review".to_string(),

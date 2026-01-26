@@ -44,6 +44,14 @@ pub async fn handle_session_event(
                 session.workflow_state = Some(state);
             }
         }
+        Event::SessionViewUpdate { session_id, view } => {
+            if let Some(session) = tab_manager.session_by_id_mut(session_id) {
+                if let Some(ref name) = view.feature_name {
+                    session.name = name.as_str().to_string();
+                }
+                session.workflow_view = Some(view);
+            }
+        }
         Event::SessionApprovalRequest {
             session_id,
             summary,

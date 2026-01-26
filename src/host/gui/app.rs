@@ -6,13 +6,13 @@ use crate::host::gui::tray::{HostTray, TrayCommand};
 use crate::host::gui::usage_panel::{self, AccountProvider, DisplayAccountRow};
 use crate::host::rpc_server::HostEvent;
 use crate::host::state::HostState;
-use crate::session_daemon::LivenessState;
 use eframe::egui;
-use egui_extras::{Column, TableBuilder};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::{mpsc, Mutex};
+
+use super::session_table::{DisplaySessionRow, LivenessDisplay};
 
 /// Maximum number of log entries to keep.
 const MAX_LOG_ENTRIES: usize = 200;
@@ -68,36 +68,6 @@ struct DisplayContainerRow {
     ping_ago: String,
     ping_healthy: bool,
     session_count: usize,
-}
-
-#[derive(Clone)]
-struct DisplaySessionRow {
-    session_id: String,
-    container_name: String,
-    feature_name: String,
-    phase: String,
-    iteration: u32,
-    status: String,
-    liveness: LivenessDisplay,
-    pid: u32,
-    updated_ago: String,
-}
-
-#[derive(Clone, Copy)]
-enum LivenessDisplay {
-    Running,
-    Unresponsive,
-    Stopped,
-}
-
-impl From<LivenessState> for LivenessDisplay {
-    fn from(state: LivenessState) -> Self {
-        match state {
-            LivenessState::Running => LivenessDisplay::Running,
-            LivenessState::Unresponsive => LivenessDisplay::Unresponsive,
-            LivenessState::Stopped => LivenessDisplay::Stopped,
-        }
-    }
 }
 
 #[derive(Clone)]
@@ -470,7 +440,7 @@ impl eframe::App for HostApp {
 
         // Central session table
         egui::CentralPanel::default().show(ctx, |ui| {
-            self.render_session_table(ui);
+            super::session_table::render_session_table(ui, &self.display_data.sessions);
         });
     }
 }
@@ -691,137 +661,6 @@ impl HostApp {
                     });
                 }
             });
-    }
-
-    /// Render the session table with separate sections for live and disconnected sessions.
-    fn render_session_table(&self, ui: &mut egui::Ui) {
-        if self.display_data.sessions.is_empty() {
-            ui.centered_and_justified(|ui| {
-                ui.label("No active sessions");
-            });
-            return;
-        }
-
-        // Partition sessions into live and disconnected based on liveness
-        let (live_sessions, disconnected_sessions): (Vec<_>, Vec<_>) =
-            self.display_data.sessions.iter().partition(|s| {
-                matches!(
-                    s.liveness,
-                    LivenessDisplay::Running | LivenessDisplay::Unresponsive
-                )
-            });
-
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            // Live Sessions Section
-            if !live_sessions.is_empty() {
-                ui.horizontal(|ui| {
-                    ui.colored_label(egui::Color32::from_rgb(76, 175, 80), "●");
-                    ui.strong(format!("Live Sessions ({})", live_sessions.len()));
-                });
-                ui.separator();
-                self.render_session_rows(ui, &live_sessions);
-            }
-
-            // Disconnected Sessions Section (below live)
-            if !disconnected_sessions.is_empty() {
-                ui.add_space(16.0);
-                ui.horizontal(|ui| {
-                    ui.colored_label(egui::Color32::from_rgb(117, 117, 117), "○");
-                    ui.label(format!(
-                        "Disconnected Sessions ({})",
-                        disconnected_sessions.len()
-                    ));
-                });
-                ui.separator();
-                self.render_session_rows(ui, &disconnected_sessions);
-            }
-        });
-    }
-
-    /// Render session rows as a table.
-    fn render_session_rows(&self, ui: &mut egui::Ui, sessions: &[&DisplaySessionRow]) {
-        TableBuilder::new(ui)
-            .striped(true)
-            .resizable(true)
-            .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-            .column(Column::exact(16.0)) // Liveness indicator
-            .column(Column::initial(100.0).at_least(80.0)) // Container
-            .column(Column::initial(180.0).at_least(100.0)) // Feature
-            .column(Column::exact(80.0)) // Phase
-            .column(Column::exact(35.0)) // Iter
-            .column(Column::exact(90.0)) // Status
-            .column(Column::exact(60.0)) // PID
-            .column(Column::exact(70.0)) // Updated
-            .header(24.0, |mut header| {
-                header.col(|_| {}); // Liveness - no header
-                header.col(|ui| {
-                    ui.strong("Container");
-                });
-                header.col(|ui| {
-                    ui.strong("Feature");
-                });
-                header.col(|ui| {
-                    ui.strong("Phase");
-                });
-                header.col(|ui| {
-                    ui.strong("Iter");
-                });
-                header.col(|ui| {
-                    ui.strong("Status");
-                });
-                header.col(|ui| {
-                    ui.strong("PID");
-                });
-                header.col(|ui| {
-                    ui.strong("Updated");
-                });
-            })
-            .body(|mut body| {
-                for session in sessions {
-                    body.row(22.0, |mut row| {
-                        // Liveness indicator
-                        row.col(|ui| {
-                            let color = match session.liveness {
-                                LivenessDisplay::Running => egui::Color32::from_rgb(76, 175, 80),
-                                LivenessDisplay::Unresponsive => {
-                                    egui::Color32::from_rgb(255, 183, 77)
-                                }
-                                LivenessDisplay::Stopped => egui::Color32::from_rgb(117, 117, 117),
-                            };
-                            let (rect, _) =
-                                ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
-                            ui.painter().circle_filled(rect.center(), 4.0, color);
-                        });
-                        row.col(|ui| {
-                            ui.label(&session.container_name);
-                        });
-                        row.col(|ui| {
-                            ui.label(&session.feature_name);
-                        });
-                        row.col(|ui| {
-                            ui.label(&session.phase);
-                        });
-                        row.col(|ui| {
-                            ui.label(session.iteration.to_string());
-                        });
-                        row.col(|ui| {
-                            self.render_status(ui, &session.phase, &session.status);
-                        });
-                        row.col(|ui| {
-                            ui.label(session.pid.to_string());
-                        });
-                        row.col(|ui| {
-                            ui.label(&session.updated_ago);
-                        });
-                    });
-                }
-            });
-    }
-
-    /// Render the workflow status with descriptive text and color coding.
-    fn render_status(&self, ui: &mut egui::Ui, phase: &str, status: &str) {
-        let (color, text) = super::status_colors::get_status_display(phase, status);
-        ui.colored_label(color, text);
     }
 }
 

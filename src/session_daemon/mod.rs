@@ -31,3 +31,6 @@ pub(crate) mod rpc_tests;
 pub use protocol::{LivenessState, SessionRecord};
 pub use rpc_client::RpcClient;
 pub use rpc_server::run_daemon_rpc;
+
+// Re-export WorkflowEventEnvelope for session tracking
+pub use crate::rpc::WorkflowEventEnvelope;

@@ -15,7 +15,8 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
-use crate::state_machine::{StateCommand, StateEvent};
+use crate::domain::commands::WorkflowCommand;
+use crate::domain::events::WorkflowEvent;
 
 /// Structured JSONL logger for debugging and event reconstruction.
 pub struct StructuredLogger {
@@ -102,20 +103,26 @@ impl StructuredLogger {
         }
     }
 
-    /// Logs a state machine command.
-    pub fn log_command(&self, _sm_seq: u64, command: &StateCommand) {
+    /// Logs a domain workflow command.
+    pub fn log_workflow_command(&self, command: &WorkflowCommand) {
         self.log(
-            "StateMachine",
+            "Workflow",
             serde_json::json!({
-                "type": "CommandReceived",
-                "command": format!("{:?}", command)
+                "type": "WorkflowCommand",
+                "command": command
             }),
         );
     }
 
-    /// Logs a state machine event.
-    pub fn log_event(&self, _sm_seq: u64, event: &StateEvent) {
-        self.log("StateMachine", event);
+    /// Logs a domain workflow event.
+    pub fn log_workflow_event(&self, event: &WorkflowEvent) {
+        self.log(
+            "Workflow",
+            serde_json::json!({
+                "type": "WorkflowEvent",
+                "event": event
+            }),
+        );
     }
 
     /// Logs a channel send operation.
@@ -425,5 +432,53 @@ mod tests {
 
         let entry3: LogEntry = serde_json::from_str(lines[2]).expect("Failed to parse entry 3");
         assert_eq!(entry3.event["type"], "ConcurrentWorkflowPrevented");
+    }
+
+    #[test]
+    fn test_domain_workflow_logging() {
+        use crate::domain::commands::WorkflowCommand;
+        use crate::domain::events::WorkflowEvent;
+        use crate::domain::types::{
+            FeatureName, FeedbackPath, MaxIterations, Objective, PlanPath, TimestampUtc, WorkingDir,
+        };
+
+        let (logger, temp_dir) = create_test_logger();
+
+        let command = WorkflowCommand::CreateWorkflow {
+            feature_name: FeatureName("test-feature".to_string()),
+            objective: Objective("Test objective".to_string()),
+            working_dir: WorkingDir("/test/dir".into()),
+            max_iterations: MaxIterations(3),
+            plan_path: PlanPath("/test/plan.md".into()),
+            feedback_path: FeedbackPath("/test/feedback.md".into()),
+        };
+        logger.log_workflow_command(&command);
+
+        let event = WorkflowEvent::WorkflowCreated {
+            feature_name: FeatureName("test-feature".to_string()),
+            objective: Objective("Test objective".to_string()),
+            working_dir: WorkingDir("/test/dir".into()),
+            max_iterations: MaxIterations(3),
+            plan_path: PlanPath("/test/plan.md".into()),
+            feedback_path: FeedbackPath("/test/feedback.md".into()),
+            created_at: TimestampUtc::now(),
+        };
+        logger.log_workflow_event(&event);
+
+        let content = std::fs::read_to_string(temp_dir.path().join("events.jsonl"))
+            .expect("Failed to read log file");
+
+        let lines: Vec<&str> = content.lines().collect();
+        assert_eq!(lines.len(), 2);
+
+        let entry1: LogEntry = serde_json::from_str(lines[0]).expect("Failed to parse entry 1");
+        assert_eq!(entry1.component, "Workflow");
+        assert_eq!(entry1.event["type"], "WorkflowCommand");
+        assert!(entry1.event["command"]["create_workflow"].is_object());
+
+        let entry2: LogEntry = serde_json::from_str(lines[1]).expect("Failed to parse entry 2");
+        assert_eq!(entry2.component, "Workflow");
+        assert_eq!(entry2.event["type"], "WorkflowEvent");
+        assert!(entry2.event["event"]["workflow_created"].is_object());
     }
 }

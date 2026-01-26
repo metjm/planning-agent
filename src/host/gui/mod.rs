@@ -4,6 +4,7 @@
 
 pub mod app;
 mod helpers;
+mod session_table;
 mod status_colors;
 mod usage_panel;
 

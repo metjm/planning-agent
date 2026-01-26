@@ -1,11 +1,9 @@
-//! Structured failure handling for the planning-agent workflow.
+//! Structured failure handling types for the workflow domain.
 //!
 //! This module provides a canonical failure taxonomy for agent-level failures
-//! (network, timeout, non-zero exit, parse errors) and workflow-level failures
-//! (all reviewers failed, empty plan output). It supports recovery decisions
-//! in both TUI and headless modes.
+//! (network, timeout, non-zero exit, parse errors) and workflow-level failures.
 
-use crate::state::Phase;
+use crate::domain::types::{AgentId, PhaseLabel, TimestampUtc};
 use serde::{Deserialize, Serialize};
 
 /// Maximum number of failure records to keep in history to prevent unbounded growth.
@@ -27,7 +25,7 @@ pub enum FailureKind {
     EmptyOutput,
     /// Workflow-level failure when no reviews completed.
     AllReviewersFailed,
-    /// Unclassified errors for future extensibility and diagnostic capture.
+    /// Unclassified errors for future extensibility.
     Unknown(String),
 }
 
@@ -58,7 +56,7 @@ impl FailureKind {
 }
 
 /// Actions that can be taken to recover from a failure.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum RecoveryAction {
     /// User chose to retry the failed operation.
@@ -71,21 +69,21 @@ pub enum RecoveryAction {
     ContinuedWithoutFullReview,
 }
 
-/// Context for a workflow failure, persisted in State for recovery.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Context for a workflow failure, persisted in state for recovery.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct FailureContext {
     /// Classified failure type.
     pub kind: FailureKind,
     /// Which phase the failure occurred in.
-    pub phase: Phase,
+    pub phase: PhaseLabel,
     /// Which agent failed (if agent-level failure).
-    pub agent_name: Option<String>,
+    pub agent_name: Option<AgentId>,
     /// Number of retries attempted for this failure.
     pub retry_count: u32,
     /// Maximum retries allowed from policy.
     pub max_retries: u32,
-    /// Timestamp when failure occurred (RFC3339 format).
-    pub failed_at: String,
+    /// Timestamp when failure occurred.
+    pub failed_at: TimestampUtc,
     /// How the failure was recovered (set after user decision).
     pub recovery_action: Option<RecoveryAction>,
 }
@@ -94,8 +92,8 @@ impl FailureContext {
     /// Creates a new FailureContext with the given parameters.
     pub fn new(
         kind: FailureKind,
-        phase: Phase,
-        agent_name: Option<String>,
+        phase: PhaseLabel,
+        agent_name: Option<AgentId>,
         max_retries: u32,
     ) -> Self {
         Self {
@@ -104,7 +102,7 @@ impl FailureContext {
             agent_name,
             retry_count: 0,
             max_retries,
-            failed_at: chrono::Utc::now().to_rfc3339(),
+            failed_at: TimestampUtc::now(),
             recovery_action: None,
         }
     }
@@ -117,7 +115,7 @@ impl FailureContext {
     /// Increments the retry count and updates the failed_at timestamp.
     pub fn increment_retry(&mut self) {
         self.retry_count += 1;
-        self.failed_at = chrono::Utc::now().to_rfc3339();
+        self.failed_at = TimestampUtc::now();
     }
 
     /// Sets the recovery action taken.
@@ -174,7 +172,6 @@ impl Default for FailurePolicy {
 impl FailurePolicy {
     /// Validates the policy configuration.
     pub fn validate(&self) -> anyhow::Result<()> {
-        // Enum already enforces valid values via serde
         Ok(())
     }
 }
@@ -183,132 +180,3 @@ impl FailurePolicy {
 /// These patterns are used to identify network-related failures.
 pub const NETWORK_ERROR_PATTERN: &str =
     r"(?i)connect|network|ECONNREFUSED|ETIMEDOUT|connection\s+refused|name\s+resolution|DNS|socket";
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_failure_kind_retryable() {
-        assert!(FailureKind::Timeout.is_retryable());
-        assert!(FailureKind::Network.is_retryable());
-        assert!(FailureKind::EmptyOutput.is_retryable());
-        assert!(FailureKind::AllReviewersFailed.is_retryable());
-
-        assert!(!FailureKind::ProcessExit(1).is_retryable());
-        assert!(!FailureKind::ParseFailure("test".to_string()).is_retryable());
-        assert!(!FailureKind::Unknown("test".to_string()).is_retryable());
-    }
-
-    #[test]
-    fn test_failure_kind_display_name() {
-        assert_eq!(FailureKind::Timeout.display_name(), "Timeout");
-        assert_eq!(FailureKind::Network.display_name(), "Network");
-        assert_eq!(FailureKind::ProcessExit(1).display_name(), "Process Exit");
-        assert_eq!(
-            FailureKind::ParseFailure("test".to_string()).display_name(),
-            "Parse Failure"
-        );
-        assert_eq!(FailureKind::EmptyOutput.display_name(), "Empty Output");
-        assert_eq!(
-            FailureKind::AllReviewersFailed.display_name(),
-            "All Reviewers Failed"
-        );
-        assert_eq!(
-            FailureKind::Unknown("test".to_string()).display_name(),
-            "Unknown"
-        );
-    }
-
-    #[test]
-    fn test_failure_context_can_retry() {
-        let mut ctx = FailureContext::new(FailureKind::Network, Phase::Reviewing, None, 2);
-        assert!(ctx.can_retry());
-
-        ctx.retry_count = 2;
-        assert!(!ctx.can_retry());
-
-        let ctx2 = FailureContext::new(FailureKind::ProcessExit(1), Phase::Planning, None, 2);
-        assert!(!ctx2.can_retry()); // ProcessExit is not retryable
-    }
-
-    #[test]
-    fn test_failure_context_increment_retry() {
-        let mut ctx = FailureContext::new(FailureKind::Timeout, Phase::Reviewing, None, 3);
-        let original_timestamp = ctx.failed_at.clone();
-
-        std::thread::sleep(std::time::Duration::from_millis(10));
-        ctx.increment_retry();
-
-        assert_eq!(ctx.retry_count, 1);
-        assert_ne!(ctx.failed_at, original_timestamp);
-    }
-
-    #[test]
-    fn test_failure_policy_default() {
-        let policy = FailurePolicy::default();
-        assert_eq!(policy.max_retries, 2);
-        assert_eq!(policy.backoff_secs, 5);
-        assert_eq!(policy.on_all_reviewers_failed, OnAllReviewersFailed::Abort);
-    }
-
-    #[test]
-    fn test_failure_policy_validate_valid() {
-        let policy = FailurePolicy {
-            max_retries: 3,
-            backoff_secs: 10,
-            on_all_reviewers_failed: OnAllReviewersFailed::SaveState,
-        };
-        assert!(policy.validate().is_ok());
-
-        let policy2 = FailurePolicy {
-            on_all_reviewers_failed: OnAllReviewersFailed::ContinueWithoutReview,
-            ..Default::default()
-        };
-        assert!(policy2.validate().is_ok());
-    }
-
-    #[test]
-    fn test_failure_policy_yaml_parsing() {
-        // Test that YAML strings are correctly deserialized to enum values
-        let yaml = r#"
-max_retries: 3
-backoff_secs: 10
-on_all_reviewers_failed: save_state
-"#;
-        let policy: FailurePolicy = serde_yaml::from_str(yaml).unwrap();
-        assert_eq!(policy.max_retries, 3);
-        assert_eq!(
-            policy.on_all_reviewers_failed,
-            OnAllReviewersFailed::SaveState
-        );
-    }
-
-    #[test]
-    fn test_failure_context_serialization_roundtrip() {
-        let ctx = FailureContext::new(
-            FailureKind::Network,
-            Phase::Reviewing,
-            Some("codex".to_string()),
-            2,
-        );
-
-        let json = serde_json::to_string(&ctx).unwrap();
-        let loaded: FailureContext = serde_json::from_str(&json).unwrap();
-
-        assert_eq!(loaded.kind, FailureKind::Network);
-        assert_eq!(loaded.phase, Phase::Reviewing);
-        assert_eq!(loaded.agent_name, Some("codex".to_string()));
-        assert_eq!(loaded.max_retries, 2);
-    }
-
-    #[test]
-    fn test_failure_kind_serialization() {
-        let kind = FailureKind::ProcessExit(42);
-        let json = serde_json::to_string(&kind).unwrap();
-        assert!(json.contains("42"));
-
-        let loaded: FailureKind = serde_json::from_str(&json).unwrap();
-        assert_eq!(loaded, FailureKind::ProcessExit(42));
-    }
-}

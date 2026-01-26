@@ -40,25 +40,84 @@ mod planning;
 mod reviewing;
 mod revising;
 
+use crate::domain::actor::WorkflowMessage;
+use crate::domain::commands::WorkflowCommand as DomainCommand;
+use crate::session_logger::{LogCategory, LogLevel, SessionLogger};
+use ractor::ActorRef;
+use tokio::sync::oneshot;
+
+/// Dispatches a domain command to the workflow actor with full error handling.
+///
+/// Handles all three response cases:
+/// - `Ok(Ok(_view))` - command succeeded, logs at Info level
+/// - `Ok(Err(e))` - command was rejected by actor, logs at Warn level
+/// - `Err(_)` - reply channel dropped, logs at Warn level
+pub(crate) async fn dispatch_domain_command(
+    actor_ref: &Option<ActorRef<WorkflowMessage>>,
+    cmd: DomainCommand,
+    session_logger: &SessionLogger,
+) {
+    if let Some(ref actor) = actor_ref {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        if let Err(e) =
+            actor.send_message(WorkflowMessage::Command(Box::new(cmd.clone()), reply_tx))
+        {
+            session_logger.log(
+                LogLevel::Warn,
+                LogCategory::Workflow,
+                &format!("Failed to dispatch command {:?}: {}", cmd, e),
+            );
+            return;
+        }
+        match reply_rx.await {
+            Ok(Ok(_view)) => {
+                session_logger.log(
+                    LogLevel::Info,
+                    LogCategory::Workflow,
+                    &format!("Command dispatched: {:?}", cmd),
+                );
+            }
+            Ok(Err(e)) => {
+                session_logger.log(
+                    LogLevel::Warn,
+                    LogCategory::Workflow,
+                    &format!("Command rejected: {:?}: {:?}", cmd, e),
+                );
+            }
+            Err(_) => {
+                session_logger.log(
+                    LogLevel::Warn,
+                    LogCategory::Workflow,
+                    &format!("Command reply channel dropped: {:?}", cmd),
+                );
+            }
+        }
+    }
+}
+
 use crate::app::implementation::{run_implementation_workflow, ImplementationContext};
 use crate::app::workflow_decisions::{
     apply_planning_decision, await_max_iterations_decision,
-    build_max_iterations_summary_from_state, IterativePhase,
+    build_max_iterations_summary_from_state, IterativePhase, MaxIterationsDecision,
 };
 use crate::config::WorkflowConfig;
+use crate::domain::actor::{create_actor_args, WorkflowActor};
+use crate::domain::types::{
+    FeatureName, FeedbackPath, MaxIterations, Objective, PlanPath, WorkingDir,
+};
 use crate::planning_paths;
-use crate::session_logger::{create_session_logger, LogCategory, LogLevel};
+use crate::session_logger::create_session_logger;
 use crate::session_tracking::SessionTracker;
 use crate::state::{Phase, State};
-use crate::state_machine::StateSnapshot;
 use crate::structured_logger::StructuredLogger;
 use crate::tui::{
     CancellationError, Event, SessionEventSender, UserApprovalResponse, WorkflowCommand,
 };
 use anyhow::Result;
+use ractor::Actor;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::{mpsc, watch};
+use tokio::sync::mpsc;
 
 use completion::handle_completion;
 use planning::run_planning_phase;
@@ -90,13 +149,6 @@ pub struct WorkflowRunConfig {
     pub run_id: u64,
     /// If true, disable session daemon tracking (for tests/headless mode)
     pub no_daemon: bool,
-    /// Optional watch channel sender for broadcasting state snapshots to TUI.
-    /// When provided, the workflow will broadcast StateSnapshot updates that
-    /// the TUI can poll for state changes. This enables the new centralized
-    /// state management architecture.
-    ///
-    /// If None (default), the workflow uses legacy Event::SessionStateUpdate.
-    pub snapshot_tx: Option<watch::Sender<StateSnapshot>>,
 }
 
 pub async fn run_workflow_with_config(
@@ -113,7 +165,6 @@ pub async fn run_workflow_with_config(
         session_id,
         run_id,
         no_daemon,
-        snapshot_tx,
     } = run_config;
 
     let sender = SessionEventSender::new(session_id, run_id, output_tx);
@@ -136,22 +187,139 @@ pub async fn run_workflow_with_config(
     };
     structured_logger.log_workflow_spawn(false);
 
-    // Broadcast initial state snapshot if TUI provided a snapshot channel
-    if let Some(ref tx) = snapshot_tx {
-        let initial_snapshot = StateSnapshot::from(&state);
-        let _ = tx.send(initial_snapshot);
-    }
+    // Initialize CQRS actor for event-sourced state management
+    let session_dir = planning_paths::session_dir(&state.workflow_session_id)?;
+    let (actor_args, mut view_rx, event_rx) = create_actor_args(&state.workflow_session_id)?;
+    let (actor_ref, _actor_handle) = WorkflowActor::spawn(None, WorkflowActor, actor_args)
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to spawn workflow actor: {}", e))?;
 
-    // Create session tracker for daemon integration
+    // Spawn task to forward CQRS view updates to TUI
+    let view_sender = sender.clone();
+    tokio::spawn(async move {
+        while view_rx.changed().await.is_ok() {
+            let view = view_rx.borrow().clone();
+            view_sender.send_view_update(view);
+        }
+    });
+
+    // Create session tracker for daemon integration early so we can use it for event streaming
     let tracker = Arc::new(SessionTracker::new(no_daemon).await);
 
-    // Register session with daemon
+    // Spawn task to forward CQRS events to daemon for broadcasting to subscribers
+    {
+        let session_id = state.workflow_session_id.clone();
+        let tracker_clone = tracker.clone();
+        let mut event_rx = event_rx;
+        tokio::spawn(async move {
+            while let Ok(event) = event_rx.recv().await {
+                // Forward event to daemon (ignore errors - daemon may not be running)
+                let _ = tracker_clone.workflow_event(&session_id, event).await;
+            }
+        });
+    }
+
+    session_logger.log(
+        LogLevel::Info,
+        LogCategory::Workflow,
+        "CQRS workflow actor initialized",
+    );
+
+    // Send CreateWorkflow command for new workflows (iteration == 1 at Planning phase)
+    // For resumed workflows, the aggregate state is replayed from the event log
+    if state.phase == Phase::Planning && state.iteration == 1 {
+        let create_cmd = DomainCommand::CreateWorkflow {
+            feature_name: FeatureName::from(state.feature_name.as_str()),
+            objective: Objective::from(state.objective.as_str()),
+            working_dir: WorkingDir::from(working_dir.as_path()),
+            max_iterations: MaxIterations(state.max_iterations),
+            plan_path: PlanPath::from(state.plan_file.clone()),
+            feedback_path: FeedbackPath::from(state.feedback_file.clone()),
+        };
+        let (reply_tx, reply_rx) = oneshot::channel();
+        actor_ref
+            .send_message(WorkflowMessage::Command(Box::new(create_cmd), reply_tx))
+            .map_err(|e| anyhow::anyhow!("Failed to send CreateWorkflow command: {}", e))?;
+
+        // Wait for command result
+        match reply_rx.await {
+            Ok(Ok(view)) => {
+                session_logger.log(
+                    LogLevel::Info,
+                    LogCategory::Workflow,
+                    &format!("CreateWorkflow succeeded: phase={:?}", view.planning_phase),
+                );
+            }
+            Ok(Err(e)) => {
+                session_logger.log(
+                    LogLevel::Warn,
+                    LogCategory::Workflow,
+                    &format!("CreateWorkflow command rejected: {:?}", e),
+                );
+            }
+            Err(_) => {
+                session_logger.log(
+                    LogLevel::Warn,
+                    LogCategory::Workflow,
+                    "CreateWorkflow reply channel dropped",
+                );
+            }
+        }
+
+        // Dispatch StartPlanning command after workflow creation
+        let start_cmd = DomainCommand::StartPlanning;
+        let (reply_tx, reply_rx) = oneshot::channel();
+        if let Err(e) =
+            actor_ref.send_message(WorkflowMessage::Command(Box::new(start_cmd), reply_tx))
+        {
+            session_logger.log(
+                LogLevel::Warn,
+                LogCategory::Workflow,
+                &format!("Failed to send StartPlanning command: {}", e),
+            );
+        } else if reply_rx.await.is_err() {
+            session_logger.log(
+                LogLevel::Warn,
+                LogCategory::Workflow,
+                "StartPlanning reply channel dropped",
+            );
+        }
+
+        // Dispatch AttachWorktree command if worktree info is present
+        if let Some(ref wt_info) = state.worktree_info {
+            let worktree_state = crate::domain::types::WorktreeState {
+                worktree_path: wt_info.worktree_path.clone(),
+                branch_name: wt_info.branch_name.clone(),
+                source_branch: wt_info.source_branch.clone(),
+                original_dir: wt_info.original_dir.clone(),
+            };
+            let attach_cmd = DomainCommand::AttachWorktree { worktree_state };
+            let (reply_tx, reply_rx) = oneshot::channel();
+            if let Err(e) =
+                actor_ref.send_message(WorkflowMessage::Command(Box::new(attach_cmd), reply_tx))
+            {
+                session_logger.log(
+                    LogLevel::Warn,
+                    LogCategory::Workflow,
+                    &format!("Failed to send AttachWorktree command: {}", e),
+                );
+            } else if reply_rx.await.is_err() {
+                session_logger.log(
+                    LogLevel::Warn,
+                    LogCategory::Workflow,
+                    "AttachWorktree reply channel dropped",
+                );
+            }
+        }
+    }
+
+    // Register session with daemon (now passing session_dir instead of state_path)
     if let Err(e) = tracker
         .register(
             state.workflow_session_id.clone(),
             state.feature_name.clone(),
             working_dir.clone(),
-            state_path.clone(),
+            session_dir.clone(),
             format!("{:?}", state.phase),
             state.iteration,
             format!("{:?}", state.phase),
@@ -180,6 +348,7 @@ pub async fn run_workflow_with_config(
         config: &config,
         sender: &sender,
         session_logger: session_logger.clone(),
+        actor_ref: Some(actor_ref),
     };
 
     let mut last_reviews: Vec<crate::phases::ReviewResult> = Vec::new();
@@ -200,6 +369,7 @@ pub async fn run_workflow_with_config(
                     &mut approval_rx,
                     &mut control_rx,
                     session_logger.clone(),
+                    phase_context.actor_ref.clone(),
                 )
                 .await;
 
@@ -209,7 +379,14 @@ pub async fn run_workflow_with_config(
                         return Ok(workflow_result);
                     }
                     Ok(None) => {
-                        // Phase completed - update session state
+                        // Phase completed - dispatch PlanningCompleted command
+                        phase_context
+                            .dispatch_command(DomainCommand::PlanningCompleted {
+                                plan_path: PlanPath::from(state.plan_file.clone()),
+                            })
+                            .await;
+
+                        // Update session state
                         let _ = tracker
                             .update(
                                 &state.workflow_session_id,
@@ -339,6 +516,7 @@ pub async fn run_workflow_with_config(
                     &mut control_rx,
                     &mut last_reviews,
                     session_logger.clone(),
+                    phase_context.actor_ref.clone(),
                 )
                 .await;
 
@@ -348,7 +526,14 @@ pub async fn run_workflow_with_config(
                         return Ok(workflow_result);
                     }
                     Ok(None) => {
-                        // Phase completed - update session state
+                        // Phase completed - dispatch RevisionCompleted command
+                        phase_context
+                            .dispatch_command(DomainCommand::RevisionCompleted {
+                                plan_path: PlanPath::from(state.plan_file.clone()),
+                            })
+                            .await;
+
+                        // Update session state
                         let _ = tracker
                             .update(
                                 &state.workflow_session_id,
@@ -405,6 +590,27 @@ pub async fn run_workflow_with_config(
                 )
                 .await?;
 
+                // Dispatch domain commands for user decisions
+                match &decision {
+                    MaxIterationsDecision::ProceedWithoutApproval => {
+                        phase_context
+                            .dispatch_command(DomainCommand::UserOverrideApproval {
+                                override_reason:
+                                    "User proceeded without AI approval at max iterations"
+                                        .to_string(),
+                            })
+                            .await;
+                    }
+                    MaxIterationsDecision::Abort => {
+                        phase_context
+                            .dispatch_command(DomainCommand::UserAborted {
+                                reason: "User aborted workflow at max iterations".to_string(),
+                            })
+                            .await;
+                    }
+                    _ => {}
+                }
+
                 // Apply the decision using the shared helper
                 if let Some(result) =
                     apply_planning_decision(decision, &mut state, &state_path, &sender)?
@@ -440,6 +646,28 @@ pub async fn run_workflow_with_config(
         )
         .await?;
 
+        // Dispatch domain command based on user decision
+        match &result {
+            WorkflowResult::Accepted => {
+                phase_context
+                    .dispatch_command(DomainCommand::UserApproved)
+                    .await;
+            }
+            WorkflowResult::ImplementationRequested => {
+                phase_context
+                    .dispatch_command(DomainCommand::UserRequestedImplementation)
+                    .await;
+            }
+            WorkflowResult::NeedsRestart { user_feedback } => {
+                phase_context
+                    .dispatch_command(DomainCommand::UserDeclined {
+                        feedback: user_feedback.clone(),
+                    })
+                    .await;
+            }
+            _ => {}
+        }
+
         // Check if implementation was requested
         if matches!(result, WorkflowResult::ImplementationRequested) {
             session_logger.log(
@@ -454,6 +682,7 @@ pub async fn run_workflow_with_config(
                 session_logger: session_logger.clone(),
                 approval_rx: &mut approval_rx,
                 control_rx: &mut control_rx,
+                actor_ref: phase_context.actor_ref.clone(),
             };
             let impl_result = run_implementation_workflow(
                 &mut state,

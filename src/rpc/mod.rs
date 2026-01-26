@@ -27,6 +27,11 @@ pub use crate::session_daemon::protocol::{LivenessState, PortFileContent, Sessio
 #[allow(unused_imports)]
 pub use crate::host_protocol::SessionInfo;
 
+// Re-export CQRS domain types for event streaming
+// Note: Allow unused for now - will be used when event streaming is implemented
+#[allow(unused_imports)]
+pub use crate::domain::view::WorkflowEventEnvelope;
+
 // ============================================================================
 // ERROR TYPES (NEW)
 // ============================================================================

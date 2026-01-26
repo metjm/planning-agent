@@ -6,7 +6,7 @@
 use crate::daemon_log::daemon_log;
 use crate::planning_paths;
 use crate::rpc::daemon_service::{DaemonServiceClient, SubscriberCallback};
-use crate::rpc::{PortFileContent, SessionRecord};
+use crate::rpc::{PortFileContent, SessionRecord, WorkflowEventEnvelope};
 use futures::StreamExt;
 use tarpc::server::{self, Channel};
 use tarpc::tokio_serde::formats::Bincode;
@@ -19,6 +19,11 @@ pub enum SubscriptionEvent {
     SessionChanged(Box<SessionRecord>),
     /// Daemon is restarting (subscriber should reconnect)
     DaemonRestarting,
+    /// A workflow emitted a CQRS event (boxed for memory efficiency)
+    WorkflowEvent {
+        session_id: String,
+        event: Box<WorkflowEventEnvelope>,
+    },
 }
 
 /// Handler that implements SubscriberCallback and forwards events to a channel.
@@ -44,6 +49,18 @@ impl SubscriberCallback for SubscriptionHandler {
 
     async fn ping(self, _: tarpc::context::Context) -> bool {
         true
+    }
+
+    async fn workflow_event(
+        self,
+        _: tarpc::context::Context,
+        session_id: String,
+        event: WorkflowEventEnvelope,
+    ) {
+        let _ = self.tx.send(SubscriptionEvent::WorkflowEvent {
+            session_id,
+            event: Box::new(event),
+        });
     }
 }
 
@@ -184,7 +201,7 @@ mod tests {
             "test".to_string(),
             "Test".to_string(),
             std::path::PathBuf::from("/test"),
-            std::path::PathBuf::from("/test/state.json"),
+            std::path::PathBuf::from("/test/sessions/test"),
             "Planning".to_string(),
             1,
             "Planning".to_string(),

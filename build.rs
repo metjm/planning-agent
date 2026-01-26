@@ -2,12 +2,13 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 const MAX_LINES: usize = 750;
+const MAX_RS_FILES_PER_FOLDER: usize = 10;
 
 const CHECKED_EXTENSIONS: &[&str] = &["rs", "md", "yaml", "toml"];
 
 const EXCLUDED_DIRS: &[&str] = &["target", ".git", "node_modules"];
 
-const EXCLUDED_FILES: &[&str] = &["Cargo.lock", "docs/plans/file-line-limit.md"];
+const EXCLUDED_FILES: &[&str] = &["Cargo.lock", "docs/plans/file-line-limit.md", "build.rs"];
 
 fn main() {
     println!("cargo:rerun-if-changed=.git/HEAD");
@@ -72,6 +73,8 @@ fn main() {
 
     enforce_formatting();
     enforce_line_limits();
+    enforce_max_files_per_folder();
+    enforce_tests_in_test_paths();
     enforce_no_dead_code_allows();
     enforce_no_ignored_tests();
     enforce_no_test_skips();
@@ -127,6 +130,200 @@ fn enforce_line_limits() {
             "Build failed: {} file(s) exceed the {} line limit",
             violations.len(),
             MAX_LINES
+        );
+    }
+}
+
+/// Enforces that no folder contains more than MAX_RS_FILES_PER_FOLDER .rs files.
+///
+/// This forces a better module structure by requiring code to be split into
+/// subfolders when a directory gets too large.
+fn enforce_max_files_per_folder() {
+    // Skip check if SKIP_FOLDER_CHECK is set (useful during migration)
+    if std::env::var("SKIP_FOLDER_CHECK").is_ok() {
+        return;
+    }
+
+    use std::collections::HashMap;
+
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR must be set");
+    let root = PathBuf::from(&manifest_dir);
+
+    // Collect all .rs files
+    let rust_files: Vec<PathBuf> = collect_files_to_check(&root)
+        .into_iter()
+        .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("rs"))
+        .collect();
+
+    // Group by parent directory
+    let mut files_per_folder: HashMap<PathBuf, Vec<PathBuf>> = HashMap::new();
+    for file in rust_files {
+        if let Some(parent) = file.parent() {
+            files_per_folder
+                .entry(parent.to_path_buf())
+                .or_default()
+                .push(file);
+        }
+    }
+
+    // Find violations
+    let mut violations: Vec<(PathBuf, usize)> = Vec::new();
+    for (folder, files) in &files_per_folder {
+        if files.len() > MAX_RS_FILES_PER_FOLDER {
+            let rel_path = folder.strip_prefix(&root).unwrap_or(folder).to_path_buf();
+            violations.push((rel_path, files.len()));
+        }
+    }
+
+    if !violations.is_empty() {
+        violations.sort_by(|a, b| b.1.cmp(&a.1)); // Sort by count descending
+
+        eprintln!("\n========================================");
+        eprintln!(
+            "TOO MANY FILES PER FOLDER (max {} .rs files)",
+            MAX_RS_FILES_PER_FOLDER
+        );
+        eprintln!("========================================");
+        for (path, count) in &violations {
+            eprintln!(
+                "  {} - {} files (exceeds by {})",
+                path.display(),
+                count,
+                count - MAX_RS_FILES_PER_FOLDER
+            );
+        }
+        eprintln!("========================================\n");
+        eprintln!("Please organize these folders into submodules.");
+        eprintln!("For example:");
+        eprintln!("  src/foo/bar.rs");
+        eprintln!("  src/foo/baz.rs");
+        eprintln!("  ... (many files)");
+        eprintln!();
+        eprintln!("Should become:");
+        eprintln!("  src/foo/bar/mod.rs");
+        eprintln!("  src/foo/bar/helpers.rs");
+        eprintln!("  src/foo/baz/mod.rs");
+        eprintln!("  ...");
+        eprintln!("\n========================================\n");
+        panic!(
+            "Build failed: {} folder(s) exceed the {} file limit",
+            violations.len(),
+            MAX_RS_FILES_PER_FOLDER
+        );
+    }
+}
+
+/// Enforces that all tests are in folders whose name contains "test".
+///
+/// This ensures a clear separation between production code and test code.
+/// The parent folder of any file containing tests must have "test" in its name.
+/// Examples:
+///   - `src/foo/tests/helpers.rs` - OK (parent "tests" contains "test")
+///   - `src/foo/foo_tests/bar.rs` - OK (parent "foo_tests" contains "test")
+///   - `tests/integration.rs` - OK (parent "tests" contains "test")
+///   - `src/foo/bar.rs` - NOT OK (parent "foo" doesn't contain "test")
+fn enforce_tests_in_test_paths() {
+    // Skip check if SKIP_TEST_FOLDER_CHECK is set (useful during migration)
+    if std::env::var("SKIP_TEST_FOLDER_CHECK").is_ok() {
+        return;
+    }
+
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR must be set");
+    let root = PathBuf::from(&manifest_dir);
+
+    // Collect all .rs files (excluding build.rs)
+    let rust_files: Vec<PathBuf> = collect_files_to_check(&root)
+        .into_iter()
+        .filter(|p| {
+            p.extension().and_then(|e| e.to_str()) == Some("rs")
+                && p.file_name().and_then(|n| n.to_str()) != Some("build.rs")
+        })
+        .collect();
+
+    let mut violations: Vec<(PathBuf, Vec<String>)> = Vec::new();
+
+    for file in &rust_files {
+        let rel_path = file.strip_prefix(&root).unwrap_or(file);
+
+        // Check if parent folder name contains "test"
+        let parent_has_test = rel_path
+            .parent()
+            .and_then(|p| p.file_name())
+            .and_then(|n| n.to_str())
+            .map(|name| name.to_lowercase().contains("test"))
+            .unwrap_or(false);
+
+        if parent_has_test {
+            // This file is in a test folder, allowed to have tests
+            continue;
+        }
+
+        // Check if file contains test functions
+        if let Ok(content) = std::fs::read_to_string(file) {
+            let mut test_fns: Vec<String> = Vec::new();
+
+            let lines: Vec<&str> = content.lines().collect();
+            for (i, line) in lines.iter().enumerate() {
+                let trimmed = line.trim();
+
+                // Look for #[test] or #[tokio::test]
+                if trimmed == "#[test]" || trimmed.starts_with("#[tokio::test") {
+                    // Look ahead for function name
+                    for lookahead_line in lines.iter().skip(i + 1).take(4) {
+                        if lookahead_line.contains("fn ") {
+                            if let Some(fn_pos) = lookahead_line.find("fn ") {
+                                let after_fn = lookahead_line.get(fn_pos + 3..).unwrap_or("");
+                                if let Some(paren) = after_fn.find('(') {
+                                    let fn_name = after_fn.get(..paren).unwrap_or("").trim();
+                                    test_fns.push(fn_name.to_string());
+                                }
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if !test_fns.is_empty() {
+                violations.push((rel_path.to_path_buf(), test_fns));
+            }
+        }
+    }
+
+    if !violations.is_empty() {
+        let total_tests: usize = violations.iter().map(|(_, fns)| fns.len()).sum();
+
+        eprintln!("\n========================================");
+        eprintln!("TESTS MUST BE IN TEST FOLDERS");
+        eprintln!("========================================");
+        eprintln!();
+        for (path, fns) in &violations {
+            eprintln!("  {}", path.display());
+            for fn_name in fns {
+                eprintln!("    - {}", fn_name);
+            }
+            eprintln!();
+        }
+        eprintln!("========================================");
+        eprintln!();
+        eprintln!("Tests must be in folders whose name contains \"test\".");
+        eprintln!();
+        eprintln!("Valid locations:");
+        eprintln!("  - src/foo/tests/bar.rs      (parent: tests)");
+        eprintln!("  - src/foo/foo_tests/bar.rs  (parent: foo_tests)");
+        eprintln!("  - tests/integration.rs      (parent: tests)");
+        eprintln!();
+        eprintln!("Invalid locations:");
+        eprintln!("  - src/foo/bar_tests.rs      (parent: foo - no 'test')");
+        eprintln!("  - src/foo/tests.rs          (parent: foo - no 'test')");
+        eprintln!();
+        eprintln!("Move tests into a folder with 'test' in its name.");
+        eprintln!();
+        eprintln!("========================================\n");
+        panic!(
+            "Build failed: {} test(s) in {} file(s) are not in test folders",
+            total_tests,
+            violations.len()
         );
     }
 }
