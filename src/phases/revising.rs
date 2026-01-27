@@ -63,8 +63,7 @@ pub async fn run_revision_phase_with_context(
 
     // Compute session folder for supplementary file access
     let workflow_id = view
-        .workflow_id
-        .as_ref()
+        .workflow_id()
         .ok_or_else(|| anyhow::anyhow!("WorkflowView missing workflow_id"))?;
     let session_folder = planning_paths::session_dir(&workflow_id.to_string())?;
 
@@ -87,12 +86,12 @@ pub async fn run_revision_phase_with_context(
 
     // Get existing conversation state from view (read-only)
     let (conversation_id, conv_resume_strategy) = view
-        .agent_conversations
+        .agent_conversations()
         .get(&agent_id)
         .map(|state| {
             (
-                state.conversation_id.as_ref().map(|c| c.0.clone()),
-                state.resume_strategy,
+                state.conversation_id().map(|c| c.0.clone()),
+                state.resume_strategy(),
             )
         })
         .unwrap_or((None, ResumeStrategy::ConversationResume));
@@ -156,8 +155,7 @@ fn build_revision_prompt_with_reviews(
     iteration: u32,
 ) -> String {
     let plan_path = view
-        .plan_path
-        .as_ref()
+        .plan_path()
         .map(|p| p.0.display().to_string())
         .unwrap_or_else(|| "plan.md".to_string());
 

@@ -39,13 +39,13 @@ async fn test_query_applies_event_to_view() {
 
     // Check view was updated
     let updated_view = view.read().await;
-    assert!(updated_view.feature_name.is_some());
-    assert_eq!(updated_view.feature_name.as_ref().unwrap().as_str(), "test");
+    assert!(updated_view.feature_name().is_some());
+    assert_eq!(updated_view.feature_name().unwrap().as_str(), "test");
 
     // Check snapshot was sent
     snapshot_rx.changed().await.unwrap();
     let snapshot = snapshot_rx.borrow();
-    assert!(snapshot.feature_name.is_some());
+    assert!(snapshot.feature_name().is_some());
 
     // Check event was broadcast
     let received = event_rx.try_recv().unwrap();

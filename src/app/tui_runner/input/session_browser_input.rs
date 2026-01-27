@@ -247,16 +247,14 @@ fn resume_session_in_current_process(
             session.adjust_start_time_for_previous_elapsed(snapshot.total_elapsed_before_resume_ms);
 
             // Compute effective_working_dir from worktree_info if present
-            let effective_working_dir = compute_effective_working_dir(
-                &snapshot.working_dir,
-                restored_view.worktree_info.as_ref(),
-            );
+            let effective_working_dir =
+                compute_effective_working_dir(&snapshot.working_dir, restored_view.worktree_info());
 
             // Create and set session context BEFORE starting the workflow
             let context = SessionContext::from_snapshot(
                 snapshot.working_dir.clone(),
                 snapshot.state_path.clone(),
-                restored_view.worktree_info.as_ref(),
+                restored_view.worktree_info(),
                 workflow_config.clone(),
             );
             session.context = Some(context);
@@ -264,14 +262,13 @@ fn resume_session_in_current_process(
             // Log resume information
             session.add_output(format!("[planning] Resumed session: {}", entry.session_id));
             let feature_name = restored_view
-                .feature_name
-                .as_ref()
+                .feature_name()
                 .map(|f| f.0.as_str())
                 .unwrap_or("<unknown>");
             let phase = restored_view
-                .planning_phase
+                .planning_phase()
                 .unwrap_or(crate::domain::types::Phase::Planning);
-            let iteration = restored_view.iteration.map(|i| i.0).unwrap_or(1);
+            let iteration = restored_view.iteration().map(|i| i.0).unwrap_or(1);
             session.add_output(format!(
                 "[planning] Feature: {}, Phase: {:?}, Iteration: {}",
                 feature_name, phase, iteration
@@ -296,7 +293,7 @@ fn resume_session_in_current_process(
             session.total_cost = snapshot.ui_state.total_cost;
 
             // Start the actual workflow
-            let input = if let Some(ref workflow_id) = restored_view.workflow_id {
+            let input = if let Some(workflow_id) = restored_view.workflow_id() {
                 crate::domain::WorkflowInput::Resume(crate::domain::ResumeWorkflowInput {
                     workflow_id: workflow_id.clone(),
                 })

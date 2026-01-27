@@ -19,25 +19,25 @@ use uuid::Uuid;
 /// Read-only view of workflow state derived from events.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct WorkflowView {
-    pub workflow_id: Option<WorkflowId>,
-    pub feature_name: Option<FeatureName>,
-    pub objective: Option<Objective>,
-    pub working_dir: Option<WorkingDir>,
-    pub plan_path: Option<PlanPath>,
-    pub feedback_path: Option<FeedbackPath>,
-    pub planning_phase: Option<Phase>,
-    pub iteration: Option<Iteration>,
-    pub max_iterations: Option<MaxIterations>,
-    pub last_feedback_status: Option<FeedbackStatus>,
-    pub review_mode: Option<ReviewMode>,
-    pub implementation_state: Option<ImplementationPhaseState>,
-    pub agent_conversations: HashMap<AgentId, AgentConversationState>,
-    pub invocations: Vec<InvocationRecord>,
-    pub last_failure: Option<FailureContext>,
-    pub failure_history: Vec<FailureContext>,
-    pub worktree_info: Option<WorktreeState>,
-    pub approval_overridden: bool,
-    pub last_event_sequence: u64,
+    workflow_id: Option<WorkflowId>,
+    feature_name: Option<FeatureName>,
+    objective: Option<Objective>,
+    working_dir: Option<WorkingDir>,
+    plan_path: Option<PlanPath>,
+    feedback_path: Option<FeedbackPath>,
+    planning_phase: Option<Phase>,
+    iteration: Option<Iteration>,
+    max_iterations: Option<MaxIterations>,
+    last_feedback_status: Option<FeedbackStatus>,
+    review_mode: Option<ReviewMode>,
+    implementation_state: Option<ImplementationPhaseState>,
+    agent_conversations: HashMap<AgentId, AgentConversationState>,
+    invocations: Vec<InvocationRecord>,
+    last_failure: Option<FailureContext>,
+    failure_history: Vec<FailureContext>,
+    worktree_info: Option<WorktreeState>,
+    approval_overridden: bool,
+    last_event_sequence: u64,
 }
 
 impl WorkflowView {
@@ -95,15 +95,14 @@ impl WorkflowView {
 
             WorkflowEvent::ReviewerApproved { reviewer_id, .. } => {
                 if let Some(ReviewMode::Sequential(ref mut state)) = self.review_mode {
-                    state
-                        .approvals
-                        .insert(reviewer_id.clone(), state.plan_version);
+                    state.record_approval_simple(reviewer_id.clone());
+                    state.advance_to_next_reviewer();
                 }
             }
 
             WorkflowEvent::ReviewerRejected { reviewer_id, .. } => {
                 if let Some(ReviewMode::Sequential(ref mut state)) = self.review_mode {
-                    state.last_rejecting_reviewer = Some(reviewer_id.clone());
+                    state.record_rejection(reviewer_id.as_str());
                 }
             }
 
@@ -132,10 +131,8 @@ impl WorkflowView {
                     .expect("WorkflowView must be initialized before RevisionCompleted");
                 self.iteration = Some(current.next());
                 if let Some(ReviewMode::Sequential(ref mut state)) = self.review_mode {
-                    state.plan_version += 1;
-                    state.approvals.clear();
-                    state.accumulated_reviews.clear();
-                    state.current_cycle_order.clear();
+                    state.increment_version();
+                    state.clear_cycle_order();
                 }
             }
 
@@ -166,8 +163,8 @@ impl WorkflowView {
 
             WorkflowEvent::ImplementationRoundStarted { iteration, .. } => {
                 if let Some(ref mut state) = self.implementation_state {
-                    state.phase = ImplementationPhase::Implementing;
-                    state.iteration = *iteration;
+                    state.set_phase(ImplementationPhase::Implementing);
+                    state.set_iteration(*iteration);
                 }
             }
 
@@ -179,15 +176,15 @@ impl WorkflowView {
                 verdict, feedback, ..
             } => {
                 if let Some(ref mut state) = self.implementation_state {
-                    state.phase = ImplementationPhase::ImplementationReview;
-                    state.last_verdict = Some(*verdict);
-                    state.last_feedback = feedback.clone();
+                    state.set_phase(ImplementationPhase::ImplementationReview);
+                    state.set_verdict(Some(*verdict));
+                    state.set_feedback(feedback.clone());
                 }
             }
 
             WorkflowEvent::ImplementationMaxIterationsReached { .. } => {
                 if let Some(ref mut state) = self.implementation_state {
-                    state.phase = ImplementationPhase::AwaitingDecision;
+                    state.set_phase(ImplementationPhase::AwaitingDecision);
                 }
             }
 
@@ -195,7 +192,7 @@ impl WorkflowView {
             | WorkflowEvent::ImplementationDeclined { .. }
             | WorkflowEvent::ImplementationCancelled { .. } => {
                 if let Some(ref mut state) = self.implementation_state {
-                    state.phase = ImplementationPhase::Complete;
+                    state.set_phase(ImplementationPhase::Complete);
                 }
             }
 
@@ -207,11 +204,11 @@ impl WorkflowView {
             } => {
                 self.agent_conversations.insert(
                     agent_id.clone(),
-                    AgentConversationState {
-                        resume_strategy: *resume_strategy,
-                        conversation_id: conversation_id.clone(),
-                        last_used_at: *updated_at,
-                    },
+                    AgentConversationState::new(
+                        *resume_strategy,
+                        conversation_id.clone(),
+                        *updated_at,
+                    ),
                 );
             }
 
@@ -222,13 +219,13 @@ impl WorkflowView {
                 conversation_id,
                 resume_strategy,
             } => {
-                self.invocations.push(InvocationRecord {
-                    agent: agent_id.clone(),
-                    phase: *phase,
-                    timestamp: *timestamp,
-                    conversation_id: conversation_id.clone(),
-                    resume_strategy: *resume_strategy,
-                });
+                self.invocations.push(InvocationRecord::new(
+                    agent_id.clone(),
+                    *phase,
+                    *timestamp,
+                    conversation_id.clone(),
+                    *resume_strategy,
+                ));
             }
 
             WorkflowEvent::FailureRecorded { failure, .. } => {
@@ -246,10 +243,105 @@ impl WorkflowView {
         }
     }
 
+    /// Returns a reference to the agent conversations map.
+    pub fn agent_conversations(&self) -> &HashMap<AgentId, AgentConversationState> {
+        &self.agent_conversations
+    }
+
+    /// Returns a reference to the invocation records.
+    pub fn invocations(&self) -> &[InvocationRecord] {
+        &self.invocations
+    }
+
+    /// Returns a reference to the failure history.
+    pub fn failure_history(&self) -> &[FailureContext] {
+        &self.failure_history
+    }
+
+    /// Returns the workflow ID.
+    pub fn workflow_id(&self) -> Option<&WorkflowId> {
+        self.workflow_id.as_ref()
+    }
+
+    /// Returns the feature name.
+    pub fn feature_name(&self) -> Option<&FeatureName> {
+        self.feature_name.as_ref()
+    }
+
+    /// Returns the objective.
+    pub fn objective(&self) -> Option<&Objective> {
+        self.objective.as_ref()
+    }
+
+    /// Returns the working directory.
+    pub fn working_dir(&self) -> Option<&WorkingDir> {
+        self.working_dir.as_ref()
+    }
+
+    /// Returns the plan path.
+    pub fn plan_path(&self) -> Option<&PlanPath> {
+        self.plan_path.as_ref()
+    }
+
+    /// Returns the feedback path.
+    pub fn feedback_path(&self) -> Option<&FeedbackPath> {
+        self.feedback_path.as_ref()
+    }
+
+    /// Returns the current planning phase.
+    pub fn planning_phase(&self) -> Option<Phase> {
+        self.planning_phase
+    }
+
+    /// Returns the current iteration.
+    pub fn iteration(&self) -> Option<Iteration> {
+        self.iteration
+    }
+
+    /// Returns the maximum iterations.
+    pub fn max_iterations(&self) -> Option<MaxIterations> {
+        self.max_iterations
+    }
+
+    /// Returns the last feedback status.
+    pub fn last_feedback_status(&self) -> Option<FeedbackStatus> {
+        self.last_feedback_status
+    }
+
+    /// Returns the review mode.
+    pub fn review_mode(&self) -> Option<&ReviewMode> {
+        self.review_mode.as_ref()
+    }
+
+    /// Returns the implementation state.
+    pub fn implementation_state(&self) -> Option<&ImplementationPhaseState> {
+        self.implementation_state.as_ref()
+    }
+
+    /// Returns the last failure.
+    pub fn last_failure(&self) -> Option<&FailureContext> {
+        self.last_failure.as_ref()
+    }
+
+    /// Returns the worktree info.
+    pub fn worktree_info(&self) -> Option<&WorktreeState> {
+        self.worktree_info.as_ref()
+    }
+
+    /// Returns whether approval was overridden.
+    pub fn approval_overridden(&self) -> bool {
+        self.approval_overridden
+    }
+
+    /// Returns the last event sequence number.
+    pub fn last_event_sequence(&self) -> u64 {
+        self.last_event_sequence
+    }
+
     /// Returns the current UI mode based on implementation state.
     pub fn ui_mode(&self) -> UiMode {
         match &self.implementation_state {
-            Some(impl_state) if impl_state.phase != ImplementationPhase::Complete => {
+            Some(impl_state) if impl_state.phase() != ImplementationPhase::Complete => {
                 UiMode::Implementation
             }
             _ => UiMode::Planning,

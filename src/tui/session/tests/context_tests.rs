@@ -39,12 +39,12 @@ fn test_compute_effective_without_worktree() {
 #[test]
 fn test_compute_effective_with_nonexistent_worktree() {
     let base = PathBuf::from("/base/dir");
-    let wt = WorktreeState {
-        worktree_path: PathBuf::from("/nonexistent/worktree"),
-        branch_name: "feature".to_string(),
-        source_branch: Some("main".to_string()),
-        original_dir: base.clone(),
-    };
+    let wt = WorktreeState::new(
+        PathBuf::from("/nonexistent/worktree"),
+        "feature".to_string(),
+        Some("main".to_string()),
+        base.clone(),
+    );
     let result = compute_effective_working_dir(&base, Some(&wt));
     // Should fall back to base since worktree doesn't exist
     assert_eq!(result, base);

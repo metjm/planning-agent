@@ -135,11 +135,11 @@ pub async fn run_implementation_workflow(
 
     // Get initial state from view (should exist - UserRequestedImplementation was called earlier)
     let (mut local_iteration, mut local_max_iterations, initial_phase) =
-        if let Some(ref impl_state) = view.implementation_state {
+        if let Some(impl_state) = view.implementation_state() {
             (
-                impl_state.iteration.0,
-                impl_state.max_iterations.0,
-                impl_state.phase,
+                impl_state.iteration().0,
+                impl_state.max_iterations().0,
+                impl_state.phase(),
             )
         } else {
             // Implementation state not yet initialized - use config defaults
@@ -160,9 +160,8 @@ pub async fn run_implementation_workflow(
 
     // Use initial feedback if provided
     let mut current_feedback = initial_feedback.or_else(|| {
-        view.implementation_state
-            .as_ref()
-            .and_then(|s| s.last_feedback.clone())
+        view.implementation_state()
+            .and_then(|s| s.last_feedback().map(|f| f.to_string()))
     });
 
     // Track last fingerprint for circuit breaker
@@ -430,9 +429,9 @@ fn build_implementation_max_iterations_summary(
     view: &WorkflowView,
     last_feedback: Option<&str>,
 ) -> String {
-    let impl_state = view.implementation_state.as_ref();
-    let iteration = impl_state.map(|s| s.iteration.0).unwrap_or(0);
-    let max = impl_state.map(|s| s.max_iterations.0).unwrap_or(0);
+    let impl_state = view.implementation_state();
+    let iteration = impl_state.map(|s| s.iteration().0).unwrap_or(0);
+    let max = impl_state.map(|s| s.max_iterations().0).unwrap_or(0);
 
     let mut summary = format!(
         "Implementation has been attempted {} time(s) (max: {}) but review has not approved.\n\n",

@@ -571,7 +571,7 @@ async fn handle_implementation_chat_input(
                 return Ok(false);
             };
 
-            let Some(workflow_id) = view.workflow_id.as_ref() else {
+            let Some(workflow_id) = view.workflow_id() else {
                 session.add_output(
                     "[implementation] Follow-up unavailable: missing workflow ID".to_string(),
                 );

@@ -338,14 +338,14 @@ impl Theme {
         // Check workflow view for phase
         if let Some(ref view) = session.workflow_view {
             // Check implementation phase first
-            if let Some(ref impl_state) = view.implementation_state {
-                if impl_state.phase != ImplementationPhase::Complete {
+            if let Some(impl_state) = view.implementation_state() {
+                if impl_state.phase() != ImplementationPhase::Complete {
                     return ThemePhase::Implementation;
                 }
             }
 
             // Check planning workflow phase
-            match view.planning_phase {
+            match view.planning_phase() {
                 Some(Phase::Complete) => ThemePhase::Complete,
                 Some(Phase::Planning)
                 | Some(Phase::Reviewing)

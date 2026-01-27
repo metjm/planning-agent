@@ -74,9 +74,9 @@ fn get_phase_background_color(session: &Session, theme: &theme::Theme) -> ratatu
     match &session.workflow_view {
         Some(view) => {
             // Check implementation phase first
-            if let Some(impl_state) = &view.implementation_state {
-                if impl_state.phase != ImplementationPhase::Complete {
-                    return match impl_state.phase {
+            if let Some(impl_state) = view.implementation_state() {
+                if impl_state.phase() != ImplementationPhase::Complete {
+                    return match impl_state.phase() {
                         ImplementationPhase::Implementing => theme.phase_bg_planning,
                         ImplementationPhase::ImplementationReview => theme.phase_bg_reviewing,
                         ImplementationPhase::AwaitingDecision => theme.phase_bg_reviewing,
@@ -85,7 +85,7 @@ fn get_phase_background_color(session: &Session, theme: &theme::Theme) -> ratatu
                 }
             }
             // Planning workflow phases
-            match view.planning_phase {
+            match view.planning_phase() {
                 Some(Phase::Planning) => theme.phase_bg_planning,
                 Some(Phase::Reviewing) => theme.phase_bg_reviewing,
                 Some(Phase::Revising) => theme.phase_bg_revising,
@@ -223,7 +223,7 @@ fn draw_tab_bar(frame: &mut Frame, tab_manager: &TabManager, area: Rect) {
 
     // Build right section: path/title
     let right_section = if let Some(ref view) = active_session.workflow_view {
-        if let Some(ref plan_path) = view.plan_path {
+        if let Some(plan_path) = view.plan_path() {
             format!("Planning Agent - {} ", plan_path.as_path().display())
         } else {
             "Planning Agent ".to_string()

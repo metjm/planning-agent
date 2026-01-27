@@ -30,12 +30,12 @@ pub async fn handle_completion(
     sender.send_output("".to_string());
 
     // Output merge instructions if using a worktree
-    if let Some(ref wt_state) = view.worktree_info {
+    if let Some(wt_state) = view.worktree_info() {
         let info = git_worktree::WorktreeInfo {
-            worktree_path: wt_state.worktree_path.clone(),
-            branch_name: wt_state.branch_name.clone(),
-            source_branch: wt_state.source_branch.clone(),
-            original_dir: wt_state.original_dir.clone(),
+            worktree_path: wt_state.worktree_path().to_path_buf(),
+            branch_name: wt_state.branch_name().to_string(),
+            source_branch: wt_state.source_branch().map(|s| s.to_string()),
+            original_dir: wt_state.original_dir().to_path_buf(),
             has_submodules: false, // Don't re-check at completion
         };
         let instructions = git_worktree::generate_merge_instructions(&info);
@@ -44,19 +44,18 @@ pub async fn handle_completion(
         }
     }
 
-    // view.plan_path is now an absolute path (in ~/.planning-agent/plans/)
+    // view.plan_path() is now an absolute path (in ~/.planning-agent/plans/)
     let plan_path = view
-        .plan_path
-        .as_ref()
+        .plan_path()
         .expect("plan_path must be set before completion")
         .0
         .clone();
     let iteration = view
-        .iteration
+        .iteration()
         .expect("iteration must be set before completion")
         .0;
 
-    if view.approval_overridden {
+    if view.approval_overridden() {
         sender.send_output("=== PROCEEDING WITHOUT AI APPROVAL ===".to_string());
         sender.send_output("User chose to proceed after max iterations".to_string());
         sender.send_output("Waiting for your final decision...".to_string());

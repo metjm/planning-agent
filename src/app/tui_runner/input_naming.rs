@@ -3,7 +3,6 @@ use crate::app::util::extract_feature_name;
 use crate::app::workflow_common::pre_create_session_folder_with_working_dir;
 use crate::domain::input::{NewWorkflowInput, WorkflowInput};
 use crate::domain::types::WorkflowId;
-use crate::domain::view::WorkflowView;
 
 use super::workflow_lifecycle::InitResult;
 use crate::planning_paths;
@@ -226,7 +225,7 @@ pub(crate) async fn handle_naming_tab_input(
                         }
                         SlashCommand::MaxIterations(n) => {
                             if let Some(ref view) = session.workflow_view {
-                                let old_value = view.max_iterations.map(|m| m.0).unwrap_or(0);
+                                let old_value = view.max_iterations().map(|m| m.0).unwrap_or(0);
                                 // Note: WorkflowView is read-only; max_iterations changes
                                 // require a command dispatch (not yet implemented)
                                 tab_manager.command_notice = Some(format!(
@@ -405,9 +404,10 @@ pub(crate) async fn handle_naming_tab_input(
                                         e
                                     ),
                                     });
+                                    // View will be created via CQRS when WorkflowCreated event is emitted
                                     return Ok::<_, anyhow::Error>(InitResult {
                                         input: WorkflowInput::New(input),
-                                        view: WorkflowView::default(),
+                                        view: None,
                                         state_path,
                                         feature_name,
                                         effective_working_dir: wd.clone(),
@@ -455,12 +455,12 @@ pub(crate) async fn handle_naming_tab_input(
                                             .to_string(),
                                     });
                                 }
-                                let wt_state = crate::domain::types::WorktreeState {
-                                    worktree_path: info.worktree_path.clone(),
-                                    branch_name: info.branch_name,
-                                    source_branch: info.source_branch,
-                                    original_dir: info.original_dir,
-                                };
+                                let wt_state = crate::domain::types::WorktreeState::new(
+                                    info.worktree_path.clone(),
+                                    info.branch_name,
+                                    info.source_branch,
+                                    info.original_dir,
+                                );
                                 input.worktree_info = Some(wt_state);
                                 info.worktree_path
                             }
@@ -494,9 +494,10 @@ pub(crate) async fn handle_naming_tab_input(
                     )
                     .context("Failed to pre-create plan files")?;
 
+                    // View will be created via CQRS when WorkflowCreated event is emitted
                     Ok::<_, anyhow::Error>(InitResult {
                         input: WorkflowInput::New(input),
-                        view: WorkflowView::default(),
+                        view: None,
                         state_path,
                         feature_name,
                         effective_working_dir,

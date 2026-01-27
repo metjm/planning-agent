@@ -1,9 +1,9 @@
 use super::*;
 use crate::domain::types::{
-    FeatureName, FeedbackPath, Iteration, MaxIterations, Objective, Phase, PlanPath, WorkflowId,
-    WorkingDir,
+    FeatureName, FeedbackPath, MaxIterations, Objective, PlanPath, TimestampUtc, WorkingDir,
 };
 use crate::domain::view::WorkflowView;
+use crate::domain::WorkflowEvent;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
@@ -25,22 +25,49 @@ fn test_reviews() -> Vec<ReviewResult> {
 }
 
 fn minimal_view() -> WorkflowView {
-    WorkflowView {
-        workflow_id: Some(WorkflowId(Uuid::new_v4())),
-        feature_name: Some(FeatureName("test".to_string())),
-        objective: Some(Objective("test objective".to_string())),
-        working_dir: Some(WorkingDir(PathBuf::from("/workspaces/myproject"))),
-        plan_path: Some(PlanPath(PathBuf::from(
-            "/home/user/.planning-agent/sessions/abc123/plan.md",
-        ))),
-        feedback_path: Some(FeedbackPath(PathBuf::from(
-            "/home/user/.planning-agent/sessions/abc123/feedback.md",
-        ))),
-        planning_phase: Some(Phase::Revising),
-        iteration: Some(Iteration(1)),
-        max_iterations: Some(MaxIterations(3)),
-        ..Default::default()
-    }
+    let mut view = WorkflowView::default();
+    let agg_id = Uuid::new_v4().to_string();
+
+    // Create workflow
+    view.apply_event(
+        &agg_id,
+        &WorkflowEvent::WorkflowCreated {
+            feature_name: FeatureName::from("test"),
+            objective: Objective::from("test objective"),
+            working_dir: WorkingDir::from(PathBuf::from("/workspaces/myproject").as_path()),
+            max_iterations: MaxIterations(3),
+            plan_path: PlanPath::from(PathBuf::from(
+                "/home/user/.planning-agent/sessions/abc123/plan.md",
+            )),
+            feedback_path: FeedbackPath::from(PathBuf::from(
+                "/home/user/.planning-agent/sessions/abc123/feedback.md",
+            )),
+            created_at: TimestampUtc::now(),
+        },
+        1,
+    );
+
+    // Move to Revising phase: Planning -> Reviewing (rejected) -> Revising
+    view.apply_event(
+        &agg_id,
+        &WorkflowEvent::PlanningCompleted {
+            plan_path: PlanPath::from(PathBuf::from(
+                "/home/user/.planning-agent/sessions/abc123/plan.md",
+            )),
+            completed_at: TimestampUtc::now(),
+        },
+        2,
+    );
+    view.apply_event(
+        &agg_id,
+        &WorkflowEvent::ReviewCycleCompleted {
+            approved: false,
+            completed_at: TimestampUtc::now(),
+        },
+        3,
+    );
+
+    view
 }
 
 #[test]

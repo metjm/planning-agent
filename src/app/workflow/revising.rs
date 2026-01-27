@@ -56,7 +56,7 @@ pub async fn run_revising_phase(
     }
 
     // Extract iteration from view (Iteration is a newtype wrapping u32)
-    let iteration = view.iteration.map(|i| i.0).unwrap_or(1);
+    let iteration = view.iteration().map(|i| i.0).unwrap_or(1);
 
     session_logger.log(
         LogLevel::Info,
@@ -72,7 +72,7 @@ pub async fn run_revising_phase(
         config.workflow.planning.agent
     ));
 
-    let max_retries = config.failure_policy.max_retries as usize;
+    let max_retries = config.failure_policy.max_retries() as usize;
     let mut retry_attempts = 0usize;
 
     loop {
@@ -166,7 +166,10 @@ pub async fn run_revising_phase(
                             FailureKind::Unknown(error_msg),
                             PhaseLabel::Revising,
                             Some(config.workflow.planning.agent.clone().into()),
+                            0, // retry_count
                             max_retries as u32,
+                            crate::domain::types::TimestampUtc::now(),
+                            None, // recovery_action
                         );
                         // Dispatch RecordFailure command (events persisted by actor)
                         dispatch_domain_command(
@@ -216,9 +219,9 @@ pub async fn run_revising_phase(
     );
 
     // Log sequential review state if present (actual reset is done by RevisionCompleted event)
-    if let Some(ReviewMode::Sequential(ref seq_state)) = view.review_mode {
+    if let Some(ReviewMode::Sequential(ref seq_state)) = view.review_mode() {
         // Plan version will be incremented by RevisionCompleted event
-        let next_version = seq_state.plan_version + 1;
+        let next_version = seq_state.plan_version() + 1;
         sender.send_output(format!(
             "[sequential] Plan revised - restarting from first reviewer (version {})",
             next_version

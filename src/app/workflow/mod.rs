@@ -254,7 +254,10 @@ pub async fn run_workflow_with_config(
                 session_logger.log(
                     LogLevel::Info,
                     LogCategory::Workflow,
-                    &format!("CreateWorkflow succeeded: phase={:?}", view.planning_phase),
+                    &format!(
+                        "CreateWorkflow succeeded: phase={:?}",
+                        view.planning_phase()
+                    ),
                 );
             }
             Ok(Err(e)) => {
@@ -322,14 +325,10 @@ pub async fn run_workflow_with_config(
     // Extract feature_name for daemon registration (from input for new, from view for resume)
     let feature_name_for_daemon = match &input {
         WorkflowInput::New(new_input) => new_input.feature_name.0.clone(),
-        WorkflowInput::Resume(_) => view
-            .feature_name
-            .as_ref()
-            .map(|f| f.0.clone())
-            .unwrap_or_default(),
+        WorkflowInput::Resume(_) => view.feature_name().map(|f| f.0.clone()).unwrap_or_default(),
     };
-    let initial_phase = view.planning_phase.unwrap_or(Phase::Planning);
-    let initial_iteration = view.iteration.unwrap_or(Iteration::first()).0;
+    let initial_phase = view.planning_phase().unwrap_or(Phase::Planning);
+    let initial_iteration = view.iteration().unwrap_or(Iteration::first()).0;
 
     // Register session with daemon (now passing session_dir instead of state_path)
     if let Err(e) = tracker
@@ -378,7 +377,7 @@ pub async fn run_workflow_with_config(
             break;
         }
 
-        let current_phase = view.planning_phase.unwrap_or(Phase::Planning);
+        let current_phase = view.planning_phase().unwrap_or(Phase::Planning);
         match current_phase {
             Phase::Planning => {
                 let result = run_planning_phase(
@@ -402,9 +401,10 @@ pub async fn run_workflow_with_config(
                         // Phase completed - PlanningCompleted already dispatched by run_planning_phase
                         // Get updated view for tracker
                         let updated_view = view_rx_for_loop.borrow().clone();
-                        let updated_phase = updated_view.planning_phase.unwrap_or(Phase::Reviewing);
+                        let updated_phase =
+                            updated_view.planning_phase().unwrap_or(Phase::Reviewing);
                         let updated_iteration =
-                            updated_view.iteration.unwrap_or(Iteration::first()).0;
+                            updated_view.iteration().unwrap_or(Iteration::first()).0;
 
                         // Update session state
                         let _ = tracker
@@ -481,9 +481,10 @@ pub async fn run_workflow_with_config(
                     Ok(None) => {
                         // Phase completed - get updated view for tracker
                         let updated_view = view_rx_for_loop.borrow().clone();
-                        let updated_phase = updated_view.planning_phase.unwrap_or(Phase::Complete);
+                        let updated_phase =
+                            updated_view.planning_phase().unwrap_or(Phase::Complete);
                         let updated_iteration =
-                            updated_view.iteration.unwrap_or(Iteration::first()).0;
+                            updated_view.iteration().unwrap_or(Iteration::first()).0;
 
                         // Update session state
                         let _ = tracker
@@ -554,9 +555,10 @@ pub async fn run_workflow_with_config(
                         // Phase completed - RevisionCompleted already dispatched by run_revising_phase
                         // Get updated view for tracker
                         let updated_view = view_rx_for_loop.borrow().clone();
-                        let updated_phase = updated_view.planning_phase.unwrap_or(Phase::Reviewing);
+                        let updated_phase =
+                            updated_view.planning_phase().unwrap_or(Phase::Reviewing);
                         let updated_iteration =
-                            updated_view.iteration.unwrap_or(Iteration::first()).0;
+                            updated_view.iteration().unwrap_or(Iteration::first()).0;
 
                         // Update session state
                         let _ = tracker
@@ -678,8 +680,8 @@ pub async fn run_workflow_with_config(
 
     // Get final view for logging
     let final_view = view_rx_for_loop.borrow().clone();
-    let final_phase = final_view.planning_phase.unwrap_or(Phase::Complete);
-    let final_iteration = final_view.iteration.unwrap_or(Iteration::first()).0;
+    let final_phase = final_view.planning_phase().unwrap_or(Phase::Complete);
+    let final_iteration = final_view.iteration().unwrap_or(Iteration::first()).0;
 
     session_logger.log(
         LogLevel::Info,

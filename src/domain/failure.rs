@@ -73,19 +73,19 @@ pub enum RecoveryAction {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct FailureContext {
     /// Classified failure type.
-    pub kind: FailureKind,
+    kind: FailureKind,
     /// Which phase the failure occurred in.
-    pub phase: PhaseLabel,
+    phase: PhaseLabel,
     /// Which agent failed (if agent-level failure).
-    pub agent_name: Option<AgentId>,
+    agent_name: Option<AgentId>,
     /// Number of retries attempted for this failure.
-    pub retry_count: u32,
+    retry_count: u32,
     /// Maximum retries allowed from policy.
-    pub max_retries: u32,
+    max_retries: u32,
     /// Timestamp when failure occurred.
-    pub failed_at: TimestampUtc,
+    failed_at: TimestampUtc,
     /// How the failure was recovered (set after user decision).
-    pub recovery_action: Option<RecoveryAction>,
+    recovery_action: Option<RecoveryAction>,
 }
 
 impl FailureContext {
@@ -94,17 +94,55 @@ impl FailureContext {
         kind: FailureKind,
         phase: PhaseLabel,
         agent_name: Option<AgentId>,
+        retry_count: u32,
         max_retries: u32,
+        failed_at: TimestampUtc,
+        recovery_action: Option<RecoveryAction>,
     ) -> Self {
         Self {
             kind,
             phase,
             agent_name,
-            retry_count: 0,
+            retry_count,
             max_retries,
-            failed_at: TimestampUtc::now(),
-            recovery_action: None,
+            failed_at,
+            recovery_action,
         }
+    }
+
+    /// Returns the failure kind.
+    pub fn kind(&self) -> &FailureKind {
+        &self.kind
+    }
+
+    /// Returns the phase where the failure occurred.
+    pub fn phase(&self) -> &PhaseLabel {
+        &self.phase
+    }
+
+    /// Returns the agent name if this was an agent-level failure.
+    pub fn agent_name(&self) -> Option<&AgentId> {
+        self.agent_name.as_ref()
+    }
+
+    /// Returns the current retry count.
+    pub fn retry_count(&self) -> u32 {
+        self.retry_count
+    }
+
+    /// Returns the maximum retries allowed.
+    pub fn max_retries(&self) -> u32 {
+        self.max_retries
+    }
+
+    /// Returns the timestamp when the failure occurred.
+    pub fn failed_at(&self) -> &TimestampUtc {
+        &self.failed_at
+    }
+
+    /// Returns the recovery action if one was taken.
+    pub fn recovery_action(&self) -> Option<&RecoveryAction> {
+        self.recovery_action.as_ref()
     }
 
     /// Returns true if this failure can be retried based on retry_count and max_retries.
@@ -142,13 +180,13 @@ pub enum OnAllReviewersFailed {
 pub struct FailurePolicy {
     /// Maximum retry attempts for transient failures. Default: 2
     #[serde(default = "default_max_retries")]
-    pub max_retries: u32,
+    max_retries: u32,
     /// Backoff multiplier in seconds for retries. Default: 5
     #[serde(default = "default_backoff_secs")]
-    pub backoff_secs: u32,
+    backoff_secs: u32,
     /// Action when all reviewers fail after retries
     #[serde(default)]
-    pub on_all_reviewers_failed: OnAllReviewersFailed,
+    on_all_reviewers_failed: OnAllReviewersFailed,
 }
 
 fn default_max_retries() -> u32 {
@@ -170,6 +208,34 @@ impl Default for FailurePolicy {
 }
 
 impl FailurePolicy {
+    /// Creates a new FailurePolicy with the given parameters.
+    pub fn new(
+        max_retries: u32,
+        backoff_secs: u32,
+        on_all_reviewers_failed: OnAllReviewersFailed,
+    ) -> Self {
+        Self {
+            max_retries,
+            backoff_secs,
+            on_all_reviewers_failed,
+        }
+    }
+
+    /// Returns the maximum retry attempts for transient failures.
+    pub fn max_retries(&self) -> u32 {
+        self.max_retries
+    }
+
+    /// Returns the backoff multiplier in seconds for retries.
+    pub fn backoff_secs(&self) -> u32 {
+        self.backoff_secs
+    }
+
+    /// Returns the action to take when all reviewers fail after retries.
+    pub fn on_all_reviewers_failed(&self) -> OnAllReviewersFailed {
+        self.on_all_reviewers_failed
+    }
+
     /// Validates the policy configuration.
     pub fn validate(&self) -> anyhow::Result<()> {
         Ok(())

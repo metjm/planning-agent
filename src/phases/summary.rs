@@ -26,8 +26,7 @@ pub fn spawn_summary_generation(
     session_logger: Arc<SessionLogger>,
 ) {
     let plan_path = view
-        .plan_path
-        .as_ref()
+        .plan_path()
         .map(|p| p.as_path().to_path_buf())
         .unwrap_or_else(|| working_dir.join("plan.md"));
     let working_dir = working_dir.to_path_buf();

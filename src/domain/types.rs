@@ -360,13 +360,18 @@ pub enum FeedbackStatus {
 }
 
 /// Implementation phase state tracking.
+///
+/// # Invariants
+/// - All mutations happen through the aggregate's event handlers
+/// - External code can only read via getter methods
+/// - Fields are private to enforce this
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ImplementationPhaseState {
-    pub phase: ImplementationPhase,
-    pub iteration: Iteration,
-    pub max_iterations: MaxIterations,
-    pub last_verdict: Option<ImplementationVerdict>,
-    pub last_feedback: Option<String>,
+    phase: ImplementationPhase,
+    iteration: Iteration,
+    max_iterations: MaxIterations,
+    last_verdict: Option<ImplementationVerdict>,
+    last_feedback: Option<String>,
 }
 
 impl ImplementationPhaseState {
@@ -381,6 +386,35 @@ impl ImplementationPhaseState {
         }
     }
 
+    // ========================================================================
+    // READ-ONLY GETTERS (public - safe for external code to call)
+    // ========================================================================
+
+    /// Returns the current implementation phase.
+    pub fn phase(&self) -> ImplementationPhase {
+        self.phase
+    }
+
+    /// Returns the current iteration.
+    pub fn iteration(&self) -> Iteration {
+        self.iteration
+    }
+
+    /// Returns the maximum allowed iterations.
+    pub fn max_iterations(&self) -> MaxIterations {
+        self.max_iterations
+    }
+
+    /// Returns the last implementation verdict (if any).
+    pub fn last_verdict(&self) -> Option<ImplementationVerdict> {
+        self.last_verdict
+    }
+
+    /// Returns the last feedback (if any).
+    pub fn last_feedback(&self) -> Option<&str> {
+        self.last_feedback.as_deref()
+    }
+
     /// Returns true if we can continue with another iteration.
     pub fn can_continue(&self) -> bool {
         self.phase != ImplementationPhase::Complete && self.iteration.0 <= self.max_iterations.0
@@ -390,33 +424,173 @@ impl ImplementationPhaseState {
     pub fn is_approved(&self) -> bool {
         self.last_verdict == Some(ImplementationVerdict::Approved)
     }
+
+    // ========================================================================
+    // MUTATION METHODS (pub(crate) - only callable from domain module)
+    // These are called by the aggregate's apply() method in response to events.
+    // ========================================================================
+
+    /// Sets the implementation phase.
+    /// ONLY call from aggregate event handlers.
+    pub(crate) fn set_phase(&mut self, phase: ImplementationPhase) {
+        self.phase = phase;
+    }
+
+    /// Sets the current iteration.
+    /// ONLY call from aggregate event handlers.
+    pub(crate) fn set_iteration(&mut self, iteration: Iteration) {
+        self.iteration = iteration;
+    }
+
+    /// Sets the last verdict.
+    /// ONLY call from aggregate event handlers.
+    pub(crate) fn set_verdict(&mut self, verdict: Option<ImplementationVerdict>) {
+        self.last_verdict = verdict;
+    }
+
+    /// Sets the last feedback.
+    /// ONLY call from aggregate event handlers.
+    pub(crate) fn set_feedback(&mut self, feedback: Option<String>) {
+        self.last_feedback = feedback;
+    }
 }
 
 /// Persisted worktree state for session resume.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WorktreeState {
-    pub worktree_path: PathBuf,
-    pub branch_name: String,
-    pub source_branch: Option<String>,
-    pub original_dir: PathBuf,
+    worktree_path: PathBuf,
+    branch_name: String,
+    source_branch: Option<String>,
+    original_dir: PathBuf,
+}
+
+impl WorktreeState {
+    /// Creates a new worktree state.
+    pub fn new(
+        worktree_path: PathBuf,
+        branch_name: String,
+        source_branch: Option<String>,
+        original_dir: PathBuf,
+    ) -> Self {
+        Self {
+            worktree_path,
+            branch_name,
+            source_branch,
+            original_dir,
+        }
+    }
+
+    /// Returns the worktree path.
+    pub fn worktree_path(&self) -> &std::path::Path {
+        &self.worktree_path
+    }
+
+    /// Returns the branch name.
+    pub fn branch_name(&self) -> &str {
+        &self.branch_name
+    }
+
+    /// Returns the source branch, if any.
+    pub fn source_branch(&self) -> Option<&str> {
+        self.source_branch.as_deref()
+    }
+
+    /// Returns the original directory.
+    pub fn original_dir(&self) -> &std::path::Path {
+        &self.original_dir
+    }
 }
 
 /// Agent conversation state for resume.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AgentConversationState {
-    pub resume_strategy: ResumeStrategy,
-    pub conversation_id: Option<ConversationId>,
-    pub last_used_at: TimestampUtc,
+    resume_strategy: ResumeStrategy,
+    conversation_id: Option<ConversationId>,
+    last_used_at: TimestampUtc,
+}
+
+impl AgentConversationState {
+    /// Creates a new agent conversation state.
+    pub fn new(
+        resume_strategy: ResumeStrategy,
+        conversation_id: Option<ConversationId>,
+        last_used_at: TimestampUtc,
+    ) -> Self {
+        Self {
+            resume_strategy,
+            conversation_id,
+            last_used_at,
+        }
+    }
+
+    /// Returns the resume strategy.
+    pub fn resume_strategy(&self) -> ResumeStrategy {
+        self.resume_strategy
+    }
+
+    /// Returns the conversation ID, if any.
+    pub fn conversation_id(&self) -> Option<&ConversationId> {
+        self.conversation_id.as_ref()
+    }
+
+    /// Returns the timestamp when this conversation was last used.
+    pub fn last_used_at(&self) -> TimestampUtc {
+        self.last_used_at
+    }
 }
 
 /// Invocation history entry.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct InvocationRecord {
-    pub agent: AgentId,
-    pub phase: PhaseLabel,
-    pub timestamp: TimestampUtc,
-    pub conversation_id: Option<ConversationId>,
-    pub resume_strategy: ResumeStrategy,
+    agent: AgentId,
+    phase: PhaseLabel,
+    timestamp: TimestampUtc,
+    conversation_id: Option<ConversationId>,
+    resume_strategy: ResumeStrategy,
+}
+
+impl InvocationRecord {
+    /// Creates a new invocation record.
+    pub fn new(
+        agent: AgentId,
+        phase: PhaseLabel,
+        timestamp: TimestampUtc,
+        conversation_id: Option<ConversationId>,
+        resume_strategy: ResumeStrategy,
+    ) -> Self {
+        Self {
+            agent,
+            phase,
+            timestamp,
+            conversation_id,
+            resume_strategy,
+        }
+    }
+
+    /// Returns the agent ID.
+    pub fn agent(&self) -> &AgentId {
+        &self.agent
+    }
+
+    /// Returns the phase label.
+    pub fn phase(&self) -> PhaseLabel {
+        self.phase
+    }
+
+    /// Returns the timestamp.
+    pub fn timestamp(&self) -> TimestampUtc {
+        self.timestamp
+    }
+
+    /// Returns the conversation ID, if any.
+    pub fn conversation_id(&self) -> Option<&ConversationId> {
+        self.conversation_id.as_ref()
+    }
+
+    /// Returns the resume strategy.
+    pub fn resume_strategy(&self) -> ResumeStrategy {
+        self.resume_strategy
+    }
 }
 
 /// UI mode for theming and display purposes.

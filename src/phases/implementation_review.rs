@@ -85,8 +85,7 @@ pub async fn run_implementation_review_phase(
 
     // Get report path
     let workflow_id = view
-        .workflow_id
-        .as_ref()
+        .workflow_id()
         .ok_or_else(|| anyhow::anyhow!("Workflow ID not set in view"))?;
     let report_path =
         planning_paths::session_implementation_review_path(&workflow_id.0.to_string(), iteration)?;
@@ -260,8 +259,7 @@ fn build_implementation_review_prompt(
 ) -> Result<String> {
     // Get plan path from view
     let plan_path_ref = view
-        .plan_path
-        .as_ref()
+        .plan_path()
         .ok_or_else(|| anyhow::anyhow!("Plan path not set in view"))?;
 
     // Resolve plan path to absolute
@@ -273,8 +271,7 @@ fn build_implementation_review_prompt(
 
     // Get workflow_id for review output path
     let workflow_id = view
-        .workflow_id
-        .as_ref()
+        .workflow_id()
         .ok_or_else(|| anyhow::anyhow!("Workflow ID not set in view"))?;
 
     // Get review output path

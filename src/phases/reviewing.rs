@@ -146,12 +146,12 @@ pub async fn run_multi_agent_review_with_context(
 
         // Look up existing conversation state from view, default to Stateless with no conversation
         let (conv_id, resume_strategy) = view
-            .agent_conversations
+            .agent_conversations()
             .get(&agent_id)
             .map(|state| {
                 (
-                    state.conversation_id.as_ref().map(|c| c.0.clone()),
-                    state.resume_strategy,
+                    state.conversation_id().map(|c| c.0.clone()),
+                    state.resume_strategy(),
                 )
             })
             .unwrap_or((None, ResumeStrategy::Stateless));
@@ -207,8 +207,7 @@ pub async fn run_multi_agent_review_with_context(
 
     // Get plan path (absolute)
     let plan_path = view
-        .plan_path
-        .as_ref()
+        .plan_path()
         .map(|p| p.0.clone())
         .unwrap_or_else(|| PathBuf::from("plan.md"));
     let plan_path_abs = if plan_path.is_absolute() {
@@ -218,14 +217,9 @@ pub async fn run_multi_agent_review_with_context(
     };
 
     // Get objective for prompts
-    let objective = view
-        .objective
-        .as_ref()
-        .map(|o| o.0.clone())
-        .unwrap_or_default();
+    let objective = view.objective().map(|o| o.0.clone()).unwrap_or_default();
     let session_id = view
-        .workflow_id
-        .as_ref()
+        .workflow_id()
         .map(|id| id.0.to_string())
         .unwrap_or_default();
 

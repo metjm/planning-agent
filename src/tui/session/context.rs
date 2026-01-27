@@ -80,13 +80,13 @@ pub fn compute_effective_working_dir(
     worktree_info: Option<&WorktreeState>,
 ) -> PathBuf {
     if let Some(wt) = worktree_info {
-        if wt.worktree_path.exists() {
-            return wt.worktree_path.clone();
+        if wt.worktree_path().exists() {
+            return wt.worktree_path().to_path_buf();
         }
         // Worktree path doesn't exist - log warning and fall back
         eprintln!(
             "[planning] Warning: Worktree path no longer exists: {}",
-            wt.worktree_path.display()
+            wt.worktree_path().display()
         );
         eprintln!(
             "[planning] Falling back to base directory: {}",

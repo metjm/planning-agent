@@ -1,10 +1,15 @@
 //! Tests for session_store module.
 
 use super::*;
-use crate::domain::types::{FeatureName, Iteration, MaxIterations, Objective, Phase};
+use crate::domain::types::{
+    FeatureName, FeedbackPath, MaxIterations, Objective, PlanPath, TimestampUtc, WorkingDir,
+};
 use crate::domain::view::WorkflowView;
+use crate::domain::WorkflowEvent;
 use crate::planning_paths::{set_home_for_test, TestHomeGuard};
+use std::path::PathBuf;
 use tempfile::tempdir;
+use uuid::Uuid;
 
 /// Helper to set up an isolated test home directory.
 fn test_env() -> (tempfile::TempDir, TestHomeGuard) {
@@ -14,14 +19,24 @@ fn test_env() -> (tempfile::TempDir, TestHomeGuard) {
 }
 
 fn create_test_workflow_view() -> WorkflowView {
-    WorkflowView {
-        feature_name: Some(FeatureName("test-feature".to_string())),
-        objective: Some(Objective("Test objective".to_string())),
-        iteration: Some(Iteration(1)),
-        max_iterations: Some(MaxIterations(3)),
-        planning_phase: Some(Phase::Planning),
-        ..Default::default()
-    }
+    let mut view = WorkflowView::default();
+    let agg_id = Uuid::new_v4().to_string();
+
+    view.apply_event(
+        &agg_id,
+        &WorkflowEvent::WorkflowCreated {
+            feature_name: FeatureName::from("test-feature"),
+            objective: Objective::from("Test objective"),
+            working_dir: WorkingDir::from(PathBuf::from("/tmp/test").as_path()),
+            max_iterations: MaxIterations(3),
+            plan_path: PlanPath::from(PathBuf::from("/tmp/test/plan.md")),
+            feedback_path: FeedbackPath::from(PathBuf::from("/tmp/test/feedback.md")),
+            created_at: TimestampUtc::now(),
+        },
+        1,
+    );
+
+    view
 }
 
 fn create_test_ui_state() -> SessionUiState {
@@ -108,7 +123,7 @@ fn test_snapshot_creation() {
     assert!(!snapshot.saved_at.is_empty());
     assert_eq!(snapshot.workflow_session_id, "test-session-id");
     assert_eq!(
-        snapshot.workflow_view.feature_name.as_ref().unwrap().0,
+        snapshot.workflow_view.feature_name().unwrap().0,
         "test-feature"
     );
     assert_eq!(snapshot.workflow_name, "claude-only");
@@ -140,8 +155,8 @@ fn test_snapshot_serialization_roundtrip() {
     assert_eq!(loaded.saved_at, snapshot.saved_at);
     assert_eq!(loaded.workflow_session_id, snapshot.workflow_session_id);
     assert_eq!(
-        loaded.workflow_view.feature_name,
-        snapshot.workflow_view.feature_name
+        loaded.workflow_view.feature_name().map(|f| f.0.as_str()),
+        snapshot.workflow_view.feature_name().map(|f| f.0.as_str())
     );
     assert_eq!(loaded.ui_state.name, snapshot.ui_state.name);
     assert_eq!(loaded.total_elapsed_before_resume_ms, 5000);
@@ -219,7 +234,7 @@ fn test_save_and_load_session_centric_snapshot() {
 
     assert_eq!(loaded.workflow_session_id, session_id);
     assert_eq!(
-        loaded.workflow_view.feature_name.as_ref().unwrap().0,
+        loaded.workflow_view.feature_name().unwrap().0,
         "test-feature"
     );
 

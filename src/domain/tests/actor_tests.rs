@@ -39,13 +39,13 @@ async fn test_actor_handles_command() {
     assert!(result.is_ok());
 
     let view = result.unwrap();
-    assert!(view.feature_name.is_some());
-    assert_eq!(view.feature_name.as_ref().unwrap().as_str(), "test-feature");
+    assert!(view.feature_name().is_some());
+    assert_eq!(view.feature_name().unwrap().as_str(), "test-feature");
 
     // Wait for snapshot update
     snapshot_rx.changed().await.expect("snapshot changed");
     let snapshot = snapshot_rx.borrow();
-    assert!(snapshot.feature_name.is_some());
+    assert!(snapshot.feature_name().is_some());
 }
 
 #[tokio::test]
@@ -67,7 +67,7 @@ async fn test_actor_get_view() {
         .expect("send failed");
 
     let view = rx.await.expect("receive failed");
-    assert!(view.feature_name.is_none()); // Not initialized yet
+    assert!(view.feature_name().is_none()); // Not initialized yet
 }
 
 #[tokio::test]
@@ -107,13 +107,13 @@ async fn test_bootstrap_view_from_events() {
     let bootstrapped_view = bootstrap_view_from_events(&log_path, &session_id);
 
     // Verify the view was populated from persisted events
-    assert!(bootstrapped_view.feature_name.is_some());
+    assert!(bootstrapped_view.feature_name().is_some());
     assert_eq!(
-        bootstrapped_view.feature_name.as_ref().unwrap().as_str(),
+        bootstrapped_view.feature_name().unwrap().as_str(),
         "bootstrap-test"
     );
-    assert_eq!(bootstrapped_view.planning_phase, Some(Phase::Planning));
-    assert_eq!(bootstrapped_view.last_event_sequence, 1);
+    assert_eq!(bootstrapped_view.planning_phase(), Some(Phase::Planning));
+    assert_eq!(bootstrapped_view.last_event_sequence(), 1);
 }
 
 #[test]
@@ -122,6 +122,6 @@ fn test_bootstrap_view_nonexistent_log() {
     let view = bootstrap_view_from_events(&log_path, "any-id");
 
     // Should return default view without error
-    assert!(view.feature_name.is_none());
-    assert_eq!(view.last_event_sequence, 0);
+    assert!(view.feature_name().is_none());
+    assert_eq!(view.last_event_sequence(), 0);
 }

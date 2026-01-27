@@ -95,8 +95,7 @@ pub async fn run_implementation_phase(
 
     // Get workflow ID from view
     let workflow_id = view
-        .workflow_id
-        .as_ref()
+        .workflow_id()
         .ok_or_else(|| anyhow::anyhow!("WorkflowView missing workflow_id"))?;
 
     // Get log path
@@ -109,9 +108,9 @@ pub async fn run_implementation_phase(
 
     // Get existing conversation ID if available (entry created by orchestrator)
     let conversation_id = view
-        .agent_conversations
+        .agent_conversations()
         .get(&agent_id)
-        .and_then(|conv| conv.conversation_id.as_ref().map(|c| c.0.clone()));
+        .and_then(|conv| conv.conversation_id().map(|c| c.0.clone()));
 
     // Dispatch RecordInvocation command to CQRS actor
     dispatch_implementation_command(
@@ -250,9 +249,9 @@ async fn run_implementation_interaction_inner(
 
     // Get conversation ID from view - required for follow-up
     let conversation_id = view
-        .agent_conversations
+        .agent_conversations()
         .get(&agent_id)
-        .and_then(|conv| conv.conversation_id.as_ref().map(|c| c.0.clone()))
+        .and_then(|conv| conv.conversation_id().map(|c| c.0.clone()))
         .ok_or_else(|| {
             anyhow::anyhow!("No conversation ID available for implementation follow-up")
         })?;
@@ -323,8 +322,7 @@ fn build_implementation_prompt(
 ) -> String {
     // Get plan path from view (already absolute in ~/.planning-agent/sessions/)
     let plan_path = view
-        .plan_path
-        .as_ref()
+        .plan_path()
         .map(|p| p.0.display().to_string())
         .unwrap_or_else(|| "plan.md".to_string());
 
@@ -360,8 +358,7 @@ fn build_implementation_followup_prompt(
 ) -> String {
     // Get plan path from view (already absolute in ~/.planning-agent/sessions/)
     let plan_path = view
-        .plan_path
-        .as_ref()
+        .plan_path()
         .map(|p| p.0.display().to_string())
         .unwrap_or_else(|| "plan.md".to_string());
 

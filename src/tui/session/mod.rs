@@ -332,7 +332,7 @@ impl Session {
     pub fn feature_name(&self) -> &str {
         self.workflow_view
             .as_ref()
-            .and_then(|v| v.feature_name.as_ref())
+            .and_then(|v| v.feature_name())
             .map(|f| f.as_str())
             .unwrap_or(&self.name)
     }
@@ -477,10 +477,10 @@ impl Session {
         let Some(view) = self.workflow_view.as_ref() else {
             return false;
         };
-        let Some(impl_state) = view.implementation_state.as_ref() else {
+        let Some(impl_state) = view.implementation_state() else {
             return false;
         };
-        if impl_state.phase != ImplementationPhase::Complete {
+        if impl_state.phase() != ImplementationPhase::Complete {
             return false;
         }
         let Some(context) = self.context.as_ref() else {
@@ -494,9 +494,9 @@ impl Session {
         };
         let conversation_key = implementing_conversation_key(agent_name);
         let agent_id = AgentId::from(conversation_key.as_str());
-        view.agent_conversations
+        view.agent_conversations()
             .get(&agent_id)
-            .and_then(|conv| conv.conversation_id.as_ref())
+            .and_then(|conv| conv.conversation_id())
             .is_some()
     }
 
@@ -513,13 +513,13 @@ impl Session {
         match &self.workflow_view {
             Some(view) => {
                 // If implementation is active, show implementation sub-phase
-                if let Some(impl_state) = &view.implementation_state {
-                    if impl_state.phase != ImplementationPhase::Complete {
-                        return impl_state.phase.label();
+                if let Some(impl_state) = view.implementation_state() {
+                    if impl_state.phase() != ImplementationPhase::Complete {
+                        return impl_state.phase().label();
                     }
                 }
                 // Otherwise show planning workflow phase
-                match view.planning_phase {
+                match view.planning_phase() {
                     Some(Phase::Planning) => "Planning",
                     Some(Phase::Reviewing) => "Reviewing",
                     Some(Phase::Revising) => "Revising",
@@ -536,14 +536,14 @@ impl Session {
         match &self.workflow_view {
             Some(view) => {
                 // If implementation is active, show implementation iteration
-                if let Some(impl_state) = &view.implementation_state {
-                    if impl_state.phase != ImplementationPhase::Complete {
-                        return (impl_state.iteration.0, impl_state.max_iterations.0);
+                if let Some(impl_state) = view.implementation_state() {
+                    if impl_state.phase() != ImplementationPhase::Complete {
+                        return (impl_state.iteration().0, impl_state.max_iterations().0);
                     }
                 }
                 // Otherwise show planning workflow iteration
-                let iter = view.iteration.map(|i| i.0).unwrap_or(0);
-                let max = view.max_iterations.map(|m| m.0).unwrap_or(0);
+                let iter = view.iteration().map(|i| i.0).unwrap_or(0);
+                let max = view.max_iterations().map(|m| m.0).unwrap_or(0);
                 (iter, max)
             }
             None => (0, 0),

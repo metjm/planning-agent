@@ -1,34 +1,50 @@
 use super::*;
 use crate::domain::types::{
-    FeatureName, Iteration, MaxIterations, Objective, Phase, PlanPath, WorkflowId,
+    FeatureName, FeedbackPath, MaxIterations, Objective, PlanPath, TimestampUtc, WorkingDir,
 };
 use crate::domain::view::WorkflowView;
-use std::collections::HashMap;
+use crate::domain::WorkflowEvent;
 use std::path::PathBuf;
 use uuid::Uuid;
 
 fn minimal_view() -> WorkflowView {
-    WorkflowView {
-        workflow_id: Some(WorkflowId(Uuid::new_v4())),
-        feature_name: Some(FeatureName::from("test-feature")),
-        objective: Some(Objective::from("Test objective")),
-        working_dir: None,
-        plan_path: Some(PlanPath::from(PathBuf::from("/tmp/test-plan/plan.md"))),
-        feedback_path: None,
-        planning_phase: Some(Phase::Complete),
-        iteration: Some(Iteration::first()),
-        max_iterations: Some(MaxIterations::default()),
-        last_feedback_status: None,
-        review_mode: None,
-        implementation_state: None,
-        agent_conversations: HashMap::new(),
-        invocations: Vec::new(),
-        last_failure: None,
-        failure_history: Vec::new(),
-        worktree_info: None,
-        approval_overridden: false,
-        last_event_sequence: 0,
-    }
+    let mut view = WorkflowView::default();
+    let agg_id = Uuid::new_v4().to_string();
+
+    // Create workflow
+    view.apply_event(
+        &agg_id,
+        &WorkflowEvent::WorkflowCreated {
+            feature_name: FeatureName::from("test-feature"),
+            objective: Objective::from("Test objective"),
+            working_dir: WorkingDir::from(PathBuf::from("/tmp/workspace").as_path()),
+            max_iterations: MaxIterations::default(),
+            plan_path: PlanPath::from(PathBuf::from("/tmp/test-plan/plan.md")),
+            feedback_path: FeedbackPath::from(PathBuf::from("/tmp/test-feedback.md")),
+            created_at: TimestampUtc::now(),
+        },
+        1,
+    );
+
+    // Move to Complete phase
+    view.apply_event(
+        &agg_id,
+        &WorkflowEvent::PlanningCompleted {
+            plan_path: PlanPath::from(PathBuf::from("/tmp/test-plan/plan.md")),
+            completed_at: TimestampUtc::now(),
+        },
+        2,
+    );
+    view.apply_event(
+        &agg_id,
+        &WorkflowEvent::ReviewCycleCompleted {
+            approved: true,
+            completed_at: TimestampUtc::now(),
+        },
+        3,
+    );
+
+    view
 }
 
 #[test]

@@ -387,15 +387,14 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
         // Extract workflow info from workflow_view
         let view = &snapshot.workflow_view;
         let feature_name = view
-            .feature_name
-            .as_ref()
+            .feature_name()
             .map(|n| n.0.clone())
             .unwrap_or_else(|| "Unknown".to_string());
         let phase_str = view
-            .planning_phase
+            .planning_phase()
             .map(|p| format!("{:?}", p))
             .unwrap_or_else(|| "Unknown".to_string());
-        let iteration = view.iteration.map(|i| i.0).unwrap_or(1);
+        let iteration = view.iteration().map(|i| i.0).unwrap_or(1);
 
         *first_session = crate::tui::Session::from_ui_state(
             snapshot.ui_state.clone(),
@@ -431,7 +430,7 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
         };
 
         // Get worktree info from workflow_view
-        let worktree_info = snapshot.workflow_view.worktree_info.clone();
+        let worktree_info = snapshot.workflow_view.worktree_info().cloned();
 
         // Set up session context BEFORE starting the workflow
         // This enables proper working directory tracking for cross-directory resume
@@ -513,17 +512,17 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                 };
 
                 // Check for existing worktree
-                let effective_working_dir = if let Some(ref wt) = view.worktree_info {
-                    if crate::git_worktree::is_valid_worktree(&wt.worktree_path) {
+                let effective_working_dir = if let Some(wt) = view.worktree_info() {
+                    if crate::git_worktree::is_valid_worktree(wt.worktree_path()) {
                         let _ = init_tx.send(Event::Output(format!(
                             "[planning] Reusing existing worktree: {}",
-                            wt.worktree_path.display()
+                            wt.worktree_path().display()
                         )));
                         let _ = init_tx.send(Event::Output(format!(
                             "[planning] Branch: {}",
-                            wt.branch_name
+                            wt.branch_name()
                         )));
-                        wt.worktree_path.clone()
+                        wt.worktree_path().to_path_buf()
                     } else {
                         let _ = init_tx.send(Event::Output(
                             "[planning] Warning: Previous worktree no longer valid".to_string(),
@@ -545,7 +544,7 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
 
                 Ok::<_, anyhow::Error>(InitResult {
                     input: workflow_input,
-                    view,
+                    view: Some(view),
                     state_path,
                     feature_name,
                     effective_working_dir,
@@ -588,21 +587,10 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                                 "[planning] Continuing with original directory".to_string(),
                             ));
 
-                            let view = WorkflowView {
-                                workflow_id: Some(workflow_id),
-                                feature_name: Some(new_input.feature_name.clone()),
-                                objective: Some(new_input.objective.clone()),
-                                max_iterations: Some(new_input.max_iterations),
-                                ..Default::default()
-                            };
-                            let _ = init_tx.send(Event::SessionViewUpdate {
-                                session_id: init_session_id,
-                                view: Box::new(view.clone()),
-                            });
-
+                            // View will be created via CQRS when WorkflowCreated event is emitted
                             return Ok::<_, anyhow::Error>(InitResult {
                                 input: WorkflowInput::New(new_input),
-                                view,
+                                view: None,
                                 state_path,
                                 feature_name,
                                 effective_working_dir: init_working_dir.clone(),
@@ -651,12 +639,12 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                                 ));
                             }
 
-                            let wt_state = WorktreeState {
-                                worktree_path: info.worktree_path.clone(),
-                                branch_name: info.branch_name,
-                                source_branch: info.source_branch,
-                                original_dir: info.original_dir,
-                            };
+                            let wt_state = WorktreeState::new(
+                                info.worktree_path.clone(),
+                                info.branch_name,
+                                info.source_branch,
+                                info.original_dir,
+                            );
                             new_input = new_input.with_worktree(wt_state);
                             info.worktree_path
                         }
@@ -680,23 +668,10 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                     }
                 };
 
-                // Build initial view for new workflow
-                let view = WorkflowView {
-                    workflow_id: Some(workflow_id),
-                    feature_name: Some(new_input.feature_name.clone()),
-                    objective: Some(new_input.objective.clone()),
-                    max_iterations: Some(new_input.max_iterations),
-                    worktree_info: new_input.worktree_info.clone(),
-                    ..Default::default()
-                };
-                let _ = init_tx.send(Event::SessionViewUpdate {
-                    session_id: init_session_id,
-                    view: Box::new(view.clone()),
-                });
-
+                // View will be created via CQRS when WorkflowCreated event is emitted
                 Ok::<_, anyhow::Error>(InitResult {
                     input: WorkflowInput::New(new_input),
-                    view,
+                    view: None,
                     state_path,
                     feature_name,
                     effective_working_dir,
@@ -775,8 +750,7 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                 // Save snapshot if we have workflow view
                 if let Some(ref view) = session.workflow_view {
                     let session_id = view
-                        .workflow_id
-                        .as_ref()
+                        .workflow_id()
                         .map(|id| id.to_string())
                         .unwrap_or_else(|| "unknown".to_string());
                     debug_log(
@@ -798,15 +772,14 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                     } else {
                         debug_log(start, "Snapshot saved successfully");
                         let feature_name = view
-                            .feature_name
-                            .as_ref()
+                            .feature_name()
                             .map(|n| n.0.clone())
                             .unwrap_or_else(|| "unknown".to_string());
-                        resumable_sessions.push(ResumableSession {
+                        resumable_sessions.push(ResumableSession::new(
                             feature_name,
                             session_id,
-                            working_dir: session_working_dir,
-                        });
+                            session_working_dir,
+                        ));
                     }
                 }
                 // Send stop command and drop channels to unblock workflows

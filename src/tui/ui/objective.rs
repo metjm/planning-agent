@@ -48,7 +48,7 @@ pub fn draw_objective(frame: &mut Frame, session: &Session, area: Rect) {
     let objective_text = session
         .workflow_view
         .as_ref()
-        .and_then(|v| v.objective.as_ref())
+        .and_then(|v| v.objective())
         .map(|o| o.as_str())
         .unwrap_or("");
 

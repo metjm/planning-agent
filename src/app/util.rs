@@ -128,18 +128,19 @@ pub fn build_all_reviewers_failed_summary(
 pub fn build_resume_failure_summary(failure: &crate::domain::failure::FailureContext) -> String {
     let mut s = String::new();
     s.push_str("# Unresolved Workflow Failure\n\n");
-    s.push_str(&format!("**Type**: {}\n", failure.kind.display_name()));
-    s.push_str(&format!("**Phase**: {:?}\n", failure.phase));
-    if let Some(ref agent) = failure.agent_name {
+    s.push_str(&format!("**Type**: {}\n", failure.kind().display_name()));
+    s.push_str(&format!("**Phase**: {:?}\n", failure.phase()));
+    if let Some(agent) = failure.agent_name() {
         s.push_str(&format!("**Agent**: {}\n", agent.as_str()));
     }
     s.push_str(&format!(
         "**Retries**: {}/{}\n",
-        failure.retry_count, failure.max_retries
+        failure.retry_count(),
+        failure.max_retries()
     ));
     s.push_str(&format!(
         "**Failed at**: {}\n\n",
-        failure.failed_at.to_rfc3339()
+        failure.failed_at().to_rfc3339()
     ));
     s.push_str("This session was stopped with an unresolved failure.\n\n");
     s.push_str("## Recovery Options\n\n");

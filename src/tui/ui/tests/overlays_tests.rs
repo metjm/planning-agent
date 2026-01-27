@@ -1,18 +1,110 @@
 use super::overlays::{build_phase_spans, PhaseDisplayMode};
 use super::theme::Theme;
 use crate::domain::types::{
-    ImplementationPhase, ImplementationPhaseState, Iteration, MaxIterations, Phase,
+    FeatureName, FeedbackPath, ImplementationPhase, ImplementationVerdict, Iteration,
+    MaxIterations, Objective, Phase, PlanPath, TimestampUtc, WorkingDir,
 };
 use crate::domain::view::WorkflowView;
+use crate::domain::WorkflowEvent;
 use crate::tui::session::Session;
+use std::path::PathBuf;
+use uuid::Uuid;
 
 fn make_test_view(phase: Phase) -> WorkflowView {
-    WorkflowView {
-        planning_phase: Some(phase),
-        iteration: Some(Iteration(1)),
-        max_iterations: Some(MaxIterations(3)),
-        ..Default::default()
+    let mut view = WorkflowView::default();
+    let agg_id = Uuid::new_v4().to_string();
+
+    // Create workflow
+    view.apply_event(
+        &agg_id,
+        &WorkflowEvent::WorkflowCreated {
+            feature_name: FeatureName::from("test-feature"),
+            objective: Objective::from("Test objective"),
+            working_dir: WorkingDir::from(PathBuf::from("/tmp/test").as_path()),
+            max_iterations: MaxIterations(3),
+            plan_path: PlanPath::from(PathBuf::from("/tmp/test/plan.md")),
+            feedback_path: FeedbackPath::from(PathBuf::from("/tmp/test/feedback.md")),
+            created_at: TimestampUtc::now(),
+        },
+        1,
+    );
+
+    // Transition to the desired phase
+    let mut seq = 2;
+    match phase {
+        Phase::Planning => {
+            // Already in Planning after creation
+        }
+        Phase::Reviewing => {
+            view.apply_event(
+                &agg_id,
+                &WorkflowEvent::PlanningCompleted {
+                    plan_path: PlanPath::from(PathBuf::from("/tmp/test/plan.md")),
+                    completed_at: TimestampUtc::now(),
+                },
+                seq,
+            );
+        }
+        Phase::Revising => {
+            view.apply_event(
+                &agg_id,
+                &WorkflowEvent::PlanningCompleted {
+                    plan_path: PlanPath::from(PathBuf::from("/tmp/test/plan.md")),
+                    completed_at: TimestampUtc::now(),
+                },
+                seq,
+            );
+            seq += 1;
+            view.apply_event(
+                &agg_id,
+                &WorkflowEvent::ReviewCycleCompleted {
+                    approved: false,
+                    completed_at: TimestampUtc::now(),
+                },
+                seq,
+            );
+        }
+        Phase::AwaitingPlanningDecision => {
+            view.apply_event(
+                &agg_id,
+                &WorkflowEvent::PlanningCompleted {
+                    plan_path: PlanPath::from(PathBuf::from("/tmp/test/plan.md")),
+                    completed_at: TimestampUtc::now(),
+                },
+                seq,
+            );
+            seq += 1;
+            // Use PlanningMaxIterationsReached to enter AwaitingPlanningDecision
+            view.apply_event(
+                &agg_id,
+                &WorkflowEvent::PlanningMaxIterationsReached {
+                    reached_at: TimestampUtc::now(),
+                },
+                seq,
+            );
+        }
+        Phase::Complete => {
+            view.apply_event(
+                &agg_id,
+                &WorkflowEvent::PlanningCompleted {
+                    plan_path: PlanPath::from(PathBuf::from("/tmp/test/plan.md")),
+                    completed_at: TimestampUtc::now(),
+                },
+                seq,
+            );
+            seq += 1;
+            view.apply_event(
+                &agg_id,
+                &WorkflowEvent::ReviewCycleCompleted {
+                    approved: true,
+                    completed_at: TimestampUtc::now(),
+                },
+                seq,
+            );
+        }
     }
+
+    view
 }
 
 fn make_test_session_with_phase(phase: Phase) -> Session {
@@ -24,13 +116,62 @@ fn make_test_session_with_phase(phase: Phase) -> Session {
 fn make_test_session_with_impl_phase(impl_phase: ImplementationPhase) -> Session {
     let mut session = Session::default();
     let mut view = make_test_view(Phase::Complete);
-    view.implementation_state = Some(ImplementationPhaseState {
-        phase: impl_phase,
-        iteration: Iteration(1),
-        max_iterations: MaxIterations(3),
-        last_verdict: None,
-        last_feedback: None,
-    });
+
+    // Apply events to set up implementation state (proper CQRS approach)
+    view.apply_event(
+        "test-id",
+        &WorkflowEvent::ImplementationStarted {
+            max_iterations: MaxIterations(3),
+            started_at: TimestampUtc::default(),
+        },
+        1,
+    );
+    view.apply_event(
+        "test-id",
+        &WorkflowEvent::ImplementationRoundStarted {
+            iteration: Iteration(1),
+            started_at: TimestampUtc::default(),
+        },
+        2,
+    );
+
+    // Set the desired phase by applying appropriate events
+    match impl_phase {
+        ImplementationPhase::Implementing => {
+            // Already in Implementing from ImplementationRoundStarted
+        }
+        ImplementationPhase::ImplementationReview => {
+            view.apply_event(
+                "test-id",
+                &WorkflowEvent::ImplementationReviewCompleted {
+                    iteration: Iteration(1),
+                    verdict: ImplementationVerdict::NeedsChanges,
+                    feedback: None,
+                    completed_at: TimestampUtc::default(),
+                },
+                3,
+            );
+        }
+        ImplementationPhase::AwaitingDecision => {
+            view.apply_event(
+                "test-id",
+                &WorkflowEvent::ImplementationMaxIterationsReached {
+                    reached_at: TimestampUtc::default(),
+                },
+                3,
+            );
+        }
+        ImplementationPhase::Complete => {
+            view.apply_event(
+                "test-id",
+                &WorkflowEvent::ImplementationAccepted {
+                    approved_at: TimestampUtc::default(),
+                },
+                3,
+            );
+        }
+    }
+
     session.workflow_view = Some(view);
     session
 }

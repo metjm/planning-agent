@@ -258,8 +258,8 @@ async fn reviewer_approved_records_approval_in_sequential_state() {
     let data = get_data_mut(&mut agg);
     match &data.review_mode {
         Some(ReviewMode::Sequential(state)) => {
-            assert!(state.approvals.contains_key(&reviewer_id));
-            assert_eq!(state.approvals.get(&reviewer_id), Some(&1)); // plan_version starts at 1
+            assert!(state.approvals().contains_key(&reviewer_id));
+            assert_eq!(state.approvals().get(&reviewer_id), Some(&1)); // plan_version starts at 1
         }
         _ => panic!("Expected Sequential review mode"),
     }
@@ -322,7 +322,7 @@ async fn reviewer_rejected_records_rejection_in_sequential_state() {
     let data = get_data_mut(&mut agg);
     match &data.review_mode {
         Some(ReviewMode::Sequential(state)) => {
-            assert_eq!(state.last_rejecting_reviewer, Some(reviewer_id));
+            assert_eq!(state.last_rejecting_reviewer(), Some(&reviewer_id));
         }
         _ => panic!("Expected Sequential review mode"),
     }

@@ -51,10 +51,10 @@ pub async fn run_planning_phase_with_context(
 
     // Get conversation state from view if it exists
     let agent_id = AgentId::from(conversation_id_name.as_str());
-    let (conversation_id, resume_strategy) = match view.agent_conversations.get(&agent_id) {
+    let (conversation_id, resume_strategy) = match view.agent_conversations().get(&agent_id) {
         Some(state) => (
-            state.conversation_id.as_ref().map(|c| c.0.clone()),
-            state.resume_strategy,
+            state.conversation_id().map(|c| c.0.clone()),
+            state.resume_strategy(),
         ),
         None => (None, configured_strategy),
     };
@@ -125,35 +125,28 @@ pub async fn run_planning_phase_with_context(
 fn build_planning_prompt(view: &WorkflowView, working_dir: &Path) -> String {
     // Get plan path from view (absolute path in ~/.planning-agent/sessions/)
     let plan_path = view
-        .plan_path
-        .as_ref()
+        .plan_path()
         .map(|p| p.0.display().to_string())
         .unwrap_or_default();
 
     // Get session folder path for supplementary files
     // session_dir() creates the directory if it doesn't exist; only fails if home dir unavailable
     let workflow_id_str = view
-        .workflow_id
-        .as_ref()
+        .workflow_id()
         .map(|id| id.0.to_string())
         .unwrap_or_default();
     let session_folder = planning_paths::session_dir(&workflow_id_str)
         .map(|p| p.display().to_string())
         .unwrap_or_else(|_| {
             // Defensive fallback: derive from plan_path parent
-            view.plan_path
-                .as_ref()
+            view.plan_path()
                 .and_then(|p| p.0.parent())
                 .map(|p| p.display().to_string())
                 .unwrap_or_default()
         });
 
-    let feature_name = view
-        .feature_name
-        .as_ref()
-        .map(|f| f.0.as_str())
-        .unwrap_or("");
-    let objective = view.objective.as_ref().map(|o| o.0.as_str()).unwrap_or("");
+    let feature_name = view.feature_name().map(|f| f.0.as_str()).unwrap_or("");
+    let objective = view.objective().map(|o| o.0.as_str()).unwrap_or("");
 
     let mut builder = PromptBuilder::new()
         .phase("planning")
@@ -165,15 +158,18 @@ fn build_planning_prompt(view: &WorkflowView, working_dir: &Path) -> String {
         .input("session-folder-path", &session_folder);
 
     // Add worktree context if applicable
-    if let Some(ref wt_state) = view.worktree_info {
+    if let Some(wt_state) = view.worktree_info() {
         builder = builder
             .input(
                 "worktree-path",
-                &wt_state.worktree_path.display().to_string(),
+                &wt_state.worktree_path().display().to_string(),
             )
-            .input("worktree-branch", &wt_state.branch_name)
-            .input("original-dir", &wt_state.original_dir.display().to_string());
-        if let Some(ref source) = wt_state.source_branch {
+            .input("worktree-branch", wt_state.branch_name())
+            .input(
+                "original-dir",
+                &wt_state.original_dir().display().to_string(),
+            );
+        if let Some(source) = wt_state.source_branch() {
             builder = builder.input("source-branch", source);
         }
     }

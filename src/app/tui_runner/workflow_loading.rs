@@ -17,6 +17,16 @@ pub struct ResumableSession {
     pub working_dir: PathBuf,
 }
 
+impl ResumableSession {
+    pub fn new(feature_name: String, session_id: String, working_dir: PathBuf) -> Self {
+        Self {
+            feature_name,
+            session_id,
+            working_dir,
+        }
+    }
+}
+
 pub fn restore_terminal(
     terminal: &mut ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io::Stdout>>,
 ) -> Result<()> {

@@ -59,11 +59,11 @@ pub fn build_phase_spans(
     let phase = session
         .workflow_view
         .as_ref()
-        .and_then(|v| v.planning_phase.as_ref());
+        .and_then(|v| v.planning_phase());
     let impl_state = session
         .workflow_view
         .as_ref()
-        .and_then(|v| v.implementation_state.as_ref());
+        .and_then(|v| v.implementation_state());
     let mut spans = Vec::new();
 
     // Spinner characters for chip mode
@@ -124,7 +124,7 @@ pub fn build_phase_spans(
             ("Deciding", "Decide", ImplementationPhase::AwaitingDecision),
             ("Complete", "Done", ImplementationPhase::Complete),
         ];
-        let current = impl_state.map(|s| &s.phase);
+        let current = impl_state.map(|s| s.phase());
         for (i, (name, short, p)) in impl_phases.iter().enumerate() {
             // is_done: true when this phase is completed (Phase::Complete marks all done)
             let is_done = matches!(
@@ -141,7 +141,7 @@ pub fn build_phase_spans(
                     )
             );
             // is_cur: actively running (done phases are never "current")
-            let is_cur = !is_done && current == Some(p);
+            let is_cur = !is_done && current == Some(*p);
             spans.extend(render_phase(name, short, is_cur, is_done, mode, theme));
             if i < impl_phases.len() - 1 {
                 spans.push(separator(mode, theme));
@@ -165,8 +165,8 @@ pub fn build_phase_spans(
             );
             // is_cur: actively running (AwaitingPlanningDecision maps to Reviewing as current)
             let is_cur = !is_done
-                && (phase == Some(p)
-                    || (p == &Phase::Reviewing && phase == Some(&Phase::AwaitingPlanningDecision)));
+                && (phase == Some(*p)
+                    || (*p == Phase::Reviewing && phase == Some(Phase::AwaitingPlanningDecision)));
             spans.extend(render_phase(name, short, is_cur, is_done, mode, theme));
             if i < phases.len() - 1 {
                 spans.push(separator(mode, theme));
@@ -502,7 +502,7 @@ pub fn draw_plan_modal(frame: &mut Frame, session: &Session, regions: &mut Scrol
     let plan_path = session
         .workflow_view
         .as_ref()
-        .and_then(|v| v.plan_path.as_ref())
+        .and_then(|v| v.plan_path())
         .map(|p| p.as_path().display().to_string())
         .unwrap_or_else(|| "Plan".to_string());
 

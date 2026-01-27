@@ -1,25 +1,50 @@
 use super::*;
 use crate::domain::types::{
-    FeatureName, FeedbackPath, Iteration, MaxIterations, Objective, Phase, PlanPath, WorkflowId,
-    WorkingDir,
+    FeatureName, FeedbackPath, MaxIterations, Objective, PlanPath, TimestampUtc, WorkingDir,
 };
 use crate::domain::view::WorkflowView;
+use crate::domain::WorkflowEvent;
 use std::path::PathBuf;
 use uuid::Uuid;
 
 fn minimal_view() -> WorkflowView {
-    WorkflowView {
-        workflow_id: Some(WorkflowId(Uuid::new_v4())),
-        feature_name: Some(FeatureName("test-feature".to_string())),
-        objective: Some(Objective("Test objective".to_string())),
-        working_dir: Some(WorkingDir(PathBuf::from("/tmp/workspace"))),
-        plan_path: Some(PlanPath(PathBuf::from("/tmp/test-plan/plan.md"))),
-        feedback_path: Some(FeedbackPath(PathBuf::from("/tmp/test-feedback.md"))),
-        planning_phase: Some(Phase::Complete),
-        iteration: Some(Iteration(1)),
-        max_iterations: Some(MaxIterations(3)),
-        ..Default::default()
-    }
+    let mut view = WorkflowView::default();
+    let agg_id = Uuid::new_v4().to_string();
+
+    // Create workflow
+    view.apply_event(
+        &agg_id,
+        &WorkflowEvent::WorkflowCreated {
+            feature_name: FeatureName::from("test-feature"),
+            objective: Objective::from("Test objective"),
+            working_dir: WorkingDir::from(PathBuf::from("/tmp/workspace").as_path()),
+            max_iterations: MaxIterations(3),
+            plan_path: PlanPath::from(PathBuf::from("/tmp/test-plan/plan.md")),
+            feedback_path: FeedbackPath::from(PathBuf::from("/tmp/test-feedback.md")),
+            created_at: TimestampUtc::now(),
+        },
+        1,
+    );
+
+    // Move to Complete phase
+    view.apply_event(
+        &agg_id,
+        &WorkflowEvent::PlanningCompleted {
+            plan_path: PlanPath::from(PathBuf::from("/tmp/test-plan/plan.md")),
+            completed_at: TimestampUtc::now(),
+        },
+        2,
+    );
+    view.apply_event(
+        &agg_id,
+        &WorkflowEvent::ReviewCycleCompleted {
+            approved: true,
+            completed_at: TimestampUtc::now(),
+        },
+        3,
+    );
+
+    view
 }
 
 #[test]

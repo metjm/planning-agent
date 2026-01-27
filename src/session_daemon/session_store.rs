@@ -208,15 +208,16 @@ impl SessionSnapshot {
             workflow_session_id: self.workflow_session_id.clone(),
             feature_name: self
                 .workflow_view
-                .feature_name
-                .as_ref()
+                .feature_name()
                 .map(|f| f.0.clone())
                 .unwrap_or_default(),
             phase: format!(
                 "{:?}",
-                self.workflow_view.planning_phase.unwrap_or(Phase::Planning)
+                self.workflow_view
+                    .planning_phase()
+                    .unwrap_or(Phase::Planning)
             ),
-            iteration: self.workflow_view.iteration.map(|i| i.0).unwrap_or(1),
+            iteration: self.workflow_view.iteration().map(|i| i.0).unwrap_or(1),
             saved_at: self.saved_at.clone(),
             working_dir: self.working_dir.clone(),
         }
@@ -271,14 +272,12 @@ fn update_session_info(snapshot: &SessionSnapshot) -> Result<()> {
         session_id: snapshot.workflow_session_id.clone(),
         feature_name: snapshot
             .workflow_view
-            .feature_name
-            .as_ref()
+            .feature_name()
             .map(|f| f.0.clone())
             .unwrap_or_default(),
         objective: snapshot
             .workflow_view
-            .objective
-            .as_ref()
+            .objective()
             .map(|o| o.0.clone())
             .unwrap_or_default(),
         working_dir: snapshot.working_dir.clone(),
@@ -288,10 +287,10 @@ fn update_session_info(snapshot: &SessionSnapshot) -> Result<()> {
             "{:?}",
             snapshot
                 .workflow_view
-                .planning_phase
+                .planning_phase()
                 .unwrap_or(Phase::Planning)
         ),
-        iteration: snapshot.workflow_view.iteration.map(|i| i.0).unwrap_or(1),
+        iteration: snapshot.workflow_view.iteration().map(|i| i.0).unwrap_or(1),
     };
     info.save(&snapshot.workflow_session_id)
 }
@@ -433,12 +432,12 @@ pub fn cleanup_old_snapshots(older_than_days: u32) -> Result<Vec<String>> {
             // Load the full snapshot to get worktree info
             if let Ok(full_snapshot) = load_snapshot(session_id) {
                 // Clean up git worktree if present
-                if let Some(ref wt_state) = full_snapshot.workflow_view.worktree_info {
-                    if wt_state.worktree_path.exists() {
+                if let Some(wt_state) = full_snapshot.workflow_view.worktree_info() {
+                    if wt_state.worktree_path().exists() {
                         if let Err(e) = crate::git_worktree::remove_worktree(
-                            &wt_state.original_dir,
-                            &wt_state.worktree_path,
-                            Some(&wt_state.branch_name),
+                            wt_state.original_dir(),
+                            wt_state.worktree_path(),
+                            Some(wt_state.branch_name()),
                         ) {
                             eprintln!("[cleanup] Warning: Failed to remove worktree: {}", e);
                             // Continue anyway - we'll still try to delete the directory
@@ -487,7 +486,7 @@ pub fn recover_from_state_file(session_id: &str) -> Result<SessionSnapshot> {
     }
 
     let workflow_view = crate::domain::actor::bootstrap_view_from_events(&log_path, session_id);
-    let last_event_sequence = workflow_view.last_event_sequence;
+    let last_event_sequence = workflow_view.last_event_sequence();
 
     if last_event_sequence == 0 {
         anyhow::bail!(
@@ -498,8 +497,7 @@ pub fn recover_from_state_file(session_id: &str) -> Result<SessionSnapshot> {
 
     // Get working_dir from workflow_view or fall back to daemon registry
     let working_dir = workflow_view
-        .working_dir
-        .as_ref()
+        .working_dir()
         .map(|w| w.0.clone())
         .or_else(|| {
             // Fall back to daemon registry
@@ -544,13 +542,9 @@ impl SessionUiState {
     /// Create minimal UI state from WorkflowView (for recovery from crashes).
     /// All UI state is reset to defaults since we don't have the original.
     pub fn minimal_from_view(view: &WorkflowView) -> Self {
-        let phase = view.planning_phase.unwrap_or(Phase::Planning);
-        let iteration = view.iteration.map(|i| i.0).unwrap_or(1);
-        let feature_name = view
-            .feature_name
-            .as_ref()
-            .map(|f| f.0.clone())
-            .unwrap_or_default();
+        let phase = view.planning_phase().unwrap_or(Phase::Planning);
+        let iteration = view.iteration().map(|i| i.0).unwrap_or(1);
+        let feature_name = view.feature_name().map(|f| f.0.clone()).unwrap_or_default();
 
         Self {
             id: 0,

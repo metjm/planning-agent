@@ -17,7 +17,7 @@ impl Session {
             let plan_path_opt = self
                 .workflow_view
                 .as_ref()
-                .and_then(|v| v.plan_path.as_ref())
+                .and_then(|v| v.plan_path())
                 .map(|p| {
                     let path = p.as_path();
                     if path.is_absolute() {

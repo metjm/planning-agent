@@ -203,7 +203,7 @@ pub async fn handle_all_reviewers_failed_input(
 
                 if let Some(ref view) = session.workflow_view {
                     // Get feature_name from view
-                    let Some(ref _feature_name) = view.feature_name else {
+                    let Some(_feature_name) = view.feature_name() else {
                         session.handle_error("Missing feature_name in workflow view");
                         return Ok(false);
                     };
@@ -220,19 +220,20 @@ pub async fn handle_all_reviewers_failed_input(
                     session.current_run_id += 1;
                     let run_id = session.current_run_id;
 
+                    // Get workflow_id before moving view into async block
+                    let workflow_id = view
+                        .workflow_id()
+                        .expect("workflow_id must be present in view")
+                        .clone();
+
                     // Spawn workflow
                     let workflow_handle = tokio::spawn({
                         let working_dir = base_working_dir;
                         let tx = output_tx.clone();
                         let sid = session.id;
-                        let view = view.clone();
                         async move {
                             let input = crate::domain::input::WorkflowInput::Resume(
-                                crate::domain::input::ResumeWorkflowInput {
-                                    workflow_id: view
-                                        .workflow_id
-                                        .expect("workflow_id must be present in view"),
-                                },
+                                crate::domain::input::ResumeWorkflowInput { workflow_id },
                             );
                             run_workflow_with_config(
                                 input,
@@ -334,7 +335,7 @@ pub async fn handle_workflow_failure_input(
 
                 if let Some(ref view) = session.workflow_view {
                     // Get feature_name from view
-                    let Some(ref _feature_name) = view.feature_name else {
+                    let Some(_feature_name) = view.feature_name() else {
                         session.handle_error("Missing feature_name in workflow view");
                         return Ok(false);
                     };
@@ -351,19 +352,20 @@ pub async fn handle_workflow_failure_input(
                     session.current_run_id += 1;
                     let run_id = session.current_run_id;
 
+                    // Get workflow_id before moving into async block
+                    let workflow_id = view
+                        .workflow_id()
+                        .expect("workflow_id must be present in view")
+                        .clone();
+
                     // Spawn workflow
                     let workflow_handle = tokio::spawn({
                         let working_dir = base_working_dir;
                         let tx = output_tx.clone();
                         let sid = session.id;
-                        let view = view.clone();
                         async move {
                             let input = crate::domain::input::WorkflowInput::Resume(
-                                crate::domain::input::ResumeWorkflowInput {
-                                    workflow_id: view
-                                        .workflow_id
-                                        .expect("workflow_id must be present in view"),
-                                },
+                                crate::domain::input::ResumeWorkflowInput { workflow_id },
                             );
                             run_workflow_with_config(
                                 input,

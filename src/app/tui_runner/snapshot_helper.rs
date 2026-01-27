@@ -27,11 +27,7 @@ pub fn create_and_save_snapshot(
     working_dir: &Path,
 ) -> Result<PathBuf> {
     // Extract feature name from view (Option-wrapped)
-    let feature_name = view
-        .feature_name
-        .as_ref()
-        .map(|f| f.as_str())
-        .unwrap_or("unknown");
+    let feature_name = view.feature_name().map(|f| f.as_str()).unwrap_or("unknown");
 
     // Use state_path from session context if available (preserves original path across resumes)
     // Otherwise compute from working_dir (for new sessions)
@@ -61,13 +57,12 @@ pub fn create_and_save_snapshot(
 
     // Get workflow_session_id from view (WorkflowId -> String)
     let workflow_session_id = view
-        .workflow_id
-        .as_ref()
+        .workflow_id()
         .map(|id| id.to_string())
         .unwrap_or_default();
 
     // Include workflow view and event sequence
-    let last_event_sequence = view.last_event_sequence;
+    let last_event_sequence = view.last_event_sequence();
 
     let snapshot = SessionSnapshot::new_with_timestamp(
         working_dir.to_path_buf(),

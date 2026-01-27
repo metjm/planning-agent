@@ -96,7 +96,7 @@ async fn implementation_started_event_initializes_implementation_state() {
     let data = get_data_mut(&mut agg);
     assert!(data.implementation_state.is_some());
     let impl_state = data.implementation_state.as_ref().unwrap();
-    assert_eq!(impl_state.max_iterations.0, 5);
+    assert_eq!(impl_state.max_iterations().0, 5);
 }
 
 #[tokio::test]
@@ -120,10 +120,10 @@ async fn implementation_review_completed_updates_verdict() {
     let data = get_data_mut(&mut agg);
     let impl_state = data.implementation_state.as_ref().unwrap();
     assert_eq!(
-        impl_state.last_verdict,
+        impl_state.last_verdict(),
         Some(ImplementationVerdict::Approved)
     );
-    assert_eq!(impl_state.last_feedback, Some("Looks good".to_string()));
+    assert_eq!(impl_state.last_feedback(), Some("Looks good"));
 }
 
 #[tokio::test]
@@ -140,7 +140,7 @@ async fn implementation_accepted_sets_phase_complete() {
 
     let data = get_data_mut(&mut agg);
     let impl_state = data.implementation_state.as_ref().unwrap();
-    assert_eq!(impl_state.phase, ImplementationPhase::Complete);
+    assert_eq!(impl_state.phase(), ImplementationPhase::Complete);
 }
 
 // ============================================================================
@@ -157,6 +157,9 @@ async fn record_failure_adds_to_history() {
         PhaseLabel::Planning,
         Some("test-agent".into()),
         1,
+        3,
+        crate::domain::types::TimestampUtc::now(),
+        None,
     );
 
     let events = agg
@@ -186,12 +189,12 @@ async fn attach_worktree_stores_state() {
     let mut agg = initialized_aggregate();
     let services = test_services();
 
-    let worktree = WorktreeState {
-        worktree_path: PathBuf::from("/worktree"),
-        branch_name: "feature-branch".to_string(),
-        source_branch: Some("main".to_string()),
-        original_dir: PathBuf::from("/original"),
-    };
+    let worktree = WorktreeState::new(
+        PathBuf::from("/worktree"),
+        "feature-branch".to_string(),
+        Some("main".to_string()),
+        PathBuf::from("/original"),
+    );
 
     let events = agg
         .handle(
@@ -209,7 +212,7 @@ async fn attach_worktree_stores_state() {
     let data = get_data_mut(&mut agg);
     assert!(data.worktree_info.is_some());
     assert_eq!(
-        data.worktree_info.as_ref().unwrap().branch_name,
+        data.worktree_info.as_ref().unwrap().branch_name(),
         "feature-branch"
     );
 }
@@ -241,8 +244,11 @@ async fn record_agent_conversation_stores_state() {
     let data = get_data_mut(&mut agg);
     assert!(data.agent_conversations.contains_key(&"claude".into()));
     let conv = data.agent_conversations.get(&"claude".into()).unwrap();
-    assert_eq!(conv.conversation_id, Some(ConversationId::from("conv-123")));
-    assert_eq!(conv.resume_strategy, ResumeStrategy::ConversationResume);
+    assert_eq!(
+        conv.conversation_id(),
+        Some(&ConversationId::from("conv-123"))
+    );
+    assert_eq!(conv.resume_strategy(), ResumeStrategy::ConversationResume);
 }
 
 // ============================================================================
@@ -297,23 +303,23 @@ async fn record_invocation_appends_to_invocations_list() {
     assert_eq!(data.invocations.len(), 2);
 
     // Verify first invocation
-    assert_eq!(data.invocations[0].agent.0, "claude");
-    assert_eq!(data.invocations[0].phase, PhaseLabel::Planning);
+    assert_eq!(data.invocations[0].agent().0, "claude");
+    assert_eq!(data.invocations[0].phase(), PhaseLabel::Planning);
     assert_eq!(
-        data.invocations[0].conversation_id,
-        Some(ConversationId::from("conv-abc"))
+        data.invocations[0].conversation_id(),
+        Some(&ConversationId::from("conv-abc"))
     );
     assert_eq!(
-        data.invocations[0].resume_strategy,
+        data.invocations[0].resume_strategy(),
         ResumeStrategy::ConversationResume
     );
 
     // Verify second invocation
-    assert_eq!(data.invocations[1].agent.0, "gemini");
-    assert_eq!(data.invocations[1].phase, PhaseLabel::Reviewing);
-    assert_eq!(data.invocations[1].conversation_id, None);
+    assert_eq!(data.invocations[1].agent().0, "gemini");
+    assert_eq!(data.invocations[1].phase(), PhaseLabel::Reviewing);
+    assert_eq!(data.invocations[1].conversation_id(), None);
     assert_eq!(
-        data.invocations[1].resume_strategy,
+        data.invocations[1].resume_strategy(),
         ResumeStrategy::Stateless
     );
 }
@@ -398,8 +404,8 @@ async fn implementation_round_started_succeeds_with_implementation_state() {
     agg.apply(events.into_iter().next().unwrap());
     let data = get_data_mut(&mut agg);
     let impl_state = data.implementation_state.as_ref().unwrap();
-    assert_eq!(impl_state.phase, ImplementationPhase::Implementing);
-    assert_eq!(impl_state.iteration, Iteration::first());
+    assert_eq!(impl_state.phase(), ImplementationPhase::Implementing);
+    assert_eq!(impl_state.iteration(), Iteration::first());
 }
 
 #[tokio::test]
@@ -467,7 +473,7 @@ async fn implementation_max_iterations_reached_sets_phase_to_awaiting_decision()
     agg.apply(events.into_iter().next().unwrap());
     let data = get_data_mut(&mut agg);
     let impl_state = data.implementation_state.as_ref().unwrap();
-    assert_eq!(impl_state.phase, ImplementationPhase::AwaitingDecision);
+    assert_eq!(impl_state.phase(), ImplementationPhase::AwaitingDecision);
 }
 
 #[tokio::test]
@@ -503,7 +509,7 @@ async fn implementation_declined_sets_phase_to_complete() {
     agg.apply(events.into_iter().next().unwrap());
     let data = get_data_mut(&mut agg);
     let impl_state = data.implementation_state.as_ref().unwrap();
-    assert_eq!(impl_state.phase, ImplementationPhase::Complete);
+    assert_eq!(impl_state.phase(), ImplementationPhase::Complete);
 }
 
 #[tokio::test]
@@ -539,7 +545,7 @@ async fn implementation_cancelled_sets_phase_to_complete() {
     agg.apply(events.into_iter().next().unwrap());
     let data = get_data_mut(&mut agg);
     let impl_state = data.implementation_state.as_ref().unwrap();
-    assert_eq!(impl_state.phase, ImplementationPhase::Complete);
+    assert_eq!(impl_state.phase(), ImplementationPhase::Complete);
 }
 
 // ============================================================================
@@ -557,6 +563,9 @@ async fn failure_history_limited_to_max_entries() {
             PhaseLabel::Planning,
             Some("test-agent".into()),
             i as u32,
+            3,
+            crate::domain::types::TimestampUtc::now(),
+            None,
         );
         agg.apply(WorkflowEvent::FailureRecorded {
             failure,
@@ -572,14 +581,14 @@ async fn failure_history_limited_to_max_entries() {
     // Oldest failures should be removed (first 10 are gone)
     // The first remaining failure should be "Error 10"
     let first_failure = &data.failure_history[0];
-    match &first_failure.kind {
+    match first_failure.kind() {
         FailureKind::Unknown(msg) => assert_eq!(msg, "Error 10"),
         _ => panic!("Expected Unknown failure kind"),
     }
 
     // The last failure should be "Error 59" (MAX_FAILURE_HISTORY + 10 - 1)
     let last_failure = &data.failure_history[MAX_FAILURE_HISTORY - 1];
-    match &last_failure.kind {
+    match last_failure.kind() {
         FailureKind::Unknown(msg) => {
             assert_eq!(msg, &format!("Error {}", MAX_FAILURE_HISTORY + 10 - 1))
         }

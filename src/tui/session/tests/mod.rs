@@ -1,8 +1,8 @@
 use super::*;
 use crate::config::WorkflowConfig;
 use crate::domain::types::{
-    AgentConversationState, AgentId, ConversationId, ImplementationPhase, ImplementationPhaseState,
-    ImplementationVerdict, Iteration, MaxIterations, ResumeStrategy, TimestampUtc,
+    AgentId, ConversationId, ImplementationVerdict, Iteration, MaxIterations, ResumeStrategy,
+    TimestampUtc,
 };
 use crate::domain::view::WorkflowView;
 use crate::phases::implementing_conversation_key;
@@ -713,6 +713,8 @@ fn test_toggle_focus_with_summary() {
 }
 
 fn build_interactive_session() -> Session {
+    use crate::domain::WorkflowEvent;
+
     let mut session = Session::new(0);
     let config = WorkflowConfig::claude_only_config();
     let agent_name = config
@@ -722,22 +724,53 @@ fn build_interactive_session() -> Session {
     let conversation_key = implementing_conversation_key(agent_name);
     let agent_id = AgentId::from(conversation_key.as_str());
 
-    // Build a WorkflowView with implementation state and conversation
+    // Build a WorkflowView by applying events (proper CQRS approach)
     let mut view = WorkflowView::default();
-    view.implementation_state = Some(ImplementationPhaseState {
-        phase: ImplementationPhase::Complete,
-        iteration: Iteration(1),
-        max_iterations: MaxIterations(1),
-        last_verdict: Some(ImplementationVerdict::Approved),
-        last_feedback: None,
-    });
-    view.agent_conversations.insert(
-        agent_id,
-        AgentConversationState {
-            conversation_id: Some(ConversationId("conv-id".to_string())),
-            resume_strategy: ResumeStrategy::ConversationResume,
-            last_used_at: TimestampUtc::default(),
+    let aggregate_id = "test-workflow-id";
+
+    // Apply events to construct the desired state
+    view.apply_event(
+        aggregate_id,
+        &WorkflowEvent::ImplementationStarted {
+            max_iterations: MaxIterations(1),
+            started_at: TimestampUtc::default(),
         },
+        1,
+    );
+    view.apply_event(
+        aggregate_id,
+        &WorkflowEvent::ImplementationRoundStarted {
+            iteration: Iteration(1),
+            started_at: TimestampUtc::default(),
+        },
+        2,
+    );
+    view.apply_event(
+        aggregate_id,
+        &WorkflowEvent::ImplementationReviewCompleted {
+            iteration: Iteration(1),
+            verdict: ImplementationVerdict::Approved,
+            feedback: None,
+            completed_at: TimestampUtc::default(),
+        },
+        3,
+    );
+    view.apply_event(
+        aggregate_id,
+        &WorkflowEvent::ImplementationAccepted {
+            approved_at: TimestampUtc::default(),
+        },
+        4,
+    );
+    view.apply_event(
+        aggregate_id,
+        &WorkflowEvent::AgentConversationRecorded {
+            agent_id: agent_id.clone(),
+            resume_strategy: ResumeStrategy::ConversationResume,
+            conversation_id: Some(ConversationId("conv-id".to_string())),
+            updated_at: TimestampUtc::default(),
+        },
+        5,
     );
 
     session.workflow_view = Some(view);

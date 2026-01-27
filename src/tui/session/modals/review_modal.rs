@@ -26,7 +26,7 @@ impl Session {
         let Some(ref view) = self.workflow_view else {
             return false;
         };
-        let Some(ref workflow_id) = view.workflow_id else {
+        let Some(workflow_id) = view.workflow_id() else {
             return false;
         };
 

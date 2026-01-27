@@ -1,20 +1,39 @@
 use super::*;
-use crate::domain::types::WorkflowId;
+use crate::domain::types::{
+    FeatureName, FeedbackPath, MaxIterations, Objective, PlanPath, TimestampUtc, WorkingDir,
+};
 use crate::domain::view::WorkflowView;
+use crate::domain::WorkflowEvent;
 use crate::planning_paths::{session_dir, set_home_for_test};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tempfile::tempdir;
+use uuid::Uuid;
 
 /// Creates a session with a workflow_view that has a random workflow_id.
 /// Returns (session, session_id_string) where session_id_string is the
 /// UUID string that should be used for session_dir().
 fn setup_session() -> (Session, String) {
     let mut session = Session::new(0);
-    let workflow_id = uuid::Uuid::new_v4();
+    let workflow_id = Uuid::new_v4();
+    let agg_id = workflow_id.to_string();
     let mut view = WorkflowView::default();
-    view.workflow_id = Some(WorkflowId(workflow_id));
+
+    view.apply_event(
+        &agg_id,
+        &WorkflowEvent::WorkflowCreated {
+            feature_name: FeatureName::from("test-feature"),
+            objective: Objective::from("Test objective"),
+            working_dir: WorkingDir::from(PathBuf::from("/tmp/test").as_path()),
+            max_iterations: MaxIterations(3),
+            plan_path: PlanPath::from(PathBuf::from("/tmp/test/plan.md")),
+            feedback_path: FeedbackPath::from(PathBuf::from("/tmp/test/feedback.md")),
+            created_at: TimestampUtc::now(),
+        },
+        1,
+    );
+
     session.workflow_view = Some(view);
-    (session, workflow_id.to_string())
+    (session, agg_id)
 }
 
 #[test]

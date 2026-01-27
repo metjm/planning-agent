@@ -37,18 +37,10 @@ pub async fn run_planning_phase(
     sender.send_phase_started("Planning".to_string());
     sender.send_output("".to_string());
     sender.send_output("=== PLANNING PHASE ===".to_string());
-    let feature_name = view
-        .feature_name
-        .as_ref()
-        .map(|f| f.0.as_str())
-        .unwrap_or("");
+    let feature_name = view.feature_name().map(|f| f.0.as_str()).unwrap_or("");
     sender.send_output(format!("Feature: {}", feature_name));
     sender.send_output(format!("Agent: {}", config.workflow.planning.agent));
-    let plan_path = view
-        .plan_path
-        .as_ref()
-        .map(|p| p.0.clone())
-        .unwrap_or_default();
+    let plan_path = view.plan_path().map(|p| p.0.clone()).unwrap_or_default();
     sender.send_output(format!("Plan file: {}", plan_path.display()));
 
     loop {

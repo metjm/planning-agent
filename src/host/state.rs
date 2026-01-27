@@ -31,6 +31,26 @@ pub struct ConnectedContainer {
     pub build_timestamp: u64,
 }
 
+impl ConnectedContainer {
+    pub fn new(
+        container_name: String,
+        working_dir: PathBuf,
+        git_sha: String,
+        build_timestamp: u64,
+    ) -> Self {
+        let now = Instant::now();
+        Self {
+            container_name,
+            working_dir,
+            connected_at: now,
+            last_message_at: now,
+            sessions: HashMap::new(),
+            git_sha,
+            build_timestamp,
+        }
+    }
+}
+
 /// Aggregated state for the host application.
 pub struct HostState {
     /// Connected containers by container_id
@@ -57,6 +77,15 @@ impl Default for HostState {
 pub struct DisplaySession {
     pub container_name: String,
     pub session: SessionInfo,
+}
+
+impl DisplaySession {
+    pub fn new(container_name: String, session: SessionInfo) -> Self {
+        Self {
+            container_name,
+            session,
+        }
+    }
 }
 
 impl HostState {
@@ -130,18 +159,9 @@ impl HostState {
         git_sha: String,
         build_timestamp: u64,
     ) {
-        let now = Instant::now();
         self.containers.insert(
             container_id,
-            ConnectedContainer {
-                container_name,
-                working_dir,
-                connected_at: now,
-                last_message_at: now,
-                sessions: HashMap::new(),
-                git_sha,
-                build_timestamp,
-            },
+            ConnectedContainer::new(container_name, working_dir, git_sha, build_timestamp),
         );
         self.invalidate_cache();
     }
@@ -227,10 +247,10 @@ impl HostState {
             let mut sessions = Vec::new();
             for container in self.containers.values() {
                 for session in container.sessions.values() {
-                    sessions.push(DisplaySession {
-                        container_name: container.container_name.clone(),
-                        session: session.clone(),
-                    });
+                    sessions.push(DisplaySession::new(
+                        container.container_name.clone(),
+                        session.clone(),
+                    ));
                 }
             }
             // Sort: AwaitingApproval first, then by updated_at descending

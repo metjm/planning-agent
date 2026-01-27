@@ -41,7 +41,7 @@ pub async fn handle_session_event(
         Event::SessionViewUpdate { session_id, view } => {
             if let Some(session) = tab_manager.session_by_id_mut(session_id) {
                 let view = *view; // Unbox the view
-                if let Some(ref name) = view.feature_name {
+                if let Some(name) = view.feature_name() {
                     session.name = name.as_str().to_string();
                 }
                 session.workflow_view = Some(view);
