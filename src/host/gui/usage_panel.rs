@@ -3,6 +3,8 @@
 use crate::account_usage::types::AccountId;
 use eframe::egui;
 
+use super::status_colors;
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum AccountProvider {
     Claude,
@@ -56,6 +58,11 @@ pub struct DisplayAccountRow {
     pub weekly_percent: Option<u8>,
     pub weekly_reset: String,
     pub token_valid: bool,
+    /// Whether the displayed data is extrapolated from cached values.
+    /// True when last API fetch failed but we have historical data.
+    pub is_stale: bool,
+    /// Human-readable staleness info (e.g., "Credentials expired - data from 2h ago")
+    pub stale_reason: Option<String>,
 }
 
 /// Render the usage panel contents.
@@ -74,20 +81,36 @@ pub fn render_usage_panel_content(ui: &mut egui::Ui, accounts: &[DisplayAccountR
         }
 
         ui.push_id(&account.account_id, |ui| {
-            // Provider badge and email
+            // Provider badge and email with warning indicators
             ui.horizontal(|ui| {
                 ui.colored_label(account.provider.badge_color(), account.provider.label());
                 if !account.token_valid {
-                    ui.colored_label(egui::Color32::RED, "⚠");
+                    ui.colored_label(egui::Color32::RED, "⚠")
+                        .on_hover_text("Credentials expired");
+                }
+                if account.is_stale {
+                    ui.colored_label(status_colors::STALE, "●").on_hover_text(
+                        account
+                            .stale_reason
+                            .as_deref()
+                            .unwrap_or("Data may be outdated"),
+                    );
                 }
             });
             ui.small(&account.email);
+
+            // Stale data warning message
+            if account.is_stale {
+                if let Some(reason) = &account.stale_reason {
+                    ui.colored_label(status_colors::STALE, reason);
+                }
+            }
 
             // Session usage bar
             if let Some(pct) = account.session_percent {
                 ui.horizontal(|ui| {
                     ui.small("Session:");
-                    render_usage_bar(ui, pct);
+                    render_usage_bar(ui, pct, account.is_stale);
                     if !account.session_reset.is_empty() {
                         ui.small(&account.session_reset);
                     }
@@ -97,7 +120,7 @@ pub fn render_usage_panel_content(ui: &mut egui::Ui, accounts: &[DisplayAccountR
             if let Some(pct) = account.weekly_percent {
                 ui.horizontal(|ui| {
                     ui.small("Weekly:");
-                    render_usage_bar(ui, pct);
+                    render_usage_bar(ui, pct, account.is_stale);
                     if !account.weekly_reset.is_empty() {
                         ui.small(&account.weekly_reset);
                     }
@@ -111,18 +134,42 @@ pub fn render_usage_panel_content(ui: &mut egui::Ui, accounts: &[DisplayAccountR
     }
 }
 
-/// Render a small usage progress bar.
-pub fn render_usage_bar(ui: &mut egui::Ui, percent: u8) {
+/// Render a small usage progress bar with optional stale indicator.
+pub fn render_usage_bar(ui: &mut egui::Ui, percent: u8, is_stale: bool) {
     let (rect, _) = ui.allocate_exact_size(egui::vec2(50.0, 8.0), egui::Sense::hover());
-    ui.painter()
-        .rect_filled(rect, 2.0, egui::Color32::from_rgb(60, 60, 60));
-    let fill_color = match percent {
-        90..=100 => egui::Color32::from_rgb(244, 67, 54),
-        70..=89 => egui::Color32::from_rgb(255, 152, 0),
-        _ => egui::Color32::from_rgb(76, 175, 80),
+
+    // Background - slightly different if stale
+    let bg_color = if is_stale {
+        egui::Color32::from_rgb(50, 50, 50) // Darker to indicate uncertainty
+    } else {
+        egui::Color32::from_rgb(60, 60, 60)
     };
+    ui.painter().rect_filled(rect, 2.0, bg_color);
+
+    // Fill color with stale desaturation
+    let fill_color = if is_stale {
+        // Desaturated/dimmed colors for stale data
+        match percent {
+            90..=100 => egui::Color32::from_rgb(180, 80, 80), // Dimmed red
+            70..=89 => egui::Color32::from_rgb(180, 130, 60), // Dimmed orange
+            _ => egui::Color32::from_rgb(80, 140, 80),        // Dimmed green
+        }
+    } else {
+        match percent {
+            90..=100 => egui::Color32::from_rgb(244, 67, 54),
+            70..=89 => egui::Color32::from_rgb(255, 152, 0),
+            _ => egui::Color32::from_rgb(76, 175, 80),
+        }
+    };
+
     let fill_rect =
         egui::Rect::from_min_size(rect.min, egui::vec2(50.0 * percent as f32 / 100.0, 8.0));
     ui.painter().rect_filled(fill_rect, 2.0, fill_color);
-    ui.small(format!("{}%", percent));
+
+    // Text with tilde for stale
+    if is_stale {
+        ui.small(format!("~{}%", percent));
+    } else {
+        ui.small(format!("{}%", percent));
+    }
 }

@@ -6,6 +6,7 @@ pub mod app;
 mod helpers;
 mod session_table;
 mod status_colors;
+mod usage_extrapolation;
 mod usage_panel;
 
 #[cfg(feature = "tray-icon")]

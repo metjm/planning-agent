@@ -28,6 +28,9 @@ pub const INPUT_PENDING: egui::Color32 = egui::Color32::from_rgb(3, 169, 244); /
 // Unknown
 pub const UNKNOWN: egui::Color32 = egui::Color32::from_rgb(158, 158, 158); // Light gray
 
+// Stale/warning indicator color (amber/orange)
+pub const STALE: egui::Color32 = egui::Color32::from_rgb(255, 183, 77);
+
 /// Get the color and display text for a workflow status.
 /// Uses both `phase` (workflow phase) and `status` (session status) for context.
 pub fn get_status_display(phase: &str, status: &str) -> (egui::Color32, &'static str) {

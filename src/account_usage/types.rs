@@ -73,6 +73,10 @@ pub struct AccountRecord {
     pub first_seen: String,
     pub last_successful_fetch: Option<String>,
     pub current_usage: Option<AccountUsageState>,
+    /// Last successful usage state, preserved for extrapolation when current fetch fails.
+    /// Only updated when a fetch succeeds (error.is_none()).
+    #[serde(default)]
+    pub last_successful_usage: Option<AccountUsageState>,
     pub history: Vec<UsageSnapshot>,
     pub credentials_available: bool,
     pub seen_in_containers: Vec<String>,

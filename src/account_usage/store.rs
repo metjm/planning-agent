@@ -91,13 +91,17 @@ impl UsageStore {
                 first_seen: now.clone(),
                 last_successful_fetch: None,
                 current_usage: None,
+                last_successful_usage: None,
                 history: Vec::new(),
                 credentials_available: true,
                 seen_in_containers: Vec::new(),
             });
 
-        // Add history entry only on successful fetch
+        // On successful fetch, update last_successful_usage and history
         if usage.error.is_none() {
+            // Store the complete successful state for extrapolation fallback
+            record.last_successful_usage = Some(usage.clone());
+
             record.history.push(UsageSnapshot {
                 timestamp: now.clone(),
                 session_percent: usage.session_window.used_percent,

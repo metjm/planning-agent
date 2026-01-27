@@ -195,24 +195,33 @@ impl HostApp {
             let mut accounts_to_clear: Vec<AccountId> = Vec::new();
 
             for record in state.usage_store.get_all_accounts() {
-                let usage = match &record.current_usage {
-                    Some(usage) => usage,
-                    None => continue,
-                };
-
                 seen_accounts.insert(record.account_id.clone());
 
-                if let Some(error) = &usage.error {
-                    errors_to_log.push((
-                        record.account_id.clone(),
-                        record.provider.clone(),
-                        record.email.clone(),
-                        error.clone(),
-                    ));
-                    continue;
-                }
+                // Get display usage, preferring last_successful_usage when current has error
+                let (usage_to_display, is_stale) =
+                    match super::usage_extrapolation::get_display_usage(record) {
+                        Some((usage, stale)) => (usage, stale),
+                        None => {
+                            // No usable data at all - skip this account
+                            continue;
+                        }
+                    };
 
-                accounts_to_clear.push(record.account_id.clone());
+                // Log errors for accounts where current fetch failed (but we may still display stale data)
+                if let Some(current) = &record.current_usage {
+                    if let Some(error) = &current.error {
+                        if !is_stale {
+                            // Error with no fallback - log it
+                            errors_to_log.push((
+                                record.account_id.clone(),
+                                record.provider.clone(),
+                                record.email.clone(),
+                                error.clone(),
+                            ));
+                        }
+                        // If is_stale, we'll display the stale data, so don't skip
+                    }
+                }
 
                 let provider = match AccountProvider::try_from_str(&record.provider) {
                     Some(provider) => provider,
@@ -225,23 +234,50 @@ impl HostApp {
                     }
                 };
 
+                // Extrapolate session/weekly percent if reset time has passed
+                let session_percent =
+                    super::usage_extrapolation::extrapolate_usage(&usage_to_display.session_window);
+                let weekly_percent =
+                    super::usage_extrapolation::extrapolate_usage(&usage_to_display.weekly_window);
+
+                // Get current token validity from most recent state
+                let token_valid = record
+                    .current_usage
+                    .as_ref()
+                    .map(|u| u.token_valid)
+                    .unwrap_or(usage_to_display.token_valid);
+
+                // Format stale reason
+                let stale_reason = if is_stale {
+                    super::usage_extrapolation::format_stale_reason(
+                        record.last_successful_fetch.as_deref(),
+                        token_valid,
+                    )
+                } else {
+                    None
+                };
+
+                accounts_to_clear.push(record.account_id.clone());
+
                 account_rows.push(DisplayAccountRow {
                     account_id: record.account_id.clone(),
                     provider,
                     email: record.email.clone(),
-                    session_percent: usage.session_window.used_percent,
-                    session_reset: usage
+                    session_percent,
+                    session_reset: usage_to_display
                         .session_window
                         .reset_at
                         .map(|r| format_reset_countdown(r.epoch_seconds))
                         .unwrap_or_default(),
-                    weekly_percent: usage.weekly_window.used_percent,
-                    weekly_reset: usage
+                    weekly_percent,
+                    weekly_reset: usage_to_display
                         .weekly_window
                         .reset_at
                         .map(|r| format_reset_countdown(r.epoch_seconds))
                         .unwrap_or_default(),
-                    token_valid: usage.token_valid,
+                    token_valid,
+                    is_stale,
+                    stale_reason,
                 });
             }
 
