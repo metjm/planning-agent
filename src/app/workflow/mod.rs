@@ -539,6 +539,9 @@ pub async fn run_workflow_with_config(
             }
 
             Phase::Revising => {
+                // On session resume, last_reviews may be empty - populate from view
+                revising::populate_reviews_from_view(&view, &mut last_reviews, &session_logger);
+
                 let result = run_revising_phase(
                     &view,
                     &working_dir,

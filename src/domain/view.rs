@@ -9,7 +9,7 @@ use crate::domain::review::ReviewMode;
 use crate::domain::types::{
     AgentConversationState, AgentId, FeatureName, FeedbackPath, FeedbackStatus,
     ImplementationPhase, ImplementationPhaseState, InvocationRecord, Iteration, MaxIterations,
-    Objective, Phase, PlanPath, UiMode, WorkflowId, WorkingDir, WorktreeState,
+    Objective, Phase, PlanPath, ReviewerResult, UiMode, WorkflowId, WorkingDir, WorktreeState,
 };
 use crate::domain::WorkflowEvent;
 use serde::{Deserialize, Serialize};
@@ -38,6 +38,10 @@ pub struct WorkflowView {
     worktree_info: Option<WorktreeState>,
     approval_overridden: bool,
     last_event_sequence: u64,
+    /// Review results from the current review cycle.
+    /// Cleared when a new review cycle starts or revision completes.
+    #[serde(default)]
+    current_cycle_reviews: Vec<ReviewerResult>,
 }
 
 impl WorkflowView {
@@ -91,6 +95,8 @@ impl WorkflowView {
             WorkflowEvent::ReviewCycleStarted { mode, .. } => {
                 self.review_mode = Some(mode.clone());
                 self.planning_phase = Some(Phase::Reviewing);
+                // Clear previous cycle's reviews when starting a new cycle
+                self.current_cycle_reviews.clear();
             }
 
             WorkflowEvent::ReviewerApproved { reviewer_id, .. } => {
@@ -98,12 +104,24 @@ impl WorkflowView {
                     state.record_approval_simple(reviewer_id.clone());
                     state.advance_to_next_reviewer();
                 }
+                // Track this reviewer's approval for resume
+                self.current_cycle_reviews
+                    .push(ReviewerResult::approved(reviewer_id.clone()));
             }
 
-            WorkflowEvent::ReviewerRejected { reviewer_id, .. } => {
+            WorkflowEvent::ReviewerRejected {
+                reviewer_id,
+                feedback_path,
+                ..
+            } => {
                 if let Some(ReviewMode::Sequential(ref mut state)) = self.review_mode {
                     state.record_rejection(reviewer_id.as_str());
                 }
+                // Track this reviewer's rejection with feedback path for resume
+                self.current_cycle_reviews.push(ReviewerResult::rejected(
+                    reviewer_id.clone(),
+                    feedback_path.clone(),
+                ));
             }
 
             WorkflowEvent::ReviewCycleCompleted { approved, .. } => {
@@ -134,6 +152,8 @@ impl WorkflowView {
                     state.increment_version();
                     state.clear_cycle_order();
                 }
+                // Clear reviews after revision - new review cycle will start
+                self.current_cycle_reviews.clear();
             }
 
             WorkflowEvent::PlanningMaxIterationsReached { .. } => {
@@ -338,6 +358,12 @@ impl WorkflowView {
         self.last_event_sequence
     }
 
+    /// Returns the review results from the current review cycle.
+    /// This data survives session resume and is used by the revising phase.
+    pub fn current_cycle_reviews(&self) -> &[ReviewerResult] {
+        &self.current_cycle_reviews
+    }
+
     /// Returns the current UI mode based on implementation state.
     pub fn ui_mode(&self) -> UiMode {
         match &self.implementation_state {
@@ -382,3 +408,7 @@ impl From<&cqrs_es::EventEnvelope<WorkflowAggregate>> for WorkflowEventEnvelope 
         }
     }
 }
+
+#[cfg(test)]
+#[path = "tests/view_tests.rs"]
+mod tests;

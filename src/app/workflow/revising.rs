@@ -7,7 +7,7 @@ use crate::config::WorkflowConfig;
 use crate::domain::actor::WorkflowMessage;
 use crate::domain::failure::{FailureContext, FailureKind};
 use crate::domain::review::ReviewMode;
-use crate::domain::types::PhaseLabel;
+use crate::domain::types::{PhaseLabel, ReviewerResult};
 use crate::domain::view::WorkflowView;
 use crate::domain::WorkflowCommand as DomainCommand;
 use crate::phases::{self, run_revision_phase_with_context};
@@ -15,6 +15,7 @@ use crate::session_daemon::{LogCategory, LogLevel, SessionLogger};
 use crate::tui::{CancellationError, SessionEventSender, UserApprovalResponse, WorkflowCommand};
 use anyhow::Result;
 use ractor::ActorRef;
+use std::fs;
 use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -275,3 +276,111 @@ pub async fn run_revising_phase(
 
     Ok(None)
 }
+
+/// Populates `last_reviews` from the view's current_cycle_reviews if empty.
+/// This enables session resume by loading persisted review data.
+///
+/// When resuming a session that was in the Revising phase, `last_reviews` will be empty
+/// because it's only populated during the in-memory review phase. This function
+/// reconstructs the review data from:
+/// 1. The view's `current_cycle_reviews` (persisted via events)
+/// 2. The feedback files on disk (paths stored in events)
+pub fn populate_reviews_from_view(
+    view: &WorkflowView,
+    last_reviews: &mut Vec<phases::ReviewResult>,
+    session_logger: &SessionLogger,
+) {
+    if !last_reviews.is_empty() {
+        // Already have reviews - don't override
+        return;
+    }
+
+    let cycle_reviews = view.current_cycle_reviews();
+    if cycle_reviews.is_empty() {
+        session_logger.log(
+            LogLevel::Info,
+            LogCategory::Workflow,
+            "No cycle reviews in view - revising with empty feedback",
+        );
+        return;
+    }
+
+    session_logger.log(
+        LogLevel::Info,
+        LogCategory::Workflow,
+        &format!(
+            "Populating {} review(s) from view for session resume",
+            cycle_reviews.len()
+        ),
+    );
+
+    for reviewer_result in cycle_reviews {
+        let review_result = convert_reviewer_result(reviewer_result);
+        last_reviews.push(review_result);
+    }
+
+    session_logger.log(
+        LogLevel::Info,
+        LogCategory::Workflow,
+        &format!(
+            "Loaded {} review(s) from view: {} need revision",
+            last_reviews.len(),
+            last_reviews.iter().filter(|r| r.needs_revision).count()
+        ),
+    );
+}
+
+/// Converts a ReviewerResult from the view to a phases::ReviewResult.
+/// Reads the feedback file if present to get the content and summary.
+fn convert_reviewer_result(reviewer_result: &ReviewerResult) -> phases::ReviewResult {
+    let agent_name = reviewer_result.reviewer_id.as_str().to_string();
+    let needs_revision = !reviewer_result.approved;
+
+    // Read feedback from file if path is present
+    let (feedback, summary) = match &reviewer_result.feedback_path {
+        Some(path) => {
+            match fs::read_to_string(path.as_path()) {
+                Ok(content) => {
+                    // Extract first non-empty line as summary (truncated)
+                    let summary = content
+                        .lines()
+                        .find(|line| !line.trim().is_empty())
+                        .map(|line| {
+                            if line.len() > 100 {
+                                format!("{}...", &line[..97])
+                            } else {
+                                line.to_string()
+                            }
+                        })
+                        .unwrap_or_else(|| "Feedback provided".to_string());
+                    (content, summary)
+                }
+                Err(_) => {
+                    // File not readable - use placeholder
+                    let placeholder = format!("Feedback file: {}", path.as_path().display());
+                    (placeholder.clone(), placeholder)
+                }
+            }
+        }
+        None => {
+            // Approved review - no feedback file
+            let msg = if needs_revision {
+                "Needs revision (no feedback file)".to_string()
+            } else {
+                "Approved".to_string()
+            };
+            (msg.clone(), msg)
+        }
+    };
+
+    phases::ReviewResult {
+        agent_name,
+        needs_revision,
+        feedback,
+        summary,
+    }
+}
+
+#[cfg(test)]
+#[path = "tests/revising_tests.rs"]
+mod tests;

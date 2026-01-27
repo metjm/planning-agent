@@ -135,6 +135,38 @@ impl From<PathBuf> for FeedbackPath {
     }
 }
 
+/// Result of a single reviewer's review in a review cycle.
+/// Stored in the view to survive session resume.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReviewerResult {
+    /// The reviewer's agent ID.
+    pub reviewer_id: AgentId,
+    /// Whether the reviewer approved the plan.
+    pub approved: bool,
+    /// Path to the feedback file (only set for rejections).
+    pub feedback_path: Option<FeedbackPath>,
+}
+
+impl ReviewerResult {
+    /// Creates a new approved review result.
+    pub fn approved(reviewer_id: AgentId) -> Self {
+        Self {
+            reviewer_id,
+            approved: true,
+            feedback_path: None,
+        }
+    }
+
+    /// Creates a new rejected review result with feedback path.
+    pub fn rejected(reviewer_id: AgentId, feedback_path: FeedbackPath) -> Self {
+        Self {
+            reviewer_id,
+            approved: false,
+            feedback_path: Some(feedback_path),
+        }
+    }
+}
+
 /// Current iteration number (1-indexed).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Iteration(pub u32);
