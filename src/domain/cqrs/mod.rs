@@ -19,9 +19,9 @@ use crate::domain::failure::{FailureContext, MAX_FAILURE_HISTORY};
 use crate::domain::review::ReviewMode;
 use crate::domain::services::WorkflowServices;
 use crate::domain::types::{
-    AgentConversationState, AgentId, FeatureName, FeedbackPath, FeedbackStatus,
-    ImplementationPhase, ImplementationPhaseState, InvocationRecord, Iteration, MaxIterations,
-    Objective, Phase, PlanPath, TimestampUtc, WorkingDir, WorktreeState,
+    AgentConversationState, AgentId, AwaitingDecisionReason, FeatureName, FeedbackPath,
+    FeedbackStatus, ImplementationPhase, ImplementationPhaseState, InvocationRecord, Iteration,
+    MaxIterations, Objective, Phase, PlanPath, TimestampUtc, WorkingDir, WorktreeState,
 };
 use async_trait::async_trait;
 use cqrs_es::Aggregate;
@@ -504,6 +504,17 @@ impl Aggregate for WorkflowAggregate {
                 }])
             }
 
+            // ImplementationNoChanges
+            (
+                WorkflowState::Active(data),
+                WorkflowCommand::ImplementationNoChanges { iteration },
+            ) if data.implementation_state().is_some() => {
+                Ok(vec![WorkflowEvent::ImplementationNoChanges {
+                    iteration,
+                    detected_at: now,
+                }])
+            }
+
             // ImplementationAccepted
             (WorkflowState::Active(data), WorkflowCommand::ImplementationAccepted)
                 if data.implementation_state().is_some() =>
@@ -737,6 +748,7 @@ impl Aggregate for WorkflowAggregate {
                 if let Some(ref mut state) = data.implementation_state_mut() {
                     state.set_phase(ImplementationPhase::Implementing);
                     state.set_iteration(iteration);
+                    state.set_decision_reason(None); // Clear stale decision reason
                 }
             }
 
@@ -764,6 +776,15 @@ impl Aggregate for WorkflowAggregate {
             ) => {
                 if let Some(ref mut state) = data.implementation_state_mut() {
                     state.set_phase(ImplementationPhase::AwaitingDecision);
+                    state.set_decision_reason(Some(AwaitingDecisionReason::MaxIterationsReached));
+                }
+            }
+
+            // ImplementationNoChanges
+            (WorkflowState::Active(data), WorkflowEvent::ImplementationNoChanges { .. }) => {
+                if let Some(ref mut state) = data.implementation_state_mut() {
+                    state.set_phase(ImplementationPhase::AwaitingDecision);
+                    state.set_decision_reason(Some(AwaitingDecisionReason::NoChanges));
                 }
             }
 
@@ -852,6 +873,7 @@ fn command_name(cmd: &WorkflowCommand) -> &'static str {
         WorkflowCommand::ImplementationRoundCompleted { .. } => "ImplementationRoundCompleted",
         WorkflowCommand::ImplementationReviewCompleted { .. } => "ImplementationReviewCompleted",
         WorkflowCommand::ImplementationMaxIterationsReached => "ImplementationMaxIterationsReached",
+        WorkflowCommand::ImplementationNoChanges { .. } => "ImplementationNoChanges",
         WorkflowCommand::ImplementationAccepted => "ImplementationAccepted",
         WorkflowCommand::ImplementationDeclined { .. } => "ImplementationDeclined",
         WorkflowCommand::ImplementationCancelled { .. } => "ImplementationCancelled",

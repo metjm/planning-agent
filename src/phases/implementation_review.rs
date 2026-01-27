@@ -174,7 +174,21 @@ pub async fn run_implementation_review_phase(
 
         // Extract feedback if verdict requires revision
         let feedback = if verdict.needs_revision() {
-            extract_implementation_feedback(&report)
+            let extracted = extract_implementation_feedback(&report);
+
+            // Warn if feedback tags are missing for a NEEDS_REVISION verdict
+            if extracted.is_none() {
+                tracing::warn!(
+                    iteration = iteration,
+                    "Implementation review round {} returned NEEDS_REVISION verdict but no \
+                     <implementation-feedback> tags found. The implementation agent will not \
+                     receive structured feedback for the next round. Consider checking if the \
+                     implementation-review skill is being invoked correctly.",
+                    iteration
+                );
+            }
+
+            extracted
         } else {
             None
         };
@@ -294,6 +308,16 @@ Paths:
 - Plan file: {plan}
 - Review output: {review_output}
 {log_section}
+IMPORTANT: If the verdict is NEEDS REVISION, you MUST include feedback in this exact format:
+
+<implementation-feedback>
+[Detailed, actionable feedback for the next implementation attempt.
+Be specific about what needs to change and where.]
+</implementation-feedback>
+
+This feedback is extracted and passed to the implementation agent for the next round.
+Without properly formatted feedback, the agent will not receive guidance on what to fix.
+
 Run the "implementation-review" skill to perform the review."#,
         iteration = iteration,
         workspace = working_dir.display(),

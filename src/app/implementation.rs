@@ -9,7 +9,10 @@ use crate::app::workflow_decisions::{
 };
 use crate::config::WorkflowConfig;
 use crate::domain::actor::WorkflowMessage;
-use crate::domain::types::{ImplementationPhase, ImplementationVerdict, Iteration, ResumeStrategy};
+use crate::domain::types::{
+    AwaitingDecisionReason, ConversationId, ImplementationPhase, ImplementationVerdict, Iteration,
+    ResumeStrategy,
+};
 use crate::domain::view::WorkflowView;
 use crate::domain::WorkflowCommand as DomainCommand;
 use crate::phases::implementation::run_implementation_phase;
@@ -47,8 +50,6 @@ pub enum ImplementationWorkflowResult {
     },
     /// Implementation was cancelled by user
     Cancelled { iterations_used: u32 },
-    /// No changes were detected between iterations (circuit breaker)
-    NoChanges { iterations_used: u32 },
 }
 
 /// Runs the implementation workflow loop.
@@ -172,14 +173,34 @@ pub async fn run_implementation_workflow(
         local_max_iterations
     ));
 
+    // Track conversation ID across rounds
+    let mut captured_conversation_id: Option<ConversationId> = None;
+
     // Main orchestration loop
     let mut local_phase = initial_phase;
     loop {
-        // Check if we need to resume from awaiting max iterations decision
+        // Check if we need to resume from awaiting decision
         if local_phase == ImplementationPhase::AwaitingDecision {
-            // Re-display the max iterations modal
-            let summary =
-                build_implementation_max_iterations_summary(view, current_feedback.as_deref());
+            // Determine the reason for being in AwaitingDecision phase
+            let decision_reason = view
+                .implementation_state()
+                .and_then(|s| s.decision_reason());
+
+            // Build appropriate summary based on the reason
+            let summary = match decision_reason {
+                Some(AwaitingDecisionReason::NoChanges) => {
+                    // Use the iteration from view since we're resuming from event store
+                    let iteration = view
+                        .implementation_state()
+                        .map(|s| s.iteration().0)
+                        .unwrap_or(1);
+                    build_implementation_no_changes_summary(current_feedback.as_deref(), iteration)
+                }
+                Some(AwaitingDecisionReason::MaxIterationsReached) | None => {
+                    // Default to max iterations summary (backwards compatible for old sessions)
+                    build_implementation_max_iterations_summary(view, current_feedback.as_deref())
+                }
+            };
 
             let decision = await_max_iterations_decision(
                 IterativePhase::Implementation,
@@ -228,16 +249,8 @@ pub async fn run_implementation_workflow(
         })
         .await;
 
-        // Record agent conversation for implementing agent (for conversation ID capture)
-        if let Some(agent_cfg) = impl_config.implementing.as_ref() {
-            let key = implementing_conversation_key(&agent_cfg.agent);
-            dispatch_impl_cmd(DomainCommand::RecordAgentConversation {
-                agent_id: key.into(),
-                resume_strategy: ResumeStrategy::ConversationResume,
-                conversation_id: None,
-            })
-            .await;
-        }
+        // NOTE: Pre-round RecordAgentConversation{None} was removed to preserve
+        // conversation IDs across rounds and session resume
 
         let impl_result = run_implementation_phase(
             view,
@@ -245,6 +258,7 @@ pub async fn run_implementation_workflow(
             working_dir,
             local_iteration,
             current_feedback.as_deref(),
+            captured_conversation_id.clone(),
             session_sender.clone(),
             session_logger.clone(),
             actor_ref.clone(),
@@ -276,14 +290,19 @@ pub async fn run_implementation_workflow(
             // Continue to review - let the review agent assess the state
         }
 
-        // Update conversation ID if captured
-        if let Some(conv_id) = impl_result.conversation_id {
+        // Capture conversation ID for next round (using strong type)
+        if let Some(ref conv_id) = impl_result.conversation_id {
+            captured_conversation_id = Some(ConversationId::from(conv_id.clone()));
+        }
+
+        // Record agent conversation to event store (for session resume)
+        if let Some(ref conv_id) = impl_result.conversation_id {
             if let Some(agent_cfg) = impl_config.implementing.as_ref() {
                 let key = implementing_conversation_key(&agent_cfg.agent);
                 dispatch_impl_cmd(DomainCommand::RecordAgentConversation {
                     agent_id: key.into(),
                     resume_strategy: ResumeStrategy::ConversationResume,
-                    conversation_id: Some(conv_id.into()),
+                    conversation_id: Some(conv_id.clone().into()),
                 })
                 .await;
             }
@@ -353,12 +372,50 @@ pub async fn run_implementation_workflow(
                 if let Some(prev_fp) = last_fingerprint {
                     if prev_fp == current_fingerprint {
                         session_sender.send_output(
-                            "[implementation] No changes detected between iterations, stopping"
-                                .to_string(),
+                            "[implementation] No changes detected between iterations".to_string(),
                         );
-                        return Ok(ImplementationWorkflowResult::NoChanges {
-                            iterations_used: local_iteration,
-                        });
+
+                        // Dispatch ImplementationNoChanges command
+                        dispatch_impl_cmd(DomainCommand::ImplementationNoChanges {
+                            iteration: Iteration(local_iteration),
+                        })
+                        .await;
+
+                        // Transition to awaiting decision state
+                        local_phase = ImplementationPhase::AwaitingDecision;
+
+                        // Build summary and prompt user
+                        let summary = build_implementation_no_changes_summary(
+                            current_feedback.as_deref(),
+                            local_iteration,
+                        );
+
+                        let decision = await_max_iterations_decision(
+                            IterativePhase::Implementation,
+                            &session_logger,
+                            &session_sender,
+                            approval_rx,
+                            control_rx,
+                            summary,
+                        )
+                        .await?;
+
+                        // Apply the decision (reuse existing function)
+                        if let Some(result) = apply_implementation_decision(
+                            decision,
+                            &dispatch_impl_cmd,
+                            &session_sender,
+                            &mut local_iteration,
+                            &mut local_max_iterations,
+                            &mut local_phase,
+                            &mut current_feedback,
+                        )
+                        .await?
+                        {
+                            return Ok(result);
+                        }
+                        // If None returned, continue the loop
+                        continue;
                     }
                 }
                 last_fingerprint = Some(current_fingerprint);
@@ -456,6 +513,41 @@ fn build_implementation_max_iterations_summary(
     summary.push_str("- **[c] Continue**: Run another implementation+review cycle\n");
     summary
         .push_str("- **[d] Decline**: Provide feedback to guide the next implementation attempt\n");
+    summary.push_str("- **[a] Abort**: Stop the implementation workflow\n");
+
+    summary
+}
+
+/// Builds the summary text for implementation no-changes modal.
+/// Note: Unlike build_implementation_max_iterations_summary, this function takes iteration
+/// directly because local_iteration is already available at the call site.
+fn build_implementation_no_changes_summary(last_feedback: Option<&str>, iteration: u32) -> String {
+    let mut summary = format!(
+        "No changes were detected after implementation round {}.\n\n\
+         This usually means the implementation agent either:\n\
+         - Believes the implementation is complete\n\
+         - Couldn't understand the feedback\n\
+         - Encountered an issue it couldn't resolve\n\n",
+        iteration
+    );
+
+    if let Some(feedback) = last_feedback {
+        summary.push_str("## Last Review Feedback\n\n");
+        let preview = if feedback.chars().count() > 500 {
+            let truncated: String = feedback.chars().take(500).collect();
+            format!("{}...\n\n_(truncated)_", truncated)
+        } else {
+            feedback.to_string()
+        };
+        summary.push_str(&preview);
+        summary.push_str("\n\n");
+    }
+
+    summary.push_str("---\n\n");
+    summary.push_str("Choose an action:\n");
+    summary.push_str("- **[y] Yes**: Accept current implementation as-is\n");
+    summary.push_str("- **[c] Continue**: Try another implementation round\n");
+    summary.push_str("- **[d] Decline**: Provide different feedback to guide implementation\n");
     summary.push_str("- **[a] Abort**: Stop the implementation workflow\n");
 
     summary

@@ -47,6 +47,9 @@ pub struct ImplementationResult {
 /// * `working_dir` - The working directory for the implementation
 /// * `iteration` - The current iteration number (1-indexed)
 /// * `feedback` - Optional feedback from a previous review iteration
+/// * `previous_conversation_id` - Conversation ID from previous round (passed directly from
+///   orchestrator because the view is stale within a single workflow execution and cannot see
+///   IDs captured earlier)
 /// * `session_sender` - Channel to send session events
 /// * `session_logger` - Logger for the session
 /// * `actor_ref` - Optional actor reference for dispatching commands
@@ -60,6 +63,7 @@ pub async fn run_implementation_phase(
     working_dir: &Path,
     iteration: u32,
     feedback: Option<&str>,
+    previous_conversation_id: Option<ConversationId>,
     session_sender: SessionEventSender,
     session_logger: Arc<SessionLogger>,
     actor_ref: Option<ActorRef<WorkflowMessage>>,
@@ -106,11 +110,15 @@ pub async fn run_implementation_phase(
     let conversation_key = implementing_conversation_key(agent_name);
     let agent_id = AgentId::from(conversation_key.as_str());
 
-    // Get existing conversation ID if available (entry created by orchestrator)
-    let conversation_id = view
-        .agent_conversations()
-        .get(&agent_id)
-        .and_then(|conv| conv.conversation_id().map(|c| c.0.clone()));
+    // Use conversation ID passed from orchestrator (preferred) or fallback to view (first round)
+    // NOTE: The view is stale within a single workflow execution and cannot see conversation IDs
+    // captured in previous rounds. The orchestrator passes the ID directly to ensure context
+    // preservation across rounds. The view fallback handles session resume scenarios.
+    let conversation_id = previous_conversation_id.map(|c| c.0).or_else(|| {
+        view.agent_conversations()
+            .get(&agent_id)
+            .and_then(|conv| conv.conversation_id().map(|c| c.0.clone()))
+    });
 
     // Dispatch RecordInvocation command to CQRS actor
     dispatch_implementation_command(

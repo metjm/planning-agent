@@ -7,9 +7,10 @@ use crate::domain::cqrs::WorkflowAggregate;
 use crate::domain::failure::{FailureContext, MAX_FAILURE_HISTORY};
 use crate::domain::review::ReviewMode;
 use crate::domain::types::{
-    AgentConversationState, AgentId, FeatureName, FeedbackPath, FeedbackStatus,
-    ImplementationPhase, ImplementationPhaseState, InvocationRecord, Iteration, MaxIterations,
-    Objective, Phase, PlanPath, ReviewerResult, UiMode, WorkflowId, WorkingDir, WorktreeState,
+    AgentConversationState, AgentId, AwaitingDecisionReason, FeatureName, FeedbackPath,
+    FeedbackStatus, ImplementationPhase, ImplementationPhaseState, InvocationRecord, Iteration,
+    MaxIterations, Objective, Phase, PlanPath, ReviewerResult, UiMode, WorkflowId, WorkingDir,
+    WorktreeState,
 };
 use crate::domain::WorkflowEvent;
 use serde::{Deserialize, Serialize};
@@ -200,6 +201,7 @@ impl WorkflowView {
                 if let Some(ref mut state) = self.implementation_state {
                     state.set_phase(ImplementationPhase::Implementing);
                     state.set_iteration(*iteration);
+                    state.set_decision_reason(None); // Clear stale decision reason
                 }
             }
 
@@ -220,6 +222,14 @@ impl WorkflowView {
             WorkflowEvent::ImplementationMaxIterationsReached { .. } => {
                 if let Some(ref mut state) = self.implementation_state {
                     state.set_phase(ImplementationPhase::AwaitingDecision);
+                    state.set_decision_reason(Some(AwaitingDecisionReason::MaxIterationsReached));
+                }
+            }
+
+            WorkflowEvent::ImplementationNoChanges { .. } => {
+                if let Some(ref mut state) = self.implementation_state {
+                    state.set_phase(ImplementationPhase::AwaitingDecision);
+                    state.set_decision_reason(Some(AwaitingDecisionReason::NoChanges));
                 }
             }
 

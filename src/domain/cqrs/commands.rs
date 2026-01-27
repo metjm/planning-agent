@@ -104,6 +104,9 @@ pub enum WorkflowCommand {
     /// Awaiting max-iterations decision for implementation.
     ImplementationMaxIterationsReached,
 
+    /// No changes detected between implementation iterations (circuit breaker).
+    ImplementationNoChanges { iteration: Iteration },
+
     /// Implementation accepted.
     ImplementationAccepted,
 

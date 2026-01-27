@@ -138,6 +138,12 @@ pub enum WorkflowEvent {
     /// Implementation max iterations reached.
     ImplementationMaxIterationsReached { reached_at: TimestampUtc },
 
+    /// Implementation detected no changes between iterations (circuit breaker triggered).
+    ImplementationNoChanges {
+        iteration: Iteration,
+        detected_at: TimestampUtc,
+    },
+
     /// Implementation accepted.
     ImplementationAccepted { approved_at: TimestampUtc },
 
@@ -208,6 +214,7 @@ impl DomainEvent for WorkflowEvent {
             Self::ImplementationMaxIterationsReached { .. } => {
                 "ImplementationMaxIterationsReached".to_string()
             }
+            Self::ImplementationNoChanges { .. } => "ImplementationNoChanges".to_string(),
             Self::ImplementationAccepted { .. } => "ImplementationAccepted".to_string(),
             Self::ImplementationDeclined { .. } => "ImplementationDeclined".to_string(),
             Self::ImplementationCancelled { .. } => "ImplementationCancelled".to_string(),

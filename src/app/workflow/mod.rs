@@ -805,12 +805,6 @@ pub async fn run_workflow_with_config(
                             ));
                             return Ok(WorkflowResult::Stopped);
                         }
-                        ImplementationWorkflowResult::NoChanges { iterations_used } => {
-                            let msg =
-                                format!("No changes detected after {} iterations", iterations_used);
-                            sender.send_output(format!("[implementation] {}", msg));
-                            return Ok(WorkflowResult::Aborted { reason: msg });
-                        }
                     }
                 }
                 Err(e) => {

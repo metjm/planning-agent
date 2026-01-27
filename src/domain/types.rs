@@ -306,6 +306,17 @@ impl ImplementationPhase {
     }
 }
 
+/// Reason for entering AwaitingDecision phase.
+/// Used during session resume to show the appropriate context message to the user.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AwaitingDecisionReason {
+    /// Max iterations reached without approval
+    MaxIterationsReached,
+    /// No changes detected between iterations (circuit breaker)
+    NoChanges,
+}
+
 /// UI-friendly phase labels for display purposes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -404,6 +415,10 @@ pub struct ImplementationPhaseState {
     max_iterations: MaxIterations,
     last_verdict: Option<ImplementationVerdict>,
     last_feedback: Option<String>,
+    /// Reason for entering AwaitingDecision phase (used for session resume).
+    /// None when not in AwaitingDecision phase.
+    #[serde(default)]
+    decision_reason: Option<AwaitingDecisionReason>,
 }
 
 impl ImplementationPhaseState {
@@ -415,6 +430,7 @@ impl ImplementationPhaseState {
             max_iterations,
             last_verdict: None,
             last_feedback: None,
+            decision_reason: None,
         }
     }
 
@@ -457,6 +473,11 @@ impl ImplementationPhaseState {
         self.last_verdict == Some(ImplementationVerdict::Approved)
     }
 
+    /// Returns the reason for being in AwaitingDecision phase (if any).
+    pub fn decision_reason(&self) -> Option<AwaitingDecisionReason> {
+        self.decision_reason
+    }
+
     // ========================================================================
     // MUTATION METHODS (pub(crate) - only callable from domain module)
     // These are called by the aggregate's apply() method in response to events.
@@ -484,6 +505,12 @@ impl ImplementationPhaseState {
     /// ONLY call from aggregate event handlers.
     pub(crate) fn set_feedback(&mut self, feedback: Option<String>) {
         self.last_feedback = feedback;
+    }
+
+    /// Sets the decision reason (crate-private).
+    /// ONLY call from aggregate event handlers.
+    pub(crate) fn set_decision_reason(&mut self, reason: Option<AwaitingDecisionReason>) {
+        self.decision_reason = reason;
     }
 }
 
