@@ -256,6 +256,46 @@ tokio::select! {
 let response = approval_rx.recv().await;
 ```
 
+## Workflow Phase Boundaries (Critical)
+
+Phase handlers (`planning.rs`, `reviewing.rs`, `revising.rs`) do their core work and dispatch commands. The main workflow loop (`mod.rs`) handles all user-facing decisions.
+
+### Phase Handlers Dispatch and Return
+
+When a phase handler reaches a decision point requiring user input, it should dispatch a command to transition to a "waiting" phase and **return immediately**:
+
+```rust
+// CORRECT - Dispatch phase transition and return, let main loop handle decision
+if iteration >= max_iterations {
+    context.dispatch_command(DomainCommand::PlanningMaxIterationsReached).await;
+    return Ok(None);  // Main loop will handle AwaitingPlanningDecision
+}
+
+// WRONG - Handling user decision inline in phase code
+if iteration >= max_iterations {
+    context.dispatch_command(DomainCommand::PlanningMaxIterationsReached).await;
+    let decision = await_max_iterations_decision(...).await?;  // NO!
+    match decision { ... }  // This creates duplicate handling
+}
+```
+
+### Single Handler for User Decisions
+
+Each user-facing decision type has exactly ONE handler in the main workflow loop:
+
+| Decision Type | Phase | Handler Location |
+|--------------|-------|------------------|
+| Max iterations reached | `AwaitingPlanningDecision` | `mod.rs` only |
+| Plan approval | `Complete` | `mod.rs` only |
+| Implementation decision | `AwaitingDecision` | `mod.rs` only |
+
+**DO NOT** call phase-transition decision functions from phase handlers. In particular:
+- `await_max_iterations_decision` - **only in `mod.rs`** (enforced by build script)
+
+This function handles `AwaitingPlanningDecision` which has a handler in the main loop. Calling it from phase handlers creates duplicate modal displays.
+
+Other decision functions (`wait_for_review_decision`, `wait_for_all_reviewers_failed_decision`, `wait_for_workflow_failure_decision`) may be called from phase handlers as they handle within-phase decisions, not phase transitions.
+
 ## Naming Conventions
 
 ### Sessions vs Conversations
@@ -285,6 +325,7 @@ The build script (`build.rs`) enforces:
 9. **Tests in Test Folders** - Use `#[path = "tests/foo.rs"]` pattern
 10. **UTF-8 Safe String Operations** - No `.get(..n)` on strings in TUI code
 11. **TUI Zero Guards** - Division by width/height must have zero checks
+12. **Decision Functions in mod.rs Only** - `await_*_decision` functions only called from workflow `mod.rs`
 
 ### Test Location Pattern
 

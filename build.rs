@@ -85,6 +85,7 @@ fn main() {
     enforce_all_features_compile();
     enforce_no_unsafe_string_ops();
     enforce_tui_zero_guards();
+    enforce_decision_functions_in_mod_only();
 }
 
 /// Ensures all feature combinations compile.
@@ -1398,6 +1399,117 @@ fn enforce_tui_zero_guards() {
         eprintln!("========================================\n");
         panic!(
             "Build failed: {} unguarded division(s) in TUI code. Add zero checks.",
+            total_count
+        );
+    }
+}
+
+/// Ensures user decision functions are only called from the main workflow loop.
+///
+/// Functions like `await_max_iterations_decision` should only be called from
+/// `src/app/workflow/mod.rs`. If phase handlers (planning.rs, reviewing.rs, etc.)
+/// call these directly, it creates duplicate code paths for handling the same decision.
+///
+/// The correct pattern is:
+/// 1. Phase handler dispatches a command (e.g., PlanningMaxIterationsReached)
+/// 2. Phase handler returns
+/// 3. Main workflow loop observes the phase change and handles the decision
+fn enforce_decision_functions_in_mod_only() {
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR must be set");
+    let root = PathBuf::from(&manifest_dir);
+    let workflow_dir = root.join("src/app/workflow");
+
+    // Decision functions that should only be called from mod.rs.
+    // await_max_iterations_decision is the key one - it handles the AwaitingPlanningDecision
+    // phase which must have a single handler to avoid duplicate modal displays.
+    // Other decision functions (wait_for_review_decision, etc.) are currently allowed
+    // in phase handlers as they don't have corresponding phase handlers in mod.rs.
+    let decision_functions = [
+        "await_max_iterations_decision",
+        // Note: wait_for_review_decision, wait_for_all_reviewers_failed_decision,
+        // and wait_for_workflow_failure_decision are allowed in phase handlers
+        // because they handle decisions within the phase, not phase transitions.
+    ];
+
+    // Collect workflow .rs files (excluding mod.rs)
+    let workflow_files: Vec<PathBuf> = collect_files_to_check(&root)
+        .into_iter()
+        .filter(|p| {
+            p.extension().and_then(|e| e.to_str()) == Some("rs")
+                && p.starts_with(&workflow_dir)
+                && p.file_name().and_then(|n| n.to_str()) != Some("mod.rs")
+        })
+        .collect();
+
+    let mut violations: Vec<(PathBuf, Vec<(usize, String)>)> = Vec::new();
+
+    for file in &workflow_files {
+        if let Ok(content) = std::fs::read_to_string(file) {
+            let mut file_violations = Vec::new();
+
+            for (line_num, line) in content.lines().enumerate() {
+                let trimmed = line.trim();
+
+                // Skip comments
+                if trimmed.starts_with("//") {
+                    continue;
+                }
+
+                // Check for decision function calls
+                for func in &decision_functions {
+                    if trimmed.contains(func) {
+                        file_violations.push((
+                            line_num + 1,
+                            format!("`{}` should only be called from mod.rs", func),
+                        ));
+                        break;
+                    }
+                }
+            }
+
+            if !file_violations.is_empty() {
+                let rel_path = file.strip_prefix(&root).unwrap_or(file).to_path_buf();
+                violations.push((rel_path, file_violations));
+            }
+        }
+    }
+
+    if !violations.is_empty() {
+        let total_count: usize = violations.iter().map(|(_, v)| v.len()).sum();
+
+        eprintln!("\n========================================");
+        eprintln!("DECISION FUNCTIONS CALLED OUTSIDE mod.rs");
+        eprintln!("========================================");
+        eprintln!();
+        for (path, issues) in &violations {
+            for (line_num, msg) in issues {
+                eprintln!("  {}:{}", path.display(), line_num);
+                eprintln!("    {}", msg);
+                eprintln!();
+            }
+        }
+        eprintln!("========================================");
+        eprintln!();
+        eprintln!("User-facing decision functions must only be called from");
+        eprintln!("src/app/workflow/mod.rs to prevent duplicate handling.");
+        eprintln!();
+        eprintln!("The correct pattern is:");
+        eprintln!("  1. Phase handler dispatches a state-change command");
+        eprintln!("  2. Phase handler returns Ok(None)");
+        eprintln!("  3. Main loop (mod.rs) handles the new phase");
+        eprintln!();
+        eprintln!("Example (in reviewing.rs):");
+        eprintln!("  // WRONG - handling decision inline");
+        eprintln!("  context.dispatch_command(PlanningMaxIterationsReached).await;");
+        eprintln!("  let decision = await_max_iterations_decision(...).await;");
+        eprintln!();
+        eprintln!("  // CORRECT - dispatch and return");
+        eprintln!("  context.dispatch_command(PlanningMaxIterationsReached).await;");
+        eprintln!("  return Ok(None); // mod.rs handles AwaitingPlanningDecision");
+        eprintln!();
+        eprintln!("========================================\n");
+        panic!(
+            "Build failed: {} decision function call(s) outside mod.rs. Move to main loop.",
             total_count
         );
     }
