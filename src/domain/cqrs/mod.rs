@@ -345,11 +345,13 @@ impl Aggregate for WorkflowAggregate {
                 }])
             }
 
-            // RevisingStarted
+            // RevisingStarted - valid from Revising phase or AwaitingPlanningDecision (when user continues at max iterations)
             (
                 WorkflowState::Active(data),
                 WorkflowCommand::RevisingStarted { feedback_summary },
-            ) if *data.planning_phase() == Phase::Revising => {
+            ) if *data.planning_phase() == Phase::Revising
+                || *data.planning_phase() == Phase::AwaitingPlanningDecision =>
+            {
                 Ok(vec![WorkflowEvent::RevisingStarted {
                     feedback_summary,
                     started_at: now,
