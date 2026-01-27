@@ -551,10 +551,15 @@ pub async fn run_sequential_reviewing_phase(
             let reviewer_agent_ids: Vec<AgentId> =
                 reviewer_ids.iter().map(|s| AgentId::from(*s)).collect();
 
+            // Compute review counts from invocations (counts are keyed by raw display_id)
+            let review_counts =
+                crate::domain::review::count_reviewing_invocations(view.invocations());
+
             context
                 .dispatch_command(DomainCommand::ReviewCycleStarted {
                     mode: ReviewMode::Sequential(SequentialReviewState::new_with_cycle(
                         &reviewer_ids,
+                        &review_counts,
                     )),
                     reviewers: reviewer_agent_ids,
                 })
@@ -571,9 +576,15 @@ pub async fn run_sequential_reviewing_phase(
         let reviewer_agent_ids: Vec<AgentId> =
             reviewer_ids.iter().map(|s| AgentId::from(*s)).collect();
 
+        // Compute review counts from invocations (counts are keyed by raw display_id)
+        let review_counts = crate::domain::review::count_reviewing_invocations(view.invocations());
+
         context
             .dispatch_command(DomainCommand::ReviewCycleStarted {
-                mode: ReviewMode::Sequential(SequentialReviewState::new_with_cycle(&reviewer_ids)),
+                mode: ReviewMode::Sequential(SequentialReviewState::new_with_cycle(
+                    &reviewer_ids,
+                    &review_counts,
+                )),
                 reviewers: reviewer_agent_ids,
             })
             .await;

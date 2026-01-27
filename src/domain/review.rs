@@ -4,7 +4,7 @@
 //! happen through the aggregate's event handlers. Mutation methods are `pub(crate)`
 //! to prevent external code from bypassing the CQRS pattern.
 
-use crate::domain::types::AgentId;
+use crate::domain::types::{AgentId, InvocationRecord, PhaseLabel};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -59,10 +59,10 @@ impl SequentialReviewState {
 
     /// Creates a new sequential review state with the cycle order initialized.
     /// This is the public factory for creating state to pass to ReviewCycleStarted.
-    /// The cycle order is computed based on the provided reviewer IDs.
-    pub fn new_with_cycle(reviewer_ids: &[&str]) -> Self {
+    /// The cycle order is computed based on the provided reviewer IDs and review counts.
+    pub fn new_with_cycle(reviewer_ids: &[&str], review_counts: &HashMap<AgentId, usize>) -> Self {
         let mut state = Self::new();
-        state.start_new_cycle(reviewer_ids);
+        state.start_new_cycle(reviewer_ids, review_counts);
         state
     }
 
@@ -159,25 +159,45 @@ impl SequentialReviewState {
     }
 
     /// Starts a new review cycle by computing and storing the reviewer order.
-    /// The last rejecting reviewer (if any) is prioritized first.
+    /// Ordering priority:
+    /// 1. Reviewers with fewer past reviews run first (round-robin)
+    /// 2. Ties broken by last-rejector priority (rejector runs first among equals)
+    /// 3. Remaining ties use stable config order
+    ///
     /// ONLY call from aggregate event handlers.
-    pub(crate) fn start_new_cycle(&mut self, reviewer_ids: &[&str]) -> Option<AgentId> {
+    pub(crate) fn start_new_cycle(
+        &mut self,
+        reviewer_ids: &[&str],
+        review_counts: &HashMap<AgentId, usize>,
+    ) -> Option<AgentId> {
         let mut sorted: Vec<AgentId> = reviewer_ids.iter().map(|s| AgentId::from(*s)).collect();
         let last_rejector = self.last_rejecting_reviewer.take();
         let tiebreaker_used = last_rejector.clone();
 
-        // Sort by tiebreaker: prioritize the last rejecting reviewer
-        if let Some(ref rejector) = last_rejector {
-            sorted.sort_by(|a, b| {
-                if a == rejector {
-                    std::cmp::Ordering::Less
-                } else if b == rejector {
-                    std::cmp::Ordering::Greater
-                } else {
+        // Sort by: (review_count ASC, is_last_rejector DESC, config_order)
+        // Lower review count = runs first
+        // Last rejector wins ties at same count
+        sorted.sort_by(|a, b| {
+            let count_a = review_counts.get(a).copied().unwrap_or(0);
+            let count_b = review_counts.get(b).copied().unwrap_or(0);
+
+            match count_a.cmp(&count_b) {
+                std::cmp::Ordering::Equal => {
+                    // Tie on count: last rejector wins
+                    if let Some(ref rejector) = last_rejector {
+                        if a == rejector {
+                            return std::cmp::Ordering::Less;
+                        }
+                        if b == rejector {
+                            return std::cmp::Ordering::Greater;
+                        }
+                    }
+                    // Neither is last rejector: maintain stable order
                     std::cmp::Ordering::Equal
                 }
-            });
-        }
+                other => other,
+            }
+        });
 
         self.current_cycle_order = sorted;
         self.current_reviewer_index = 0;
@@ -199,3 +219,27 @@ pub enum ReviewMode {
     Parallel,
     Sequential(SequentialReviewState),
 }
+
+/// Counts reviewing invocations per agent from the invocation history.
+/// Returns a HashMap from AgentId (raw display_id, no namespace) to count.
+///
+/// Note: InvocationRecord stores namespaced agent IDs (e.g., "reviewing/claude-completeness")
+/// but start_new_cycle() works with raw display IDs (e.g., "claude-completeness").
+/// This function strips the "reviewing/" prefix to produce counts keyed by raw display IDs.
+pub fn count_reviewing_invocations(invocations: &[InvocationRecord]) -> HashMap<AgentId, usize> {
+    let mut counts: HashMap<AgentId, usize> = HashMap::new();
+    for record in invocations {
+        if record.phase() == PhaseLabel::Reviewing {
+            // Strip namespace prefix to get raw display_id
+            // InvocationRecord stores "reviewing/{display_id}", we need just "{display_id}"
+            let agent_str = record.agent().as_str();
+            let display_id = agent_str.strip_prefix("reviewing/").unwrap_or(agent_str);
+            *counts.entry(AgentId::from(display_id)).or_insert(0) += 1;
+        }
+    }
+    counts
+}
+
+#[cfg(test)]
+#[path = "tests/review_tests.rs"]
+mod tests;
