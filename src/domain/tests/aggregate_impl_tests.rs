@@ -666,3 +666,142 @@ async fn multiple_revision_iterations_increment_correctly() {
     assert_eq!(get_data_mut(&mut agg).iteration().0, 4);
     assert_eq!(*get_data_mut(&mut agg).planning_phase(), Phase::Reviewing);
 }
+
+// ============================================================================
+// ImplementationPhase::AwaitingDecision Tests
+// ============================================================================
+
+/// Create an aggregate in implementation AwaitingDecision phase (after max iterations reached).
+fn aggregate_in_impl_awaiting_decision() -> WorkflowAggregate {
+    let mut agg = initialized_aggregate();
+
+    // Start implementation
+    agg.apply(WorkflowEvent::ImplementationStarted {
+        max_iterations: MaxIterations(3),
+        started_at: crate::domain::types::TimestampUtc::now(),
+    });
+
+    // Reach max iterations
+    agg.apply(WorkflowEvent::ImplementationMaxIterationsReached {
+        reached_at: crate::domain::types::TimestampUtc::now(),
+    });
+
+    let impl_state_opt = get_data_mut(&mut agg).implementation_state();
+    let impl_state = impl_state_opt.as_ref().unwrap();
+    assert_eq!(impl_state.phase(), ImplementationPhase::AwaitingDecision);
+    agg
+}
+
+#[tokio::test]
+async fn implementation_accepted_from_awaiting_decision_succeeds() {
+    let mut agg = aggregate_in_impl_awaiting_decision();
+    let services = test_services();
+
+    let events = agg
+        .handle(WorkflowCommand::ImplementationAccepted, &services)
+        .await
+        .unwrap();
+
+    assert_eq!(events.len(), 1);
+    assert!(matches!(
+        events[0],
+        WorkflowEvent::ImplementationAccepted { .. }
+    ));
+
+    // Apply and verify transition to Complete phase
+    agg.apply(events.into_iter().next().unwrap());
+    let impl_state_opt = get_data_mut(&mut agg).implementation_state();
+    let impl_state = impl_state_opt.as_ref().unwrap();
+    assert_eq!(impl_state.phase(), ImplementationPhase::Complete);
+}
+
+#[tokio::test]
+async fn implementation_declined_from_awaiting_decision_succeeds() {
+    let mut agg = aggregate_in_impl_awaiting_decision();
+    let services = test_services();
+
+    let events = agg
+        .handle(
+            WorkflowCommand::ImplementationDeclined {
+                reason: "User declined at max iterations".to_string(),
+            },
+            &services,
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(events.len(), 1);
+    match &events[0] {
+        WorkflowEvent::ImplementationDeclined { reason, .. } => {
+            assert_eq!(reason, "User declined at max iterations");
+        }
+        _ => panic!("Expected ImplementationDeclined event"),
+    }
+
+    // Apply and verify transition to Complete phase
+    agg.apply(events.into_iter().next().unwrap());
+    let impl_state_opt = get_data_mut(&mut agg).implementation_state();
+    let impl_state = impl_state_opt.as_ref().unwrap();
+    assert_eq!(impl_state.phase(), ImplementationPhase::Complete);
+}
+
+#[tokio::test]
+async fn implementation_cancelled_from_awaiting_decision_succeeds() {
+    let mut agg = aggregate_in_impl_awaiting_decision();
+    let services = test_services();
+
+    let events = agg
+        .handle(
+            WorkflowCommand::ImplementationCancelled {
+                reason: "User cancelled at max iterations".to_string(),
+            },
+            &services,
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(events.len(), 1);
+    match &events[0] {
+        WorkflowEvent::ImplementationCancelled { reason, .. } => {
+            assert_eq!(reason, "User cancelled at max iterations");
+        }
+        _ => panic!("Expected ImplementationCancelled event"),
+    }
+
+    // Apply and verify transition to Complete phase
+    agg.apply(events.into_iter().next().unwrap());
+    let impl_state_opt = get_data_mut(&mut agg).implementation_state();
+    let impl_state = impl_state_opt.as_ref().unwrap();
+    assert_eq!(impl_state.phase(), ImplementationPhase::Complete);
+}
+
+#[tokio::test]
+async fn implementation_round_started_from_awaiting_decision_for_continue() {
+    let mut agg = aggregate_in_impl_awaiting_decision();
+    let services = test_services();
+
+    // User chose to continue at max iterations - should dispatch ImplementationRoundStarted
+    let events = agg
+        .handle(
+            WorkflowCommand::ImplementationRoundStarted {
+                iteration: Iteration(4),
+            },
+            &services,
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(events.len(), 1);
+    match &events[0] {
+        WorkflowEvent::ImplementationRoundStarted { iteration, .. } => {
+            assert_eq!(iteration.0, 4);
+        }
+        _ => panic!("Expected ImplementationRoundStarted event"),
+    }
+
+    // Apply and verify transition back to Implementing phase
+    agg.apply(events.into_iter().next().unwrap());
+    let impl_state_opt = get_data_mut(&mut agg).implementation_state();
+    let impl_state = impl_state_opt.as_ref().unwrap();
+    assert_eq!(impl_state.phase(), ImplementationPhase::Implementing);
+}

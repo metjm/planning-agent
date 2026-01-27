@@ -566,3 +566,176 @@ async fn planning_max_iterations_reached_sets_phase_to_awaiting_decision() {
     let data = get_data_mut(&mut agg);
     assert_eq!(*data.planning_phase(), Phase::AwaitingPlanningDecision);
 }
+
+// ============================================================================
+// AwaitingPlanningDecision Phase Tests
+// ============================================================================
+
+/// Create an aggregate in AwaitingPlanningDecision phase (after max iterations reached).
+fn aggregate_in_awaiting_planning_decision() -> WorkflowAggregate {
+    let mut agg = initialized_aggregate();
+    agg.apply(WorkflowEvent::PlanningMaxIterationsReached {
+        reached_at: crate::domain::types::TimestampUtc::now(),
+    });
+    assert_eq!(
+        *get_data_mut(&mut agg).planning_phase(),
+        Phase::AwaitingPlanningDecision
+    );
+    agg
+}
+
+#[tokio::test]
+async fn revising_started_from_awaiting_planning_decision_succeeds() {
+    let mut agg = aggregate_in_awaiting_planning_decision();
+    let services = test_services();
+
+    // User chose to continue at max iterations - should dispatch RevisingStarted
+    let events = agg
+        .handle(
+            WorkflowCommand::RevisingStarted {
+                feedback_summary: "Continuing after max iterations".to_string(),
+            },
+            &services,
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(events.len(), 1);
+    match &events[0] {
+        WorkflowEvent::RevisingStarted {
+            feedback_summary, ..
+        } => {
+            assert_eq!(feedback_summary, "Continuing after max iterations");
+        }
+        _ => panic!("Expected RevisingStarted event"),
+    }
+
+    // Apply and verify transition to Revising phase
+    agg.apply(events.into_iter().next().unwrap());
+    let data = get_data_mut(&mut agg);
+    assert_eq!(*data.planning_phase(), Phase::Revising);
+}
+
+#[tokio::test]
+async fn user_approved_from_awaiting_planning_decision_succeeds() {
+    let mut agg = aggregate_in_awaiting_planning_decision();
+    let services = test_services();
+
+    let events = agg
+        .handle(WorkflowCommand::UserApproved, &services)
+        .await
+        .unwrap();
+
+    assert_eq!(events.len(), 1);
+    assert!(matches!(events[0], WorkflowEvent::UserApproved { .. }));
+
+    // Apply and verify transition to Complete phase
+    agg.apply(events.into_iter().next().unwrap());
+    let data = get_data_mut(&mut agg);
+    assert_eq!(*data.planning_phase(), Phase::Complete);
+}
+
+#[tokio::test]
+async fn user_override_approval_from_awaiting_planning_decision_succeeds() {
+    let mut agg = aggregate_in_awaiting_planning_decision();
+    let services = test_services();
+
+    let events = agg
+        .handle(
+            WorkflowCommand::UserOverrideApproval {
+                override_reason: "User proceeded without AI approval at max iterations".to_string(),
+            },
+            &services,
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(events.len(), 1);
+    match &events[0] {
+        WorkflowEvent::UserOverrideApproval {
+            override_reason, ..
+        } => {
+            assert_eq!(
+                override_reason,
+                "User proceeded without AI approval at max iterations"
+            );
+        }
+        _ => panic!("Expected UserOverrideApproval event"),
+    }
+
+    // Apply and verify transition to Complete phase with override flag
+    agg.apply(events.into_iter().next().unwrap());
+    let data = get_data_mut(&mut agg);
+    assert_eq!(*data.planning_phase(), Phase::Complete);
+    assert!(data.approval_overridden());
+}
+
+#[tokio::test]
+async fn user_aborted_from_awaiting_planning_decision_succeeds() {
+    let agg = aggregate_in_awaiting_planning_decision();
+    let services = test_services();
+
+    let events = agg
+        .handle(
+            WorkflowCommand::UserAborted {
+                reason: "User aborted workflow at max iterations".to_string(),
+            },
+            &services,
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(events.len(), 1);
+    match &events[0] {
+        WorkflowEvent::UserAborted { reason, .. } => {
+            assert_eq!(reason, "User aborted workflow at max iterations");
+        }
+        _ => panic!("Expected UserAborted event"),
+    }
+}
+
+#[tokio::test]
+async fn user_declined_from_awaiting_planning_decision_succeeds() {
+    let agg = aggregate_in_awaiting_planning_decision();
+    let services = test_services();
+
+    let events = agg
+        .handle(
+            WorkflowCommand::UserDeclined {
+                feedback: "Need different approach".to_string(),
+            },
+            &services,
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(events.len(), 1);
+    match &events[0] {
+        WorkflowEvent::UserDeclined { feedback, .. } => {
+            assert_eq!(feedback, "Need different approach");
+        }
+        _ => panic!("Expected UserDeclined event"),
+    }
+}
+
+#[tokio::test]
+async fn user_requested_implementation_from_awaiting_planning_decision_succeeds() {
+    let agg = aggregate_in_awaiting_planning_decision();
+    let services = test_services();
+
+    let events = agg
+        .handle(WorkflowCommand::UserRequestedImplementation, &services)
+        .await
+        .unwrap();
+
+    // Should emit both UserRequestedImplementation and ImplementationStarted
+    assert_eq!(events.len(), 2);
+    assert!(matches!(
+        events[0],
+        WorkflowEvent::UserRequestedImplementation { .. }
+    ));
+    assert!(matches!(
+        events[1],
+        WorkflowEvent::ImplementationStarted { .. }
+    ));
+}
