@@ -50,6 +50,7 @@ fn test_port_file_content_serialization() {
     let content = PortFileContent {
         port: 12345,
         subscriber_port: 12346,
+        file_service_port: 12347,
         token: "secret-token".to_string(),
     };
 
@@ -58,6 +59,7 @@ fn test_port_file_content_serialization() {
 
     assert_eq!(parsed.port, 12345);
     assert_eq!(parsed.subscriber_port, 12346);
+    assert_eq!(parsed.file_service_port, 12347);
     assert_eq!(parsed.token, "secret-token");
 }
 

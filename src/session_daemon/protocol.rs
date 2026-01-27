@@ -114,6 +114,9 @@ pub struct PortFileContent {
     pub port: u16,
     /// Subscriber callback port
     pub subscriber_port: u16,
+    /// File service port (host connects here for file access)
+    #[serde(default)]
+    pub file_service_port: u16,
     /// Authentication token
     pub token: String,
 }

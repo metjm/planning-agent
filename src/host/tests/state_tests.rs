@@ -24,6 +24,7 @@ fn test_add_container() {
         PathBuf::from("/test/work"),
         "abc123".to_string(),
         1234567890,
+        0,
     );
 
     assert_eq!(state.containers.len(), 1);
@@ -45,6 +46,7 @@ fn test_sync_sessions() {
         PathBuf::from("/test/work"),
         "abc123".to_string(),
         1234567890,
+        0,
     );
 
     let sessions = vec![
@@ -66,6 +68,7 @@ fn test_sessions_sorted_by_status() {
         PathBuf::from("/test/work"),
         "abc123".to_string(),
         1234567890,
+        0,
     );
 
     let sessions = vec![
@@ -96,6 +99,7 @@ fn test_remove_container() {
         PathBuf::from("/test/work"),
         "abc123".to_string(),
         1234567890,
+        0,
     );
     state.sync_sessions("c1", vec![make_session("s1", "Running")]);
 
@@ -114,6 +118,7 @@ fn test_update_session() {
         PathBuf::from("/test/work"),
         "abc123".to_string(),
         1234567890,
+        0,
     );
     state.sync_sessions("c1", vec![make_session("s1", "Running")]);
 
@@ -133,6 +138,7 @@ fn test_remove_session() {
         PathBuf::from("/test/work"),
         "abc123".to_string(),
         1234567890,
+        0,
     );
     state.sync_sessions(
         "c1",

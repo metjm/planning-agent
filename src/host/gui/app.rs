@@ -12,6 +12,10 @@ use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::{mpsc, Mutex};
 
+use super::session_detail::SessionDetailData;
+use super::session_selection::{
+    DisplayContainerRowLite, PendingFileContent, PendingFileList, SessionSelectionManager,
+};
 use super::session_table::DisplaySessionRow;
 
 /// Maximum number of log entries to keep.
@@ -44,6 +48,14 @@ pub struct HostApp {
     last_usage_fetch: Option<Instant>,
     /// Last error message per account to dedupe logging
     account_error_cache: HashMap<AccountId, String>,
+    /// Currently selected session for detail view
+    selected_session_id: Option<String>,
+    /// Detail data for selected session (populated via RPC)
+    session_detail: Option<SessionDetailData>,
+    /// Pending file list fetch result.
+    pending_file_list: PendingFileList,
+    /// Pending file content fetch result.
+    pending_file_content: PendingFileContent,
 }
 
 #[derive(Default)]
@@ -72,6 +84,7 @@ struct DisplayContainerRow {
     ping_ago: String,
     ping_healthy: bool,
     session_count: usize,
+    file_service_port: u16,
 }
 
 #[derive(Clone)]
@@ -118,6 +131,10 @@ impl HostApp {
             log_entries: VecDeque::new(),
             last_usage_fetch: None,
             account_error_cache: HashMap::new(),
+            selected_session_id: None,
+            session_detail: None,
+            pending_file_list: Arc::new(Mutex::new(None)),
+            pending_file_content: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -138,6 +155,10 @@ impl HostApp {
             log_entries: VecDeque::new(),
             last_usage_fetch: None,
             account_error_cache: HashMap::new(),
+            selected_session_id: None,
+            session_detail: None,
+            pending_file_list: Arc::new(Mutex::new(None)),
+            pending_file_content: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -180,6 +201,7 @@ impl HostApp {
                         ping_ago: format_ping_duration(ping_elapsed),
                         ping_healthy,
                         session_count: c.sessions.len(),
+                        file_service_port: c.file_service_port,
                     }
                 })
                 .collect();
@@ -533,6 +555,12 @@ impl eframe::App for HostApp {
         // Check if we need to fetch usage (on startup or periodically)
         self.maybe_fetch_usage();
 
+        // Check for pending async results (file list / content)
+        self.check_pending_results();
+
+        // Handle container disconnect while detail panel is open
+        self.handle_container_disconnect_for_detail();
+
         // Sync display data periodically (every 100ms) or when state changed
         if self.last_sync.elapsed().as_millis() > 100 {
             self.sync_display_data();
@@ -549,8 +577,17 @@ impl eframe::App for HostApp {
             }
         }
 
+        // Sync detail panel fields from latest display_data
+        self.sync_detail_from_display_data();
+
         // Request repaint every second for timestamp updates
         ctx.request_repaint_after(std::time::Duration::from_secs(1));
+
+        // Handle Escape key to close detail panel
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) && self.selected_session_id.is_some() {
+            self.selected_session_id = None;
+            self.session_detail = None;
+        }
 
         // Header panel with stats
         egui::TopBottomPanel::top("header").show(ctx, |ui| {
@@ -618,9 +655,27 @@ impl eframe::App for HostApp {
                 self.render_usage_panel(ui);
             });
 
-        // Central session table
+        // Session detail panel (right side, only shown when session selected)
+        if self.selected_session_id.is_some() {
+            egui::SidePanel::right("session_detail")
+                .resizable(true)
+                .default_width(400.0)
+                .min_width(300.0)
+                .max_width(600.0)
+                .show(ctx, |ui| {
+                    self.handle_session_detail_panel(ui);
+                });
+        }
+
+        // Central session table (handles clicks)
         egui::CentralPanel::default().show(ctx, |ui| {
-            super::session_table::render_session_table(ui, &self.display_data.sessions);
+            if let Some(clicked_id) = super::session_table::render_session_table(
+                ui,
+                &self.display_data.sessions,
+                &self.selected_session_id,
+            ) {
+                self.select_session(&clicked_id);
+            }
         });
     }
 }
@@ -841,6 +896,72 @@ impl HostApp {
                     });
                 }
             });
+    }
+
+    /// Get containers as lite structs for session selection helper.
+    fn get_containers_lite(&self) -> Vec<DisplayContainerRowLite> {
+        self.display_data
+            .containers
+            .iter()
+            .map(|c| DisplayContainerRowLite {
+                container_id: c.container_id.clone(),
+                container_name: c.container_name.clone(),
+                file_service_port: c.file_service_port,
+            })
+            .collect()
+    }
+
+    /// Check for pending async results and update session_detail.
+    fn check_pending_results(&mut self) {
+        SessionSelectionManager::check_pending_results(
+            &self.pending_file_list,
+            &self.pending_file_content,
+            &mut self.session_detail,
+        );
+    }
+
+    /// Select a session and initiate RPC fetch for file list.
+    fn select_session(&mut self, session_id: &str) {
+        let containers = self.get_containers_lite();
+        let (new_selected, new_detail) = SessionSelectionManager::select_session(
+            session_id,
+            &self.selected_session_id,
+            &self.display_data.sessions,
+            &containers,
+            self.pending_file_list.clone(),
+        );
+        self.selected_session_id = new_selected;
+        self.session_detail = new_detail;
+    }
+
+    /// Handle container disconnect while detail panel is open.
+    fn handle_container_disconnect_for_detail(&mut self) {
+        let containers = self.get_containers_lite();
+        SessionSelectionManager::handle_container_disconnect_for_detail(
+            &mut self.session_detail,
+            &containers,
+        );
+    }
+
+    /// Sync detail panel data from display_data (keeps updated_ago fresh).
+    fn sync_detail_from_display_data(&mut self) {
+        SessionSelectionManager::sync_detail_from_display_data(
+            &mut self.session_detail,
+            &self.display_data.sessions,
+        );
+    }
+
+    /// Wrapper method that delegates to session_detail::render_session_detail_panel
+    /// and handles the returned state (close, file clicks).
+    fn handle_session_detail_panel(&mut self, ui: &mut egui::Ui) {
+        let containers = self.get_containers_lite();
+        SessionSelectionManager::render_and_handle_detail_panel(
+            ui,
+            &mut self.session_detail,
+            &mut self.selected_session_id,
+            self.pending_file_content.clone(),
+            &containers,
+        );
     }
 }
 

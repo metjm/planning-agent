@@ -66,8 +66,12 @@ impl HostService for HostServer {
         protocol_version: u32,
     ) -> Result<String, HostError> {
         eprintln!(
-            "[host-rpc] Hello received from {} (protocol v{}, git={}, built={})",
-            info.container_id, protocol_version, info.git_sha, info.build_timestamp
+            "[host-rpc] Hello received from {} (protocol v{}, git={}, built={}, file_port={})",
+            info.container_id,
+            protocol_version,
+            info.git_sha,
+            info.build_timestamp,
+            info.file_service_port
         );
 
         // Check protocol version
@@ -87,6 +91,7 @@ impl HostService for HostServer {
                 info.working_dir.clone(),
                 info.git_sha.clone(),
                 info.build_timestamp,
+                info.file_service_port,
             );
         }
 

@@ -15,6 +15,7 @@
 //! - **Subscription (`rpc_subscription.rs`)**: tarpc-based push notification subscriber.
 //! - **Protocol (`protocol.rs`)**: Message types and session records.
 
+pub mod file_service_impl;
 pub mod protocol;
 pub mod rpc_client;
 pub mod rpc_server;

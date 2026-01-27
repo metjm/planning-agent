@@ -90,6 +90,7 @@ fn main() {
     enforce_no_send_unwrap();
     enforce_no_expect_in_workflow();
     enforce_phase_interrupt_consistency();
+    check_path_traversal_patterns();
 }
 
 /// Ensures all feature combinations compile.
@@ -1869,5 +1870,32 @@ fn enforce_phase_interrupt_consistency() {
         }
 
         panic!("{}", error_msg);
+    }
+}
+
+/// Check for path traversal security patterns in file service.
+fn check_path_traversal_patterns() {
+    let file_service_path = Path::new("src/session_daemon/file_service_impl.rs");
+    if !file_service_path.exists() {
+        return; // Skip if file doesn't exist yet
+    }
+
+    let content =
+        std::fs::read_to_string(file_service_path).expect("Failed to read file_service_impl.rs");
+
+    // Pattern 1: Ensure canonical path verification exists
+    if !content.contains("canonicalize()") {
+        panic!(
+            "SECURITY: file_service_impl.rs must use canonicalize() for path traversal prevention.\n\
+             The canonical path check is the authoritative security gate for file access."
+        );
+    }
+
+    // Pattern 2: Ensure starts_with() check after canonicalize
+    if !content.contains("starts_with(") {
+        panic!(
+            "SECURITY: file_service_impl.rs must verify canonical paths with starts_with().\n\
+             This ensures files are within the allowed session directory."
+        );
     }
 }

@@ -29,6 +29,9 @@ pub struct ConnectedContainer {
     pub git_sha: String,
     /// Unix timestamp when the daemon was built.
     pub build_timestamp: u64,
+    /// Port for file service RPC (host connects here)
+    #[cfg_attr(not(feature = "host-gui"), allow(dead_code))]
+    pub file_service_port: u16,
 }
 
 impl ConnectedContainer {
@@ -37,6 +40,7 @@ impl ConnectedContainer {
         working_dir: PathBuf,
         git_sha: String,
         build_timestamp: u64,
+        file_service_port: u16,
     ) -> Self {
         let now = Instant::now();
         Self {
@@ -47,6 +51,7 @@ impl ConnectedContainer {
             sessions: HashMap::new(),
             git_sha,
             build_timestamp,
+            file_service_port,
         }
     }
 }
@@ -158,10 +163,17 @@ impl HostState {
         working_dir: PathBuf,
         git_sha: String,
         build_timestamp: u64,
+        file_service_port: u16,
     ) {
         self.containers.insert(
             container_id,
-            ConnectedContainer::new(container_name, working_dir, git_sha, build_timestamp),
+            ConnectedContainer::new(
+                container_name,
+                working_dir,
+                git_sha,
+                build_timestamp,
+                file_service_port,
+            ),
         );
         self.invalidate_cache();
     }

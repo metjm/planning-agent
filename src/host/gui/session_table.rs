@@ -1,24 +1,14 @@
-//! Session table rendering for the host GUI.
+//! Session table rendering for the host GUI with click detection and container grouping.
 
 use crate::session_daemon::LivenessState;
 use egui_extras::{Column, TableBuilder};
+use std::collections::BTreeMap;
 
 /// Check if a session requires user interaction based on its phase and liveness.
-///
-/// A session needs interaction when:
-/// 1. It is in one of these planning phases:
-///    - "AwaitingPlanningDecision" - max iterations reached in planning/review cycle
-///    - "Complete" - plan approved, awaiting user decision (approve/implement/decline)
-/// 2. AND it is NOT stopped (liveness != Stopped)
-///
-/// Stopped sessions cannot receive user input until restarted, so they are excluded
-/// from the interaction count even if in an awaiting phase.
 pub fn session_needs_interaction(phase: &str, liveness: LivenessDisplay) -> bool {
-    // Stopped sessions cannot receive input
     if matches!(liveness, LivenessDisplay::Stopped) {
         return false;
     }
-
     let phase_lower = phase.to_lowercase();
     matches!(
         phase_lower.as_str(),
@@ -40,10 +30,11 @@ pub struct DisplaySessionRow {
     pub updated_ago: String,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default, Debug)]
 pub enum LivenessDisplay {
     Running,
     Unresponsive,
+    #[default]
     Stopped,
 }
 
@@ -57,16 +48,37 @@ impl From<LivenessState> for LivenessDisplay {
     }
 }
 
-/// Render the session table with separate sections for live and disconnected sessions.
-pub fn render_session_table(ui: &mut eframe::egui::Ui, sessions: &[DisplaySessionRow]) {
+/// Group sessions by container name.
+fn group_by_container<'a>(
+    sessions: &[&'a DisplaySessionRow],
+) -> Vec<(&'a str, Vec<&'a DisplaySessionRow>)> {
+    let mut groups: BTreeMap<&str, Vec<&DisplaySessionRow>> = BTreeMap::new();
+    for session in sessions {
+        groups
+            .entry(&session.container_name)
+            .or_default()
+            .push(*session);
+    }
+    groups.into_iter().collect()
+}
+
+/// Render the session table with click detection and container sub-grouping.
+/// Returns the session_id if a row was clicked.
+pub fn render_session_table(
+    ui: &mut eframe::egui::Ui,
+    sessions: &[DisplaySessionRow],
+    selected_session_id: &Option<String>,
+) -> Option<String> {
     if sessions.is_empty() {
         ui.centered_and_justified(|ui| {
             ui.label("No active sessions");
         });
-        return;
+        return None;
     }
 
-    // Partition sessions into live and disconnected based on liveness
+    let mut clicked_session: Option<String> = None;
+
+    // Partition into live and disconnected (preserve existing UX)
     let (live_sessions, disconnected_sessions): (Vec<_>, Vec<_>) = sessions.iter().partition(|s| {
         matches!(
             s.liveness,
@@ -82,10 +94,14 @@ pub fn render_session_table(ui: &mut eframe::egui::Ui, sessions: &[DisplaySessio
                 ui.strong(format!("Live Sessions ({})", live_sessions.len()));
             });
             ui.separator();
-            render_session_rows(ui, &live_sessions);
+
+            let live_refs: Vec<_> = live_sessions.iter().collect();
+            if let Some(id) = render_container_grouped_rows(ui, &live_refs, selected_session_id) {
+                clicked_session = Some(id);
+            }
         }
 
-        // Disconnected Sessions Section (below live)
+        // Disconnected Sessions Section
         if !disconnected_sessions.is_empty() {
             ui.add_space(16.0);
             ui.horizontal(|ui| {
@@ -96,21 +112,80 @@ pub fn render_session_table(ui: &mut eframe::egui::Ui, sessions: &[DisplaySessio
                 ));
             });
             ui.separator();
-            render_session_rows(ui, &disconnected_sessions);
+
+            let disconnected_refs: Vec<_> = disconnected_sessions.iter().collect();
+            if let Some(id) =
+                render_container_grouped_rows(ui, &disconnected_refs, selected_session_id)
+            {
+                clicked_session = Some(id);
+            }
         }
     });
+
+    clicked_session
 }
 
-/// Render session rows as a table.
-fn render_session_rows(ui: &mut eframe::egui::Ui, sessions: &[&DisplaySessionRow]) {
+fn render_container_grouped_rows(
+    ui: &mut eframe::egui::Ui,
+    sessions: &[&&DisplaySessionRow],
+    selected_session_id: &Option<String>,
+) -> Option<String> {
     use eframe::egui;
 
+    let mut clicked_session: Option<String> = None;
+    let sessions_vec: Vec<&DisplaySessionRow> = sessions.iter().map(|s| **s).collect();
+    let grouped = group_by_container(&sessions_vec);
+
+    for (idx, (container_name, container_sessions)) in grouped.iter().enumerate() {
+        if idx > 0 {
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                ui.add_space(20.0);
+                ui.separator();
+            });
+            ui.add_space(4.0);
+        }
+
+        ui.horizontal(|ui| {
+            ui.add_space(8.0);
+            ui.small(egui::RichText::new(*container_name).strong());
+            ui.small(format!("({})", container_sessions.len()));
+        });
+
+        if let Some(id) = render_session_rows_clickable(ui, container_sessions, selected_session_id)
+        {
+            clicked_session = Some(id);
+        }
+    }
+
+    clicked_session
+}
+
+/// Get a short container name (last 8 chars) for the per-row badge.
+fn container_short_name(name: &str) -> String {
+    let chars: Vec<char> = name.chars().collect();
+    if chars.len() <= 8 {
+        name.to_string()
+    } else {
+        chars[chars.len() - 8..].iter().collect()
+    }
+}
+
+fn render_session_rows_clickable(
+    ui: &mut eframe::egui::Ui,
+    sessions: &[&DisplaySessionRow],
+    selected_session_id: &Option<String>,
+) -> Option<String> {
+    use eframe::egui;
+
+    let mut clicked_session: Option<String> = None;
+
     TableBuilder::new(ui)
+        .sense(egui::Sense::click()) // REQUIRED for click detection
         .striped(true)
         .resizable(true)
         .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-        .column(Column::exact(16.0)) // Liveness indicator
-        .column(Column::initial(100.0).at_least(80.0)) // Container
+        .column(Column::exact(80.0)) // Liveness dot + container badge
         .column(Column::initial(180.0).at_least(100.0)) // Feature
         .column(Column::exact(80.0)) // Phase
         .column(Column::exact(35.0)) // Iter
@@ -118,10 +193,7 @@ fn render_session_rows(ui: &mut eframe::egui::Ui, sessions: &[&DisplaySessionRow
         .column(Column::exact(60.0)) // PID
         .column(Column::exact(70.0)) // Updated
         .header(24.0, |mut header| {
-            header.col(|_| {}); // Liveness - no header
-            header.col(|ui| {
-                ui.strong("Container");
-            });
+            header.col(|_| {}); // Liveness/container badge column (no header)
             header.col(|ui| {
                 ui.strong("Feature");
             });
@@ -143,32 +215,38 @@ fn render_session_rows(ui: &mut eframe::egui::Ui, sessions: &[&DisplaySessionRow
         })
         .body(|mut body| {
             for session in sessions {
+                let is_selected = selected_session_id
+                    .as_ref()
+                    .is_some_and(|id| id == &session.session_id);
+
                 body.row(22.0, |mut row| {
-                    // Highlight entire row if awaiting user interaction
-                    if session_needs_interaction(&session.phase, session.liveness) {
+                    if is_selected || session_needs_interaction(&session.phase, session.liveness) {
                         row.set_selected(true);
                     }
 
-                    // Liveness indicator
+                    // First column: liveness indicator + container badge
                     row.col(|ui| {
-                        let color = match session.liveness {
-                            LivenessDisplay::Running => egui::Color32::from_rgb(76, 175, 80),
-                            LivenessDisplay::Unresponsive => egui::Color32::from_rgb(255, 183, 77),
-                            LivenessDisplay::Stopped => egui::Color32::from_rgb(117, 117, 117),
-                        };
-                        let (rect, _) =
-                            ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
-                        ui.painter().circle_filled(rect.center(), 4.0, color);
-                    });
-                    row.col(|ui| {
-                        ui.label(&session.container_name);
+                        ui.horizontal(|ui| {
+                            // Liveness dot
+                            let color = liveness_color(session.liveness);
+                            let (rect, _) =
+                                ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
+                            ui.painter().circle_filled(rect.center(), 4.0, color);
+                            ui.add_space(4.0);
+                            // Container short-name badge
+                            let short_name = container_short_name(&session.container_name);
+                            ui.colored_label(
+                                egui::Color32::GRAY,
+                                egui::RichText::new(short_name).small(),
+                            );
+                        });
                     });
                     row.col(|ui| {
                         ui.label(&session.feature_name);
                     });
                     row.col(|ui| {
-                        let phase_color = super::status_colors::get_phase_color(&session.phase);
-                        ui.colored_label(phase_color, &session.phase);
+                        let color = super::status_colors::get_phase_color(&session.phase);
+                        ui.colored_label(color, &session.phase);
                     });
                     row.col(|ui| {
                         ui.label(session.iteration.to_string());
@@ -182,12 +260,27 @@ fn render_session_rows(ui: &mut eframe::egui::Ui, sessions: &[&DisplaySessionRow
                     row.col(|ui| {
                         ui.label(&session.updated_ago);
                     });
+
+                    // Check click AFTER adding all columns
+                    if row.response().clicked() {
+                        clicked_session = Some(session.session_id.clone());
+                    }
                 });
             }
         });
+
+    clicked_session
 }
 
-/// Render the workflow status with descriptive text and color coding.
+/// Color for liveness indicator. Made public for reuse in session_detail panel.
+pub fn liveness_color(liveness: LivenessDisplay) -> eframe::egui::Color32 {
+    match liveness {
+        LivenessDisplay::Running => eframe::egui::Color32::from_rgb(76, 175, 80),
+        LivenessDisplay::Unresponsive => eframe::egui::Color32::from_rgb(255, 183, 77),
+        LivenessDisplay::Stopped => eframe::egui::Color32::from_rgb(117, 117, 117),
+    }
+}
+
 fn render_status(ui: &mut eframe::egui::Ui, phase: &str, status: &str) {
     let (color, text) = super::status_colors::get_status_display(phase, status);
     ui.colored_label(color, text);

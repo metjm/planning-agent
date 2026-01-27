@@ -29,6 +29,9 @@ const DEFAULT_HOST_PORT: u16 = 17717;
 /// Interval for checking credential file changes (30 seconds per plan).
 const CREDENTIAL_CHECK_INTERVAL_SECS: u64 = 30;
 
+/// Heartbeat interval to host (500ms to match session-to-daemon timing).
+const HOST_HEARTBEAT_INTERVAL_MS: u64 = 500;
+
 /// Events to send upstream to host.
 #[derive(Debug, Clone)]
 pub enum UpstreamEvent {
@@ -66,12 +69,14 @@ pub struct RpcUpstream {
     working_dir: PathBuf,
     /// Reference to daemon state for syncing sessions on connect.
     daemon_state: Arc<Mutex<DaemonState>>,
+    /// Port where daemon's file service listens (passed to host in hello)
+    file_service_port: u16,
 }
 
 impl RpcUpstream {
     /// Create a new upstream connection manager.
     /// Reads container identification from environment variables.
-    pub fn new(port: u16, daemon_state: Arc<Mutex<DaemonState>>) -> Self {
+    pub fn new(port: u16, daemon_state: Arc<Mutex<DaemonState>>, file_service_port: u16) -> Self {
         // Host address: "auto" tries localhost then host.docker.internal
         // Can be overridden with PLANNING_AGENT_HOST_ADDRESS
         let host =
@@ -96,6 +101,7 @@ impl RpcUpstream {
             container_name,
             working_dir,
             daemon_state,
+            file_service_port,
         }
     }
 
@@ -241,6 +247,7 @@ impl RpcUpstream {
             working_dir: self.working_dir.clone(),
             git_sha: crate::update::BUILD_SHA.to_string(),
             build_timestamp: crate::update::BUILD_TIMESTAMP,
+            file_service_port: self.file_service_port,
         };
 
         let hello_result = client
@@ -311,7 +318,7 @@ impl RpcUpstream {
         }
 
         // Main loop: forward session events
-        let heartbeat_interval = Duration::from_secs(30);
+        let heartbeat_interval = Duration::from_millis(HOST_HEARTBEAT_INTERVAL_MS);
         let mut heartbeat_timer = tokio::time::interval(heartbeat_interval);
 
         let credential_check_interval = Duration::from_secs(CREDENTIAL_CHECK_INTERVAL_SECS);

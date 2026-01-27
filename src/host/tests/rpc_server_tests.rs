@@ -113,6 +113,7 @@ async fn test_hello_success() {
         working_dir: std::path::PathBuf::from("/work"),
         git_sha: "test123".to_string(),
         build_timestamp: 1234567890,
+        file_service_port: 0,
     };
 
     let result = client
@@ -140,6 +141,7 @@ async fn test_hello_protocol_mismatch() {
         working_dir: std::path::PathBuf::from("/work"),
         git_sha: "test123".to_string(),
         build_timestamp: 1234567890,
+        file_service_port: 0,
     };
 
     // Use wrong protocol version
@@ -177,6 +179,7 @@ async fn test_sync_sessions() {
         working_dir: std::path::PathBuf::from("/work"),
         git_sha: "test123".to_string(),
         build_timestamp: 1234567890,
+        file_service_port: 0,
     };
     client
         .hello(tarpc::context::current(), info, PROTOCOL_VERSION)
@@ -213,6 +216,7 @@ async fn test_sync_sessions_replaces_existing() {
         working_dir: std::path::PathBuf::from("/work"),
         git_sha: "test123".to_string(),
         build_timestamp: 1234567890,
+        file_service_port: 0,
     };
     client
         .hello(tarpc::context::current(), info, PROTOCOL_VERSION)
@@ -260,6 +264,7 @@ async fn test_session_update() {
         working_dir: std::path::PathBuf::from("/work"),
         git_sha: "test123".to_string(),
         build_timestamp: 1234567890,
+        file_service_port: 0,
     };
     client
         .hello(tarpc::context::current(), info, PROTOCOL_VERSION)
@@ -303,6 +308,7 @@ async fn test_session_gone() {
         working_dir: std::path::PathBuf::from("/work"),
         git_sha: "test123".to_string(),
         build_timestamp: 1234567890,
+        file_service_port: 0,
     };
     client
         .hello(tarpc::context::current(), info, PROTOCOL_VERSION)
@@ -349,6 +355,7 @@ async fn test_heartbeat() {
         working_dir: std::path::PathBuf::from("/work"),
         git_sha: "test123".to_string(),
         build_timestamp: 1234567890,
+        file_service_port: 0,
     };
     client
         .hello(tarpc::context::current(), info, PROTOCOL_VERSION)
@@ -389,6 +396,7 @@ async fn test_events_on_connect() {
         working_dir: std::path::PathBuf::from("/work"),
         git_sha: "test123".to_string(),
         build_timestamp: 1234567890,
+        file_service_port: 0,
     };
     client
         .hello(tarpc::context::current(), info, PROTOCOL_VERSION)
@@ -425,6 +433,7 @@ async fn test_events_on_sessions_updated() {
         working_dir: std::path::PathBuf::from("/work"),
         git_sha: "test123".to_string(),
         build_timestamp: 1234567890,
+        file_service_port: 0,
     };
     client
         .hello(tarpc::context::current(), info, PROTOCOL_VERSION)
@@ -472,6 +481,7 @@ async fn test_multiple_containers() {
         working_dir: std::path::PathBuf::from("/work1"),
         git_sha: "test123".to_string(),
         build_timestamp: 1234567890,
+        file_service_port: 0,
     };
     client1
         .hello(tarpc::context::current(), info1, PROTOCOL_VERSION)
@@ -485,6 +495,7 @@ async fn test_multiple_containers() {
         working_dir: std::path::PathBuf::from("/work2"),
         git_sha: "test456".to_string(),
         build_timestamp: 1234567891,
+        file_service_port: 0,
     };
     client2
         .hello(tarpc::context::current(), info2, PROTOCOL_VERSION)
@@ -531,6 +542,7 @@ async fn test_disconnect_event_contains_container_id() {
         working_dir: std::path::PathBuf::from("/work"),
         git_sha: "test123".to_string(),
         build_timestamp: 1234567890,
+        file_service_port: 0,
     };
     client
         .hello(tarpc::context::current(), info, PROTOCOL_VERSION)
@@ -566,6 +578,7 @@ async fn test_display_sessions_include_container_name() {
         working_dir: std::path::PathBuf::from("/work"),
         git_sha: "test123".to_string(),
         build_timestamp: 1234567890,
+        file_service_port: 0,
     };
     client
         .hello(tarpc::context::current(), info, PROTOCOL_VERSION)

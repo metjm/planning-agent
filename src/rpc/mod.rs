@@ -4,6 +4,7 @@
 //! - Client ↔ Daemon: Session registration, updates, heartbeats, and subscriptions
 //! - Daemon ↔ Host: Session aggregation across containers
 
+pub mod daemon_file_service;
 pub mod daemon_service;
 pub mod host_service;
 
@@ -31,6 +32,14 @@ pub use crate::host::SessionInfo;
 // Note: Allow unused for now - will be used when event streaming is implemented
 #[allow(unused_imports)]
 pub use crate::domain::view::WorkflowEventEnvelope;
+
+// Re-export DaemonFileService types
+// Note: Allow unused since GUI code only imports through daemon_file_service submodule
+#[allow(unused_imports)]
+pub use daemon_file_service::{
+    DaemonFileService, DaemonFileServiceClient, FileAccessError, FileContent, FileEntry,
+    MAX_FILE_READ_SIZE,
+};
 
 // ============================================================================
 // ERROR TYPES (NEW)

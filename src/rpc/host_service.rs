@@ -19,6 +19,10 @@ pub struct ContainerInfo {
     pub git_sha: String,
     /// Unix timestamp when the daemon was built.
     pub build_timestamp: u64,
+    /// Port where daemon's file service listens.
+    /// Host connects to this port to request session files.
+    #[serde(default)]
+    pub file_service_port: u16,
 }
 
 /// Credential info sent from daemon to host (includes tokens for API calls).

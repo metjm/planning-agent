@@ -26,6 +26,7 @@ async fn test_upstream_handshake_and_session_sync() {
         working_dir: std::path::PathBuf::from("/work"),
         git_sha: "test123".to_string(),
         build_timestamp: 1234567890,
+        file_service_port: 0,
     };
     let result = client
         .hello(tarpc::context::current(), info, PROTOCOL_VERSION)
@@ -70,6 +71,7 @@ async fn test_upstream_session_update_flow() {
         working_dir: std::path::PathBuf::from("/work"),
         git_sha: "test123".to_string(),
         build_timestamp: 1234567890,
+        file_service_port: 0,
     };
     client
         .hello(tarpc::context::current(), info, PROTOCOL_VERSION)
@@ -156,6 +158,7 @@ async fn test_upstream_heartbeat() {
         working_dir: std::path::PathBuf::from("/work"),
         git_sha: "test123".to_string(),
         build_timestamp: 1234567890,
+        file_service_port: 0,
     };
     client
         .hello(tarpc::context::current(), info, PROTOCOL_VERSION)
@@ -190,6 +193,7 @@ async fn test_upstream_protocol_mismatch() {
         working_dir: std::path::PathBuf::from("/work"),
         git_sha: "test123".to_string(),
         build_timestamp: 1234567890,
+        file_service_port: 0,
     };
     let result = client
         .hello(tarpc::context::current(), info, PROTOCOL_VERSION + 99)
@@ -227,6 +231,7 @@ async fn test_upstream_client_sends_session_updates() {
         working_dir: std::path::PathBuf::from("/work"),
         git_sha: "test123".to_string(),
         build_timestamp: 1234567890,
+        file_service_port: 0,
     };
     client
         .hello(tarpc::context::current(), info, PROTOCOL_VERSION)
@@ -271,6 +276,7 @@ async fn test_upstream_client_sync_sessions() {
         working_dir: std::path::PathBuf::from("/work"),
         git_sha: "test123".to_string(),
         build_timestamp: 1234567890,
+        file_service_port: 0,
     };
     client
         .hello(tarpc::context::current(), info, PROTOCOL_VERSION)
@@ -346,6 +352,7 @@ async fn test_upstream_client_session_gone() {
         working_dir: std::path::PathBuf::from("/work"),
         git_sha: "test123".to_string(),
         build_timestamp: 1234567890,
+        file_service_port: 0,
     };
     client
         .hello(tarpc::context::current(), info, PROTOCOL_VERSION)
@@ -411,7 +418,7 @@ async fn test_rpc_upstream_connects_and_syncs() {
     std::env::set_var("PLANNING_AGENT_CONTAINER_ID", "test-upstream-container");
     std::env::set_var("PLANNING_AGENT_CONTAINER_NAME", "Test Upstream Container");
 
-    let upstream = RpcUpstream::new(host.port, daemon_state);
+    let upstream = RpcUpstream::new(host.port, daemon_state, 0);
 
     // Spawn upstream in background
     let upstream_handle = tokio::spawn(async move {
@@ -498,7 +505,7 @@ async fn test_full_stack_client_to_daemon_to_host() {
 
     // Spawn upstream connection
     let upstream =
-        crate::session_daemon::rpc_upstream::RpcUpstream::new(host.port, daemon_state.clone());
+        crate::session_daemon::rpc_upstream::RpcUpstream::new(host.port, daemon_state.clone(), 0);
     let upstream_handle = tokio::spawn(async move {
         upstream.run(upstream_rx).await;
     });

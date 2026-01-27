@@ -4,10 +4,12 @@
 
 use crate::daemon_log::daemon_log;
 use crate::planning_paths;
+use crate::rpc::daemon_file_service::DaemonFileService;
 use crate::rpc::daemon_service::{DaemonService, SubscriberCallbackClient};
 use crate::rpc::{
     DaemonError, DaemonResult, LivenessState, PortFileContent, SessionRecord, WorkflowEventEnvelope,
 };
+use crate::session_daemon::file_service_impl::DaemonFileServer;
 use crate::session_daemon::rpc_upstream::UpstreamEvent;
 use crate::session_daemon::server::DaemonState;
 use crate::update::{BUILD_SHA, BUILD_TIMESTAMP};
@@ -598,6 +600,55 @@ pub async fn run_subscriber_listener(
     Ok(())
 }
 
+/// Run the file service listener for host file access requests.
+/// The host connects to this port to request session file listings and content.
+pub async fn run_file_service_listener(
+    shutdown_tx: broadcast::Sender<()>,
+    file_service_port: u16,
+) -> anyhow::Result<()> {
+    use tarpc::serde_transport::tcp;
+
+    let addr = format!("127.0.0.1:{}", file_service_port);
+    let mut listener = tcp::listen(&addr, Bincode::default).await?;
+
+    daemon_log("rpc_server", &format!("File service listener on {}", addr));
+
+    let mut shutdown_rx = shutdown_tx.subscribe();
+
+    loop {
+        tokio::select! {
+            Some(result) = listener.next() => {
+                match result {
+                    Ok(transport) => {
+                        let server = DaemonFileServer::new();
+                        let channel = server::BaseChannel::with_defaults(transport);
+
+                        tokio::spawn(async move {
+                            channel
+                                .execute(server.serve())
+                                .for_each(|response| async {
+                                    tokio::spawn(response);
+                                })
+                                .await;
+                        });
+
+                        daemon_log("rpc_server", "File service client connected");
+                    }
+                    Err(e) => {
+                        daemon_log("rpc_server", &format!("File service accept error: {}", e));
+                    }
+                }
+            }
+            _ = shutdown_rx.recv() => {
+                daemon_log("rpc_server", "File service listener shutting down");
+                break;
+            }
+        }
+    }
+
+    Ok(())
+}
+
 /// Background task to periodically clean up dead subscriber connections.
 /// Sends a ping to each subscriber and removes those that don't respond.
 pub async fn run_subscriber_cleanup(
@@ -761,12 +812,14 @@ pub async fn run_daemon_rpc() -> anyhow::Result<()> {
     // Find available ports for main RPC and subscriber listener
     let main_port = find_available_port().await?;
     let subscriber_port = find_available_port().await?;
+    let file_service_port = find_available_port().await?;
 
     // Write port file with PortFileContent
     let port_path = planning_paths::sessiond_port_path()?;
     let port_content = PortFileContent {
         port: main_port,
         subscriber_port,
+        file_service_port,
         token: auth_token.clone(),
     };
     std::fs::write(&port_path, serde_json::to_string(&port_content)?)?;
@@ -774,8 +827,8 @@ pub async fn run_daemon_rpc() -> anyhow::Result<()> {
     daemon_log(
         "rpc_server",
         &format!(
-            "Daemon starting on ports {} (main) and {} (subscriber)",
-            main_port, subscriber_port
+            "Daemon starting on ports {} (main), {} (subscriber), {} (file service)",
+            main_port, subscriber_port, file_service_port
         ),
     );
 
@@ -791,8 +844,11 @@ pub async fn run_daemon_rpc() -> anyhow::Result<()> {
 
         // Spawn upstream connection task
         // Pass daemon state so upstream can sync sessions after connecting
-        let upstream_conn =
-            crate::session_daemon::rpc_upstream::RpcUpstream::new(host_port, state.clone());
+        let upstream_conn = crate::session_daemon::rpc_upstream::RpcUpstream::new(
+            host_port,
+            state.clone(),
+            file_service_port,
+        );
         tokio::spawn(async move {
             upstream_conn.run(rx).await;
         });
@@ -810,6 +866,14 @@ pub async fn run_daemon_rpc() -> anyhow::Result<()> {
             run_subscriber_listener(sub_subscribers, sub_shutdown, subscriber_port).await
         {
             daemon_log("rpc_server", &format!("Subscriber listener error: {}", e));
+        }
+    });
+
+    // Spawn file service listener
+    let file_shutdown = shutdown_tx.clone();
+    tokio::spawn(async move {
+        if let Err(e) = run_file_service_listener(file_shutdown, file_service_port).await {
+            daemon_log("rpc_server", &format!("File service listener error: {}", e));
         }
     });
 

@@ -122,6 +122,7 @@ impl TestServer {
         let content = PortFileContent {
             port: self.port,
             subscriber_port: self.subscriber_port,
+            file_service_port: 0,
             token: self.auth_token.clone(),
         };
         std::fs::write(path, serde_json::to_string(&content).unwrap()).unwrap();
