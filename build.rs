@@ -86,6 +86,9 @@ fn main() {
     enforce_no_unsafe_string_ops();
     enforce_tui_zero_guards();
     enforce_decision_functions_in_mod_only();
+    enforce_select_for_channel_recv();
+    enforce_no_send_unwrap();
+    enforce_no_expect_in_workflow();
 }
 
 /// Ensures all feature combinations compile.
@@ -1510,6 +1513,290 @@ fn enforce_decision_functions_in_mod_only() {
         eprintln!("========================================\n");
         panic!(
             "Build failed: {} decision function call(s) outside mod.rs. Move to main loop.",
+            total_count
+        );
+    }
+}
+
+/// Ensures user-facing channel .recv().await calls in workflow code use tokio::select!.
+///
+/// Single-channel awaits on approval_rx/control_rx can cause freeze bugs when the
+/// user quits, because the control channel (for Stop commands) isn't being checked.
+/// Internal channels like event_rx are exempt as they have different semantics.
+fn enforce_select_for_channel_recv() {
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR must be set");
+    let root = PathBuf::from(&manifest_dir);
+    let workflow_dir = root.join("src/app/workflow");
+
+    // User-facing channels that must use select! for proper quit handling
+    let user_facing_channels = ["approval_rx", "control_rx"];
+
+    // Only check workflow files where channel receives are critical
+    let workflow_files: Vec<PathBuf> = collect_files_to_check(&root)
+        .into_iter()
+        .filter(|p| {
+            p.extension().and_then(|e| e.to_str()) == Some("rs") && p.starts_with(&workflow_dir)
+        })
+        .collect();
+
+    let mut violations: Vec<(PathBuf, Vec<(usize, String)>)> = Vec::new();
+
+    for file in &workflow_files {
+        if let Ok(content) = std::fs::read_to_string(file) {
+            let lines: Vec<&str> = content.lines().collect();
+            let mut file_violations = Vec::new();
+
+            for (line_num, line) in lines.iter().enumerate() {
+                let trimmed = line.trim();
+
+                // Skip comments
+                if trimmed.starts_with("//") {
+                    continue;
+                }
+
+                // Check for user-facing channel .recv().await pattern
+                let is_user_channel = user_facing_channels
+                    .iter()
+                    .any(|ch| trimmed.contains(&format!("{}.recv()", ch)));
+
+                if is_user_channel && trimmed.contains(".recv().await") {
+                    // Check if we're inside a select! block (look backwards for select!)
+                    let start = line_num.saturating_sub(10);
+                    let context: String = lines[start..=line_num].join("\n");
+
+                    if !context.contains("select!") && !context.contains("tokio::select!") {
+                        file_violations.push((
+                            line_num + 1,
+                            format!(
+                                "user channel .recv().await without select!: `{}`",
+                                trimmed.chars().take(60).collect::<String>()
+                            ),
+                        ));
+                    }
+                }
+            }
+
+            if !file_violations.is_empty() {
+                let rel_path = file.strip_prefix(&root).unwrap_or(file).to_path_buf();
+                violations.push((rel_path, file_violations));
+            }
+        }
+    }
+
+    if !violations.is_empty() {
+        let total_count: usize = violations.iter().map(|(_, v)| v.len()).sum();
+
+        eprintln!("\n========================================");
+        eprintln!("CHANNEL RECV WITHOUT SELECT! IN WORKFLOW");
+        eprintln!("========================================");
+        eprintln!();
+        for (path, issues) in &violations {
+            for (line_num, msg) in issues {
+                eprintln!("  {}:{}", path.display(), line_num);
+                eprintln!("    {}", msg);
+                eprintln!();
+            }
+        }
+        eprintln!("========================================");
+        eprintln!();
+        eprintln!("Channel .recv().await in workflow code must use tokio::select!");
+        eprintln!("to check both approval_rx AND control_rx. Single-channel awaits");
+        eprintln!("cause freeze bugs when the user quits.");
+        eprintln!();
+        eprintln!("WRONG:");
+        eprintln!("    let response = approval_rx.recv().await;");
+        eprintln!();
+        eprintln!("CORRECT:");
+        eprintln!("    tokio::select! {{");
+        eprintln!("        Some(cmd) = control_rx.recv() => {{ /* handle Stop */ }}");
+        eprintln!("        response = approval_rx.recv() => {{ /* handle response */ }}");
+        eprintln!("    }}");
+        eprintln!();
+        eprintln!("========================================\n");
+        panic!(
+            "Build failed: {} channel recv(s) without select! in workflow code.",
+            total_count
+        );
+    }
+}
+
+/// Ensures .send().unwrap() is not used on channels.
+///
+/// Channel sends can fail when the receiver is dropped (e.g., during shutdown).
+/// Using unwrap() causes a panic instead of graceful handling.
+fn enforce_no_send_unwrap() {
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR must be set");
+    let root = PathBuf::from(&manifest_dir);
+
+    // Check all Rust files except tests
+    let rust_files: Vec<PathBuf> = collect_files_to_check(&root)
+        .into_iter()
+        .filter(|p| {
+            p.extension().and_then(|e| e.to_str()) == Some("rs")
+                && p.file_name().and_then(|n| n.to_str()) != Some("build.rs")
+                && !p.to_string_lossy().contains("/tests/")
+                && !p.to_string_lossy().contains("_tests.rs")
+        })
+        .collect();
+
+    let mut violations: Vec<(PathBuf, Vec<(usize, String)>)> = Vec::new();
+
+    for file in &rust_files {
+        if let Ok(content) = std::fs::read_to_string(file) {
+            let mut file_violations = Vec::new();
+
+            for (line_num, line) in content.lines().enumerate() {
+                let trimmed = line.trim();
+
+                // Skip comments
+                if trimmed.starts_with("//") {
+                    continue;
+                }
+
+                // Check for .send(...).unwrap() or .send(...).await.unwrap() patterns
+                if (trimmed.contains(".send(") && trimmed.contains(").unwrap()"))
+                    || (trimmed.contains(".send(") && trimmed.contains(").await.unwrap()"))
+                {
+                    file_violations.push((
+                        line_num + 1,
+                        format!(
+                            "channel send with unwrap: `{}`",
+                            trimmed.chars().take(60).collect::<String>()
+                        ),
+                    ));
+                }
+            }
+
+            if !file_violations.is_empty() {
+                let rel_path = file.strip_prefix(&root).unwrap_or(file).to_path_buf();
+                violations.push((rel_path, file_violations));
+            }
+        }
+    }
+
+    if !violations.is_empty() {
+        let total_count: usize = violations.iter().map(|(_, v)| v.len()).sum();
+
+        eprintln!("\n========================================");
+        eprintln!("CHANNEL SEND WITH UNWRAP");
+        eprintln!("========================================");
+        eprintln!();
+        for (path, issues) in &violations {
+            for (line_num, msg) in issues {
+                eprintln!("  {}:{}", path.display(), line_num);
+                eprintln!("    {}", msg);
+                eprintln!();
+            }
+        }
+        eprintln!("========================================");
+        eprintln!();
+        eprintln!("Channel .send().unwrap() can panic when the receiver is dropped");
+        eprintln!("(e.g., during shutdown). Use explicit error handling instead.");
+        eprintln!();
+        eprintln!("WRONG:");
+        eprintln!("    tx.send(message).unwrap();");
+        eprintln!("    tx.send(message).await.unwrap();");
+        eprintln!();
+        eprintln!("CORRECT:");
+        eprintln!("    let _ = tx.send(message);  // Receiver may be dropped");
+        eprintln!("    if tx.send(message).await.is_err() {{ /* handle */ }}");
+        eprintln!();
+        eprintln!("========================================\n");
+        panic!(
+            "Build failed: {} channel send(s) with unwrap(). Handle errors gracefully.",
+            total_count
+        );
+    }
+}
+
+/// Ensures .expect() is not used in workflow phase handlers.
+///
+/// Phase handlers should use Result types for error handling, not panics.
+/// Expect panics in async code cause ungraceful shutdowns.
+fn enforce_no_expect_in_workflow() {
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR must be set");
+    let root = PathBuf::from(&manifest_dir);
+    let workflow_dir = root.join("src/app/workflow");
+
+    // Check workflow phase handler files (not mod.rs which is the orchestrator, not tests)
+    let phase_files: Vec<PathBuf> = collect_files_to_check(&root)
+        .into_iter()
+        .filter(|p| {
+            p.extension().and_then(|e| e.to_str()) == Some("rs")
+                && p.starts_with(&workflow_dir)
+                && p.file_name().and_then(|n| n.to_str()) != Some("mod.rs")
+                && !p.to_string_lossy().contains("/tests/")
+                && !p.to_string_lossy().contains("_tests.rs")
+        })
+        .collect();
+
+    let mut violations: Vec<(PathBuf, Vec<(usize, String)>)> = Vec::new();
+
+    for file in &phase_files {
+        if let Ok(content) = std::fs::read_to_string(file) {
+            let mut file_violations = Vec::new();
+
+            for (line_num, line) in content.lines().enumerate() {
+                let trimmed = line.trim();
+
+                // Skip comments
+                if trimmed.starts_with("//") {
+                    continue;
+                }
+
+                // Check for .expect( pattern
+                if trimmed.contains(".expect(") {
+                    file_violations.push((
+                        line_num + 1,
+                        format!(
+                            "expect() in phase handler: `{}`",
+                            trimmed.chars().take(60).collect::<String>()
+                        ),
+                    ));
+                }
+            }
+
+            if !file_violations.is_empty() {
+                let rel_path = file.strip_prefix(&root).unwrap_or(file).to_path_buf();
+                violations.push((rel_path, file_violations));
+            }
+        }
+    }
+
+    if !violations.is_empty() {
+        let total_count: usize = violations.iter().map(|(_, v)| v.len()).sum();
+
+        eprintln!("\n========================================");
+        eprintln!("EXPECT() IN WORKFLOW PHASE HANDLERS");
+        eprintln!("========================================");
+        eprintln!();
+        for (path, issues) in &violations {
+            for (line_num, msg) in issues {
+                eprintln!("  {}:{}", path.display(), line_num);
+                eprintln!("    {}", msg);
+                eprintln!();
+            }
+        }
+        eprintln!("========================================");
+        eprintln!();
+        eprintln!("Phase handlers should use Result types, not expect() panics.");
+        eprintln!("Panics in async code cause ungraceful shutdowns.");
+        eprintln!();
+        eprintln!("WRONG:");
+        eprintln!("    let path = view.plan_path().expect(\"must be set\");");
+        eprintln!();
+        eprintln!("CORRECT:");
+        eprintln!(
+            "    let path = view.plan_path().ok_or_else(|| anyhow!(\"plan_path not set\"))?;"
+        );
+        eprintln!("    // Or use if-let with early return");
+        eprintln!("    let Some(path) = view.plan_path() else {{");
+        eprintln!("        return Err(anyhow!(\"plan_path not set\"));");
+        eprintln!("    }};");
+        eprintln!();
+        eprintln!("========================================\n");
+        panic!(
+            "Build failed: {} expect() call(s) in workflow phase handlers. Use Result types.",
             total_count
         );
     }

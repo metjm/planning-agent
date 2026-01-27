@@ -6,7 +6,7 @@ use crate::domain::view::WorkflowView;
 use crate::git_worktree;
 use crate::session_daemon::{LogCategory, LogLevel, SessionLogger};
 use crate::tui::{SessionEventSender, UserApprovalResponse, WorkflowCommand};
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
@@ -47,12 +47,12 @@ pub async fn handle_completion(
     // view.plan_path() is now an absolute path (in ~/.planning-agent/plans/)
     let plan_path = view
         .plan_path()
-        .expect("plan_path must be set before completion")
+        .ok_or_else(|| anyhow!("plan_path must be set before completion"))?
         .0
         .clone();
     let iteration = view
         .iteration()
-        .expect("iteration must be set before completion")
+        .ok_or_else(|| anyhow!("iteration must be set before completion"))?
         .0;
 
     if view.approval_overridden() {

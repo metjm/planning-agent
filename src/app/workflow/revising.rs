@@ -265,7 +265,7 @@ pub async fn run_revising_phase(
     let plan_path = view
         .plan_path()
         .cloned()
-        .expect("plan_path must be set during Revising phase");
+        .ok_or_else(|| anyhow::anyhow!("plan_path must be set during Revising phase"))?;
     dispatch_domain_command(
         &actor_ref,
         DomainCommand::RevisionCompleted { plan_path },

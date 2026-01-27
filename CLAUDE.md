@@ -326,6 +326,9 @@ The build script (`build.rs`) enforces:
 10. **UTF-8 Safe String Operations** - No `.get(..n)` on strings in TUI code
 11. **TUI Zero Guards** - Division by width/height must have zero checks
 12. **Decision Functions in mod.rs Only** - `await_*_decision` functions only called from workflow `mod.rs`
+13. **No expect() in Phase Handlers** - Workflow phase handlers must use Result types, not expect()
+14. **No send().unwrap() on Channels** - Channel sends must handle dropped receivers gracefully
+15. **User Channels Use select!** - approval_rx/control_rx must use tokio::select! for quit handling
 
 ### Test Location Pattern
 

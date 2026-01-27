@@ -22,6 +22,7 @@ use crate::session_daemon::{LogCategory, LogLevel, SessionLogger};
 use crate::tui::{
     CancellationError, ReviewKind, SessionEventSender, UserApprovalResponse, WorkflowCommand,
 };
+use anyhow::anyhow;
 use anyhow::Result;
 use ractor::ActorRef;
 use std::collections::HashMap;
@@ -644,10 +645,15 @@ pub async fn run_sequential_reviewing_phase(
     // STEP 3: Run the current reviewer
     // =========================================================================
     let current_id = seq_state.get_current_reviewer().unwrap(); // Safe: checked above
-    let reviewer = reviewers
+    let Some(reviewer) = reviewers
         .iter()
         .find(|r| r.display_id() == current_id.as_str())
-        .expect("reviewer must exist in config");
+    else {
+        return Err(anyhow!(
+            "reviewer {} not found in config",
+            current_id.as_str()
+        ));
+    };
     let reviewer_id = reviewer.display_id();
 
     context.log_workflow(&format!(
