@@ -3,8 +3,7 @@
 use super::WorkflowResult;
 use crate::app::util::{build_all_reviewers_failed_summary, build_review_failure_summary};
 use crate::app::workflow_decisions::{
-    await_max_iterations_decision, wait_for_all_reviewers_failed_decision,
-    wait_for_review_decision, AllReviewersFailedDecision, IterativePhase, MaxIterationsDecision,
+    wait_for_all_reviewers_failed_decision, wait_for_review_decision, AllReviewersFailedDecision,
     ReviewDecision,
 };
 use crate::config::{AgentRef, WorkflowConfig};
@@ -350,24 +349,12 @@ pub async fn run_reviewing_phase(
         FeedbackStatus::NeedsRevision => {
             sender.send_output("[planning] Plan needs revision".to_string());
             if iteration >= max_iterations {
-                // Dispatch PlanningMaxIterationsReached command
+                // Dispatch PlanningMaxIterationsReached and return - main loop handles AwaitingPlanningDecision
                 context
                     .dispatch_command(DomainCommand::PlanningMaxIterationsReached)
                     .await;
-
-                let result = handle_max_iterations_with_view(
-                    view,
-                    &context.session_logger,
-                    sender,
-                    approval_rx,
-                    control_rx,
-                    last_reviews,
-                    context,
-                )
-                .await?;
-                if let Some(workflow_result) = result {
-                    return Ok(Some(workflow_result));
-                }
+                // Return to let the main workflow loop handle the AwaitingPlanningDecision phase
+                return Ok(None);
             } else {
                 context.log_workflow("Transitioning: Reviewing -> Revising");
                 // Transition is handled by ReviewCycleCompleted event
@@ -395,69 +382,6 @@ fn output_failure_bundles(sender: &SessionEventSender, failures: &[phases::Revie
         sender.send_output(
             "[warning] Bundles may contain sensitive information from logs.".to_string(),
         );
-    }
-}
-
-/// Handles max iterations reached during reviewing phase using WorkflowView.
-/// Dispatches appropriate commands based on user decision.
-async fn handle_max_iterations_with_view(
-    view: &WorkflowView,
-    session_logger: &Arc<SessionLogger>,
-    sender: &SessionEventSender,
-    approval_rx: &mut mpsc::Receiver<UserApprovalResponse>,
-    control_rx: &mut mpsc::Receiver<WorkflowCommand>,
-    last_reviews: &[phases::ReviewResult],
-    context: &WorkflowPhaseContext<'_>,
-) -> Result<Option<WorkflowResult>> {
-    // Build the summary for planning phase
-    let summary = build_max_iterations_summary_from_view(view, last_reviews);
-
-    // Await user decision using the shared function
-    let decision = await_max_iterations_decision(
-        IterativePhase::Planning,
-        session_logger,
-        sender,
-        approval_rx,
-        control_rx,
-        summary,
-    )
-    .await?;
-
-    // Dispatch domain commands for user decisions
-    match &decision {
-        MaxIterationsDecision::ProceedWithoutApproval => {
-            context
-                .dispatch_command(DomainCommand::UserOverrideApproval {
-                    override_reason: "User proceeded without AI approval at max iterations"
-                        .to_string(),
-                })
-                .await;
-            sender.send_output("[planning] Proceeding without AI approval...".to_string());
-            Ok(None)
-        }
-        MaxIterationsDecision::Continue(_) => {
-            sender.send_output("[planning] Continuing with another review cycle...".to_string());
-            // The caller handles incrementing max_iterations via command
-            Ok(None)
-        }
-        MaxIterationsDecision::RestartWithFeedback(feedback) => {
-            sender.send_output(format!("[planning] Restarting with feedback: {}", feedback));
-            Ok(Some(WorkflowResult::NeedsRestart {
-                user_feedback: feedback.clone(),
-            }))
-        }
-        MaxIterationsDecision::Abort => {
-            context
-                .dispatch_command(DomainCommand::UserAborted {
-                    reason: "User aborted workflow at max iterations".to_string(),
-                })
-                .await;
-            sender.send_output("[planning] Workflow aborted by user".to_string());
-            Ok(Some(WorkflowResult::Aborted {
-                reason: "User aborted workflow at max iterations".to_string(),
-            }))
-        }
-        MaxIterationsDecision::Stopped => Ok(Some(WorkflowResult::Stopped)),
     }
 }
 
@@ -821,20 +745,11 @@ pub async fn run_sequential_reviewing_phase(
 
         // Check iteration limit
         if iteration >= max_iterations {
+            // Dispatch PlanningMaxIterationsReached and return - main loop handles AwaitingPlanningDecision
             context
                 .dispatch_command(DomainCommand::PlanningMaxIterationsReached)
                 .await;
-
-            return handle_max_iterations_with_view(
-                view,
-                &context.session_logger,
-                sender,
-                approval_rx,
-                control_rx,
-                last_reviews,
-                context,
-            )
-            .await;
+            return Ok(None);
         }
     } else {
         // Reviewer approved
