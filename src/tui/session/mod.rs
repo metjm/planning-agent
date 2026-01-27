@@ -3,7 +3,7 @@ mod chat;
 mod cli_instances;
 pub mod context;
 mod input;
-mod modals;
+pub mod modals;
 pub mod model;
 mod paste;
 mod snapshot;
@@ -200,6 +200,8 @@ pub struct Session {
     pub review_modal_scroll: usize,
     /// Currently selected review tab index (0 = most recent)
     pub review_modal_tab: usize,
+    /// Horizontal scroll offset for review modal tabs (first visible tab index)
+    pub review_modal_tab_scroll: usize,
     /// Loaded review entries: (display_name, file_path, content, sort_key)
     /// Sorted by (iteration DESC, agent_name ASC) for deterministic ordering.
     pub review_modal_entries: Vec<ReviewModalEntry>,
@@ -318,6 +320,7 @@ impl Session {
             review_modal_open: false,
             review_modal_scroll: 0,
             review_modal_tab: 0,
+            review_modal_tab_scroll: 0,
             review_modal_entries: Vec::new(),
 
             context: None,

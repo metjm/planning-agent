@@ -152,6 +152,7 @@ impl Session {
             review_modal_open: ui_state.review_modal_open,
             review_modal_scroll: ui_state.review_modal_scroll,
             review_modal_tab: ui_state.review_modal_tab,
+            review_modal_tab_scroll: 0, // Reset horizontal tab scroll on restore
             review_modal_entries: Vec::new(), // Runtime-only, re-populated on open
 
             review_history: ui_state.review_history,

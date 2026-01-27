@@ -18,6 +18,7 @@ use super::theme::Theme;
 use super::util::{compute_wrapped_line_count, parse_markdown_line, wrap_text_at_width};
 use crate::domain::types::{ImplementationPhase, Phase, UiMode};
 use crate::tui::scroll_regions::{ScrollRegion, ScrollableRegions};
+use crate::tui::session::modals::review_modal::compute_tab_viewport;
 use crate::tui::{ApprovalMode, FocusedPanel, Session, TabManager};
 use crate::update::UpdateStatus;
 use ratatui::{
@@ -606,32 +607,49 @@ pub fn draw_review_modal(frame: &mut Frame, session: &Session, regions: &mut Scr
         ])
         .split(popup_area);
 
-    // Title block with tab bar
-    let tab_spans: Vec<Span> = session
-        .review_modal_entries
-        .iter()
-        .enumerate()
-        .flat_map(|(i, entry)| {
-            let is_selected = i == session.review_modal_tab;
-            let style = if is_selected {
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(ratatui::style::Modifier::BOLD)
-            } else {
-                Style::default().fg(Color::DarkGray)
-            };
-            let bracket_style = if is_selected {
-                Style::default().fg(Color::Cyan)
-            } else {
-                Style::default().fg(Color::DarkGray)
-            };
-            vec![
-                Span::styled("[", bracket_style),
-                Span::styled(entry.display_name.clone(), style),
-                Span::styled("] ", bracket_style),
-            ]
-        })
-        .collect();
+    // Calculate available width for tabs: title block inner width = chunk width - 2 (borders)
+    let title_inner_width = chunks[0].width.saturating_sub(2) as usize;
+
+    // Compute visible tabs using the shared function
+    let (visible_range, has_left, has_right) = compute_tab_viewport(
+        &session.review_modal_entries,
+        session.review_modal_tab_scroll,
+        title_inner_width,
+    );
+
+    // Build tab spans with overflow indicators
+    let mut tab_spans: Vec<Span> = Vec::new();
+
+    // Left overflow indicator
+    if has_left {
+        tab_spans.push(Span::styled("← ", Style::default().fg(Color::Yellow)));
+    }
+
+    // Render visible tabs only
+    for i in visible_range {
+        let entry = &session.review_modal_entries[i];
+        let is_selected = i == session.review_modal_tab;
+        let style = if is_selected {
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(ratatui::style::Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+        let bracket_style = if is_selected {
+            Style::default().fg(Color::Cyan)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+        tab_spans.push(Span::styled("[", bracket_style));
+        tab_spans.push(Span::styled(entry.display_name.clone(), style));
+        tab_spans.push(Span::styled("] ", bracket_style));
+    }
+
+    // Right overflow indicator
+    if has_right {
+        tab_spans.push(Span::styled("→", Style::default().fg(Color::Yellow)));
+    }
 
     let title_line = Line::from(tab_spans);
     let title = Paragraph::new(title_line).block(

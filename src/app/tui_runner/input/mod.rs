@@ -158,6 +158,19 @@ fn compute_review_modal_visible_height() -> usize {
     visible_height as usize
 }
 
+/// Compute the available width for review modal tabs.
+/// Returns inner width of title block for tab rendering.
+///
+/// The title block is: popup_width (80% of terminal) minus 2 for borders.
+/// This matches the actual rendering in draw_review_modal() where
+/// the title Paragraph is rendered inside a Block with Borders::ALL.
+fn compute_review_modal_tab_width() -> usize {
+    let (term_width, _) = crossterm::terminal::size().unwrap_or((80, 24));
+    let popup_width = (term_width as f32 * 0.8) as u16;
+    // Title block inner width = popup_width - 2 (left and right borders)
+    popup_width.saturating_sub(2) as usize
+}
+
 /// Compute the inner dimensions of the review modal.
 /// Returns (inner_width, visible_height) for content area.
 fn compute_review_modal_inner_size(term_width: u16, term_height: u16) -> (u16, u16) {
@@ -405,10 +418,12 @@ pub async fn handle_key_event(
                 session.close_review_modal();
             }
             KeyCode::Tab | KeyCode::Right => {
-                session.review_modal_next_tab();
+                let tab_width = compute_review_modal_tab_width();
+                session.review_modal_next_tab(tab_width);
             }
             KeyCode::BackTab | KeyCode::Left => {
-                session.review_modal_prev_tab();
+                let tab_width = compute_review_modal_tab_width();
+                session.review_modal_prev_tab(tab_width);
             }
             KeyCode::Char('j') | KeyCode::Down => {
                 let max_scroll = compute_review_modal_max_scroll(&content);

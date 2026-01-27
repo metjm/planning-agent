@@ -8,6 +8,61 @@ use std::collections::hash_map::DefaultHasher;
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::path::Path;
+use unicode_width::UnicodeWidthStr;
+
+/// Compute which tabs are visible given scroll offset and available width.
+/// Returns (visible_range, has_overflow_left, has_overflow_right).
+///
+/// This is the single source of truth for tab viewport calculations.
+/// Used by both the renderer (overlays/mod.rs) and Session scroll methods.
+pub fn compute_tab_viewport(
+    entries: &[super::super::model::ReviewModalEntry],
+    scroll_offset: usize,
+    available_width: usize,
+) -> (std::ops::Range<usize>, bool, bool) {
+    if entries.is_empty() || available_width == 0 {
+        return (0..0, false, false);
+    }
+
+    let has_overflow_left = scroll_offset > 0;
+
+    // Reserve space for overflow indicators: "← " (2 chars) and " →" (2 chars)
+    let left_indicator_space = if has_overflow_left { 2 } else { 0 };
+    let mut remaining_width = available_width.saturating_sub(left_indicator_space);
+
+    let mut visible_end = scroll_offset;
+    for (i, entry) in entries.iter().enumerate().skip(scroll_offset) {
+        // Tab format: "[display_name] " = display_name.width() + 3
+        let tab_width = entry.display_name.width() + 3;
+
+        // Check if we need to reserve space for right overflow indicator
+        let need_right_indicator = i + 1 < entries.len();
+        let right_reserve = if need_right_indicator { 2 } else { 0 };
+
+        if remaining_width >= tab_width + right_reserve {
+            remaining_width = remaining_width.saturating_sub(tab_width);
+            visible_end = i + 1;
+        } else if remaining_width >= tab_width && !need_right_indicator {
+            // Last tab fits exactly
+            visible_end = i + 1;
+            break;
+        } else {
+            break;
+        }
+    }
+
+    // Ensure at least one tab is visible if possible
+    if visible_end == scroll_offset && scroll_offset < entries.len() {
+        visible_end = scroll_offset + 1;
+    }
+
+    let has_overflow_right = visible_end < entries.len();
+    (
+        scroll_offset..visible_end,
+        has_overflow_left,
+        has_overflow_right,
+    )
+}
 
 impl Session {
     /// Toggle the review modal open/closed.
@@ -64,6 +119,7 @@ impl Session {
         self.review_modal_entries = entries;
         self.review_modal_tab = 0; // Select most recent
         self.review_modal_scroll = 0;
+        self.review_modal_tab_scroll = 0; // Reset horizontal scroll
         self.review_modal_open = true;
         true
     }
@@ -140,24 +196,76 @@ impl Session {
         self.review_modal_entries.clear();
         self.review_modal_scroll = 0;
         self.review_modal_tab = 0;
+        self.review_modal_tab_scroll = 0;
     }
 
-    pub fn review_modal_next_tab(&mut self) {
+    pub fn review_modal_next_tab(&mut self, available_width: usize) {
         if !self.review_modal_entries.is_empty() {
             self.review_modal_tab = (self.review_modal_tab + 1) % self.review_modal_entries.len();
-            self.review_modal_scroll = 0; // Reset scroll when switching tabs
+            self.review_modal_scroll = 0; // Reset content scroll
+            self.ensure_review_tab_visible(available_width);
         }
     }
 
-    pub fn review_modal_prev_tab(&mut self) {
+    pub fn review_modal_prev_tab(&mut self, available_width: usize) {
         if !self.review_modal_entries.is_empty() {
             self.review_modal_tab = if self.review_modal_tab == 0 {
                 self.review_modal_entries.len() - 1
             } else {
                 self.review_modal_tab - 1
             };
-            self.review_modal_scroll = 0;
+            self.review_modal_scroll = 0; // Reset content scroll
+            self.ensure_review_tab_visible(available_width);
         }
+    }
+
+    /// Ensure the selected tab is visible in the viewport.
+    /// Called after any tab navigation to adjust scroll offset.
+    pub fn ensure_review_tab_visible(&mut self, available_width: usize) {
+        if self.review_modal_entries.is_empty() || available_width == 0 {
+            self.review_modal_tab_scroll = 0;
+            return;
+        }
+
+        // If selected tab is before visible range, scroll left to show it
+        if self.review_modal_tab < self.review_modal_tab_scroll {
+            self.review_modal_tab_scroll = self.review_modal_tab;
+            return;
+        }
+
+        // Check if selected tab is visible at current scroll
+        let (visible_range, _, _) = compute_tab_viewport(
+            &self.review_modal_entries,
+            self.review_modal_tab_scroll,
+            available_width,
+        );
+
+        if self.review_modal_tab >= visible_range.end {
+            // Selected tab is after visible range, find scroll to show it
+            self.review_modal_tab_scroll = self.find_scroll_for_tab(available_width);
+        }
+    }
+
+    /// Find minimum scroll offset that makes selected tab visible.
+    fn find_scroll_for_tab(&self, available_width: usize) -> usize {
+        if self.review_modal_tab >= self.review_modal_entries.len() {
+            return 0;
+        }
+
+        // Linear search from target backwards to find minimum scroll
+        // that keeps target in visible range
+        let mut scroll = self.review_modal_tab;
+        while scroll > 0 {
+            let test_scroll = scroll - 1;
+            let (range, _, _) =
+                compute_tab_viewport(&self.review_modal_entries, test_scroll, available_width);
+            if range.contains(&self.review_modal_tab) {
+                scroll = test_scroll;
+            } else {
+                break;
+            }
+        }
+        scroll
     }
 
     pub fn review_modal_scroll_up(&mut self) {
