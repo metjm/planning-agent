@@ -39,8 +39,6 @@ impl Session {
                 agent_name: agent_name.to_string(),
                 message,
             }));
-
-        if self.chat_follow_mode {}
     }
 
     pub fn add_tool_entry(&mut self, phase: &str, entry: ToolTimelineEntry) {
@@ -58,8 +56,6 @@ impl Session {
         };
 
         self.run_tabs[idx].entries.push(RunTabEntry::Tool(entry));
-
-        if self.chat_follow_mode {}
     }
 
     pub fn next_run_tab(&mut self) {
@@ -94,6 +90,7 @@ impl Session {
     pub fn summary_scroll_up(&mut self) {
         if let Some(tab) = self.run_tabs.get_mut(self.active_run_tab) {
             tab.summary_scroll = tab.summary_scroll.saturating_sub(1);
+            tab.summary_follow_mode = false;
         }
     }
 
@@ -108,12 +105,14 @@ impl Session {
     pub fn summary_scroll_to_top(&mut self) {
         if let Some(tab) = self.run_tabs.get_mut(self.active_run_tab) {
             tab.summary_scroll = 0;
+            tab.summary_follow_mode = false;
         }
     }
 
     pub fn summary_scroll_to_bottom(&mut self, max_scroll: usize) {
         if let Some(tab) = self.run_tabs.get_mut(self.active_run_tab) {
             tab.summary_scroll = max_scroll;
+            tab.summary_follow_mode = true;
         }
     }
 
@@ -130,6 +129,7 @@ impl Session {
             tab.summary_text = summary;
             tab.summary_state = SummaryState::Ready;
             tab.summary_scroll = 0;
+            tab.summary_follow_mode = true;
         }
     }
 

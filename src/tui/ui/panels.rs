@@ -209,7 +209,17 @@ fn draw_todos(frame: &mut Frame, session: &Session, area: Rect, regions: &mut Sc
         theme.accent_alt
     };
 
-    let title = if is_focused { " Todos [*] " } else { " Todos " };
+    let title = if is_focused {
+        if session.todo_follow_mode {
+            " Todos [*] "
+        } else {
+            " Todos [SCROLLED *] "
+        }
+    } else if !session.todo_follow_mode {
+        " Todos [SCROLLED] "
+    } else {
+        " Todos "
+    };
 
     let todos_block = Block::default()
         .borders(Borders::ALL)
@@ -286,7 +296,11 @@ fn draw_todos(frame: &mut Frame, session: &Session, area: Rect, regions: &mut Sc
     // Register scrollable region with computed max_scroll
     regions.register(ScrollRegion::TodosPanel, inner_area, max_scroll);
 
-    let scroll_pos = session.todo_scroll_position.min(max_scroll);
+    let scroll_pos = if session.todo_follow_mode {
+        max_scroll
+    } else {
+        session.todo_scroll_position.min(max_scroll)
+    };
 
     let paragraph = Paragraph::new(lines)
         .block(todos_block)

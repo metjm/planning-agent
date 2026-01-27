@@ -132,6 +132,8 @@ pub struct SessionUiState {
     pub chat_follow_mode: bool,
     pub todos: HashMap<String, Vec<TodoItem>>,
     pub todo_scroll_position: usize,
+    #[serde(default)]
+    pub todo_follow_mode: bool,
 
     // Account usage
     pub account_usage: AccountUsage,
@@ -161,6 +163,8 @@ pub struct SessionUiState {
     pub review_history_spinner_frame: u8,
     #[serde(default)]
     pub review_history_scroll: usize,
+    #[serde(default)]
+    pub review_history_follow_mode: bool,
 }
 
 /// Information about a session snapshot for listing purposes.
@@ -605,6 +609,7 @@ impl SessionUiState {
             chat_follow_mode: true,
             todos: HashMap::new(),
             todo_scroll_position: 0,
+            todo_follow_mode: true,
             account_usage: AccountUsage::default(),
             spinner_frame: 0,
             current_run_id: 0,
@@ -616,6 +621,7 @@ impl SessionUiState {
             review_history: Vec::new(),
             review_history_spinner_frame: 0,
             review_history_scroll: 0,
+            review_history_follow_mode: true,
         }
     }
 }

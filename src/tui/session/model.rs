@@ -99,6 +99,8 @@ pub struct RunTab {
     pub summary_state: SummaryState,
     #[serde(default)]
     pub summary_spinner_frame: u8,
+    #[serde(default)]
+    pub summary_follow_mode: bool,
 }
 
 impl RunTab {
@@ -111,6 +113,7 @@ impl RunTab {
             summary_scroll: 0,
             summary_state: SummaryState::None,
             summary_spinner_frame: 0,
+            summary_follow_mode: true,
         }
     }
 }

@@ -87,6 +87,7 @@ fn create_test_ui_state() -> SessionUiState {
         chat_follow_mode: true,
         todos: HashMap::new(),
         todo_scroll_position: 0,
+        todo_follow_mode: true,
         account_usage: AccountUsage::default(),
         spinner_frame: 0,
         current_run_id: 1,
@@ -98,6 +99,7 @@ fn create_test_ui_state() -> SessionUiState {
         review_history: Vec::new(),
         review_history_spinner_frame: 0,
         review_history_scroll: 0,
+        review_history_follow_mode: true,
     }
 }
 

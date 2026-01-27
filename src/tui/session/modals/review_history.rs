@@ -12,6 +12,7 @@ impl Session {
         self.review_history
             .retain(|r| !(r.kind == kind && r.round == round));
         self.review_history.push(ReviewRound::new(kind, round));
+        self.review_history_follow_mode = true;
     }
 
     /// Mark a reviewer as started in the current round
@@ -29,6 +30,7 @@ impl Session {
                 display_id,
                 status: ReviewerStatus::Running,
             });
+            self.review_history_follow_mode = true;
         }
     }
 
@@ -57,6 +59,7 @@ impl Session {
                     summary,
                     duration_ms,
                 };
+                self.review_history_follow_mode = true;
             }
         }
     }
@@ -80,6 +83,7 @@ impl Session {
                 .find(|r| r.display_id == display_id)
             {
                 entry.status = ReviewerStatus::Failed { error };
+                self.review_history_follow_mode = true;
             }
         }
     }
@@ -114,6 +118,7 @@ impl Session {
 
     /// Scroll review history up
     pub fn review_history_scroll_up(&mut self) {
+        self.review_history_follow_mode = false;
         self.review_history_scroll = self.review_history_scroll.saturating_sub(1);
     }
 
@@ -122,6 +127,12 @@ impl Session {
         if self.review_history_scroll < max_scroll {
             self.review_history_scroll += 1;
         }
+    }
+
+    /// Scroll review history to bottom
+    pub fn review_history_scroll_to_bottom(&mut self, max_scroll: usize) {
+        self.review_history_scroll = max_scroll;
+        self.review_history_follow_mode = true;
     }
 }
 

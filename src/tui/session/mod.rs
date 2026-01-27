@@ -176,9 +176,13 @@ pub struct Session {
     pub review_history_spinner_frame: u8,
     /// Scroll position for review history panel
     pub review_history_scroll: usize,
+    /// Follow mode for review history panel (auto-scroll to bottom)
+    pub review_history_follow_mode: bool,
 
     pub todos: HashMap<String, Vec<TodoItem>>,
     pub todo_scroll_position: usize,
+    /// Follow mode for todos panel (auto-scroll to bottom)
+    pub todo_follow_mode: bool,
 
     /// @-mention state for tab input field
     pub tab_mention_state: MentionState,
@@ -305,9 +309,11 @@ impl Session {
             review_history: Vec::new(),
             review_history_spinner_frame: 0,
             review_history_scroll: 0,
+            review_history_follow_mode: true,
 
             todos: HashMap::new(),
             todo_scroll_position: 0,
+            todo_follow_mode: true,
 
             tab_mention_state: MentionState::new(),
             feedback_mention_state: MentionState::new(),
@@ -592,14 +598,17 @@ impl Session {
 
     pub fn update_todos(&mut self, agent_name: String, todos: Vec<TodoItem>) {
         self.todos.insert(agent_name, todos);
+        self.todo_follow_mode = true;
     }
 
     pub fn clear_todos(&mut self) {
         self.todos.clear();
         self.todo_scroll_position = 0;
+        self.todo_follow_mode = true;
     }
 
     pub fn todo_scroll_up(&mut self) {
+        self.todo_follow_mode = false;
         self.todo_scroll_position = self.todo_scroll_position.saturating_sub(1);
     }
 
@@ -610,10 +619,12 @@ impl Session {
     }
 
     pub fn todo_scroll_to_top(&mut self) {
+        self.todo_follow_mode = false;
         self.todo_scroll_position = 0;
     }
 
     pub fn todo_scroll_to_bottom(&mut self, max_scroll: usize) {
+        self.todo_follow_mode = true;
         self.todo_scroll_position = max_scroll;
     }
 

@@ -834,23 +834,32 @@ fn handle_none_mode_input(key: crossterm::event::KeyEvent, session: &mut Session
             FocusedPanel::ChatInput => {}
             FocusedPanel::Summary => session.summary_scroll_to_top(),
         },
-        KeyCode::Char('G') => match session.focused_panel {
-            FocusedPanel::Output => session.scroll_to_bottom(),
-            FocusedPanel::Todos => {
-                let max_scroll = compute_todo_panel_max_scroll(session);
-                session.todo_scroll_to_bottom(max_scroll);
+        KeyCode::Char('G') => {
+            match session.focused_panel {
+                FocusedPanel::Output => session.scroll_to_bottom(),
+                FocusedPanel::Todos => {
+                    let max_scroll = compute_todo_panel_max_scroll(session);
+                    session.todo_scroll_to_bottom(max_scroll);
+                }
+                FocusedPanel::Chat => session.chat_scroll_to_bottom(),
+                FocusedPanel::ChatInput => {}
+                FocusedPanel::Summary => {
+                    let max_scroll = session
+                        .run_tabs
+                        .get(session.active_run_tab)
+                        .map(|tab| compute_run_tab_summary_max_scroll(&tab.summary_text))
+                        .unwrap_or(0);
+                    session.summary_scroll_to_bottom(max_scroll);
+                }
             }
-            FocusedPanel::Chat => session.chat_scroll_to_bottom(),
-            FocusedPanel::ChatInput => {}
-            FocusedPanel::Summary => {
-                let max_scroll = session
-                    .run_tabs
-                    .get(session.active_run_tab)
-                    .map(|tab| compute_run_tab_summary_max_scroll(&tab.summary_text))
-                    .unwrap_or(0);
-                session.summary_scroll_to_bottom(max_scroll);
+            // Fallback: scroll review history panel to bottom if visible
+            let (term_width, term_height) = crossterm::terminal::size().unwrap_or((80, 24));
+            if term_width >= 100 {
+                let max_scroll =
+                    compute_review_history_max_scroll(session, term_width, term_height);
+                session.review_history_scroll_to_bottom(max_scroll);
             }
-        },
+        }
         KeyCode::Left => {
             if session.focused_panel == FocusedPanel::Chat
                 || session.focused_panel == FocusedPanel::Summary

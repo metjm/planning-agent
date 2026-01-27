@@ -397,7 +397,13 @@ pub(super) fn draw_summary_panel(
     regions.register(ScrollRegion::SummaryPanel, inner_area, max_scroll);
 
     let scroll_pos = active_tab
-        .map(|t| t.summary_scroll.min(max_scroll))
+        .map(|t| {
+            if t.summary_follow_mode {
+                max_scroll
+            } else {
+                t.summary_scroll.min(max_scroll)
+            }
+        })
         .unwrap_or(0);
 
     let paragraph = Paragraph::new(lines)
@@ -632,7 +638,11 @@ pub(super) fn draw_reviewer_history_panel(
     // Register scrollable region with computed max_scroll
     regions.register(ScrollRegion::ReviewHistory, inner_area, max_scroll);
 
-    let scroll_position = session.review_history_scroll.min(max_scroll);
+    let scroll_position = if session.review_history_follow_mode {
+        max_scroll
+    } else {
+        session.review_history_scroll.min(max_scroll)
+    };
 
     let paragraph = Paragraph::new(lines.clone())
         .block(panel_block)
