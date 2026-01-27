@@ -61,11 +61,15 @@ pub fn format_ping_duration(duration: std::time::Duration) -> String {
 }
 
 /// Truncate a path for display, showing the end portion.
+/// Uses character-based truncation to avoid panicking on UTF-8 boundaries.
 pub fn truncate_path(path: &str, max_len: usize) -> String {
-    if path.len() <= max_len {
+    let char_count = path.chars().count();
+    if char_count <= max_len {
         path.to_string()
     } else {
-        format!("...{}", &path[path.len().saturating_sub(max_len - 3)..])
+        let skip_count = char_count.saturating_sub(max_len - 3);
+        let suffix: String = path.chars().skip(skip_count).collect();
+        format!("...{}", suffix)
     }
 }
 

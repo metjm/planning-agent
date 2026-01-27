@@ -58,3 +58,18 @@ pub fn get_status_display(phase: &str, status: &str) -> (egui::Color32, &'static
         _ => (UNKNOWN, "Unknown"),
     }
 }
+
+/// Get color for a workflow phase.
+pub fn get_phase_color(phase: &str) -> egui::Color32 {
+    match phase.to_lowercase().as_str() {
+        "planning" => PLANNING,
+        "reviewing" => REVIEWING,
+        "revising" => REVISING,
+        "implementing" => IMPLEMENTING,
+        "implementationreview" | "implementation_review" => IMPL_REVIEW,
+        "complete" => COMPLETE,
+        "awaitingplanningdecision" | "awaiting_planning_decision" => AWAITING,
+        "awaitingdecision" | "awaiting_decision" => AWAITING,
+        _ => UNKNOWN,
+    }
+}

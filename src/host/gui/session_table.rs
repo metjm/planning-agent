@@ -3,6 +3,29 @@
 use crate::session_daemon::LivenessState;
 use egui_extras::{Column, TableBuilder};
 
+/// Check if a session requires user interaction based on its phase and liveness.
+///
+/// A session needs interaction when:
+/// 1. It is in one of these planning phases:
+///    - "AwaitingPlanningDecision" - max iterations reached in planning/review cycle
+///    - "Complete" - plan approved, awaiting user decision (approve/implement/decline)
+/// 2. AND it is NOT stopped (liveness != Stopped)
+///
+/// Stopped sessions cannot receive user input until restarted, so they are excluded
+/// from the interaction count even if in an awaiting phase.
+pub fn session_needs_interaction(phase: &str, liveness: LivenessDisplay) -> bool {
+    // Stopped sessions cannot receive input
+    if matches!(liveness, LivenessDisplay::Stopped) {
+        return false;
+    }
+
+    let phase_lower = phase.to_lowercase();
+    matches!(
+        phase_lower.as_str(),
+        "complete" | "awaitingplanningdecision"
+    )
+}
+
 /// Display row for a session.
 #[derive(Clone)]
 pub struct DisplaySessionRow {
@@ -121,6 +144,11 @@ fn render_session_rows(ui: &mut eframe::egui::Ui, sessions: &[&DisplaySessionRow
         .body(|mut body| {
             for session in sessions {
                 body.row(22.0, |mut row| {
+                    // Highlight entire row if awaiting user interaction
+                    if session_needs_interaction(&session.phase, session.liveness) {
+                        row.set_selected(true);
+                    }
+
                     // Liveness indicator
                     row.col(|ui| {
                         let color = match session.liveness {
@@ -139,7 +167,8 @@ fn render_session_rows(ui: &mut eframe::egui::Ui, sessions: &[&DisplaySessionRow
                         ui.label(&session.feature_name);
                     });
                     row.col(|ui| {
-                        ui.label(&session.phase);
+                        let phase_color = super::status_colors::get_phase_color(&session.phase);
+                        ui.colored_label(phase_color, &session.phase);
                     });
                     row.col(|ui| {
                         ui.label(session.iteration.to_string());

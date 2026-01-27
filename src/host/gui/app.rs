@@ -55,6 +55,10 @@ struct DisplayData {
     approval_count: usize,
     container_count: usize,
     last_update_elapsed_secs: u64,
+    /// Active sessions NOT awaiting interaction
+    running_count: usize,
+    /// Sessions awaiting user interaction
+    awaiting_count: usize,
 }
 
 #[derive(Clone)]
@@ -310,12 +314,23 @@ impl HostApp {
             }
         }
 
+        // Compute awaiting/running counts using session_needs_interaction
+        // Note: session_needs_interaction checks both phase AND liveness, so stopped
+        // sessions in awaiting phases are correctly excluded from awaiting_count.
+        let awaiting_count = session_rows
+            .iter()
+            .filter(|s| super::session_table::session_needs_interaction(&s.phase, s.liveness))
+            .count();
+        let running_count = active_count.saturating_sub(awaiting_count);
+
         self.display_data.sessions = session_rows;
         self.display_data.containers = container_rows;
         self.display_data.active_count = active_count;
         self.display_data.approval_count = approval_count;
         self.display_data.container_count = container_count;
         self.display_data.last_update_elapsed_secs = last_update_elapsed_secs;
+        self.display_data.running_count = running_count;
+        self.display_data.awaiting_count = awaiting_count;
 
         for (account_id, provider, email, error) in errors_to_log {
             self.log_account_error_once(&account_id, &provider, &email, &error);
@@ -422,6 +437,55 @@ impl HostApp {
     fn handle_tray_commands(&mut self, _ctx: &egui::Context) {}
 }
 
+/// Render the stats dashboard above the session table.
+fn render_stats_dashboard(
+    ui: &mut egui::Ui,
+    running_count: usize,
+    awaiting_count: usize,
+    total_count: usize,
+) {
+    ui.horizontal(|ui| {
+        // Running agents (green)
+        ui.vertical(|ui| {
+            ui.label(
+                egui::RichText::new(running_count.to_string())
+                    .size(48.0)
+                    .color(egui::Color32::from_rgb(76, 175, 80)), // Green
+            );
+            ui.label("Running");
+        });
+
+        ui.add_space(32.0);
+
+        // Awaiting interaction (amber/gray)
+        ui.vertical(|ui| {
+            let color = if awaiting_count > 0 {
+                egui::Color32::from_rgb(255, 152, 0) // Amber
+            } else {
+                egui::Color32::GRAY
+            };
+            ui.label(
+                egui::RichText::new(awaiting_count.to_string())
+                    .size(48.0)
+                    .color(color),
+            );
+            ui.label("Awaiting Input");
+        });
+
+        ui.add_space(32.0);
+
+        // Total sessions
+        ui.vertical(|ui| {
+            ui.label(
+                egui::RichText::new(total_count.to_string())
+                    .size(48.0)
+                    .color(egui::Color32::LIGHT_GRAY),
+            );
+            ui.label("Total");
+        });
+    });
+}
+
 impl eframe::App for HostApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // Handle tray icon commands
@@ -438,6 +502,15 @@ impl eframe::App for HostApp {
             self.sync_display_data();
             // Check for new sessions awaiting approval and notify
             self.check_and_notify();
+
+            // Update tray icon with current counts (only if changed - method handles caching)
+            #[cfg(feature = "tray-icon")]
+            if let Some(ref mut tray) = self.tray {
+                tray.update_icon(
+                    self.display_data.running_count,
+                    self.display_data.awaiting_count,
+                );
+            }
         }
 
         // Request repaint every second for timestamp updates
@@ -466,6 +539,18 @@ impl eframe::App for HostApp {
                 }
             });
         });
+
+        // Stats dashboard panel (after header, before central panel)
+        egui::TopBottomPanel::top("stats_dashboard")
+            .resizable(false)
+            .show(ctx, |ui| {
+                render_stats_dashboard(
+                    ui,
+                    self.display_data.running_count,
+                    self.display_data.awaiting_count,
+                    self.display_data.sessions.len(),
+                );
+            });
 
         // Bottom log panel
         egui::TopBottomPanel::bottom("log_panel")

@@ -69,7 +69,7 @@ pub fn render_usage_panel_content(ui: &mut egui::Ui, accounts: &[DisplayAccountR
 
     let mut last_provider: Option<&AccountProvider> = None;
     for account in accounts {
-        if last_provider.map_or(false, |provider| provider != &account.provider) {
+        if last_provider.is_some_and(|provider| provider != &account.provider) {
             ui.separator();
         }
 
