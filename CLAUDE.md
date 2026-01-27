@@ -283,6 +283,8 @@ The build script (`build.rs`) enforces:
 7. **Max 10 Files Per Folder** - Split large modules
 8. **Max 750 Lines Per File** - Extract into submodules
 9. **Tests in Test Folders** - Use `#[path = "tests/foo.rs"]` pattern
+10. **UTF-8 Safe String Operations** - No `.get(..n)` on strings in TUI code
+11. **TUI Zero Guards** - Division by width/height must have zero checks
 
 ### Test Location Pattern
 
@@ -339,3 +341,56 @@ Change as much code as needed to fix problems properly:
 ### No Timelines in Plans
 
 Plans must not include time estimates, schedules, or deadlines. Focus on technical scope and sequencing only.
+
+## TUI Safety Patterns
+
+### UTF-8 String Handling
+
+**Never use byte-based operations for display truncation.** Multi-byte characters (emoji, non-ASCII) will break.
+
+```rust
+// WRONG - byte-based truncation breaks on UTF-8
+if name.len() > 15 {
+    format!("{}...", name.get(..12).unwrap_or(name))
+}
+
+// CORRECT - character-based truncation
+if name.chars().count() > 15 {
+    format!("{}...", name.chars().take(12).collect::<String>())
+}
+```
+
+For cursor-based slicing (where byte positions are maintained at UTF-8 boundaries), use `tui/cursor_utils.rs`:
+
+```rust
+use crate::tui::cursor_utils::{slice_up_to_cursor, slice_from_cursor, slice_between_cursors};
+
+// Instead of: text.get(..cursor).unwrap_or("")
+let before = slice_up_to_cursor(text, cursor);
+
+// Instead of: text.get(cursor..).unwrap_or("")
+let after = slice_from_cursor(text, cursor);
+
+// Instead of: text.get(start..end).unwrap_or("")
+let middle = slice_between_cursors(text, start, end);
+```
+
+The cursor_utils helpers include `debug_assert!` to validate positions are at character boundaries.
+
+### Terminal Safety
+
+1. **Panic Hook**: The TUI sets a panic hook to restore terminal state on crash (disable raw mode, leave alternate screen, show cursor)
+
+2. **Zero Guards**: Always check width/height before division:
+```rust
+if width == 0 || height == 0 {
+    return; // Can't render in zero-size area
+}
+let columns = total / width;
+```
+
+3. **Bounded Buffers**: Output buffers have maximum sizes to prevent memory growth:
+   - `MAX_OUTPUT_LINES = 10000`
+   - `MAX_STREAMING_LINES = 5000`
+
+4. **Control Character Sanitization**: Agent output is sanitized before display to prevent terminal corruption
