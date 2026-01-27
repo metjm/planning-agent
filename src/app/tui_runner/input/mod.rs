@@ -389,6 +389,10 @@ pub async fn handle_key_event(
         match key.code {
             KeyCode::Esc | KeyCode::Enter => {
                 session.close_implementation_success();
+                // After dismissing success modal with Enter, focus ChatInput if interaction is available
+                if key.code == KeyCode::Enter && session.can_interact_with_implementation() {
+                    session.focused_panel = FocusedPanel::ChatInput;
+                }
             }
             _ => {}
         }
@@ -396,9 +400,11 @@ pub async fn handle_key_event(
     }
 
     // Handle 'p' to toggle plan modal (global hotkey, works from any mode except error state or input areas)
+    // ChatInput is included because users need to type characters like 'p' in follow-up messages
     let in_text_input = session.input_mode != InputMode::Normal
         || session.approval_mode == ApprovalMode::EnteringFeedback
-        || session.approval_mode == ApprovalMode::EnteringIterations;
+        || session.approval_mode == ApprovalMode::EnteringIterations
+        || session.focused_panel == FocusedPanel::ChatInput;
     if key.code == KeyCode::Char('p') && session.workflow_view.is_some() && !in_text_input {
         session.toggle_plan_modal(working_dir);
         return Ok(false);

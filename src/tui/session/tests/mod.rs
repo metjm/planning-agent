@@ -806,6 +806,124 @@ fn test_toggle_focus_with_interaction() {
 }
 
 #[test]
+fn test_focus_changes_to_chat_input_after_success_modal_dismiss_with_enter() {
+    let mut session = build_interactive_session();
+    assert_eq!(session.focused_panel, FocusedPanel::Output);
+
+    // Open implementation success modal
+    session.open_implementation_success(3);
+    assert!(session.implementation_success_modal.is_some());
+
+    // Simulate Enter key dismiss behavior: close modal and set focus
+    session.close_implementation_success();
+    if session.can_interact_with_implementation() {
+        session.focused_panel = FocusedPanel::ChatInput;
+    }
+
+    // Verify modal is closed and focus moved to ChatInput
+    assert!(session.implementation_success_modal.is_none());
+    assert_eq!(session.focused_panel, FocusedPanel::ChatInput);
+}
+
+#[test]
+fn test_focus_unchanged_after_success_modal_dismiss_with_esc() {
+    let mut session = build_interactive_session();
+    assert_eq!(session.focused_panel, FocusedPanel::Output);
+
+    // Open implementation success modal
+    session.open_implementation_success(3);
+    assert!(session.implementation_success_modal.is_some());
+
+    // Simulate Esc key dismiss behavior: close modal without changing focus
+    session.close_implementation_success();
+    // Note: Esc does NOT set focus to ChatInput
+
+    // Verify modal is closed but focus remains unchanged
+    assert!(session.implementation_success_modal.is_none());
+    assert_eq!(session.focused_panel, FocusedPanel::Output);
+}
+
+#[test]
+fn test_focus_unchanged_when_cannot_interact_with_implementation() {
+    // Use basic session that cannot interact (no workflow view, no context)
+    let mut session = Session::new(0);
+    assert_eq!(session.focused_panel, FocusedPanel::Output);
+    assert!(!session.can_interact_with_implementation());
+
+    // Open implementation success modal
+    session.open_implementation_success(3);
+    assert!(session.implementation_success_modal.is_some());
+
+    // Simulate Enter key dismiss behavior
+    session.close_implementation_success();
+    if session.can_interact_with_implementation() {
+        session.focused_panel = FocusedPanel::ChatInput;
+    }
+
+    // Verify modal is closed but focus unchanged (can't interact)
+    assert!(session.implementation_success_modal.is_none());
+    assert_eq!(session.focused_panel, FocusedPanel::Output);
+}
+
+#[test]
+fn test_hotkey_guard_blocks_when_chat_input_focused() {
+    let mut session = Session::new(0);
+
+    // Default state: not in text input mode
+    let in_text_input_default = session.input_mode != InputMode::Normal
+        || session.approval_mode == ApprovalMode::EnteringFeedback
+        || session.approval_mode == ApprovalMode::EnteringIterations
+        || session.focused_panel == FocusedPanel::ChatInput;
+    assert!(!in_text_input_default);
+
+    // When ChatInput is focused: should block hotkeys
+    session.focused_panel = FocusedPanel::ChatInput;
+    let in_text_input_chat = session.input_mode != InputMode::Normal
+        || session.approval_mode == ApprovalMode::EnteringFeedback
+        || session.approval_mode == ApprovalMode::EnteringIterations
+        || session.focused_panel == FocusedPanel::ChatInput;
+    assert!(in_text_input_chat);
+
+    // When Chat (read-only) is focused: should NOT block hotkeys
+    session.focused_panel = FocusedPanel::Chat;
+    let in_text_input_readonly = session.input_mode != InputMode::Normal
+        || session.approval_mode == ApprovalMode::EnteringFeedback
+        || session.approval_mode == ApprovalMode::EnteringIterations
+        || session.focused_panel == FocusedPanel::ChatInput;
+    assert!(!in_text_input_readonly);
+}
+
+#[test]
+fn test_hotkey_guard_blocks_for_existing_input_modes() {
+    let mut session = Session::new(0);
+
+    // EnteringFeedback should block
+    session.approval_mode = ApprovalMode::EnteringFeedback;
+    let in_text_feedback = session.input_mode != InputMode::Normal
+        || session.approval_mode == ApprovalMode::EnteringFeedback
+        || session.approval_mode == ApprovalMode::EnteringIterations
+        || session.focused_panel == FocusedPanel::ChatInput;
+    assert!(in_text_feedback);
+
+    // EnteringIterations should block
+    session.approval_mode = ApprovalMode::EnteringIterations;
+    let in_text_iterations = session.input_mode != InputMode::Normal
+        || session.approval_mode == ApprovalMode::EnteringFeedback
+        || session.approval_mode == ApprovalMode::EnteringIterations
+        || session.focused_panel == FocusedPanel::ChatInput;
+    assert!(in_text_iterations);
+
+    // NamingTab mode should block
+    session.approval_mode = ApprovalMode::None;
+    session.input_mode = InputMode::NamingTab;
+    let in_text_naming = session.input_mode != InputMode::Normal
+        || session.approval_mode == ApprovalMode::EnteringFeedback
+        || session.approval_mode == ApprovalMode::EnteringIterations
+        || session.focused_panel == FocusedPanel::ChatInput;
+    assert!(in_text_naming);
+}
+
+#[test]
 fn test_is_focus_on_invisible_todos() {
     let mut session = Session::new(0);
     session.focused_panel = FocusedPanel::Todos;
