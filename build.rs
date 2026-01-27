@@ -82,6 +82,61 @@ fn main() {
     enforce_no_test_skips();
     enforce_no_nested_runtimes();
     enforce_serial_for_env_mutations();
+    enforce_all_features_compile();
+}
+
+/// Ensures all feature combinations compile.
+///
+/// This runs `cargo check` for each feature to catch compilation errors
+/// that would only appear when building with specific features.
+/// Only runs when ENFORCE_ALL_FEATURES=1 to avoid slowing down normal builds.
+fn enforce_all_features_compile() {
+    // Only run when explicitly requested (e.g., in CI or pre-commit)
+    if std::env::var("ENFORCE_ALL_FEATURES").is_err() {
+        return;
+    }
+
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR must be set");
+
+    // Features to check. host-gui-tray is excluded on Linux (depends on gtk3-rs).
+    let features_to_check = if cfg!(target_os = "linux") {
+        vec!["host-gui"]
+    } else {
+        vec!["host-gui", "host-gui-tray"]
+    };
+
+    for feature in features_to_check {
+        eprintln!("Checking feature: {}", feature);
+
+        let output = Command::new("cargo")
+            .args(["check", "--features", feature])
+            .current_dir(&manifest_dir)
+            .output();
+
+        match output {
+            Ok(result) if !result.status.success() => {
+                let stderr = String::from_utf8_lossy(&result.stderr);
+                eprintln!("\n========================================");
+                eprintln!("FEATURE '{}' FAILED TO COMPILE", feature);
+                eprintln!("========================================");
+                eprintln!("{}", stderr);
+                eprintln!("========================================\n");
+                panic!(
+                    "Build failed: feature '{}' does not compile. Fix the errors above.",
+                    feature
+                );
+            }
+            Err(e) => {
+                eprintln!(
+                    "cargo:warning=Failed to check feature '{}': {}",
+                    feature, e
+                );
+            }
+            Ok(_) => {
+                eprintln!("Feature '{}' compiled successfully", feature);
+            }
+        }
+    }
 }
 
 fn enforce_line_limits() {

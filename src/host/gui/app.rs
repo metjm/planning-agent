@@ -141,7 +141,7 @@ impl HostApp {
         // Collect all data from state first, then release lock before mutating self
         let collected = {
             // Use try_lock to avoid blocking GUI
-            let Ok(state) = self.state.try_lock() else {
+            let Ok(mut state) = self.state.try_lock() else {
                 return;
             };
 
@@ -156,23 +156,8 @@ impl HostApp {
                 .filter(|(_, c)| !c.sessions.is_empty())
                 .map(|(id, c)| (id.clone(), c.sessions.len()))
                 .collect();
-            let sessions = state.sessions();
 
-            let session_rows: Vec<DisplaySessionRow> = sessions
-                .iter()
-                .map(|s| DisplaySessionRow {
-                    session_id: s.session.session_id.clone(),
-                    container_name: s.container_name.clone(),
-                    feature_name: s.session.feature_name.clone(),
-                    phase: s.session.phase.clone(),
-                    iteration: s.session.iteration,
-                    status: s.session.status.clone(),
-                    liveness: s.session.liveness.into(),
-                    pid: s.session.pid,
-                    updated_ago: format_relative_time(&s.session.updated_at),
-                })
-                .collect();
-
+            // Collect all immutable borrows BEFORE calling sessions() which takes &mut self
             let container_rows: Vec<DisplayContainerRow> = state
                 .containers
                 .iter()
@@ -199,7 +184,7 @@ impl HostApp {
             let approval_count = state.approval_count();
             let last_update_elapsed_secs = state.last_update.elapsed().as_secs();
 
-            // Collect account usage data
+            // Collect account usage data (immutable borrow)
             let mut account_rows: Vec<DisplayAccountRow> = Vec::new();
             let mut seen_accounts: HashSet<AccountId> = HashSet::new();
             let mut errors_to_log: Vec<(AccountId, String, String, String)> = Vec::new();
@@ -260,6 +245,25 @@ impl HostApp {
                 (a.provider.order_index(), &a.email).cmp(&(b.provider.order_index(), &b.email))
             });
 
+            // NOW call sessions() which takes &mut self - do this last
+            let sessions = state.sessions();
+
+            let session_rows: Vec<DisplaySessionRow> = sessions
+                .iter()
+                .map(|s| DisplaySessionRow {
+                    session_id: s.session.session_id.clone(),
+                    container_name: s.container_name.clone(),
+                    feature_name: s.session.feature_name.clone(),
+                    phase: s.session.phase.clone(),
+                    iteration: s.session.iteration,
+                    status: s.session.status.clone(),
+                    liveness: s.session.liveness.into(),
+                    pid: s.session.pid,
+                    updated_ago: format_relative_time(&s.session.updated_at),
+                })
+                .collect();
+            let sessions_len = sessions.len();
+
             // Return collected data - state lock is released here
             (
                 session_rows,
@@ -272,7 +276,7 @@ impl HostApp {
                 seen_accounts,
                 errors_to_log,
                 accounts_to_clear,
-                sessions.len(),
+                sessions_len,
                 total_sessions_in_containers,
                 container_session_counts,
             )
