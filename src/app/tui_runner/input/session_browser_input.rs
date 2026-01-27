@@ -71,6 +71,14 @@ pub async fn handle_session_browser_input(
             // Refresh the session list asynchronously
             trigger_refresh(tab_manager, working_dir, output_tx);
         }
+        KeyCode::Char('z') => {
+            // Export the selected session as a ZIP file
+            if let Some(entry) = tab_manager.session_browser.selected_entry().cloned() {
+                if !tab_manager.session_browser.exporting_zip {
+                    trigger_zip_export(tab_manager, &entry.session_id, working_dir, output_tx);
+                }
+            }
+        }
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             return Ok(true);
         }
@@ -343,3 +351,119 @@ pub fn trigger_refresh(
         });
     });
 }
+
+/// Trigger an async export of the selected session to a ZIP file.
+fn trigger_zip_export(
+    tab_manager: &mut TabManager,
+    session_id: &str,
+    working_dir: &Path,
+    output_tx: &mpsc::UnboundedSender<Event>,
+) {
+    tab_manager.session_browser.exporting_zip = true;
+    tab_manager.session_browser.error = None;
+
+    let session_id = session_id.to_string();
+    let output_dir = working_dir.to_path_buf();
+    let tx = output_tx.clone();
+
+    tokio::spawn(async move {
+        let result = export_session_zip_async(&session_id, &output_dir).await;
+        let (output_path, error) = match result {
+            Ok(path) => (Some(path), None),
+            Err(e) => (None, Some(e.to_string())),
+        };
+        // Receiver dropped means TUI is shutting down - safe to ignore
+        let _ = tx.send(Event::SessionZipExportComplete { output_path, error });
+    });
+}
+
+/// Create a ZIP archive of a session folder.
+///
+/// The ZIP is named `{YYYYMMDD}_{session-id}.zip` and placed in `output_dir`.
+///
+/// Note: We construct the session path manually instead of using `planning_paths::session_dir()`
+/// because that function auto-creates directories via `create_dir_all`, which would prevent
+/// us from detecting non-existent sessions.
+async fn export_session_zip_async(
+    session_id: &str,
+    output_dir: &Path,
+) -> anyhow::Result<std::path::PathBuf> {
+    use std::fs::File;
+    use zip::write::SimpleFileOptions;
+    use zip::ZipWriter;
+
+    // Construct session path manually to avoid auto-creation.
+    // planning_paths::session_dir() calls create_dir_all, so we can't use it for existence checks.
+    let home_dir =
+        dirs::home_dir().ok_or_else(|| anyhow::anyhow!("Could not determine home directory"))?;
+    let session_dir = home_dir
+        .join(".planning-agent")
+        .join("sessions")
+        .join(session_id);
+
+    if !session_dir.exists() {
+        anyhow::bail!("Session directory not found: {}", session_dir.display());
+    }
+
+    // Generate output filename: YYYYMMDD_session-id.zip
+    let date_str = chrono::Local::now().format("%Y%m%d").to_string();
+    let zip_name = format!("{}_{}.zip", date_str, session_id);
+    let zip_path = output_dir.join(&zip_name);
+
+    // Run zip creation in blocking context (file I/O)
+    let session_dir_clone = session_dir.clone();
+    let zip_path_clone = zip_path.clone();
+    tokio::task::spawn_blocking(move || {
+        let file = File::create(&zip_path_clone)?;
+        let mut zip = ZipWriter::new(file);
+        let options =
+            SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+
+        // Recursively add all files
+        add_directory_to_zip(&mut zip, &session_dir_clone, &session_dir_clone, options)?;
+
+        zip.finish()?;
+        Ok::<std::path::PathBuf, anyhow::Error>(zip_path_clone)
+    })
+    .await?
+}
+
+/// Recursively add a directory's contents to a ZIP archive.
+fn add_directory_to_zip<W: std::io::Write + std::io::Seek>(
+    zip: &mut zip::ZipWriter<W>,
+    base_path: &Path,
+    current_path: &Path,
+    options: zip::write::SimpleFileOptions,
+) -> anyhow::Result<()> {
+    use std::fs::{self, File};
+    use std::io::{Read, Write};
+
+    for entry in fs::read_dir(current_path)? {
+        let entry = entry?;
+        let path = entry.path();
+        let relative_path = path
+            .strip_prefix(base_path)
+            .unwrap_or(&path)
+            .to_string_lossy()
+            .to_string();
+
+        if path.is_dir() {
+            // Add directory entry (with trailing slash)
+            zip.add_directory(format!("{}/", relative_path), options)?;
+            // Recurse into subdirectory
+            add_directory_to_zip(zip, base_path, &path, options)?;
+        } else {
+            // Add file
+            zip.start_file(&relative_path, options)?;
+            let mut file = File::open(&path)?;
+            let mut buffer = Vec::new();
+            file.read_to_end(&mut buffer)?;
+            zip.write_all(&buffer)?;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+#[path = "tests/session_browser_input_tests.rs"]
+mod tests;

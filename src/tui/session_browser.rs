@@ -163,6 +163,8 @@ pub struct SessionBrowserState {
     pub last_refresh_at: Option<Instant>,
     /// Whether a refresh is in progress
     pub loading: bool,
+    /// Whether we're exporting a session as a zip file
+    pub exporting_zip: bool,
     /// Whether daemon is connected (for graceful degradation notice)
     pub daemon_connected: bool,
     /// Current working directory (cached for filtering)
@@ -182,6 +184,7 @@ impl Default for SessionBrowserState {
             confirmation_pending: None,
             last_refresh_at: None,
             loading: false,
+            exporting_zip: false,
             daemon_connected: false,
             current_working_dir: PathBuf::new(),
         }
@@ -376,6 +379,7 @@ impl SessionBrowserState {
         self.resuming = false;
         self.confirmation_pending = None;
         self.loading = false;
+        self.exporting_zip = false;
     }
 
     /// Returns the filtered list of entries based on current filter settings.

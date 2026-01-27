@@ -270,6 +270,12 @@ pub enum Event {
         error: Option<String>,
     },
 
+    /// Session zip export completed
+    SessionZipExportComplete {
+        output_path: Option<std::path::PathBuf>,
+        error: Option<String>,
+    },
+
     /// Push notification from daemon: session state changed
     DaemonSessionChanged(crate::session_daemon::SessionRecord),
 

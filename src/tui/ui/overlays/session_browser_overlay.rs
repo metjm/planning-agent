@@ -60,6 +60,8 @@ pub fn draw_session_browser_overlay(frame: &mut Frame, tab_manager: &TabManager)
     // Title
     let title_text = if tab_manager.session_browser.resuming {
         " Loading session... "
+    } else if tab_manager.session_browser.exporting_zip {
+        " Exporting ZIP... "
     } else if tab_manager.session_browser.loading {
         " Refreshing... "
     } else {
@@ -370,6 +372,13 @@ pub fn draw_session_browser_overlay(frame: &mut Frame, tab_manager: &TabManager)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::raw("Refresh "),
+        Span::styled(
+            " [z] ",
+            Style::default()
+                .fg(Color::Magenta)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("Export "),
         Span::styled(
             " [Esc/q] ",
             Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),

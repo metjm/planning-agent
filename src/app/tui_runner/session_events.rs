@@ -371,6 +371,19 @@ pub async fn handle_session_event(
                 .apply_refresh(entries, daemon_connected, error);
             tab_manager.daemon_connected = daemon_connected;
         }
+        Event::SessionZipExportComplete { output_path, error } => {
+            tab_manager.session_browser.exporting_zip = false;
+            if let Some(err) = error {
+                tab_manager.session_browser.error = Some(format!("Export failed: {}", err));
+            } else if let Some(path) = output_path {
+                // Show success message - use filename only if it fits
+                let filename = path
+                    .file_name()
+                    .map(|f| f.to_string_lossy().to_string())
+                    .unwrap_or_else(|| path.display().to_string());
+                tab_manager.session_browser.error = Some(format!("Exported: {}", filename));
+            }
+        }
         Event::DaemonSessionChanged(record) => {
             tab_manager.session_browser.apply_session_update(record);
         }

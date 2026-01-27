@@ -1852,11 +1852,13 @@ fn enforce_phase_interrupt_consistency() {
     }
 
     if !violations.is_empty() {
-        let mut error_msg = String::from(
-            "\n\n=== Phase Interrupt Handler Consistency Violation ===\n\n",
+        let mut error_msg =
+            String::from("\n\n=== Phase Interrupt Handler Consistency Violation ===\n\n");
+        error_msg
+            .push_str("Phase handlers should return Ok(Some(NeedsRestart)) for user interrupts,\n");
+        error_msg.push_str(
+            "not Err(CancellationError). CancellationError causes feedback to be lost.\n\n",
         );
-        error_msg.push_str("Phase handlers should return Ok(Some(NeedsRestart)) for user interrupts,\n");
-        error_msg.push_str("not Err(CancellationError). CancellationError causes feedback to be lost.\n\n");
 
         for (file, file_violations) in violations {
             error_msg.push_str(&format!("File: {}\n", file.display()));
