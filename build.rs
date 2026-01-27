@@ -127,10 +127,7 @@ fn enforce_all_features_compile() {
                 );
             }
             Err(e) => {
-                eprintln!(
-                    "cargo:warning=Failed to check feature '{}': {}",
-                    feature, e
-                );
+                eprintln!("cargo:warning=Failed to check feature '{}': {}", feature, e);
             }
             Ok(_) => {
                 eprintln!("Feature '{}' compiled successfully", feature);

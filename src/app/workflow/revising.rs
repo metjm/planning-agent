@@ -258,7 +258,19 @@ pub async fn run_revising_phase(
             next_iteration
         ),
     );
-    // Phase transition and state persistence handled by RevisionCompleted command dispatched by caller
+
+    // Dispatch RevisionCompleted command to persist phase transition
+    // Plan path must exist during revision phase (set at workflow creation)
+    let plan_path = view
+        .plan_path()
+        .cloned()
+        .expect("plan_path must be set during Revising phase");
+    dispatch_domain_command(
+        &actor_ref,
+        DomainCommand::RevisionCompleted { plan_path },
+        &session_logger,
+    )
+    .await;
     sender.send_output("[planning] Transitioning to review phase...".to_string());
 
     Ok(None)

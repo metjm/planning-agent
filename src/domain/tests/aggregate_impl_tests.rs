@@ -94,8 +94,9 @@ async fn implementation_started_event_initializes_implementation_state() {
     });
 
     let data = get_data_mut(&mut agg);
-    assert!(data.implementation_state.is_some());
-    let impl_state = data.implementation_state.as_ref().unwrap();
+    assert!(data.implementation_state().is_some());
+    let impl_state_opt = data.implementation_state();
+    let impl_state = impl_state_opt.as_ref().unwrap();
     assert_eq!(impl_state.max_iterations().0, 5);
 }
 
@@ -118,7 +119,8 @@ async fn implementation_review_completed_updates_verdict() {
     });
 
     let data = get_data_mut(&mut agg);
-    let impl_state = data.implementation_state.as_ref().unwrap();
+    let impl_state_opt = data.implementation_state();
+    let impl_state = impl_state_opt.as_ref().unwrap();
     assert_eq!(
         impl_state.last_verdict(),
         Some(ImplementationVerdict::Approved)
@@ -139,7 +141,8 @@ async fn implementation_accepted_sets_phase_complete() {
     });
 
     let data = get_data_mut(&mut agg);
-    let impl_state = data.implementation_state.as_ref().unwrap();
+    let impl_state_opt = data.implementation_state();
+    let impl_state = impl_state_opt.as_ref().unwrap();
     assert_eq!(impl_state.phase(), ImplementationPhase::Complete);
 }
 
@@ -176,8 +179,8 @@ async fn record_failure_adds_to_history() {
     agg.apply(events.into_iter().next().unwrap());
 
     let data = get_data_mut(&mut agg);
-    assert!(data.last_failure.is_some());
-    assert_eq!(data.failure_history.len(), 1);
+    assert!(data.last_failure().is_some());
+    assert_eq!(data.failure_history().len(), 1);
 }
 
 // ============================================================================
@@ -210,9 +213,9 @@ async fn attach_worktree_stores_state() {
     agg.apply(events.into_iter().next().unwrap());
 
     let data = get_data_mut(&mut agg);
-    assert!(data.worktree_info.is_some());
+    assert!(data.worktree_info().is_some());
     assert_eq!(
-        data.worktree_info.as_ref().unwrap().branch_name(),
+        data.worktree_info().as_ref().unwrap().branch_name(),
         "feature-branch"
     );
 }
@@ -242,8 +245,8 @@ async fn record_agent_conversation_stores_state() {
     agg.apply(events.into_iter().next().unwrap());
 
     let data = get_data_mut(&mut agg);
-    assert!(data.agent_conversations.contains_key(&"claude".into()));
-    let conv = data.agent_conversations.get(&"claude".into()).unwrap();
+    assert!(data.agent_conversations().contains_key(&"claude".into()));
+    let conv = data.agent_conversations().get(&"claude".into()).unwrap();
     assert_eq!(
         conv.conversation_id(),
         Some(&ConversationId::from("conv-123"))
@@ -281,7 +284,7 @@ async fn record_invocation_appends_to_invocations_list() {
 
     // Apply first invocation
     agg.apply(events.into_iter().next().unwrap());
-    assert_eq!(get_data_mut(&mut agg).invocations.len(), 1);
+    assert_eq!(get_data_mut(&mut agg).invocations().len(), 1);
 
     // Record a second invocation
     let events = agg
@@ -300,26 +303,26 @@ async fn record_invocation_appends_to_invocations_list() {
     agg.apply(events.into_iter().next().unwrap());
 
     let data = get_data_mut(&mut agg);
-    assert_eq!(data.invocations.len(), 2);
+    assert_eq!(data.invocations().len(), 2);
 
     // Verify first invocation
-    assert_eq!(data.invocations[0].agent().0, "claude");
-    assert_eq!(data.invocations[0].phase(), PhaseLabel::Planning);
+    assert_eq!(data.invocations()[0].agent().0, "claude");
+    assert_eq!(data.invocations()[0].phase(), PhaseLabel::Planning);
     assert_eq!(
-        data.invocations[0].conversation_id(),
+        data.invocations()[0].conversation_id(),
         Some(&ConversationId::from("conv-abc"))
     );
     assert_eq!(
-        data.invocations[0].resume_strategy(),
+        data.invocations()[0].resume_strategy(),
         ResumeStrategy::ConversationResume
     );
 
     // Verify second invocation
-    assert_eq!(data.invocations[1].agent().0, "gemini");
-    assert_eq!(data.invocations[1].phase(), PhaseLabel::Reviewing);
-    assert_eq!(data.invocations[1].conversation_id(), None);
+    assert_eq!(data.invocations()[1].agent().0, "gemini");
+    assert_eq!(data.invocations()[1].phase(), PhaseLabel::Reviewing);
+    assert_eq!(data.invocations()[1].conversation_id(), None);
     assert_eq!(
-        data.invocations[1].resume_strategy(),
+        data.invocations()[1].resume_strategy(),
         ResumeStrategy::Stateless
     );
 }
@@ -403,7 +406,8 @@ async fn implementation_round_started_succeeds_with_implementation_state() {
     // Apply and verify state changes
     agg.apply(events.into_iter().next().unwrap());
     let data = get_data_mut(&mut agg);
-    let impl_state = data.implementation_state.as_ref().unwrap();
+    let impl_state_opt = data.implementation_state();
+    let impl_state = impl_state_opt.as_ref().unwrap();
     assert_eq!(impl_state.phase(), ImplementationPhase::Implementing);
     assert_eq!(impl_state.iteration(), Iteration::first());
 }
@@ -472,7 +476,8 @@ async fn implementation_max_iterations_reached_sets_phase_to_awaiting_decision()
     // Apply and verify state changes
     agg.apply(events.into_iter().next().unwrap());
     let data = get_data_mut(&mut agg);
-    let impl_state = data.implementation_state.as_ref().unwrap();
+    let impl_state_opt = data.implementation_state();
+    let impl_state = impl_state_opt.as_ref().unwrap();
     assert_eq!(impl_state.phase(), ImplementationPhase::AwaitingDecision);
 }
 
@@ -508,7 +513,8 @@ async fn implementation_declined_sets_phase_to_complete() {
     // Apply and verify state changes
     agg.apply(events.into_iter().next().unwrap());
     let data = get_data_mut(&mut agg);
-    let impl_state = data.implementation_state.as_ref().unwrap();
+    let impl_state_opt = data.implementation_state();
+    let impl_state = impl_state_opt.as_ref().unwrap();
     assert_eq!(impl_state.phase(), ImplementationPhase::Complete);
 }
 
@@ -544,7 +550,8 @@ async fn implementation_cancelled_sets_phase_to_complete() {
     // Apply and verify state changes
     agg.apply(events.into_iter().next().unwrap());
     let data = get_data_mut(&mut agg);
-    let impl_state = data.implementation_state.as_ref().unwrap();
+    let impl_state_opt = data.implementation_state();
+    let impl_state = impl_state_opt.as_ref().unwrap();
     assert_eq!(impl_state.phase(), ImplementationPhase::Complete);
 }
 
@@ -576,18 +583,18 @@ async fn failure_history_limited_to_max_entries() {
     let data = get_data_mut(&mut agg);
 
     // History should be trimmed to MAX_FAILURE_HISTORY
-    assert_eq!(data.failure_history.len(), MAX_FAILURE_HISTORY);
+    assert_eq!(data.failure_history().len(), MAX_FAILURE_HISTORY);
 
     // Oldest failures should be removed (first 10 are gone)
     // The first remaining failure should be "Error 10"
-    let first_failure = &data.failure_history[0];
+    let first_failure = &data.failure_history()[0];
     match first_failure.kind() {
         FailureKind::Unknown(msg) => assert_eq!(msg, "Error 10"),
         _ => panic!("Expected Unknown failure kind"),
     }
 
     // The last failure should be "Error 59" (MAX_FAILURE_HISTORY + 10 - 1)
-    let last_failure = &data.failure_history[MAX_FAILURE_HISTORY - 1];
+    let last_failure = &data.failure_history()[MAX_FAILURE_HISTORY - 1];
     match last_failure.kind() {
         FailureKind::Unknown(msg) => {
             assert_eq!(msg, &format!("Error {}", MAX_FAILURE_HISTORY + 10 - 1))
@@ -605,7 +612,7 @@ async fn multiple_revision_iterations_increment_correctly() {
     let mut agg = initialized_aggregate();
 
     // Verify initial iteration is 1
-    assert_eq!(get_data_mut(&mut agg).iteration.0, 1);
+    assert_eq!(get_data_mut(&mut agg).iteration().0, 1);
 
     // First cycle: Planning -> Reviewing -> Revising -> Reviewing
     agg.apply(WorkflowEvent::PlanningCompleted {
@@ -616,46 +623,46 @@ async fn multiple_revision_iterations_increment_correctly() {
         approved: false,
         completed_at: crate::domain::types::TimestampUtc::now(),
     });
-    assert_eq!(get_data_mut(&mut agg).planning_phase, Phase::Revising);
-    assert_eq!(get_data_mut(&mut agg).iteration.0, 1);
+    assert_eq!(*get_data_mut(&mut agg).planning_phase(), Phase::Revising);
+    assert_eq!(get_data_mut(&mut agg).iteration().0, 1);
 
     // Complete revision 1 -> iteration becomes 2
     agg.apply(WorkflowEvent::RevisionCompleted {
         plan_path: PathBuf::from("/plan_v2.md").into(),
         completed_at: crate::domain::types::TimestampUtc::now(),
     });
-    assert_eq!(get_data_mut(&mut agg).iteration.0, 2);
-    assert_eq!(get_data_mut(&mut agg).planning_phase, Phase::Reviewing);
+    assert_eq!(get_data_mut(&mut agg).iteration().0, 2);
+    assert_eq!(*get_data_mut(&mut agg).planning_phase(), Phase::Reviewing);
 
     // Second cycle: Reviewing -> Revising -> Reviewing
     agg.apply(WorkflowEvent::ReviewCycleCompleted {
         approved: false,
         completed_at: crate::domain::types::TimestampUtc::now(),
     });
-    assert_eq!(get_data_mut(&mut agg).planning_phase, Phase::Revising);
-    assert_eq!(get_data_mut(&mut agg).iteration.0, 2);
+    assert_eq!(*get_data_mut(&mut agg).planning_phase(), Phase::Revising);
+    assert_eq!(get_data_mut(&mut agg).iteration().0, 2);
 
     // Complete revision 2 -> iteration becomes 3
     agg.apply(WorkflowEvent::RevisionCompleted {
         plan_path: PathBuf::from("/plan_v3.md").into(),
         completed_at: crate::domain::types::TimestampUtc::now(),
     });
-    assert_eq!(get_data_mut(&mut agg).iteration.0, 3);
-    assert_eq!(get_data_mut(&mut agg).planning_phase, Phase::Reviewing);
+    assert_eq!(get_data_mut(&mut agg).iteration().0, 3);
+    assert_eq!(*get_data_mut(&mut agg).planning_phase(), Phase::Reviewing);
 
     // Third cycle: Reviewing -> Revising -> Reviewing
     agg.apply(WorkflowEvent::ReviewCycleCompleted {
         approved: false,
         completed_at: crate::domain::types::TimestampUtc::now(),
     });
-    assert_eq!(get_data_mut(&mut agg).planning_phase, Phase::Revising);
-    assert_eq!(get_data_mut(&mut agg).iteration.0, 3);
+    assert_eq!(*get_data_mut(&mut agg).planning_phase(), Phase::Revising);
+    assert_eq!(get_data_mut(&mut agg).iteration().0, 3);
 
     // Complete revision 3 -> iteration becomes 4
     agg.apply(WorkflowEvent::RevisionCompleted {
         plan_path: PathBuf::from("/plan_v4.md").into(),
         completed_at: crate::domain::types::TimestampUtc::now(),
     });
-    assert_eq!(get_data_mut(&mut agg).iteration.0, 4);
-    assert_eq!(get_data_mut(&mut agg).planning_phase, Phase::Reviewing);
+    assert_eq!(get_data_mut(&mut agg).iteration().0, 4);
+    assert_eq!(*get_data_mut(&mut agg).planning_phase(), Phase::Reviewing);
 }

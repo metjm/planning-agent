@@ -552,7 +552,7 @@ pub async fn run_workflow_with_config(
                         return Ok(workflow_result);
                     }
                     Ok(None) => {
-                        // Phase completed - RevisionCompleted already dispatched by run_revising_phase
+                        // Phase completed - RevisionCompleted dispatched by run_revising_phase
                         // Get updated view for tracker
                         let updated_view = view_rx_for_loop.borrow().clone();
                         let updated_phase =

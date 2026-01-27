@@ -93,9 +93,9 @@ async fn apply_workflow_created_initializes_state() {
 
     match &agg.state {
         WorkflowState::Active(data) => {
-            assert_eq!(data.feature_name.as_str(), "my-feature");
-            assert_eq!(data.planning_phase, Phase::Planning);
-            assert_eq!(data.iteration.0, 1);
+            assert_eq!(data.feature_name().as_str(), "my-feature");
+            assert_eq!(*data.planning_phase(), Phase::Planning);
+            assert_eq!(data.iteration().0, 1);
         }
         _ => panic!("Expected Active state"),
     }
@@ -130,7 +130,7 @@ async fn planning_completed_transitions_to_reviewing() {
     agg.apply(event);
 
     let data = get_data_mut(&mut agg);
-    assert_eq!(data.planning_phase, Phase::Reviewing);
+    assert_eq!(*data.planning_phase(), Phase::Reviewing);
 }
 
 #[tokio::test]
@@ -173,7 +173,7 @@ async fn review_cycle_started_emits_event_in_reviewing_phase() {
         plan_path: PathBuf::from("/plan.md").into(),
         completed_at: crate::domain::types::TimestampUtc::now(),
     });
-    assert_eq!(get_data_mut(&mut agg).planning_phase, Phase::Reviewing);
+    assert_eq!(*get_data_mut(&mut agg).planning_phase(), Phase::Reviewing);
 
     let reviewers = vec!["reviewer-1".into(), "reviewer-2".into()];
     let mode = ReviewMode::Sequential(SequentialReviewState::new());
@@ -205,7 +205,7 @@ async fn review_cycle_started_emits_event_in_reviewing_phase() {
     // Apply and verify review_mode is set
     agg.apply(events.into_iter().next().unwrap());
     let data = get_data_mut(&mut agg);
-    assert!(data.review_mode.is_some());
+    assert!(data.review_mode().is_some());
 }
 
 #[tokio::test]
@@ -256,7 +256,7 @@ async fn reviewer_approved_records_approval_in_sequential_state() {
     // Apply and verify approval is recorded in sequential state
     agg.apply(events.into_iter().next().unwrap());
     let data = get_data_mut(&mut agg);
-    match &data.review_mode {
+    match data.review_mode() {
         Some(ReviewMode::Sequential(state)) => {
             assert!(state.approvals().contains_key(&reviewer_id));
             assert_eq!(state.approvals().get(&reviewer_id), Some(&1)); // plan_version starts at 1
@@ -320,7 +320,7 @@ async fn reviewer_rejected_records_rejection_in_sequential_state() {
     // Apply and verify rejection is recorded in sequential state
     agg.apply(events.into_iter().next().unwrap());
     let data = get_data_mut(&mut agg);
-    match &data.review_mode {
+    match data.review_mode() {
         Some(ReviewMode::Sequential(state)) => {
             assert_eq!(state.last_rejecting_reviewer(), Some(&reviewer_id));
         }
@@ -337,7 +337,7 @@ async fn review_cycle_completed_approved_transitions_to_complete() {
         plan_path: PathBuf::from("/plan.md").into(),
         completed_at: crate::domain::types::TimestampUtc::now(),
     });
-    assert_eq!(get_data_mut(&mut agg).planning_phase, Phase::Reviewing);
+    assert_eq!(*get_data_mut(&mut agg).planning_phase(), Phase::Reviewing);
 
     // Complete review with approval
     agg.apply(WorkflowEvent::ReviewCycleCompleted {
@@ -346,8 +346,11 @@ async fn review_cycle_completed_approved_transitions_to_complete() {
     });
 
     let data = get_data_mut(&mut agg);
-    assert_eq!(data.planning_phase, Phase::Complete);
-    assert_eq!(data.last_feedback_status, Some(FeedbackStatus::Approved));
+    assert_eq!(*data.planning_phase(), Phase::Complete);
+    assert_eq!(
+        data.last_feedback_status().cloned(),
+        Some(FeedbackStatus::Approved)
+    );
 }
 
 #[tokio::test]
@@ -367,9 +370,9 @@ async fn review_cycle_completed_rejected_transitions_to_revising() {
     });
 
     let data = get_data_mut(&mut agg);
-    assert_eq!(data.planning_phase, Phase::Revising);
+    assert_eq!(*data.planning_phase(), Phase::Revising);
     assert_eq!(
-        data.last_feedback_status,
+        data.last_feedback_status().cloned(),
         Some(FeedbackStatus::NeedsRevision)
     );
 }
@@ -392,7 +395,7 @@ async fn revising_started_emits_event_in_revising_phase() {
         approved: false,
         completed_at: crate::domain::types::TimestampUtc::now(),
     });
-    assert_eq!(get_data_mut(&mut agg).planning_phase, Phase::Revising);
+    assert_eq!(*get_data_mut(&mut agg).planning_phase(), Phase::Revising);
 
     // Now RevisingStarted should succeed
     let events = agg
@@ -430,7 +433,7 @@ async fn revision_completed_increments_iteration() {
         completed_at: crate::domain::types::TimestampUtc::now(),
     });
 
-    assert_eq!(get_data_mut(&mut agg).iteration.0, 1);
+    assert_eq!(get_data_mut(&mut agg).iteration().0, 1);
 
     // Complete revision
     agg.apply(WorkflowEvent::RevisionCompleted {
@@ -439,8 +442,8 @@ async fn revision_completed_increments_iteration() {
     });
 
     let data = get_data_mut(&mut agg);
-    assert_eq!(data.iteration.0, 2);
-    assert_eq!(data.planning_phase, Phase::Reviewing);
+    assert_eq!(data.iteration().0, 2);
+    assert_eq!(*data.planning_phase(), Phase::Reviewing);
 }
 
 // ============================================================================
@@ -471,8 +474,8 @@ async fn user_override_approval_sets_flag_and_completes() {
     // Apply and verify state
     agg.apply(events.into_iter().next().unwrap());
     let data = get_data_mut(&mut agg);
-    assert!(data.approval_overridden);
-    assert_eq!(data.planning_phase, Phase::Complete);
+    assert!(data.approval_overridden());
+    assert_eq!(*data.planning_phase(), Phase::Complete);
 }
 
 #[tokio::test]
@@ -515,7 +518,7 @@ async fn user_approved_sets_phase_to_complete() {
     // Apply and verify state
     agg.apply(events.into_iter().next().unwrap());
     let data = get_data_mut(&mut agg);
-    assert_eq!(data.planning_phase, Phase::Complete);
+    assert_eq!(*data.planning_phase(), Phase::Complete);
 }
 
 #[tokio::test]
@@ -561,5 +564,5 @@ async fn planning_max_iterations_reached_sets_phase_to_awaiting_decision() {
     // Apply and verify state
     agg.apply(events.into_iter().next().unwrap());
     let data = get_data_mut(&mut agg);
-    assert_eq!(data.planning_phase, Phase::AwaitingPlanningDecision);
+    assert_eq!(*data.planning_phase(), Phase::AwaitingPlanningDecision);
 }
