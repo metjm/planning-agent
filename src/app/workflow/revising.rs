@@ -42,7 +42,9 @@ pub async fn run_revising_phase(
                     &format!("Received interrupt during revising: {}", feedback),
                 );
                 sender.send_output("[revision] Interrupted by user".to_string());
-                return Err(CancellationError { feedback }.into());
+                return Ok(Some(WorkflowResult::NeedsRestart {
+                    user_feedback: feedback,
+                }));
             }
             WorkflowCommand::Stop => {
                 session_logger.log(

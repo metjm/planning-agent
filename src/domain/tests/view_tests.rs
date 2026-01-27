@@ -218,6 +218,13 @@ fn revising_started_event() -> WorkflowEvent {
     }
 }
 
+fn user_declined_event(feedback: &str) -> WorkflowEvent {
+    WorkflowEvent::UserDeclined {
+        feedback: feedback.to_string(),
+        declined_at: TimestampUtc::now(),
+    }
+}
+
 #[test]
 fn max_iterations_extended_updates_view() {
     let mut view = WorkflowView::default();
@@ -351,4 +358,104 @@ fn full_max_iterations_extension_flow() {
 
     // 10. Verify should_continue is true (4 <= 8)
     assert!(view.should_continue());
+}
+
+// --- User Feedback History Tests ---
+
+#[test]
+fn user_feedback_history_starts_empty() {
+    let view = WorkflowView::default();
+    assert!(view.user_feedback_history().is_empty());
+}
+
+#[test]
+fn user_declined_accumulates_feedback_in_view() {
+    let mut view = WorkflowView::default();
+    let agg_id = test_aggregate_id();
+
+    view.apply_event(&agg_id, &workflow_created_event(), 1);
+    view.apply_event(&agg_id, &user_declined_event("Add more tests"), 2);
+
+    let feedback = view.user_feedback_history();
+    assert_eq!(feedback.len(), 1);
+    assert_eq!(feedback[0], "Add more tests");
+}
+
+#[test]
+fn multiple_user_declined_events_accumulate_in_order() {
+    let mut view = WorkflowView::default();
+    let agg_id = test_aggregate_id();
+
+    view.apply_event(&agg_id, &workflow_created_event(), 1);
+    view.apply_event(&agg_id, &user_declined_event("Focus on error handling"), 2);
+    view.apply_event(&agg_id, &user_declined_event("Add integration tests"), 3);
+    view.apply_event(&agg_id, &user_declined_event("Consider edge cases"), 4);
+
+    let feedback = view.user_feedback_history();
+    assert_eq!(feedback.len(), 3);
+    assert_eq!(feedback[0], "Focus on error handling");
+    assert_eq!(feedback[1], "Add integration tests");
+    assert_eq!(feedback[2], "Consider edge cases");
+}
+
+#[test]
+fn empty_feedback_is_not_accumulated() {
+    let mut view = WorkflowView::default();
+    let agg_id = test_aggregate_id();
+
+    view.apply_event(&agg_id, &workflow_created_event(), 1);
+    view.apply_event(&agg_id, &user_declined_event(""), 2);
+    view.apply_event(&agg_id, &user_declined_event("Real feedback"), 3);
+    view.apply_event(&agg_id, &user_declined_event(""), 4);
+
+    let feedback = view.user_feedback_history();
+    assert_eq!(feedback.len(), 1);
+    assert_eq!(feedback[0], "Real feedback");
+}
+
+#[test]
+fn user_feedback_history_survives_serialization() {
+    let mut view = WorkflowView::default();
+    let agg_id = test_aggregate_id();
+
+    view.apply_event(&agg_id, &workflow_created_event(), 1);
+    view.apply_event(&agg_id, &user_declined_event("First feedback"), 2);
+    view.apply_event(&agg_id, &user_declined_event("Second feedback"), 3);
+
+    // Serialize and deserialize
+    let json = serde_json::to_string(&view).expect("serialize");
+    let restored: WorkflowView = serde_json::from_str(&json).expect("deserialize");
+
+    let feedback = restored.user_feedback_history();
+    assert_eq!(feedback.len(), 2);
+    assert_eq!(feedback[0], "First feedback");
+    assert_eq!(feedback[1], "Second feedback");
+}
+
+#[test]
+fn old_sessions_without_user_feedback_history_load_correctly() {
+    // Simulate an old session JSON without user_feedback_history field
+    // Note: Phase enum uses lowercase variants in JSON (serde(rename_all = "snake_case"))
+    let old_json = r#"{
+        "workflow_id": "550e8400-e29b-41d4-a716-446655440000",
+        "feature_name": "test",
+        "objective": "test objective",
+        "working_dir": "/test",
+        "plan_path": "/test/plan.md",
+        "feedback_path": "/test/feedback.md",
+        "planning_phase": "planning",
+        "iteration": 1,
+        "max_iterations": 3,
+        "agent_conversations": {},
+        "invocations": [],
+        "failure_history": [],
+        "approval_overridden": false,
+        "last_event_sequence": 1,
+        "current_cycle_reviews": []
+    }"#;
+
+    let view: WorkflowView = serde_json::from_str(old_json).expect("deserialize old session");
+
+    // user_feedback_history should default to empty Vec
+    assert!(view.user_feedback_history().is_empty());
 }

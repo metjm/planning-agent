@@ -89,6 +89,7 @@ fn main() {
     enforce_select_for_channel_recv();
     enforce_no_send_unwrap();
     enforce_no_expect_in_workflow();
+    enforce_phase_interrupt_consistency();
 }
 
 /// Ensures all feature combinations compile.
@@ -1799,5 +1800,72 @@ fn enforce_no_expect_in_workflow() {
             "Build failed: {} expect() call(s) in workflow phase handlers. Use Result types.",
             total_count
         );
+    }
+}
+
+/// Ensures phase interrupt handlers return NeedsRestart, not CancellationError.
+///
+/// This prevents the bug where revising.rs returned Err(CancellationError) instead
+/// of Ok(Some(NeedsRestart)), which caused "hard fail" on user interrupt.
+fn enforce_phase_interrupt_consistency() {
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR must be set");
+    let root = PathBuf::from(&manifest_dir);
+    let workflow_dir = root.join("src/app/workflow");
+
+    // Phase handler files that should return NeedsRestart for interrupts
+    let phase_files = ["planning.rs", "reviewing.rs", "revising.rs"];
+
+    let mut violations: Vec<(PathBuf, Vec<(usize, String)>)> = Vec::new();
+
+    for filename in &phase_files {
+        let file = workflow_dir.join(filename);
+        if let Ok(content) = std::fs::read_to_string(&file) {
+            let mut file_violations = Vec::new();
+
+            for (line_num, line) in content.lines().enumerate() {
+                let trimmed = line.trim();
+
+                // Skip comments
+                if trimmed.starts_with("//") {
+                    continue;
+                }
+
+                // Check for CancellationError being returned in interrupt handling
+                // Pattern: return Err(CancellationError
+                if trimmed.contains("return Err(CancellationError")
+                    && !trimmed.contains("downcast_ref")
+                {
+                    file_violations.push((
+                        line_num + 1,
+                        format!(
+                            "Phase interrupt should return NeedsRestart, not CancellationError: {}",
+                            trimmed
+                        ),
+                    ));
+                }
+            }
+
+            if !file_violations.is_empty() {
+                violations.push((file, file_violations));
+            }
+        }
+    }
+
+    if !violations.is_empty() {
+        let mut error_msg = String::from(
+            "\n\n=== Phase Interrupt Handler Consistency Violation ===\n\n",
+        );
+        error_msg.push_str("Phase handlers should return Ok(Some(NeedsRestart)) for user interrupts,\n");
+        error_msg.push_str("not Err(CancellationError). CancellationError causes feedback to be lost.\n\n");
+
+        for (file, file_violations) in violations {
+            error_msg.push_str(&format!("File: {}\n", file.display()));
+            for (line_num, msg) in file_violations {
+                error_msg.push_str(&format!("  Line {}: {}\n", line_num, msg));
+            }
+            error_msg.push('\n');
+        }
+
+        panic!("{}", error_msg);
     }
 }

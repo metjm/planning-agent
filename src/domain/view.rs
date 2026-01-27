@@ -42,6 +42,10 @@ pub struct WorkflowView {
     /// Cleared when a new review cycle starts or revision completes.
     #[serde(default)]
     current_cycle_reviews: Vec<ReviewerResult>,
+    /// Accumulated user feedback from interrupts/declines.
+    /// Used to provide context to the planning agent on restart.
+    #[serde(default)]
+    user_feedback_history: Vec<String>,
 }
 
 impl WorkflowView {
@@ -177,7 +181,14 @@ impl WorkflowView {
                 self.planning_phase = Some(Phase::Complete);
             }
 
-            WorkflowEvent::UserDeclined { .. } | WorkflowEvent::UserAborted { .. } => {
+            WorkflowEvent::UserDeclined { feedback, .. } => {
+                // Accumulate feedback for planning agent context
+                if !feedback.is_empty() {
+                    self.user_feedback_history.push(feedback.clone());
+                }
+            }
+
+            WorkflowEvent::UserAborted { .. } => {
                 // No state change
             }
 
@@ -366,6 +377,11 @@ impl WorkflowView {
     /// This data survives session resume and is used by the revising phase.
     pub fn current_cycle_reviews(&self) -> &[ReviewerResult] {
         &self.current_cycle_reviews
+    }
+
+    /// Returns accumulated user feedback from interrupts/declines.
+    pub fn user_feedback_history(&self) -> &[String] {
+        &self.user_feedback_history
     }
 
     /// Returns the current UI mode based on implementation state.

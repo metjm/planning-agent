@@ -174,6 +174,18 @@ fn build_planning_prompt(view: &WorkflowView, working_dir: &Path) -> String {
         }
     }
 
+    // Include accumulated user feedback as additional context
+    let user_feedback = view.user_feedback_history();
+    if !user_feedback.is_empty() {
+        let feedback_text = user_feedback
+            .iter()
+            .enumerate()
+            .map(|(i, f)| format!("{}. {}", i + 1, f))
+            .collect::<Vec<_>>()
+            .join("\n");
+        builder = builder.input("user-feedback", &feedback_text);
+    }
+
     builder.build()
 }
 
