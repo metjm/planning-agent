@@ -32,8 +32,10 @@ impl VerificationVerdictResult {
 /// Looks for "Verdict: APPROVED" or "Verdict: NEEDS REVISION" patterns.
 /// Supports various formatting styles including markdown headers, colons, and bold markers.
 pub fn parse_verification_verdict(report: &str) -> VerificationVerdictResult {
-    let re =
-        Regex::new(r"(?i)(?:##\s*)?Verdict[:\*\s]*\**\s*(APPROVED|NEEDS\s*_?\s*REVISION)").unwrap();
+    let re = Regex::new(r"(?i)(?:##\s*)?Verdict[:\*\s]*\**\s*(APPROVED|NEEDS\s*_?\s*REVISION)")
+        .expect(
+            "regex to match verdict patterns like 'Verdict: APPROVED' or 'Verdict: NEEDS REVISION'",
+        );
 
     if let Some(captures) = re.captures(report) {
         if let Some(verdict_match) = captures.get(1) {
@@ -66,7 +68,8 @@ pub fn parse_verification_verdict(report: &str) -> VerificationVerdictResult {
 /// The content between the opening and closing tags, or None if not found.
 pub fn extract_feedback_tag(tag: &str, report: &str) -> Option<String> {
     let pattern = format!(r"(?s)<{}>\s*(.*?)\s*</{}>", tag, tag);
-    let re = Regex::new(&pattern).unwrap();
+    let re = Regex::new(&pattern)
+        .expect("regex to extract content between XML-style opening and closing tags");
     if let Some(captures) = re.captures(report) {
         if let Some(content) = captures.get(1) {
             return Some(content.as_str().to_string());

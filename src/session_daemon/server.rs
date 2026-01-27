@@ -21,6 +21,7 @@ pub(crate) fn process_exists(pid: u32) -> bool {
     {
         // On non-Unix platforms, assume process exists (fall back to timeout-based detection).
         // Windows support can be added later if needed.
+        // Silence unused variable warning - pid is used on Unix.
         let _ = pid;
         true
     }
@@ -99,6 +100,8 @@ impl DaemonState {
 
     /// Update liveness states based on heartbeat timestamps.
     pub(crate) fn update_liveness_states(&mut self) {
+        // We don't need the changed records here, just the side effect of updating states.
+        // The return value is used by check_process_liveness for notifications.
         let _ = self.update_liveness_states_with_changes();
     }
 

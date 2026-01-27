@@ -148,6 +148,7 @@ impl SessionLogger {
         let mut main = main_log;
         let mut agent = agent_log;
         let now = format_timestamp();
+        // Best-effort log headers - if these fail, we still try to use the logger
         let _ = writeln!(
             main,
             "\n=== Session log started at {} (session {}) ===",
@@ -185,6 +186,7 @@ impl SessionLogger {
         }
         if let Ok(mut file) = self.main_log.lock() {
             let timestamp = format_timestamp();
+            // Best-effort logging - failure here should not crash the workflow
             let _ = writeln!(
                 file,
                 "[{}] [{}] [{}] {}",
@@ -203,6 +205,7 @@ impl SessionLogger {
     pub fn log_agent_stream(&self, agent_name: &str, kind: &str, line: &str) {
         if let Ok(mut file) = self.agent_log.lock() {
             let timestamp = format_timestamp();
+            // Best-effort logging - failure here should not crash the workflow
             let _ = writeln!(file, "[{}][{}][{}] {}", timestamp, agent_name, kind, line);
             let _ = file.flush();
         }
@@ -250,6 +253,7 @@ fn merge_startup_logs(session_log: &mut File) {
         // Or include all lines if they don't have PID markers (backward compat)
         if line.contains(&format!("[PID:{}]", current_pid)) || !line.contains("[PID:") {
             if !merged_any {
+                // Best-effort merge - these are non-critical startup logs
                 let _ = writeln!(session_log, "=== Merged startup logs ===");
                 merged_any = true;
             }
@@ -258,13 +262,14 @@ fn merge_startup_logs(session_log: &mut File) {
     }
 
     if merged_any {
+        // Best-effort merge completion markers
         let _ = writeln!(session_log, "=== End merged startup logs ===");
         let _ = session_log.flush();
     }
 
-    // Truncate startup log after successful merge
-    // Note: In concurrent scenarios, other processes may still be writing,
-    // so we just truncate our entries (by rewriting without them)
+    // Truncate startup log after successful merge.
+    // Best-effort: in concurrent scenarios, other processes may still be writing,
+    // so we just truncate our entries (by rewriting without them). Failure is OK.
     let _ = std::fs::write(&startup_path, "");
 }
 
@@ -285,6 +290,8 @@ pub fn log_startup(message: &str) {
     {
         let timestamp = format_timestamp();
         let pid = std::process::id();
+        // Best-effort startup logging - failure here is acceptable since session
+        // logging will take over once the session is created
         let _ = writeln!(file, "[{}][PID:{}] {}", timestamp, pid, message);
         let _ = file.flush();
     }

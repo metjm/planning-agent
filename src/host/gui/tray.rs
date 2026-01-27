@@ -54,8 +54,10 @@ impl HostTray {
         // Handle menu events
         MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
             if event.id == show_id {
+                // Ignoring send error: receiver may have been dropped if app is shutting down
                 let _ = command_tx.send(TrayCommand::ShowWindow);
             } else if event.id == quit_id {
+                // Ignoring send error: receiver may have been dropped if app is shutting down
                 let _ = command_tx.send(TrayCommand::Quit);
             }
         }));

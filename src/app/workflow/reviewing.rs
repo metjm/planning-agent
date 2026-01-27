@@ -281,8 +281,20 @@ pub async fn run_reviewing_phase(
         .feedback_path()
         .map(|fp| fp.0.clone())
         .unwrap_or_else(|| std::path::PathBuf::from("feedback.md"));
-    let _ = write_feedback_files(&reviews, &feedback_path);
-    let _ = merge_feedback(&reviews, &feedback_path);
+    if let Err(e) = write_feedback_files(&reviews, &feedback_path) {
+        context.session_logger.log(
+            LogLevel::Warn,
+            LogCategory::Workflow,
+            &format!("Failed to write feedback files: {}", e),
+        );
+    }
+    if let Err(e) = merge_feedback(&reviews, &feedback_path) {
+        context.session_logger.log(
+            LogLevel::Warn,
+            LogCategory::Workflow,
+            &format!("Failed to merge feedback: {}", e),
+        );
+    }
 
     let status = aggregate_reviews(&reviews, &config.workflow.reviewing.aggregation);
     context.log_workflow(&format!("Aggregated status: {:?}", status));
@@ -669,7 +681,13 @@ pub async fn run_sequential_reviewing_phase(
                 .map(|fp| fp.0.clone())
                 .unwrap_or_else(|| std::path::PathBuf::from("feedback.md"));
             let all_reviews = seq_state.get_accumulated_reviews_for_summary();
-            let _ = merge_feedback(&all_reviews, &feedback_path);
+            if let Err(e) = merge_feedback(&all_reviews, &feedback_path) {
+                context.session_logger.log(
+                    LogLevel::Warn,
+                    LogCategory::Workflow,
+                    &format!("Failed to merge feedback: {}", e),
+                );
+            }
 
             // Spawn summary generation
             phases::spawn_summary_generation(
@@ -762,7 +780,13 @@ pub async fn run_sequential_reviewing_phase(
         .feedback_path()
         .map(|fp| fp.0.clone())
         .unwrap_or_else(|| std::path::PathBuf::from("feedback.md"));
-    let _ = write_feedback_files(std::slice::from_ref(&review), &feedback_path);
+    if let Err(e) = write_feedback_files(std::slice::from_ref(&review), &feedback_path) {
+        context.session_logger.log(
+            LogLevel::Warn,
+            LogCategory::Workflow,
+            &format!("Failed to write feedback files: {}", e),
+        );
+    }
 
     // =========================================================================
     // STEP 4: Handle the review result

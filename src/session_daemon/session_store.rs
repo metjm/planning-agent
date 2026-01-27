@@ -260,7 +260,9 @@ pub fn save_snapshot(snapshot: &SessionSnapshot) -> Result<PathBuf> {
     fs::rename(&temp_path, &snapshot_path)
         .with_context(|| format!("Failed to rename temp file to: {}", snapshot_path.display()))?;
 
-    // Also update session_info.json for fast listing
+    // Also update session_info.json for fast listing.
+    // Best-effort: the main snapshot was saved successfully, so failure here is non-critical.
+    // The info file is an optimization for listing, not essential for resume.
     let _ = update_session_info(snapshot);
 
     Ok(snapshot_path)

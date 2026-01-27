@@ -64,6 +64,7 @@ pub async fn handle_plan_approval_input(
     match key.code {
         KeyCode::Char('a') | KeyCode::Char('A') => {
             if let Some(tx) = session.approval_tx.take() {
+                // Channel send may fail if workflow already completed - safe to ignore
                 let _ = tx.send(UserApprovalResponse::Accept).await;
             }
             session.approval_mode = ApprovalMode::None;
@@ -71,6 +72,7 @@ pub async fn handle_plan_approval_input(
         }
         KeyCode::Char('i') | KeyCode::Char('I') => {
             if let Some(tx) = session.approval_tx.take() {
+                // Channel send may fail if workflow already completed - safe to ignore
                 let _ = tx.send(UserApprovalResponse::Implement).await;
             }
             session.approval_mode = ApprovalMode::None;
@@ -102,6 +104,7 @@ pub async fn handle_review_decision_input(
     match key.code {
         KeyCode::Char('c') | KeyCode::Char('C') => {
             if let Some(tx) = session.approval_tx.clone() {
+                // Channel send may fail if workflow already completed - safe to ignore
                 let _ = tx.send(UserApprovalResponse::ReviewContinue).await;
             }
             session.approval_mode = ApprovalMode::None;
@@ -110,6 +113,7 @@ pub async fn handle_review_decision_input(
         }
         KeyCode::Char('r') | KeyCode::Char('R') => {
             if let Some(tx) = session.approval_tx.clone() {
+                // Channel send may fail if workflow already completed - safe to ignore
                 let _ = tx.send(UserApprovalResponse::ReviewRetry).await;
             }
             session.approval_mode = ApprovalMode::None;
@@ -138,6 +142,7 @@ pub async fn handle_plan_generation_failed_input(
     match key.code {
         KeyCode::Char('r') | KeyCode::Char('R') => {
             if let Some(tx) = session.approval_tx.clone() {
+                // Channel send may fail if workflow already completed - safe to ignore
                 let _ = tx.send(UserApprovalResponse::PlanGenerationRetry).await;
             }
             session.approval_mode = ApprovalMode::None;
@@ -146,6 +151,7 @@ pub async fn handle_plan_generation_failed_input(
         }
         KeyCode::Char('c') | KeyCode::Char('C') => {
             if let Some(tx) = session.approval_tx.clone() {
+                // Channel send may fail if workflow already completed - safe to ignore
                 let _ = tx.send(UserApprovalResponse::PlanGenerationContinue).await;
             }
             session.approval_mode = ApprovalMode::None;
@@ -154,6 +160,7 @@ pub async fn handle_plan_generation_failed_input(
         }
         KeyCode::Char('a') | KeyCode::Char('A') | KeyCode::Esc => {
             if let Some(tx) = session.approval_tx.clone() {
+                // Channel send may fail if workflow already completed - safe to ignore
                 let _ = tx.send(UserApprovalResponse::AbortWorkflow).await;
             }
             session.approval_mode = ApprovalMode::None;
@@ -258,6 +265,7 @@ pub async fn handle_all_reviewers_failed_input(
             } else {
                 // Normal mode: send via approval channel
                 if let Some(tx) = session.approval_tx.clone() {
+                    // Channel send may fail if workflow already completed - safe to ignore
                     let _ = tx.send(UserApprovalResponse::ReviewRetry).await;
                 }
             }
@@ -272,6 +280,7 @@ pub async fn handle_all_reviewers_failed_input(
             } else {
                 // Normal mode: stop and save state
                 if let Some(tx) = session.approval_tx.clone() {
+                    // Channel send may fail if workflow already completed - safe to ignore
                     let _ = tx.send(UserApprovalResponse::Accept).await;
                 }
             }
@@ -282,6 +291,7 @@ pub async fn handle_all_reviewers_failed_input(
             if !is_recovery_mode {
                 // Normal mode: send abort via channel
                 if let Some(tx) = session.approval_tx.clone() {
+                    // Channel send may fail if workflow already completed - safe to ignore
                     let _ = tx.send(UserApprovalResponse::AbortWorkflow).await;
                 }
             }
@@ -391,6 +401,7 @@ pub async fn handle_workflow_failure_input(
             } else {
                 // Normal mode: send via approval channel
                 if let Some(tx) = session.approval_tx.clone() {
+                    // Channel send may fail if workflow already completed - safe to ignore
                     let _ = tx.send(UserApprovalResponse::WorkflowFailureRetry).await;
                 }
             }
@@ -405,6 +416,7 @@ pub async fn handle_workflow_failure_input(
             } else {
                 // Normal mode: stop and save state
                 if let Some(tx) = session.approval_tx.clone() {
+                    // Channel send may fail if workflow already completed - safe to ignore
                     let _ = tx.send(UserApprovalResponse::WorkflowFailureStop).await;
                 }
             }
@@ -415,6 +427,7 @@ pub async fn handle_workflow_failure_input(
             if !is_recovery_mode {
                 // Normal mode: send abort via channel
                 if let Some(tx) = session.approval_tx.clone() {
+                    // Channel send may fail if workflow already completed - safe to ignore
                     let _ = tx.send(UserApprovalResponse::WorkflowFailureAbort).await;
                 }
             }
@@ -445,6 +458,7 @@ pub async fn handle_max_iterations_input(
     match key.code {
         KeyCode::Char('y') | KeyCode::Char('Y') => {
             if let Some(tx) = session.approval_tx.clone() {
+                // Channel send may fail if workflow already completed - safe to ignore
                 let _ = tx.send(UserApprovalResponse::ProceedWithoutApproval).await;
             }
             session.approval_mode = ApprovalMode::None;
@@ -453,6 +467,7 @@ pub async fn handle_max_iterations_input(
         }
         KeyCode::Char('c') | KeyCode::Char('C') => {
             if let Some(tx) = session.approval_tx.clone() {
+                // Channel send may fail if workflow already completed - safe to ignore
                 let _ = tx.send(UserApprovalResponse::ContinueReviewing).await;
             }
             session.approval_mode = ApprovalMode::None;
@@ -464,6 +479,7 @@ pub async fn handle_max_iterations_input(
         }
         KeyCode::Char('a') | KeyCode::Char('A') => {
             if let Some(tx) = session.approval_tx.clone() {
+                // Channel send may fail if workflow already completed - safe to ignore
                 let _ = tx.send(UserApprovalResponse::AbortWorkflow).await;
             }
             session.approval_mode = ApprovalMode::None;
@@ -495,6 +511,7 @@ pub async fn handle_user_override_input(
     match key.code {
         KeyCode::Char('i') | KeyCode::Char('I') => {
             if let Some(tx) = session.approval_tx.take() {
+                // Channel send may fail if workflow already completed - safe to ignore
                 let _ = tx.send(UserApprovalResponse::Implement).await;
             }
             session.approval_mode = ApprovalMode::None;
@@ -583,12 +600,14 @@ pub async fn handle_entering_feedback_input(
                     FeedbackTarget::ApprovalDecline => {
                         // Existing behavior: decline with feedback via approval channel
                         if let Some(tx) = session.approval_tx.take() {
+                            // Channel send may fail if workflow already completed - safe to ignore
                             let _ = tx.send(UserApprovalResponse::Decline(feedback)).await;
                         }
                     }
                     FeedbackTarget::WorkflowInterrupt => {
                         // New behavior: send interrupt command via control channel
                         if let Some(tx) = session.workflow_control_tx.as_ref() {
+                            // Channel send may fail if workflow already stopped - safe to ignore
                             let _ = tx.send(WorkflowCommand::Interrupt { feedback }).await;
                         }
                     }

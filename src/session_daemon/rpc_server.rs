@@ -210,6 +210,8 @@ impl DaemonServer {
                     record.workflow_session_id, record.feature_name, record.liveness
                 ),
             );
+            // Channel send can fail if upstream receiver dropped (e.g., during shutdown).
+            // This is expected and safe to ignore.
             let _ = upstream_tx.send(UpstreamEvent::SessionUpdate(record));
         } else {
             daemon_log(
@@ -379,7 +381,7 @@ impl DaemonService for DaemonServer {
     async fn shutdown(self, _: tarpc::context::Context) -> DaemonResult<()> {
         self.check_authenticated().await?;
 
-        // Notify subscribers of restart
+        // Notify subscribers of restart. Failures are expected if subscribers already disconnected.
         {
             let registry = self.subscribers.read().await;
             let _ = registry.broadcast_restarting(BUILD_SHA.to_string()).await;
@@ -387,7 +389,14 @@ impl DaemonService for DaemonServer {
 
         let mut state = self.state.lock().await;
         state.shutting_down = true;
-        let _ = state.persist_to_disk();
+        // Best-effort persistence during shutdown - log if it fails
+        if let Err(e) = state.persist_to_disk() {
+            daemon_log(
+                "rpc_server",
+                &format!("Warning: Failed to persist state during shutdown: {}", e),
+            );
+        }
+        // Shutdown signal send can fail if no receivers, which is fine during shutdown
         let _ = self.shutdown_tx.send(());
         Ok(())
     }
@@ -412,7 +421,7 @@ impl DaemonService for DaemonServer {
                 ),
             );
 
-            // Notify subscribers of restart
+            // Notify subscribers of restart. Failures are expected if subscribers already disconnected.
             {
                 let registry = self.subscribers.read().await;
                 let _ = registry.broadcast_restarting(BUILD_SHA.to_string()).await;
@@ -421,7 +430,14 @@ impl DaemonService for DaemonServer {
             // Initiate shutdown
             let mut state = self.state.lock().await;
             state.shutting_down = true;
-            let _ = state.persist_to_disk();
+            // Best-effort persistence during upgrade shutdown - log if it fails
+            if let Err(e) = state.persist_to_disk() {
+                daemon_log(
+                    "rpc_server",
+                    &format!("Warning: Failed to persist state during upgrade: {}", e),
+                );
+            }
+            // Shutdown signal send can fail if no receivers, which is fine during shutdown
             let _ = self.shutdown_tx.send(());
 
             true
@@ -676,6 +692,8 @@ pub async fn run_process_liveness_monitor(
                     // a shared method to avoid re-acquiring locks. The effect is the same
                     // since we always send SessionUpdate for liveness changes.
                     if let Some(ref tx) = upstream_tx {
+                        // Channel send can fail if upstream receiver dropped (e.g., during shutdown).
+                        // This is expected and safe to ignore.
                         let _ = tx.send(UpstreamEvent::SessionUpdate(record));
                     }
                 }
@@ -841,7 +859,8 @@ pub async fn run_daemon_rpc() -> anyhow::Result<()> {
         }
     }
 
-    // Cleanup files on exit
+    // Cleanup files on exit. Failures are acceptable - files may already be deleted
+    // by another process or may not exist.
     let _ = std::fs::remove_file(&port_path);
     let _ = std::fs::remove_file(&pid_path);
 

@@ -95,7 +95,13 @@ pub async fn process_event(
                             .as_ref()
                             .map(|ctx| ctx.base_working_dir.as_path())
                             .unwrap_or(working_dir);
-                        let _ = create_and_save_snapshot(session, view, base_working_dir);
+                        // Periodic snapshot failure is non-fatal - will retry on next interval
+                        if let Err(e) = create_and_save_snapshot(session, view, base_working_dir) {
+                            eprintln!(
+                                "[planning] Warning: Failed to save periodic snapshot: {}",
+                                e
+                            );
+                        }
                     }
                 }
             }
@@ -143,6 +149,7 @@ fn handle_tick_event(
         tokio::spawn(async move {
             let (entries, daemon_connected, error) =
                 crate::tui::session_browser::SessionBrowserState::refresh_async(&wd).await;
+            // Receiver dropped means TUI is shutting down - safe to ignore
             let _ = tx.send(Event::SessionBrowserRefreshComplete {
                 entries,
                 daemon_connected,

@@ -125,6 +125,7 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
             false
         }
     };
+    // keyboard_enhancement_enabled is informational only - no action needed if enhancement fails
     let _ = keyboard_enhancement_enabled;
     let backend = ratatui::backend::CrosstermBackend::new(stdout);
     let mut terminal = ratatui::Terminal::new(backend)?;
@@ -161,6 +162,7 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                 let usage = tokio::task::spawn_blocking(cli_usage::fetch_all_provider_usage_sync)
                     .await
                     .unwrap_or_else(|_| cli_usage::AccountUsage::default());
+                // Receiver dropped means TUI is shutting down - safe to ignore
                 let _ = usage_tx.send(Event::AccountUsageUpdate(usage));
                 tokio::time::sleep(Duration::from_secs(300)).await;
             }
@@ -174,6 +176,7 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
             let status = tokio::task::spawn_blocking(update::check_for_update)
                 .await
                 .unwrap_or_else(|_| update::UpdateStatus::CheckFailed("Task panicked".to_string()));
+            // Receiver dropped means TUI is shutting down - safe to ignore
             let _ = update_tx.send(Event::UpdateStatusReceived(status));
         });
         debug_log(start, "update check task spawned");
@@ -187,6 +190,7 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                 tokio::task::spawn_blocking(update::get_cached_or_fetch_version_info)
                     .await
                     .unwrap_or(None);
+            // Receiver dropped means TUI is shutting down - safe to ignore
             let _ = version_tx.send(Event::VersionInfoReceived(version_info));
         });
         debug_log(start, "version info task spawned");
@@ -205,6 +209,7 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
             })
             .await
             .unwrap_or_else(|_| crate::tui::file_index::FileIndex::with_error());
+            // Receiver dropped means TUI is shutting down - safe to ignore
             let _ = file_index_tx.send(Event::FileIndexReady(index));
         });
         debug_log(start, "file index task spawned");
@@ -221,6 +226,7 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
 
             // Send initial status if daemon was already running
             if connected {
+                // Receiver dropped means TUI is shutting down - safe to ignore
                 let _ = daemon_spawn_tx.send(Event::DaemonReconnected);
             }
         });
@@ -246,6 +252,7 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                         "3+ consecutive failures, attempting to spawn daemon",
                     );
                     // RpcClient::new will spawn daemon if not running
+                    // Connection result is informational - we'll retry regardless
                     let _ = crate::session_daemon::RpcClient::new(false).await;
                     consecutive_failures = 0;
                 }
@@ -257,6 +264,7 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                         "tui_runner",
                         "connected! sending DaemonReconnected event",
                     );
+                    // Receiver dropped means TUI is shutting down - safe to ignore
                     let _ = daemon_tx.send(Event::DaemonReconnected);
 
                     // Forward all push notifications to event system
@@ -272,6 +280,7 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                                     "tui_runner",
                                     "forwarding SessionChanged event",
                                 );
+                                // Receiver dropped means TUI is shutting down - safe to ignore
                                 let _ = daemon_tx.send(Event::DaemonSessionChanged(*record));
                             }
                             SubscriptionEvent::DaemonRestarting => {
@@ -297,6 +306,7 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                         "tui_runner",
                         "recv loop ended, sending DaemonDisconnected event",
                     );
+                    // Receiver dropped means TUI is shutting down - safe to ignore
                     let _ = daemon_tx.send(Event::DaemonDisconnected);
                 } else {
                     consecutive_failures += 1;
@@ -480,6 +490,7 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
         let init_session_id = first_session_id;
 
         let handle = tokio::spawn(async move {
+            // Receiver dropped means TUI is shutting down - safe to ignore
             let _ = init_tx.send(Event::Output("[planning] Initializing...".to_string()));
 
             let feature_name = if let Some(name) = init_name {
@@ -491,6 +502,7 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
             // For --continue, find the session and resume it
             // For new workflows, create WorkflowInput::New
             if init_continue {
+                // Receiver dropped means TUI is shutting down - safe to ignore
                 let _ = init_tx.send(Event::Output(format!(
                     "[planning] Loading existing workflow: {}",
                     feature_name
@@ -514,6 +526,7 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                 // Check for existing worktree
                 let effective_working_dir = if let Some(wt) = view.worktree_info() {
                     if crate::git_worktree::is_valid_worktree(wt.worktree_path()) {
+                        // Receiver dropped means TUI is shutting down - safe to ignore
                         let _ = init_tx.send(Event::Output(format!(
                             "[planning] Reusing existing worktree: {}",
                             wt.worktree_path().display()
@@ -524,6 +537,7 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                         )));
                         wt.worktree_path().to_path_buf()
                     } else {
+                        // Receiver dropped means TUI is shutting down - safe to ignore
                         let _ = init_tx.send(Event::Output(
                             "[planning] Warning: Previous worktree no longer valid".to_string(),
                         ));
@@ -534,6 +548,7 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                 };
 
                 // Send view update
+                // Receiver dropped means TUI is shutting down - safe to ignore
                 let _ = init_tx.send(Event::SessionViewUpdate {
                     session_id: init_session_id,
                     view: Box::new(view.clone()),
@@ -550,6 +565,7 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                     effective_working_dir,
                 })
             } else {
+                // Receiver dropped means TUI is shutting down - safe to ignore
                 let _ = init_tx.send(Event::Output(format!(
                     "[planning] Starting new workflow: {}",
                     feature_name
@@ -579,6 +595,7 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                     let session_dir = match crate::planning_paths::session_dir(&workflow_id_str) {
                         Ok(dir) => dir,
                         Err(e) => {
+                            // Receiver dropped means TUI is shutting down - safe to ignore
                             let _ = init_tx.send(Event::Output(format!(
                                 "[planning] Warning: Could not get session directory: {}",
                                 e
@@ -611,6 +628,7 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                         custom_worktree_branch.as_deref(),
                     ) {
                         crate::git_worktree::WorktreeSetupResult::Created(info) => {
+                            // Receiver dropped means TUI is shutting down - safe to ignore
                             let _ = init_tx.send(Event::Output(format!(
                                 "[planning] Created git worktree at: {}",
                                 info.worktree_path.display()
@@ -649,6 +667,7 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                             info.worktree_path
                         }
                         crate::git_worktree::WorktreeSetupResult::NotAGitRepo => {
+                            // Receiver dropped means TUI is shutting down - safe to ignore
                             let _ = init_tx.send(Event::Output(
                                 "[planning] Not a git repository, using original directory"
                                     .to_string(),
@@ -656,6 +675,7 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                             init_working_dir.clone()
                         }
                         crate::git_worktree::WorktreeSetupResult::Failed(err) => {
+                            // Receiver dropped means TUI is shutting down - safe to ignore
                             let _ = init_tx.send(Event::Output(format!(
                                 "[planning] Warning: Git worktree setup failed: {}",
                                 err
@@ -785,6 +805,7 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
                 // Send stop command and drop channels to unblock workflows
                 if session.workflow_handle.is_some() {
                     if let Some(ref tx) = session.workflow_control_tx {
+                        // Workflow may already be stopped or channel full - either case is acceptable during shutdown
                         let _ = tx.try_send(WorkflowCommand::Stop);
                     }
                     session.approval_tx = None;
@@ -824,6 +845,7 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
     debug_log(start, "Loop exited, starting cleanup");
 
     // Cancel the periodic snapshot task
+    // Receiver dropped means task already exited - safe to ignore
     let _ = snapshot_cancel_tx.send(());
     debug_log(start, "Snapshot task cancelled");
 

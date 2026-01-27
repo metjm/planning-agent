@@ -26,6 +26,13 @@ pub struct SessionEventSender {
 
 /// Some methods may not be used in all code paths but are part of the
 /// public API for workflow integration.
+///
+/// # Note on `let _ = self.inner.send(...)`
+///
+/// All send methods use `let _ =` to discard the Result from mpsc::send().
+/// This is intentional: send() fails only when the receiver is dropped, which
+/// happens during TUI shutdown. At that point, we're tearing down anyway and
+/// there's no useful action to take. Logging would just add noise to shutdown.
 impl SessionEventSender {
     pub fn new(session_id: usize, run_id: u64, sender: mpsc::UnboundedSender<Event>) -> Self {
         Self {

@@ -335,6 +335,7 @@ pub fn trigger_refresh(
     tokio::spawn(async move {
         let (entries, daemon_connected, error) =
             crate::tui::session_browser::SessionBrowserState::refresh_async(&wd).await;
+        // Receiver dropped means TUI is shutting down - safe to ignore
         let _ = tx.send(Event::SessionBrowserRefreshComplete {
             entries,
             daemon_connected,

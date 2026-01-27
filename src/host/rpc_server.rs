@@ -97,6 +97,7 @@ impl HostService for HostServer {
         }
 
         // Notify event listeners
+        // Ignoring send error: receiver may have been dropped if GUI is shutting down
         let _ = self.event_tx.send(HostEvent::ContainerConnected {
             container_id: info.container_id,
             container_name: info.container_name,
@@ -130,6 +131,7 @@ impl HostService for HostServer {
             );
             let mut state = self.state.lock().await;
             state.sync_sessions(&container_id, sessions);
+            // Ignoring send error: receiver may have been dropped if GUI is shutting down
             let _ = self.event_tx.send(HostEvent::SessionsUpdated);
         } else {
             eprintln!("[host-rpc] WARNING: sync_sessions received but no container_id set");
@@ -154,6 +156,7 @@ impl HostService for HostServer {
             );
             let mut state = self.state.lock().await;
             state.update_session(&container_id, session);
+            // Ignoring send error: receiver may have been dropped if GUI is shutting down
             let _ = self.event_tx.send(HostEvent::SessionsUpdated);
         } else {
             eprintln!("[host-rpc] WARNING: session_update received but no container_id set (Hello not called?)");
@@ -169,6 +172,7 @@ impl HostService for HostServer {
         if let Some(container_id) = container_id {
             let mut state = self.state.lock().await;
             state.remove_session(&container_id, &session_id);
+            // Ignoring send error: receiver may have been dropped if GUI is shutting down
             let _ = self.event_tx.send(HostEvent::SessionsUpdated);
         }
     }
@@ -218,6 +222,7 @@ impl HostService for HostServer {
             }
 
             // Send event to trigger usage fetching
+            // Ignoring send error: receiver may have been dropped if GUI is shutting down
             let _ = self.event_tx.send(HostEvent::CredentialsReported);
         }
     }
@@ -283,6 +288,7 @@ pub async fn run_host_rpc_server(
                     if let Some(container_id) = container_id {
                         let mut state = cleanup_state.lock().await;
                         state.remove_container(&container_id);
+                        // Ignoring send error: receiver may have been dropped if GUI is shutting down
                         let _ = cleanup_event_tx.send(HostEvent::ContainerDisconnected {
                             container_id: container_id.clone(),
                         });

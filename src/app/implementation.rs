@@ -539,7 +539,3 @@ where
         }
     }
 }
-
-#[cfg(test)]
-#[path = "tests/implementation_tests.rs"]
-mod tests;

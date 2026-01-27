@@ -312,7 +312,7 @@ impl RpcClient {
                                 // Wait for daemon to exit
                                 tokio::time::sleep(Duration::from_millis(200)).await;
 
-                                // Remove port file
+                                // Remove port file. Failure is OK - file may already be deleted.
                                 let _ = std::fs::remove_file(&port_path);
                                 // Fall through to spawn new daemon
                             } else {
@@ -413,7 +413,7 @@ impl RpcClient {
             }
         }
 
-        // Clean up stale files
+        // Clean up stale files. Failures are OK - files may not exist or may already be deleted.
         let _ = std::fs::remove_file(&pid_path);
         let _ = std::fs::remove_file(&port_path);
         if let Ok(sha_path) = planning_paths::sessiond_build_sha_path() {

@@ -178,6 +178,7 @@ pub(crate) async fn handle_naming_tab_input(
                                                     false, // Not a feature-related error (task panic)
                                                 )
                                             });
+                                    // Receiver dropped means TUI is shutting down - safe to ignore
                                     let _ = update_tx.send(Event::UpdateInstallFinished(result));
                                 });
                             } else {
@@ -196,6 +197,7 @@ pub(crate) async fn handle_naming_tab_input(
                                     .await
                                     .map_err(|e| format!("Task panicked: {}", e));
 
+                                // Receiver dropped means TUI is shutting down - safe to ignore
                                 match result {
                                     Ok(config_result) => {
                                         let error = if config_result.has_errors() {
@@ -363,6 +365,7 @@ pub(crate) async fn handle_naming_tab_input(
                 let custom_worktree_branch = cli.worktree_branch.clone();
 
                 let new_init_handle = tokio::spawn(async move {
+                    // Receiver dropped means TUI is shutting down - safe to ignore for all sends in this block
                     let _ = tx.send(Event::SessionOutput {
                         session_id,
                         line: "[planning] Initializing...".to_string(),
@@ -397,6 +400,7 @@ pub(crate) async fn handle_naming_tab_input(
                             match crate::planning_paths::session_dir(&workflow_session_id) {
                                 Ok(dir) => dir,
                                 Err(e) => {
+                                    // Receiver dropped means TUI is shutting down - safe to ignore
                                     let _ = tx.send(Event::SessionOutput {
                                         session_id,
                                         line: format!(
@@ -428,6 +432,7 @@ pub(crate) async fn handle_naming_tab_input(
                             custom_worktree_branch.as_deref(),
                         ) {
                             crate::git_worktree::WorktreeSetupResult::Created(info) => {
+                                // Receiver dropped means TUI is shutting down - safe to ignore
                                 let _ = tx.send(Event::SessionOutput {
                                     session_id,
                                     line: format!(
@@ -465,6 +470,7 @@ pub(crate) async fn handle_naming_tab_input(
                                 info.worktree_path
                             }
                             crate::git_worktree::WorktreeSetupResult::NotAGitRepo => {
+                                // Receiver dropped means TUI is shutting down - safe to ignore
                                 let _ = tx.send(Event::SessionOutput {
                                     session_id,
                                     line:
@@ -474,6 +480,7 @@ pub(crate) async fn handle_naming_tab_input(
                                 wd.clone()
                             }
                             crate::git_worktree::WorktreeSetupResult::Failed(err) => {
+                                // Receiver dropped means TUI is shutting down - safe to ignore
                                 let _ = tx.send(Event::SessionOutput {
                                     session_id,
                                     line: format!(

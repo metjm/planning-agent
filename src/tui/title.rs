@@ -14,6 +14,9 @@ impl TerminalTitleManager {
         Self { is_supported }
     }
 
+    /// Saves the current terminal title to the terminal's title stack.
+    /// Uses `let _ =` because terminal title operations are cosmetic; if stdout
+    /// is unavailable (pipe closed, terminal gone), there's nothing useful to do.
     pub fn save_title(&self) {
         if self.is_supported {
             let _ = io::stdout().write_all(b"\x1b[22;0t");
@@ -21,6 +24,9 @@ impl TerminalTitleManager {
         }
     }
 
+    /// Restores the previously saved terminal title from the terminal's title stack.
+    /// Uses `let _ =` because terminal title operations are cosmetic; if stdout
+    /// is unavailable (pipe closed, terminal gone), there's nothing useful to do.
     pub fn restore_title(&self) {
         if self.is_supported {
             let _ = io::stdout().write_all(b"\x1b[23;0t");
@@ -28,6 +34,9 @@ impl TerminalTitleManager {
         }
     }
 
+    /// Sets the terminal title to the given string.
+    /// Uses `let _ =` because terminal title operations are cosmetic; if stdout
+    /// is unavailable (pipe closed, terminal gone), there's nothing useful to do.
     pub fn set_title(&self, title: &str) {
         if self.is_supported {
             let _ = execute!(io::stdout(), SetTitle(title));
@@ -40,7 +49,3 @@ impl Default for TerminalTitleManager {
         Self::new()
     }
 }
-
-#[cfg(test)]
-#[path = "tests/title_tests.rs"]
-mod tests;

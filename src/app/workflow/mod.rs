@@ -394,6 +394,7 @@ pub async fn run_workflow_with_config(
 
                 match result {
                     Ok(Some(workflow_result)) => {
+                        // Daemon tracking is best-effort - ignore errors if daemon not running
                         let _ = tracker.mark_stopped(&workflow_session_id_str).await;
                         return Ok(workflow_result);
                     }
@@ -406,7 +407,7 @@ pub async fn run_workflow_with_config(
                         let updated_iteration =
                             updated_view.iteration().unwrap_or(Iteration::first()).0;
 
-                        // Update session state
+                        // Update session state (daemon tracking is best-effort)
                         let _ = tracker
                             .update(
                                 &workflow_session_id_str,
@@ -436,12 +437,14 @@ pub async fn run_workflow_with_config(
                                         LogCategory::Workflow,
                                         "Planning phase cancelled for stop",
                                     );
+                                    // Daemon tracking is best-effort - ignore errors if daemon not running
                                     let _ = tracker.mark_stopped(&workflow_session_id_str).await;
                                     return Ok(WorkflowResult::Stopped);
                                 }
                             }
                         }
                         // Cancellation without command - shouldn't happen, but treat as abort
+                        // Daemon tracking is best-effort - ignore errors if daemon not running
                         let _ = tracker.mark_stopped(&workflow_session_id_str).await;
                         return Ok(WorkflowResult::Aborted {
                             reason: "Cancelled without feedback".to_string(),
@@ -475,6 +478,7 @@ pub async fn run_workflow_with_config(
 
                 match result {
                     Ok(Some(workflow_result)) => {
+                        // Daemon tracking is best-effort - ignore errors if daemon not running
                         let _ = tracker.mark_stopped(&workflow_session_id_str).await;
                         return Ok(workflow_result);
                     }
@@ -486,7 +490,7 @@ pub async fn run_workflow_with_config(
                         let updated_iteration =
                             updated_view.iteration().unwrap_or(Iteration::first()).0;
 
-                        // Update session state
+                        // Update session state (daemon tracking is best-effort)
                         let _ = tracker
                             .update(
                                 &workflow_session_id_str,
@@ -518,11 +522,13 @@ pub async fn run_workflow_with_config(
                                         LogCategory::Workflow,
                                         "Reviewing phase cancelled for stop",
                                     );
+                                    // Daemon tracking is best-effort - ignore errors if daemon not running
                                     let _ = tracker.mark_stopped(&workflow_session_id_str).await;
                                     return Ok(WorkflowResult::Stopped);
                                 }
                             }
                         }
+                        // Daemon tracking is best-effort - ignore errors if daemon not running
                         let _ = tracker.mark_stopped(&workflow_session_id_str).await;
                         return Ok(WorkflowResult::Aborted {
                             reason: "Cancelled without feedback".to_string(),
@@ -548,6 +554,7 @@ pub async fn run_workflow_with_config(
 
                 match result {
                     Ok(Some(workflow_result)) => {
+                        // Daemon tracking is best-effort - ignore errors if daemon not running
                         let _ = tracker.mark_stopped(&workflow_session_id_str).await;
                         return Ok(workflow_result);
                     }
@@ -560,7 +567,7 @@ pub async fn run_workflow_with_config(
                         let updated_iteration =
                             updated_view.iteration().unwrap_or(Iteration::first()).0;
 
-                        // Update session state
+                        // Update session state (daemon tracking is best-effort)
                         let _ = tracker
                             .update(
                                 &workflow_session_id_str,
@@ -589,11 +596,13 @@ pub async fn run_workflow_with_config(
                                         LogCategory::Workflow,
                                         "Revising phase cancelled for stop",
                                     );
+                                    // Daemon tracking is best-effort - ignore errors if daemon not running
                                     let _ = tracker.mark_stopped(&workflow_session_id_str).await;
                                     return Ok(WorkflowResult::Stopped);
                                 }
                             }
                         }
+                        // Daemon tracking is best-effort - ignore errors if daemon not running
                         let _ = tracker.mark_stopped(&workflow_session_id_str).await;
                         return Ok(WorkflowResult::Aborted {
                             reason: "Cancelled without feedback".to_string(),
@@ -648,6 +657,7 @@ pub async fn run_workflow_with_config(
                             "[planning] Restarting with feedback: {}",
                             feedback
                         ));
+                        // Daemon tracking is best-effort - ignore errors if daemon not running
                         let _ = tracker.mark_stopped(&workflow_session_id_str).await;
                         return Ok(WorkflowResult::NeedsRestart {
                             user_feedback: feedback,
@@ -660,12 +670,14 @@ pub async fn run_workflow_with_config(
                             })
                             .await;
                         sender.send_output("[planning] Workflow aborted by user".to_string());
+                        // Daemon tracking is best-effort - ignore errors if daemon not running
                         let _ = tracker.mark_stopped(&workflow_session_id_str).await;
                         return Ok(WorkflowResult::Aborted {
                             reason: "User aborted workflow at max iterations".to_string(),
                         });
                     }
                     MaxIterationsDecision::Stopped => {
+                        // Daemon tracking is best-effort - ignore errors if daemon not running
                         let _ = tracker.mark_stopped(&workflow_session_id_str).await;
                         return Ok(WorkflowResult::Stopped);
                     }
@@ -749,6 +761,7 @@ pub async fn run_workflow_with_config(
             .await;
 
             // Mark session stopped after implementation
+            // Daemon tracking is best-effort - ignore errors if daemon not running
             let _ = tracker.mark_stopped(&workflow_session_id_str).await;
 
             match impl_result {
@@ -804,6 +817,7 @@ pub async fn run_workflow_with_config(
         }
 
         // Mark session stopped after completion handling
+        // Daemon tracking is best-effort - ignore errors if daemon not running
         let _ = tracker.mark_stopped(&workflow_session_id_str).await;
         return Ok(result);
     }
@@ -812,7 +826,7 @@ pub async fn run_workflow_with_config(
     sender.send_output("=== WORKFLOW COMPLETE ===".to_string());
     sender.send_output("Max iterations reached. Manual review recommended.".to_string());
 
-    // Mark session stopped
+    // Mark session stopped (daemon tracking is best-effort)
     let _ = tracker.mark_stopped(&workflow_session_id_str).await;
     Ok(WorkflowResult::Accepted)
 }

@@ -258,11 +258,24 @@ pub fn remove_worktree(
 
     // Also remove the branch to avoid orphaned branches
     if let Some(branch) = branch_name {
-        let _ = Command::new("git")
+        match Command::new("git")
             .current_dir(repo_root)
             .args(["branch", "-d", branch])
-            .output();
-        // Ignore branch deletion errors - branch may have been merged or deleted already
+            .output()
+        {
+            Ok(output) if !output.status.success() => {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                eprintln!(
+                    "[git] Warning: Failed to delete branch {}: {}",
+                    branch,
+                    stderr.trim()
+                );
+            }
+            Err(e) => {
+                eprintln!("[git] Warning: Failed to delete branch {}: {}", branch, e);
+            }
+            Ok(_) => {} // Success - branch deleted
+        }
     }
 
     Ok(())

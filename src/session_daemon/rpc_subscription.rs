@@ -34,6 +34,8 @@ struct SubscriptionHandler {
 
 impl SubscriberCallback for SubscriptionHandler {
     async fn session_changed(self, _: tarpc::context::Context, record: SessionRecord) {
+        // Channel send can fail if receiver dropped (subscription closed).
+        // This is expected during shutdown and safe to ignore.
         let _ = self
             .tx
             .send(SubscriptionEvent::SessionChanged(Box::new(record)));
@@ -44,6 +46,8 @@ impl SubscriberCallback for SubscriptionHandler {
             "rpc_subscription",
             &format!("Daemon restarting notification: {}", new_sha),
         );
+        // Channel send can fail if receiver dropped (subscription closed).
+        // This is expected during shutdown and safe to ignore.
         let _ = self.tx.send(SubscriptionEvent::DaemonRestarting);
     }
 
@@ -57,6 +61,8 @@ impl SubscriberCallback for SubscriptionHandler {
         session_id: String,
         event: WorkflowEventEnvelope,
     ) {
+        // Channel send can fail if receiver dropped (subscription closed).
+        // This is expected during shutdown and safe to ignore.
         let _ = self.tx.send(SubscriptionEvent::WorkflowEvent {
             session_id,
             event: Box::new(event),

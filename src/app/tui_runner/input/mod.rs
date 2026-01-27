@@ -525,6 +525,7 @@ async fn handle_implementation_chat_input(
         KeyCode::Esc => {
             if session.implementation_interaction.running {
                 if let Some(tx) = session.implementation_interaction.cancel_tx.as_ref() {
+                    // Watch channel send may fail if receiver dropped - safe to ignore
                     let _ = tx.send(true);
                 }
             } else {
@@ -611,6 +612,7 @@ async fn handle_implementation_chat_input(
             };
 
             tokio::spawn(async move {
+                // Result is communicated via session_sender events - safe to ignore final result
                 let _ = run_implementation_interaction(
                     &view,
                     &workflow_config,
@@ -725,6 +727,7 @@ fn handle_none_mode_input(key: crossterm::event::KeyEvent, session: &mut Session
             // Escape: Start interrupt feedback mode if workflow is running, otherwise quit
             if session.implementation_interaction.running {
                 if let Some(tx) = session.implementation_interaction.cancel_tx.as_ref() {
+                    // Watch channel send may fail if receiver dropped - safe to ignore
                     let _ = tx.send(true);
                 }
             } else if session.running && session.workflow_control_tx.is_some() {
@@ -740,6 +743,7 @@ fn handle_none_mode_input(key: crossterm::event::KeyEvent, session: &mut Session
             if session.running {
                 if let Some(tx) = session.workflow_control_tx.clone() {
                     session.add_output("[planning] Stopping workflow...".to_string());
+                    // Channel may be full or closed if workflow already stopping - safe to ignore
                     let _ = tx.try_send(WorkflowCommand::Stop);
                 }
             }

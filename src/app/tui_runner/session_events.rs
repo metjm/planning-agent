@@ -174,7 +174,13 @@ pub async fn handle_session_event(
                         .as_ref()
                         .map(|ctx| ctx.base_working_dir.as_path())
                         .unwrap_or(working_dir);
-                    let _ = create_and_save_snapshot(session, view, base_working_dir);
+                    // Snapshot failure is non-fatal - session can continue and will retry on next phase transition
+                    if let Err(e) = create_and_save_snapshot(session, view, base_working_dir) {
+                        eprintln!(
+                            "[planning] Warning: Failed to save snapshot on phase transition: {}",
+                            e
+                        );
+                    }
                 }
             }
         }
@@ -432,12 +438,21 @@ async fn handle_update_install_finished(
 
     match result {
         update::UpdateResult::Success(binary_path, features_msg) => {
-            let _ = update::write_update_marker();
+            // Update marker failure is non-fatal - update still succeeded, just won't show success notice on restart
+            if let Err(e) = update::write_update_marker() {
+                eprintln!("[planning] Warning: Failed to write update marker: {}", e);
+            }
 
             // Shutdown the session daemon before exec'ing new binary
             let client = session_daemon::RpcClient::new(false).await;
             if client.is_connected() {
-                let _ = client.shutdown().await;
+                // Daemon shutdown failure is non-fatal - we're about to exec a new binary anyway
+                if let Err(e) = client.shutdown().await {
+                    eprintln!(
+                        "[planning] Warning: Failed to shutdown daemon cleanly: {}",
+                        e
+                    );
+                }
                 tokio::time::sleep(std::time::Duration::from_millis(100)).await;
             }
 
@@ -460,7 +475,11 @@ async fn handle_update_install_finished(
 
             #[cfg(not(unix))]
             {
-                let _ = std::process::Command::new(&binary_path).args(&args).spawn();
+                // On non-Unix, we spawn and exit - if spawn fails, report it before exiting
+                if let Err(e) = std::process::Command::new(&binary_path).args(&args).spawn() {
+                    eprintln!("Failed to spawn new binary: {}", e);
+                    std::process::exit(1);
+                }
                 std::process::exit(0);
             }
         }

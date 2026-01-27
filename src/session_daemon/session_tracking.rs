@@ -126,7 +126,9 @@ impl SessionTracker {
                                         backoff_secs = HEARTBEAT_INTERVAL_MS;
                                         in_reconnect_mode = false;
 
-                                        // Re-register sessions after reconnect
+                                        // Re-register sessions after reconnect.
+                                        // Best-effort: if re-registration fails, the next heartbeat
+                                        // cycle will detect it and trigger reconnection again.
                                         for info in sessions.values() {
                                             let _ = client.register(info.record.clone()).await;
                                         }

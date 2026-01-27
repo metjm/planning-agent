@@ -9,7 +9,8 @@ use regex::Regex;
 
 /// Extract content from <plan-feedback> tags if present
 pub fn extract_plan_feedback(output: &str) -> String {
-    let re = Regex::new(r"(?s)<plan-feedback>\s*(.*?)\s*</plan-feedback>").unwrap();
+    let re = Regex::new(r"(?s)<plan-feedback>\s*(.*?)\s*</plan-feedback>")
+        .expect("regex to extract content between <plan-feedback> tags");
     if let Some(captures) = re.captures(output) {
         if let Some(content) = captures.get(1) {
             return content.as_str().to_string();
@@ -82,7 +83,7 @@ fn extract_summary_from_feedback(feedback: &str) -> String {
     let summary_re = Regex::new(
         r"(?is)##?\s*(?:summary|review summary|executive summary)[:\s]*\n+(.*?)(?:\n\n|\n##|\z)",
     )
-    .unwrap();
+    .expect("regex to match summary/review summary/executive summary section headings");
     if let Some(captures) = summary_re.captures(feedback) {
         if let Some(content) = captures.get(1) {
             let summary = content.as_str().trim();
@@ -106,7 +107,8 @@ fn extract_critical_issues_from_feedback(feedback: &str) -> Vec<String> {
     let mut issues = vec![];
 
     // Look for critical issues section
-    let issues_re = Regex::new(r"(?is)##?\s*(?:critical\s+issues?|blocking\s+issues?|major\s+issues?)[:\s]*\n+(.*?)(?:\n##|\z)").unwrap();
+    let issues_re = Regex::new(r"(?is)##?\s*(?:critical\s+issues?|blocking\s+issues?|major\s+issues?)[:\s]*\n+(.*?)(?:\n##|\z)")
+        .expect("regex to match critical/blocking/major issues section headings");
     if let Some(captures) = issues_re.captures(feedback) {
         if let Some(content) = captures.get(1) {
             for line in content.as_str().lines() {
@@ -135,7 +137,7 @@ fn extract_recommendations_from_feedback(feedback: &str) -> Vec<String> {
     let recs_re = Regex::new(
         r"(?is)##?\s*(?:recommendations?|suggestions?|improvements?)[:\s]*\n+(.*?)(?:\n##|\z)",
     )
-    .unwrap();
+    .expect("regex to match recommendations/suggestions/improvements section headings");
     if let Some(captures) = recs_re.captures(feedback) {
         if let Some(content) = captures.get(1) {
             for line in content.as_str().lines() {
@@ -167,7 +169,7 @@ pub fn parse_verdict(feedback: &str) -> VerdictParseResult {
     let re = Regex::new(
         r"(?i)overall\s+assessment[:\*\s]*\**\s*(APPROVED|NEEDS\s*_?\s*REVISION|MAJOR\s+ISSUES)",
     )
-    .unwrap();
+    .expect("regex to match overall assessment verdict (APPROVED/NEEDS_REVISION/MAJOR ISSUES)");
 
     if let Some(captures) = re.captures(feedback) {
         if let Some(verdict_match) = captures.get(1) {
