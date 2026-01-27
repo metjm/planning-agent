@@ -466,13 +466,9 @@ pub async fn handle_max_iterations_input(
             session.approval_context = ApprovalContext::PlanApproval;
         }
         KeyCode::Char('c') | KeyCode::Char('C') => {
-            if let Some(tx) = session.approval_tx.clone() {
-                // Channel send may fail if workflow already completed - safe to ignore
-                let _ = tx.send(UserApprovalResponse::ContinueReviewing).await;
-            }
-            session.approval_mode = ApprovalMode::None;
-            session.status = SessionStatus::Planning;
-            session.approval_context = ApprovalContext::PlanApproval;
+            // Enter iterations input mode instead of immediate response
+            session.iterations_input.clear();
+            session.approval_mode = ApprovalMode::EnteringIterations;
         }
         KeyCode::Char('d') | KeyCode::Char('D') => {
             session.start_feedback_input();
@@ -667,5 +663,45 @@ pub async fn handle_entering_feedback_input(
         file_index,
     );
 
+    Ok(false)
+}
+
+/// Handle input when entering the number of additional iterations.
+pub async fn handle_entering_iterations_input(
+    key: crossterm::event::KeyEvent,
+    session: &mut Session,
+) -> Result<bool> {
+    match key.code {
+        KeyCode::Enter => {
+            // Parse the input, default to 1 if empty or invalid
+            let additional: u32 = session.iterations_input.trim().parse().unwrap_or(1).max(1); // Ensure at least 1
+
+            if let Some(tx) = session.approval_tx.clone() {
+                // Channel send may fail if workflow already completed - safe to ignore
+                let _ = tx
+                    .send(UserApprovalResponse::ContinueReviewing(additional))
+                    .await;
+            }
+            session.iterations_input.clear();
+            session.approval_mode = ApprovalMode::None;
+            session.status = SessionStatus::Planning;
+            session.approval_context = ApprovalContext::PlanApproval;
+        }
+        KeyCode::Esc => {
+            // Cancel and go back to the choice prompt
+            session.iterations_input.clear();
+            session.approval_mode = ApprovalMode::AwaitingChoice;
+        }
+        KeyCode::Backspace | KeyCode::Delete => {
+            session.iterations_input.pop();
+        }
+        KeyCode::Char(c) if c.is_ascii_digit() => {
+            // Only allow digits, limit to reasonable length
+            if session.iterations_input.len() < 3 {
+                session.iterations_input.push(c);
+            }
+        }
+        _ => {}
+    }
     Ok(false)
 }

@@ -307,7 +307,8 @@ pub enum UserApprovalResponse {
     PlanGenerationContinue, // Continue with existing plan file if available
     AbortWorkflow,
     ProceedWithoutApproval,
-    ContinueReviewing,
+    /// Continue with additional iterations (default 1 if 0 provided)
+    ContinueReviewing(u32),
 
     // Workflow failure recovery responses
     WorkflowFailureRetry,

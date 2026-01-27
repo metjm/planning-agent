@@ -78,6 +78,12 @@ pub enum WorkflowEvent {
     /// Max iterations reached during planning.
     PlanningMaxIterationsReached { reached_at: TimestampUtc },
 
+    /// Max iterations extended by user decision to continue.
+    MaxIterationsExtended {
+        new_max: MaxIterations,
+        extended_at: TimestampUtc,
+    },
+
     /// User approved the plan.
     UserApproved { approved_at: TimestampUtc },
 
@@ -187,6 +193,7 @@ impl DomainEvent for WorkflowEvent {
             Self::RevisingStarted { .. } => "RevisingStarted".to_string(),
             Self::RevisionCompleted { .. } => "RevisionCompleted".to_string(),
             Self::PlanningMaxIterationsReached { .. } => "PlanningMaxIterationsReached".to_string(),
+            Self::MaxIterationsExtended { .. } => "MaxIterationsExtended".to_string(),
             Self::UserApproved { .. } => "UserApproved".to_string(),
             Self::UserRequestedImplementation { .. } => "UserRequestedImplementation".to_string(),
             Self::UserDeclined { .. } => "UserDeclined".to_string(),

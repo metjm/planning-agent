@@ -99,6 +99,8 @@ pub struct Session {
     pub user_feedback: String,
     pub cursor_position: usize,
     pub feedback_scroll: usize,
+    /// Input buffer for entering additional iterations count
+    pub iterations_input: String,
 
     pub input_mode: InputMode,
     pub tab_input: String,
@@ -233,6 +235,7 @@ impl Session {
             user_feedback: String::new(),
             cursor_position: 0,
             feedback_scroll: 0,
+            iterations_input: String::new(),
 
             input_mode: InputMode::Normal,
             tab_input: String::new(),

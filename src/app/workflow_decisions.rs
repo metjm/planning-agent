@@ -72,8 +72,8 @@ impl IterativePhase {
 pub enum MaxIterationsDecision {
     /// Accept current state without further review/cycles
     ProceedWithoutApproval,
-    /// Run another iteration cycle
-    Continue,
+    /// Run another iteration cycle with the specified number of additional iterations
+    Continue(u32),
     /// Restart with user-provided feedback
     RestartWithFeedback(String),
     /// Abort the workflow
@@ -136,12 +136,13 @@ pub async fn await_max_iterations_decision(
                         );
                         return Ok(MaxIterationsDecision::ProceedWithoutApproval);
                     }
-                    Some(UserApprovalResponse::ContinueReviewing) => {
+                    Some(UserApprovalResponse::ContinueReviewing(additional)) => {
+                        let count = if additional == 0 { 1 } else { additional };
                         log_decision(
                             session_logger,
-                            &format!("[{}] User chose to continue with another cycle", phase_name),
+                            &format!("[{}] User chose to continue with {} additional iteration(s)", phase_name, count),
                         );
-                        return Ok(MaxIterationsDecision::Continue);
+                        return Ok(MaxIterationsDecision::Continue(count));
                     }
                     Some(UserApprovalResponse::Decline(feedback)) => {
                         log_decision(
@@ -218,7 +219,7 @@ pub async fn wait_for_review_decision(
                         log_decision(session_logger, "Received ProceedWithoutApproval while awaiting review decision, treating as continue");
                         ReviewDecision::Continue
                     }
-                    Some(UserApprovalResponse::ContinueReviewing) => {
+                    Some(UserApprovalResponse::ContinueReviewing(_)) => {
                         log_decision(session_logger, "Received ContinueReviewing while awaiting review decision, treating as continue");
                         ReviewDecision::Continue
                     }

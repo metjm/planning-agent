@@ -146,7 +146,7 @@ pub async fn handle_completion(
                         );
                         continue;
                     }
-                    Some(UserApprovalResponse::ContinueReviewing) => {
+                    Some(UserApprovalResponse::ContinueReviewing(_)) => {
                         log_completion(
                             session_logger,
                             "Received ContinueReviewing while awaiting plan approval, ignoring",

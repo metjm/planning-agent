@@ -101,7 +101,10 @@ pub async fn run_revision_phase_with_context(
     dispatch_revising_command(
         &actor_ref,
         &session_logger,
-        DomainCommand::RevisingStarted { feedback_summary },
+        DomainCommand::RevisingStarted {
+            feedback_summary,
+            additional_iterations: None,
+        },
     )
     .await;
 

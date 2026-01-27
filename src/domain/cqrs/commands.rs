@@ -50,7 +50,14 @@ pub enum WorkflowCommand {
     ReviewCycleCompleted { approved: bool },
 
     /// Begin revision work.
-    RevisingStarted { feedback_summary: String },
+    /// When dispatched from AwaitingPlanningDecision, additional_iterations specifies
+    /// how many more iterations to allow (default 1 if not specified).
+    RevisingStarted {
+        feedback_summary: String,
+        /// Only set when continuing from AwaitingPlanningDecision.
+        /// Triggers MaxIterationsExtended event before RevisingStarted.
+        additional_iterations: Option<u32>,
+    },
 
     /// Revision finished and new plan saved.
     RevisionCompleted { plan_path: PlanPath },

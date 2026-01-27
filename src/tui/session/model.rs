@@ -191,6 +191,8 @@ pub enum ApprovalMode {
     None,
     AwaitingChoice,
     EnteringFeedback,
+    /// User is entering the number of additional iterations
+    EnteringIterations,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]

@@ -160,6 +160,10 @@ impl WorkflowView {
                 self.planning_phase = Some(Phase::AwaitingPlanningDecision);
             }
 
+            WorkflowEvent::MaxIterationsExtended { new_max, .. } => {
+                self.max_iterations = Some(*new_max);
+            }
+
             WorkflowEvent::UserApproved { .. } => {
                 self.planning_phase = Some(Phase::Complete);
             }

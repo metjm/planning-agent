@@ -402,6 +402,7 @@ async fn revising_started_emits_event_in_revising_phase() {
         .handle(
             WorkflowCommand::RevisingStarted {
                 feedback_summary: "Address reviewer comments".to_string(),
+                additional_iterations: None,
             },
             &services,
         )
@@ -585,35 +586,89 @@ fn aggregate_in_awaiting_planning_decision() -> WorkflowAggregate {
 }
 
 #[tokio::test]
-async fn revising_started_from_awaiting_planning_decision_succeeds() {
+async fn revising_started_from_awaiting_planning_decision_emits_max_iterations_extended() {
     let mut agg = aggregate_in_awaiting_planning_decision();
     let services = test_services();
 
-    // User chose to continue at max iterations - should dispatch RevisingStarted
+    // Verify initial max_iterations is 3
+    let initial_max = get_data_mut(&mut agg).max_iterations().0;
+    assert_eq!(initial_max, 3);
+
+    // User chose to continue at max iterations - should emit MaxIterationsExtended then RevisingStarted
     let events = agg
         .handle(
             WorkflowCommand::RevisingStarted {
                 feedback_summary: "Continuing after max iterations".to_string(),
+                additional_iterations: Some(5), // User requested 5 additional iterations
             },
             &services,
         )
         .await
         .unwrap();
 
-    assert_eq!(events.len(), 1);
+    // Should emit 2 events: MaxIterationsExtended followed by RevisingStarted
+    assert_eq!(events.len(), 2);
+
+    // First event: MaxIterationsExtended
     match &events[0] {
+        WorkflowEvent::MaxIterationsExtended { new_max, .. } => {
+            assert_eq!(new_max.0, 8); // 3 + 5 = 8
+        }
+        _ => panic!("Expected MaxIterationsExtended event, got {:?}", events[0]),
+    }
+
+    // Second event: RevisingStarted
+    match &events[1] {
         WorkflowEvent::RevisingStarted {
             feedback_summary, ..
         } => {
             assert_eq!(feedback_summary, "Continuing after max iterations");
         }
-        _ => panic!("Expected RevisingStarted event"),
+        _ => panic!("Expected RevisingStarted event, got {:?}", events[1]),
     }
 
-    // Apply and verify transition to Revising phase
-    agg.apply(events.into_iter().next().unwrap());
+    // Apply events and verify state changes
+    for event in events {
+        agg.apply(event);
+    }
     let data = get_data_mut(&mut agg);
     assert_eq!(*data.planning_phase(), Phase::Revising);
+    assert_eq!(data.max_iterations().0, 8); // Verify max_iterations was extended
+}
+
+#[tokio::test]
+async fn revising_started_from_awaiting_planning_decision_defaults_to_one_additional() {
+    let mut agg = aggregate_in_awaiting_planning_decision();
+    let services = test_services();
+
+    // User chose to continue without specifying count (None) - should default to 1
+    let events = agg
+        .handle(
+            WorkflowCommand::RevisingStarted {
+                feedback_summary: "Continuing with default".to_string(),
+                additional_iterations: None, // Should default to 1
+            },
+            &services,
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(events.len(), 2);
+
+    // First event should extend by 1
+    match &events[0] {
+        WorkflowEvent::MaxIterationsExtended { new_max, .. } => {
+            assert_eq!(new_max.0, 4); // 3 + 1 = 4
+        }
+        _ => panic!("Expected MaxIterationsExtended event"),
+    }
+
+    // Apply and verify
+    for event in events {
+        agg.apply(event);
+    }
+    let data = get_data_mut(&mut agg);
+    assert_eq!(data.max_iterations().0, 4);
 }
 
 #[tokio::test]

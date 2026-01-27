@@ -103,6 +103,7 @@ impl Session {
             user_feedback: ui_state.user_feedback,
             cursor_position: ui_state.cursor_position,
             feedback_scroll: ui_state.feedback_scroll,
+            iterations_input: String::new(), // Reset on resume
             input_mode: ui_state.input_mode,
             tab_input: ui_state.tab_input,
             tab_input_cursor: ui_state.tab_input_cursor,

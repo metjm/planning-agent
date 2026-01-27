@@ -644,11 +644,12 @@ pub async fn run_workflow_with_config(
                         );
                         // Transition handled by command - loop will pick up Phase::Complete
                     }
-                    MaxIterationsDecision::Continue => {
-                        // Increment max_iterations and continue to revising
+                    MaxIterationsDecision::Continue(additional) => {
+                        // Extend max_iterations and continue to revising
                         phase_context
                             .dispatch_command(DomainCommand::RevisingStarted {
                                 feedback_summary: String::new(),
+                                additional_iterations: Some(additional),
                             })
                             .await;
                         sender.send_output(

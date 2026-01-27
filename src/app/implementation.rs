@@ -497,8 +497,8 @@ where
                 iterations_used: iteration,
             }))
         }
-        MaxIterationsDecision::Continue => {
-            *local_max_iterations += 1;
+        MaxIterationsDecision::Continue(additional) => {
+            *local_max_iterations += additional;
             *local_phase = ImplementationPhase::Implementing;
             session_sender.send_output(format!(
                 "[implementation] Continuing (max iterations now {})",

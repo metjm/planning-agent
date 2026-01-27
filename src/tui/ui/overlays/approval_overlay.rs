@@ -31,6 +31,7 @@ pub fn draw_approval_overlay(
     match session.approval_mode {
         ApprovalMode::AwaitingChoice => draw_choice_popup(frame, session, popup_area, regions),
         ApprovalMode::EnteringFeedback => draw_feedback_popup(frame, session, popup_area),
+        ApprovalMode::EnteringIterations => draw_iterations_input_popup(frame, session, popup_area),
         ApprovalMode::None => {}
     }
 }
@@ -323,6 +324,80 @@ fn draw_feedback_popup(frame: &mut Frame, session: &Session, area: Rect) {
     let instructions = Paragraph::new(Line::from(vec![
         Span::styled("  [Enter] ", Style::default().fg(Color::Green).bold()),
         Span::raw(submit_label),
+        Span::styled("  [Esc] ", Style::default().fg(Color::Red).bold()),
+        Span::raw("Cancel"),
+    ]))
+    .block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::DarkGray)),
+    );
+    frame.render_widget(instructions, chunks[2]);
+}
+
+fn draw_iterations_input_popup(frame: &mut Frame, session: &Session, area: Rect) {
+    // Smaller popup for simple number input
+    let popup_width = 50.min(area.width);
+    let popup_height = 9;
+    let popup_x = area.x + (area.width - popup_width) / 2;
+    let popup_y = area.y + (area.height - popup_height) / 2;
+    let popup_area = Rect::new(popup_x, popup_y, popup_width, popup_height);
+
+    frame.render_widget(Clear, popup_area);
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Length(3),
+            Constraint::Length(3),
+        ])
+        .split(popup_area);
+
+    // Title
+    let title = Paragraph::new(Line::from(vec![Span::styled(
+        " Additional Iterations ",
+        Style::default().fg(Color::Yellow).bold(),
+    )]))
+    .block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Yellow))
+            .title(" Continue Review "),
+    );
+    frame.render_widget(title, chunks[0]);
+
+    // Input field
+    let display_text = if session.iterations_input.is_empty() {
+        "1".to_string() // Show default
+    } else {
+        session.iterations_input.clone()
+    };
+    let input_style = if session.iterations_input.is_empty() {
+        Style::default().fg(Color::DarkGray)
+    } else {
+        Style::default().fg(Color::White)
+    };
+
+    let input_block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan))
+        .title(" Number of additional rounds ");
+    let inner = input_block.inner(chunks[1]);
+
+    let input = Paragraph::new(display_text)
+        .style(input_style)
+        .block(input_block);
+    frame.render_widget(input, chunks[1]);
+
+    // Place cursor
+    let cursor_x = inner.x + session.iterations_input.len() as u16;
+    frame.set_cursor_position((cursor_x.min(inner.x + inner.width - 1), inner.y));
+
+    // Instructions
+    let instructions = Paragraph::new(Line::from(vec![
+        Span::styled("  [Enter] ", Style::default().fg(Color::Green).bold()),
+        Span::raw("Continue  "),
         Span::styled("  [Esc] ", Style::default().fg(Color::Red).bold()),
         Span::raw("Cancel"),
     ]))

@@ -435,9 +435,9 @@ async fn handle_max_iterations_with_view(
             sender.send_output("[planning] Proceeding without AI approval...".to_string());
             Ok(None)
         }
-        MaxIterationsDecision::Continue => {
+        MaxIterationsDecision::Continue(_) => {
             sender.send_output("[planning] Continuing with another review cycle...".to_string());
-            // The caller should handle incrementing max_iterations via command
+            // The caller handles incrementing max_iterations via command
             Ok(None)
         }
         MaxIterationsDecision::RestartWithFeedback(feedback) => {

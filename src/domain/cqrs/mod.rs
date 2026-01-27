@@ -166,6 +166,11 @@ impl WorkflowData {
         self.iteration = iteration;
     }
 
+    /// Sets the maximum iterations allowed.
+    pub(crate) fn set_max_iterations(&mut self, max: MaxIterations) {
+        self.max_iterations = max;
+    }
+
     /// Sets the plan path.
     pub(crate) fn set_plan_path(&mut self, path: PlanPath) {
         self.plan_path = path;
@@ -345,17 +350,40 @@ impl Aggregate for WorkflowAggregate {
                 }])
             }
 
-            // RevisingStarted - valid from Revising phase or AwaitingPlanningDecision (when user continues at max iterations)
+            // RevisingStarted from Revising phase - just emit RevisingStarted
             (
                 WorkflowState::Active(data),
-                WorkflowCommand::RevisingStarted { feedback_summary },
-            ) if *data.planning_phase() == Phase::Revising
-                || *data.planning_phase() == Phase::AwaitingPlanningDecision =>
-            {
+                WorkflowCommand::RevisingStarted {
+                    feedback_summary,
+                    additional_iterations: _,
+                },
+            ) if *data.planning_phase() == Phase::Revising => {
                 Ok(vec![WorkflowEvent::RevisingStarted {
                     feedback_summary,
                     started_at: now,
                 }])
+            }
+
+            // RevisingStarted from AwaitingPlanningDecision - emit MaxIterationsExtended first
+            (
+                WorkflowState::Active(data),
+                WorkflowCommand::RevisingStarted {
+                    feedback_summary,
+                    additional_iterations,
+                },
+            ) if *data.planning_phase() == Phase::AwaitingPlanningDecision => {
+                let additional = additional_iterations.unwrap_or(1);
+                let new_max = MaxIterations(data.max_iterations().0 + additional);
+                Ok(vec![
+                    WorkflowEvent::MaxIterationsExtended {
+                        new_max,
+                        extended_at: now,
+                    },
+                    WorkflowEvent::RevisingStarted {
+                        feedback_summary,
+                        started_at: now,
+                    },
+                ])
             }
 
             // RevisionCompleted
@@ -666,6 +694,11 @@ impl Aggregate for WorkflowAggregate {
             // PlanningMaxIterationsReached
             (WorkflowState::Active(data), WorkflowEvent::PlanningMaxIterationsReached { .. }) => {
                 data.set_planning_phase(Phase::AwaitingPlanningDecision);
+            }
+
+            // MaxIterationsExtended
+            (WorkflowState::Active(data), WorkflowEvent::MaxIterationsExtended { new_max, .. }) => {
+                data.set_max_iterations(new_max);
             }
 
             // UserApproved
