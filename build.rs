@@ -83,6 +83,8 @@ fn main() {
     enforce_no_nested_runtimes();
     enforce_serial_for_env_mutations();
     enforce_all_features_compile();
+    enforce_no_unsafe_string_ops();
+    enforce_tui_zero_guards();
 }
 
 /// Ensures all feature combinations compile.
@@ -1137,6 +1139,265 @@ fn enforce_serial_for_env_mutations() {
         eprintln!("========================================\n");
         panic!(
             "Build failed: {} test(s) mutate env vars without #[serial].",
+            total_count
+        );
+    }
+}
+
+/// Bans unsafe string operations that don't account for UTF-8 character boundaries.
+///
+/// Even with clippy::string_slice denied, code can still do unsafe operations like:
+/// - `s.get(..n)` or `s.get(start..end)` - byte ranges may split UTF-8 chars
+/// - Using `.len()` to determine truncation point instead of `.chars().count()`
+///
+/// This check catches patterns that look like they're treating strings as byte arrays.
+///
+/// For cursor-based operations (where byte positions are maintained at UTF-8 boundaries),
+/// use the helpers in `tui/cursor_utils.rs`:
+/// - `slice_up_to_cursor(s, cursor)` - equivalent to s.get(..cursor)
+/// - `slice_from_cursor(s, cursor)` - equivalent to s.get(cursor..)
+/// - `slice_between_cursors(s, start, end)` - equivalent to s.get(start..end)
+fn enforce_no_unsafe_string_ops() {
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR must be set");
+    let root = PathBuf::from(&manifest_dir);
+
+    // Only check TUI-related files where string truncation is common
+    let tui_files: Vec<PathBuf> = collect_files_to_check(&root)
+        .into_iter()
+        .filter(|p| {
+            p.extension().and_then(|e| e.to_str()) == Some("rs")
+                && p.file_name().and_then(|n| n.to_str()) != Some("build.rs")
+                && p.to_string_lossy().contains("tui")
+                // Skip the cursor_utils.rs file itself - it defines the safe wrappers
+                && p.file_name().and_then(|n| n.to_str()) != Some("cursor_utils.rs")
+        })
+        .collect();
+
+    let mut violations: Vec<(PathBuf, Vec<(usize, String)>)> = Vec::new();
+
+    for file in &tui_files {
+        if let Ok(content) = std::fs::read_to_string(file) {
+            let mut file_violations = Vec::new();
+
+            for (line_num, line) in content.lines().enumerate() {
+                let trimmed = line.trim();
+
+                // Skip comments
+                if trimmed.starts_with("//") {
+                    continue;
+                }
+
+                // Check for .get(..n) pattern on strings (byte-based slicing)
+                // This catches: name.get(..12), s.get(0..n), etc.
+                if trimmed.contains(".get(..") || trimmed.contains(".get(0..") {
+                    // Allow if it's clearly on bytes or arrays
+                    if !trimmed.contains("bytes()")
+                        && !trimmed.contains("as_bytes()")
+                        && !trimmed.contains("[u8]")
+                    {
+                        file_violations.push((
+                            line_num + 1,
+                            format!(
+                                "unsafe byte-range on string: `{}`",
+                                trimmed.chars().take(60).collect::<String>()
+                            ),
+                        ));
+                    }
+                }
+
+                // Check for truncation using .len() comparison followed by byte slicing
+                // This is a common anti-pattern: if s.len() > 15 { &s[..12] }
+                if trimmed.contains(".len() >") && trimmed.contains("..") {
+                    // Only flag if not dealing with bytes
+                    if !trimmed.contains("bytes") {
+                        file_violations.push((
+                            line_num + 1,
+                            format!(
+                                "truncation using .len() may break UTF-8: `{}`",
+                                trimmed.chars().take(60).collect::<String>()
+                            ),
+                        ));
+                    }
+                }
+            }
+
+            if !file_violations.is_empty() {
+                let rel_path = file.strip_prefix(&root).unwrap_or(file).to_path_buf();
+                violations.push((rel_path, file_violations));
+            }
+        }
+    }
+
+    if !violations.is_empty() {
+        let total_count: usize = violations.iter().map(|(_, v)| v.len()).sum();
+
+        eprintln!("\n========================================");
+        eprintln!("UNSAFE STRING OPERATIONS DETECTED");
+        eprintln!("========================================");
+        eprintln!();
+        for (path, issues) in &violations {
+            for (line_num, msg) in issues {
+                eprintln!("  {}:{}", path.display(), line_num);
+                eprintln!("    {}", msg);
+                eprintln!();
+            }
+        }
+        eprintln!("========================================");
+        eprintln!();
+        eprintln!("String byte operations can break on multi-byte UTF-8 characters.");
+        eprintln!("Characters like emoji or non-ASCII take multiple bytes.");
+        eprintln!();
+        eprintln!("FOR DISPLAY TRUNCATION use character-based operations:");
+        eprintln!();
+        eprintln!("    // WRONG");
+        eprintln!("    if name.len() > 15 {{ name.get(..12) }}");
+        eprintln!();
+        eprintln!("    // CORRECT");
+        eprintln!("    if name.chars().count() > 15 {{");
+        eprintln!("        name.chars().take(12).collect::<String>()");
+        eprintln!("    }}");
+        eprintln!();
+        eprintln!("FOR CURSOR-BASED SLICING use tui/cursor_utils.rs helpers:");
+        eprintln!();
+        eprintln!("    use crate::tui::cursor_utils::{{slice_up_to_cursor, slice_from_cursor}};");
+        eprintln!();
+        eprintln!("    // Instead of: text.get(..cursor)");
+        eprintln!("    let before = slice_up_to_cursor(text, cursor);");
+        eprintln!();
+        eprintln!("    // Instead of: text.get(cursor..)");
+        eprintln!("    let after = slice_from_cursor(text, cursor);");
+        eprintln!();
+        eprintln!("    // Instead of: text.get(start..end)");
+        eprintln!("    let middle = slice_between_cursors(text, start, end);");
+        eprintln!();
+        eprintln!("========================================\n");
+        panic!(
+            "Build failed: {} unsafe string operation(s) in TUI code.",
+            total_count
+        );
+    }
+}
+
+/// Ensures TUI code has zero-guards before division by width/height.
+///
+/// Division by zero can occur when terminal dimensions are very small or zero.
+/// TUI code must check that width/height > 0 before dividing.
+fn enforce_tui_zero_guards() {
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR must be set");
+    let root = PathBuf::from(&manifest_dir);
+
+    // Only check TUI-related files
+    let tui_files: Vec<PathBuf> = collect_files_to_check(&root)
+        .into_iter()
+        .filter(|p| {
+            p.extension().and_then(|e| e.to_str()) == Some("rs")
+                && p.file_name().and_then(|n| n.to_str()) != Some("build.rs")
+                && p.to_string_lossy().contains("tui")
+        })
+        .collect();
+
+    let mut violations: Vec<(PathBuf, Vec<(usize, String)>)> = Vec::new();
+
+    for file in &tui_files {
+        if let Ok(content) = std::fs::read_to_string(file) {
+            let lines: Vec<&str> = content.lines().collect();
+            let mut file_violations = Vec::new();
+
+            for (line_num, line) in lines.iter().enumerate() {
+                let trimmed = line.trim();
+
+                // Skip comments
+                if trimmed.starts_with("//") {
+                    continue;
+                }
+
+                // Check for division by width or height without nearby zero check
+                // Patterns: / width, / height, / area.width, / inner.width, etc.
+                let div_patterns = [
+                    "/ width",
+                    "/ height",
+                    "/width",
+                    "/height",
+                    "/ area.width",
+                    "/ area.height",
+                    "/ inner.width",
+                    "/ inner.height",
+                    "/ chunk_width",
+                    "/ chunk_height",
+                    "/ col_width",
+                    "/ row_height",
+                ];
+
+                for pattern in &div_patterns {
+                    if trimmed.contains(pattern) {
+                        // Check if there's a zero guard in the surrounding context (5 lines before)
+                        let start = line_num.saturating_sub(5);
+                        let context: String = lines[start..=line_num].join("\n");
+
+                        let has_zero_guard = context.contains("== 0")
+                            || context.contains("== 0 {")
+                            || context.contains("< 1")
+                            || context.contains(".is_empty()")
+                            || context.contains("width == 0")
+                            || context.contains("height == 0")
+                            || context.contains("width < 1")
+                            || context.contains("height < 1")
+                            || context.contains("max(1")
+                            || context.contains(".max(1)");
+
+                        if !has_zero_guard {
+                            file_violations.push((
+                                line_num + 1,
+                                format!(
+                                    "division by dimension without zero guard: `{}`",
+                                    trimmed.chars().take(50).collect::<String>()
+                                ),
+                            ));
+                        }
+                        break;
+                    }
+                }
+            }
+
+            if !file_violations.is_empty() {
+                let rel_path = file.strip_prefix(&root).unwrap_or(file).to_path_buf();
+                violations.push((rel_path, file_violations));
+            }
+        }
+    }
+
+    if !violations.is_empty() {
+        let total_count: usize = violations.iter().map(|(_, v)| v.len()).sum();
+
+        eprintln!("\n========================================");
+        eprintln!("TUI DIVISION WITHOUT ZERO GUARD");
+        eprintln!("========================================");
+        eprintln!();
+        for (path, issues) in &violations {
+            for (line_num, msg) in issues {
+                eprintln!("  {}:{}", path.display(), line_num);
+                eprintln!("    {}", msg);
+                eprintln!();
+            }
+        }
+        eprintln!("========================================");
+        eprintln!();
+        eprintln!("Division by width/height can panic when terminal is very small.");
+        eprintln!("Always guard against zero before division.");
+        eprintln!();
+        eprintln!("WRONG:");
+        eprintln!("    let cols = total / width;");
+        eprintln!();
+        eprintln!("CORRECT:");
+        eprintln!("    if width == 0 {{ return; }}");
+        eprintln!("    let cols = total / width;");
+        eprintln!();
+        eprintln!("Or use max:");
+        eprintln!("    let cols = total / width.max(1);");
+        eprintln!();
+        eprintln!("========================================\n");
+        panic!(
+            "Build failed: {} unguarded division(s) in TUI code. Add zero checks.",
             total_count
         );
     }

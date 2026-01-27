@@ -1,3 +1,4 @@
+pub mod cursor_utils;
 mod event;
 pub mod file_index;
 pub mod mention;

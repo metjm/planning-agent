@@ -16,6 +16,7 @@ use crate::app::WorkflowResult;
 use crate::domain::types::{AgentId, ImplementationPhase, Phase, UiMode};
 use crate::domain::view::WorkflowView;
 use crate::phases::implementing_conversation_key;
+use crate::tui::cursor_utils::{slice_from_cursor, slice_up_to_cursor};
 use crate::tui::event::{TokenUsage, WorkflowCommand};
 use crate::tui::mention::MentionState;
 use crate::tui::slash::SlashState;
@@ -27,6 +28,21 @@ use tokio::sync::{mpsc, watch};
 use tokio::task::JoinHandle;
 
 use super::event::UserApprovalResponse;
+
+/// Sanitize a string for safe terminal display by removing control characters
+/// except for tab and newline. This prevents malformed escape sequences from
+/// corrupting the terminal.
+fn sanitize_for_display(s: &str) -> String {
+    s.chars()
+        .map(|c| {
+            if c.is_control() && c != '\t' && c != '\n' {
+                '\u{FFFD}' // Unicode replacement character
+            } else {
+                c
+            }
+        })
+        .collect()
+}
 
 pub use model::{
     ApprovalContext, ApprovalMode, FeedbackTarget, FocusedPanel, ImplementationSuccessModal,
@@ -66,6 +82,10 @@ pub struct ToolCompletionInfo {
 
 /// Maximum number of completed tools to retain per session
 const MAX_COMPLETED_TOOLS: usize = 100;
+/// Maximum number of output lines to retain per session
+const MAX_OUTPUT_LINES: usize = 10000;
+/// Maximum number of streaming lines to retain per session
+const MAX_STREAMING_LINES: usize = 5000;
 
 pub struct Session {
     pub id: usize,
@@ -388,7 +408,14 @@ impl Session {
     }
 
     pub fn add_output(&mut self, line: String) {
-        self.output_lines.push(line);
+        let sanitized = sanitize_for_display(&line);
+        self.output_lines.push(sanitized);
+
+        // Truncate old lines if we exceed the maximum
+        if self.output_lines.len() > MAX_OUTPUT_LINES {
+            let drain_count = self.output_lines.len() - MAX_OUTPUT_LINES;
+            self.output_lines.drain(0..drain_count);
+        }
 
         self.output_follow_mode = true;
         self.scroll_position = self.output_lines.len().saturating_sub(1);
@@ -416,7 +443,14 @@ impl Session {
     }
 
     pub fn add_streaming(&mut self, line: String) {
-        self.streaming_lines.push(line);
+        let sanitized = sanitize_for_display(&line);
+        self.streaming_lines.push(sanitized);
+
+        // Truncate old lines if we exceed the maximum
+        if self.streaming_lines.len() > MAX_STREAMING_LINES {
+            let drain_count = self.streaming_lines.len() - MAX_STREAMING_LINES;
+            self.streaming_lines.drain(0..drain_count);
+        }
 
         self.streaming_follow_mode = true;
         self.streaming_scroll_position = self.streaming_lines.len().saturating_sub(1);
@@ -645,8 +679,8 @@ impl Session {
             let end = self.tab_input_cursor;
 
             // Replace @query with the file path
-            let before = self.tab_input.get(..start).unwrap_or("");
-            let after = self.tab_input.get(end..).unwrap_or("");
+            let before = slice_up_to_cursor(&self.tab_input, start);
+            let after = slice_from_cursor(&self.tab_input, end);
             self.tab_input = format!("{}{} {}", before, path, after);
 
             // Move cursor to after the inserted path + space
@@ -666,8 +700,8 @@ impl Session {
             let end = self.cursor_position;
 
             // Replace @query with the file path
-            let before = self.user_feedback.get(..start).unwrap_or("");
-            let after = self.user_feedback.get(end..).unwrap_or("");
+            let before = slice_up_to_cursor(&self.user_feedback, start);
+            let after = slice_from_cursor(&self.user_feedback, end);
             self.user_feedback = format!("{}{} {}", before, path, after);
 
             // Move cursor to after the inserted path + space
@@ -687,8 +721,8 @@ impl Session {
             let end = self.tab_slash_state.end_byte;
 
             // Replace the command token with the selected command
-            let before = self.tab_input.get(..start).unwrap_or("");
-            let after = self.tab_input.get(end..).unwrap_or("");
+            let before = slice_up_to_cursor(&self.tab_input, start);
+            let after = slice_from_cursor(&self.tab_input, end);
             self.tab_input = format!("{}{}{}", before, insert, after);
 
             // Move cursor to the end of the inserted command

@@ -276,6 +276,9 @@ fn draw_feedback_popup(frame: &mut Frame, session: &Session, area: Rect) {
         .title(input_title);
     let inner = input_block.inner(chunks[1]);
     let (input_width, input_height) = (inner.width as usize, inner.height as usize);
+    if input_width == 0 || input_height == 0 {
+        return; // Can't render in zero-size area
+    }
     let (cursor_row, cursor_col) = if has_content {
         session.get_feedback_cursor_position(input_width)
     } else {

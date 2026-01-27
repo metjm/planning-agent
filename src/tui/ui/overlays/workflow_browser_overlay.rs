@@ -119,19 +119,22 @@ pub fn draw_workflow_browser_overlay(frame: &mut Frame, tab_manager: &TabManager
             };
             let active_indicator = if entry.is_selected { "✓" } else { " " };
 
-            // Truncate names to fit columns
-            let name_display: String = if entry.name.len() > 14 {
-                format!("{}...", entry.name.get(..11).unwrap_or(""))
+            // Truncate names to fit columns (use char count to handle UTF-8)
+            let name_display: String = if entry.name.chars().count() > 14 {
+                let truncated: String = entry.name.chars().take(11).collect();
+                format!("{}...", truncated)
             } else {
                 entry.name.clone()
             };
-            let planning_display: String = if entry.planning_agent.len() > 10 {
-                format!("{}...", entry.planning_agent.get(..7).unwrap_or(""))
+            let planning_display: String = if entry.planning_agent.chars().count() > 10 {
+                let truncated: String = entry.planning_agent.chars().take(7).collect();
+                format!("{}...", truncated)
             } else {
                 entry.planning_agent.clone()
             };
-            let reviewing_display: String = if entry.reviewing_agents.len() > 20 {
-                format!("{}...", entry.reviewing_agents.get(..17).unwrap_or(""))
+            let reviewing_display: String = if entry.reviewing_agents.chars().count() > 20 {
+                let truncated: String = entry.reviewing_agents.chars().take(17).collect();
+                format!("{}...", truncated)
             } else {
                 entry.reviewing_agents.clone()
             };

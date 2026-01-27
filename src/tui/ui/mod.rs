@@ -242,8 +242,9 @@ fn draw_tab_bar(frame: &mut Frame, tab_manager: &TabManager, area: Rect) {
         } else {
             &session.name
         };
-        let display_name: String = if name.len() > 15 {
-            format!("{}...", name.get(..12).unwrap_or(name))
+        let display_name: String = if name.chars().count() > 15 {
+            let truncated: String = name.chars().take(12).collect();
+            format!("{}...", truncated)
         } else {
             name.to_string()
         };

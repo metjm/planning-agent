@@ -1,5 +1,6 @@
 use super::model::PasteBlock;
 use super::Session;
+use crate::tui::cursor_utils::{slice_from_cursor, slice_up_to_cursor};
 
 impl Session {
     pub fn insert_paste_tab_input(&mut self, text: String) {
@@ -72,13 +73,9 @@ impl Session {
             let placeholder = Self::format_paste_placeholder(paste.line_count);
             let placeholder_len = placeholder.len();
 
-            self.tab_input = format!(
-                "{}{}",
-                self.tab_input.get(..paste.start_pos).unwrap_or(""),
-                self.tab_input
-                    .get(paste.start_pos + placeholder_len..)
-                    .unwrap_or("")
-            );
+            let before = slice_up_to_cursor(&self.tab_input, paste.start_pos);
+            let after = slice_from_cursor(&self.tab_input, paste.start_pos + placeholder_len);
+            self.tab_input = format!("{}{}", before, after);
 
             self.tab_input_cursor = paste.start_pos;
 
@@ -136,12 +133,9 @@ impl Session {
             let placeholder_end = paste.start_pos + placeholder.len();
 
             if placeholder_end <= result.len() {
-                result = format!(
-                    "{}{}{}",
-                    result.get(..paste.start_pos).unwrap_or(""),
-                    &paste.content,
-                    result.get(placeholder_end..).unwrap_or("")
-                );
+                let before = slice_up_to_cursor(&result, paste.start_pos);
+                let after = slice_from_cursor(&result, placeholder_end);
+                result = format!("{}{}{}", before, &paste.content, after);
             }
         }
 

@@ -346,8 +346,8 @@ fn convert_reviewer_result(reviewer_result: &ReviewerResult) -> phases::ReviewRe
                         .lines()
                         .find(|line| !line.trim().is_empty())
                         .map(|line| {
-                            if line.len() > 100 {
-                                format!("{}...", &line[..97])
+                            if line.chars().count() > 100 {
+                                format!("{}...", line.chars().take(97).collect::<String>())
                             } else {
                                 line.to_string()
                             }

@@ -203,13 +203,13 @@ pub fn draw_slash_dropdown(
                 .saturating_sub(separator.len());
 
             // Truncate description if needed
-            let desc: String = if m.description.len() > desc_space {
-                format!(
-                    "{}...",
-                    m.description
-                        .get(..desc_space.saturating_sub(3))
-                        .unwrap_or("")
-                )
+            let desc: String = if m.description.chars().count() > desc_space {
+                let truncated: String = m
+                    .description
+                    .chars()
+                    .take(desc_space.saturating_sub(3))
+                    .collect();
+                format!("{}...", truncated)
             } else {
                 m.description.clone()
             };

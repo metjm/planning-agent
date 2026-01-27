@@ -114,9 +114,9 @@ fn format_relative_time(timestamp: &str) -> String {
             chrono::NaiveDateTime::parse_from_str(timestamp, "%Y-%m-%dT%H:%M:%S")
                 .ok()
                 .or_else(|| {
-                    timestamp.get(..19).and_then(|s| {
-                        chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S").ok()
-                    })
+                    // Take first 19 chars (ISO format: YYYY-MM-DDTHH:MM:SS)
+                    let truncated: String = timestamp.chars().take(19).collect();
+                    chrono::NaiveDateTime::parse_from_str(&truncated, "%Y-%m-%dT%H:%M:%S").ok()
                 })
                 .map(|dt| dt.and_utc())
         });

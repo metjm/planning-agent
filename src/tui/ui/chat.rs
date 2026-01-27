@@ -424,8 +424,9 @@ pub(super) fn draw_run_tabs(frame: &mut Frame, session: &Session, area: Rect) {
     for (i, tab) in session.run_tabs.iter().enumerate() {
         let is_active = i == session.active_run_tab;
 
-        let display_name: String = if tab.phase.len() > 12 {
-            format!("{}...", tab.phase.get(..9).unwrap_or(&tab.phase))
+        let display_name: String = if tab.phase.chars().count() > 12 {
+            let truncated: String = tab.phase.chars().take(9).collect();
+            format!("{}...", truncated)
         } else {
             tab.phase.clone()
         };
@@ -454,13 +455,11 @@ pub(super) fn draw_run_tabs(frame: &mut Frame, session: &Session, area: Rect) {
 
 /// Truncate input_preview to a maximum length with ellipsis
 fn truncate_input_preview(preview: &str, max_len: usize) -> String {
-    if preview.len() <= max_len {
+    if preview.chars().count() <= max_len {
         preview.to_string()
     } else {
-        format!(
-            "{}...",
-            preview.get(..max_len.saturating_sub(3)).unwrap_or("")
-        )
+        let truncated: String = preview.chars().take(max_len.saturating_sub(3)).collect();
+        format!("{}...", truncated)
     }
 }
 

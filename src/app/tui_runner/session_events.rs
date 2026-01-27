@@ -499,8 +499,8 @@ async fn handle_update_install_finished(
                     update::BUILD_FEATURES,
                 ));
             } else {
-                let short_err = if err.len() > 60 {
-                    format!("{}...", err.get(..57).unwrap_or(&err))
+                let short_err = if err.chars().count() > 60 {
+                    format!("{}...", err.chars().take(57).collect::<String>())
                 } else {
                     err
                 };

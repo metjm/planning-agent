@@ -1,4 +1,5 @@
 //! Mention state for @-mention auto-complete in input fields.
+use super::cursor_utils::{slice_between_cursors, slice_up_to_cursor};
 use super::file_index::{FileIndex, MentionMatch};
 
 /// Maximum number of matches to show in the dropdown
@@ -74,13 +75,17 @@ pub fn detect_mention_at_cursor(input: &str, cursor: usize) -> Option<(usize, St
         return None;
     }
 
-    let text_before = input.get(..cursor)?;
+    let text_before = slice_up_to_cursor(input, cursor);
+    if text_before.is_empty() && cursor > 0 {
+        return None; // cursor was not at a valid boundary
+    }
 
     // Find the nearest @ before cursor
-    let mut search_pos = cursor;
+    let mut search_pos = text_before.len(); // Use text_before.len() which is valid
     while search_pos > 0 {
-        // Find @ going backwards
-        let at_pos = text_before.get(..search_pos)?.rfind('@')?;
+        // Find @ going backwards - at_pos is always at boundary since '@' is ASCII
+        let search_slice = slice_up_to_cursor(text_before, search_pos);
+        let at_pos = search_slice.rfind('@')?;
 
         // Check if this @ is escaped
         let is_escaped = at_pos > 0 && text_before.as_bytes().get(at_pos - 1) == Some(&b'\\');
@@ -92,7 +97,8 @@ pub fn detect_mention_at_cursor(input: &str, cursor: usize) -> Option<(usize, St
 
         // Check if @ is at valid position (start or after whitespace/punctuation)
         let valid_position = at_pos == 0 || {
-            let prev_char = text_before.get(..at_pos)?.chars().last()?;
+            let before_at = slice_up_to_cursor(text_before, at_pos);
+            let prev_char = before_at.chars().last()?;
             prev_char.is_whitespace() || is_punctuation(prev_char)
         };
 
@@ -103,8 +109,8 @@ pub fn detect_mention_at_cursor(input: &str, cursor: usize) -> Option<(usize, St
         }
 
         // Extract the query (text between @ and cursor)
-        let query_start = at_pos + 1;
-        let query = input.get(query_start..cursor)?;
+        let query_start = at_pos + 1; // +1 is safe since '@' is 1 byte
+        let query = slice_between_cursors(input, query_start, cursor);
 
         // Check for whitespace in the query - if found, mention is broken
         if query.chars().any(|c| c.is_whitespace()) {

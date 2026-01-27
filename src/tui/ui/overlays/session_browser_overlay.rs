@@ -147,9 +147,11 @@ pub fn draw_session_browser_overlay(frame: &mut Frame, tab_manager: &TabManager)
         let selected = &entries[selected_idx];
         let dir_str = selected.working_dir.display().to_string();
         let max_len = popup_width.saturating_sub(6) as usize; // " → " prefix + margins
-        let truncated_dir = if dir_str.len() > max_len {
-            let start = dir_str.len().saturating_sub(max_len.saturating_sub(3));
-            format!("...{}", dir_str.get(start..).unwrap_or(""))
+        let char_count = dir_str.chars().count();
+        let truncated_dir = if char_count > max_len {
+            let skip_count = char_count.saturating_sub(max_len.saturating_sub(3));
+            let truncated: String = dir_str.chars().skip(skip_count).collect();
+            format!("...{}", truncated)
         } else {
             dir_str
         };
@@ -527,11 +529,10 @@ fn render_session_line(
 
     // Truncate feature name if too long (expanded from 16 to 23 chars)
     let max_name_len = 23;
-    let feature_name: String = if entry.feature_name.len() > max_name_len {
-        format!(
-            "{}...",
-            entry.feature_name.get(..max_name_len - 3).unwrap_or("")
-        )
+    let char_count = entry.feature_name.chars().count();
+    let feature_name: String = if char_count > max_name_len {
+        let truncated: String = entry.feature_name.chars().take(max_name_len - 3).collect();
+        format!("{}...", truncated)
     } else {
         entry.feature_name.clone()
     };
@@ -618,11 +619,13 @@ fn render_session_line(
 
 /// Truncate a string to max length with ellipsis.
 fn truncate_str(s: &str, max_len: usize) -> String {
-    if s.len() <= max_len {
+    let char_count = s.chars().count();
+    if char_count <= max_len {
         s.to_string()
     } else if max_len > 3 {
-        format!("{}...", s.get(..max_len - 3).unwrap_or(""))
+        let truncated: String = s.chars().take(max_len - 3).collect();
+        format!("{}...", truncated)
     } else {
-        s.get(..max_len).unwrap_or("").to_string()
+        s.chars().take(max_len).collect()
     }
 }

@@ -2,6 +2,40 @@
 
 TUI/headless tool for iterative implementation planning with configurable AI agents.
 
+## Warning
+
+Uses `--dangerously-skip-permissions` by default. Run in a container.
+
+## Installation
+
+```bash
+cargo install --git https://github.com/metjm/planning-agent.git --force
+```
+
+Or from source:
+
+```bash
+git clone https://github.com/metjm/planning-agent.git
+cd planning-agent
+./install.sh
+```
+
+If `planning` not found: `source "$HOME/.cargo/env"` or add `$HOME/.cargo/bin` to PATH.
+
+### Host Mode (Desktop Dashboard)
+
+To install with the host mode GUI for monitoring sessions across containers:
+
+```bash
+# Linux (no tray icon - gtk3-rs is deprecated)
+cargo install --git https://github.com/metjm/planning-agent.git --features host-gui --force
+
+# macOS/Windows (with system tray icon)
+cargo install --git https://github.com/metjm/planning-agent.git --features host-gui-tray --force
+```
+
+Then run `planning --host` to start the dashboard. Container daemons connect via `PLANNING_AGENT_HOST_PORT=17717`.
+
 ## Workflow
 
 ```mermaid
@@ -34,21 +68,21 @@ planning [OPTIONS] [OBJECTIVE]...
 | Flag | Description |
 |------|-------------|
 | `--claude` | Use Claude-only workflow (enabled by default) |
-| `--max-iterations N` | Max review/revise cycles (default: 3) |
+| `-m, --max-iterations N` | Max review/revise cycles (default: 3) |
 | `--config PATH` | Custom workflow.yaml |
-| `--name NAME` | Feature name override |
+| `-n, --name NAME` | Feature name override |
 | `--working-dir PATH` | Working directory |
 | `-c, --continue-workflow` | Resume from existing plan |
 | `--resume-session ID` | Resume stopped session by ID |
 | `--list-sessions` | List saved session snapshots |
 | `--cleanup-sessions` | Remove old snapshots |
 | `--older-than DAYS` | Age threshold for cleanup |
-| `--verify PLAN` | Verify implementation against plan (accepts path, name pattern, or "latest") |
-| `--list-plans` | List all available plans |
 | `--worktree` | Enable git worktree creation (isolated branch for planning) |
 | `--worktree-dir PATH` | Custom directory for git worktree |
 | `--worktree-branch NAME` | Custom branch name (default: planning-agent/<feature>-<session-short>) |
 | `--no-daemon` | Disable session tracking |
+| `--host` | Run as host application aggregating sessions |
+| `--port PORT` | Port for host mode TCP server (default: 17717) |
 
 ## TUI Commands
 
@@ -56,6 +90,11 @@ In the TUI naming screen, type `/` to access commands:
 - `/update` - Install an available update
 - `/config-dangerous` - Configure CLI tools to bypass approvals
 - `/sessions` - View and resume workflow sessions
+- `/max-iterations` - Set max iterations (e.g., /max-iterations 5)
+- `/sequential` - Enable sequential review mode
+- `/parallel` - Enable parallel review mode
+- `/aggregation` - Set aggregation: any-rejects, all-reject, majority
+- `/workflow` - Select workflow configuration
 
 ## Storage
 
@@ -63,21 +102,33 @@ All data is stored under `~/.planning-agent/`:
 
 ```
 ~/.planning-agent/
-├── sessions/<session-id>/          # Session-centric storage (primary)
-│   ├── plan.md                     # Implementation plan
-│   ├── feedback_<N>_<reviewer>.md  # Review feedback per iteration
-│   ├── state.json                  # Workflow state
-│   ├── session.json                # Session snapshot (for resume)
-│   ├── session_info.json           # Metadata for listing
+├── sessions/<session-id>/
+│   ├── events.jsonl              # Event log (source of truth)
+│   ├── snapshot.json             # Aggregate snapshot
+│   ├── plan.md                   # Implementation plan
+│   ├── feedback_<round>.md       # Review feedback per round
+│   ├── session.json              # TUI snapshot for resume
+│   ├── session_info.json         # Metadata for listing
+│   ├── implementation_<N>.log    # Implementation log per iteration
+│   ├── implementation_review_<N>.md  # Implementation review per iteration
 │   └── logs/
-│       ├── session.log             # Main session log
-│       └── agent-stream.log        # Raw agent output
-├── plans/                          # Legacy plan folders (backward compat)
-├── state/<wd-hash>/                # Legacy workflow state
-└── logs/<wd-hash>/                 # Legacy logs
+│       ├── session.log           # Main session log
+│       └── agent-stream.log      # Raw agent output
+├── state/<wd-hash>/              # Per-directory state
+│   └── workflow-selection.json   # Selected workflow config
+├── logs/
+│   ├── <wd-hash>/                # Per-directory workflow logs
+│   ├── debug.log                 # Debug log
+│   └── startup.log               # Startup log
+├── diagnostics/<wd-hash>/        # Review diagnostics bundles
+├── sessiond.pid                  # Daemon PID
+├── sessiond.port                 # Daemon port info
+├── sessiond.lock                 # Daemon lock
+├── sessiond.sha                  # Daemon build version
+├── sessiond.registry.json        # Daemon session registry
+├── version-cache.json            # Update version cache
+└── update-installed              # Update marker
 ```
-
-Legacy paths exist for backward compatibility with existing sessions.
 
 ## Agent Configuration
 
@@ -152,54 +203,6 @@ The implementation workflow:
 
 Configure in `workflow.yaml` under `implementation:` section.
 
-## Plan Verification
-
-Verify implementation against an approved plan:
-
-```bash
-# Verify against the most recent plan
-planning --verify latest
-
-# Verify against a specific plan
-planning --verify my-feature
-planning --verify /path/to/plan.md
-
-# List available plans
-planning --list-plans
-```
-
-Verification runs the verifying agent to check if the current codebase matches the approved plan.
-
-## Installation
-
-```bash
-cargo install --git https://github.com/metjm/planning-agent.git --force
-```
-
-Or from source:
-
-```bash
-git clone https://github.com/metjm/planning-agent.git
-cd planning-agent
-./install.sh
-```
-
-If `planning` not found: `source "$HOME/.cargo/env"` or add `$HOME/.cargo/bin` to PATH.
-
-### Host Mode (Desktop Dashboard)
-
-To install with the host mode GUI for monitoring sessions across containers:
-
-```bash
-# Linux (no tray icon - gtk3-rs is deprecated)
-cargo install --git https://github.com/metjm/planning-agent.git --features host-gui --force
-
-# macOS/Windows (with system tray icon)
-cargo install --git https://github.com/metjm/planning-agent.git --features host-gui-tray --force
-```
-
-Then run `planning --host` to start the dashboard. Container daemons connect via `PLANNING_AGENT_HOST_PORT=17717`.
-
 ## Skills
 
 On startup, planning-agent auto-installs Claude Code skills to:
@@ -218,7 +221,3 @@ Installed skills:
 - Rust toolchain
 - Claude CLI (default workflow uses Claude-only mode)
 - Optional: codex, gemini CLIs for multi-agent workflows
-
-## Warning
-
-Uses `--dangerously-skip-permissions` by default. Run in a container.

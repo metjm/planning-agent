@@ -109,6 +109,22 @@ pub async fn run_tui(cli: Cli, start: std::time::Instant) -> Result<()> {
     )?;
     debug_log(start, "alternate screen entered");
 
+    // Set up panic hook to restore terminal on panic
+    let original_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |panic_info| {
+        // Best-effort terminal restoration
+        let _ = crossterm::terminal::disable_raw_mode();
+        let _ = crossterm::execute!(
+            std::io::stdout(),
+            crossterm::terminal::LeaveAlternateScreen,
+            crossterm::event::DisableMouseCapture,
+            crossterm::event::DisableBracketedPaste,
+            crossterm::cursor::Show
+        );
+        // Call the original panic hook
+        original_hook(panic_info);
+    }));
+
     let keyboard_enhancement_enabled = match crossterm::execute!(
         stdout,
         PushKeyboardEnhancementFlags(

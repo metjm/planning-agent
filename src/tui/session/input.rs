@@ -2,6 +2,7 @@ use unicode_width::UnicodeWidthChar;
 use unicode_width::UnicodeWidthStr;
 
 use super::Session;
+use crate::tui::cursor_utils::{slice_between_cursors, slice_from_cursor, slice_up_to_cursor};
 
 impl Session {
     pub fn insert_tab_input_char(&mut self, c: char) {
@@ -11,10 +12,7 @@ impl Session {
 
     pub fn delete_tab_input_char(&mut self) {
         if self.tab_input_cursor > 0 {
-            let prev_char_boundary = self
-                .tab_input
-                .get(..self.tab_input_cursor)
-                .unwrap_or("")
+            let prev_char_boundary = slice_up_to_cursor(&self.tab_input, self.tab_input_cursor)
                 .char_indices()
                 .last()
                 .map(|(idx, _)| idx)
@@ -26,10 +24,7 @@ impl Session {
 
     pub fn move_tab_input_cursor_left(&mut self) {
         if self.tab_input_cursor > 0 {
-            self.tab_input_cursor = self
-                .tab_input
-                .get(..self.tab_input_cursor)
-                .unwrap_or("")
+            self.tab_input_cursor = slice_up_to_cursor(&self.tab_input, self.tab_input_cursor)
                 .char_indices()
                 .last()
                 .map(|(idx, _)| idx)
@@ -39,10 +34,7 @@ impl Session {
 
     pub fn move_tab_input_cursor_right(&mut self) {
         if self.tab_input_cursor < self.tab_input.len() {
-            if let Some((_, c)) = self
-                .tab_input
-                .get(self.tab_input_cursor..)
-                .unwrap_or("")
+            if let Some((_, c)) = slice_from_cursor(&self.tab_input, self.tab_input_cursor)
                 .char_indices()
                 .next()
             {
@@ -57,7 +49,7 @@ impl Session {
     }
 
     pub fn move_tab_input_cursor_up(&mut self) {
-        let text_before = self.tab_input.get(..self.tab_input_cursor).unwrap_or("");
+        let text_before = slice_up_to_cursor(&self.tab_input, self.tab_input_cursor);
 
         let current_line_start = text_before.rfind('\n').map(|p| p + 1).unwrap_or(0);
 
@@ -65,25 +57,17 @@ impl Session {
             return;
         }
 
-        let display_col = self
-            .tab_input
-            .get(current_line_start..self.tab_input_cursor)
-            .unwrap_or("")
-            .width();
+        let display_col =
+            slice_between_cursors(&self.tab_input, current_line_start, self.tab_input_cursor)
+                .width();
 
         let prev_line_end = current_line_start - 1;
-        let prev_line_start = self
-            .tab_input
-            .get(..prev_line_end)
-            .unwrap_or("")
+        let prev_line_start = slice_up_to_cursor(&self.tab_input, prev_line_end)
             .rfind('\n')
             .map(|p| p + 1)
             .unwrap_or(0);
 
-        let prev_line = self
-            .tab_input
-            .get(prev_line_start..prev_line_end)
-            .unwrap_or("");
+        let prev_line = slice_between_cursors(&self.tab_input, prev_line_start, prev_line_end);
         let mut accumulated_width = 0;
         let mut target_byte_offset = prev_line.len();
         for (idx, c) in prev_line.char_indices() {
@@ -98,16 +82,14 @@ impl Session {
     }
 
     pub fn move_tab_input_cursor_down(&mut self) {
-        let text_before = self.tab_input.get(..self.tab_input_cursor).unwrap_or("");
-        let text_after = self.tab_input.get(self.tab_input_cursor..).unwrap_or("");
+        let text_before = slice_up_to_cursor(&self.tab_input, self.tab_input_cursor);
+        let text_after = slice_from_cursor(&self.tab_input, self.tab_input_cursor);
 
         let current_line_start = text_before.rfind('\n').map(|p| p + 1).unwrap_or(0);
 
-        let display_col = self
-            .tab_input
-            .get(current_line_start..self.tab_input_cursor)
-            .unwrap_or("")
-            .width();
+        let display_col =
+            slice_between_cursors(&self.tab_input, current_line_start, self.tab_input_cursor)
+                .width();
 
         let next_newline = text_after.find('\n');
 
@@ -117,18 +99,12 @@ impl Session {
 
         let next_line_start = self.tab_input_cursor + offset + 1;
 
-        let next_line_end = self
-            .tab_input
-            .get(next_line_start..)
-            .unwrap_or("")
+        let next_line_end = slice_from_cursor(&self.tab_input, next_line_start)
             .find('\n')
             .map(|p| next_line_start + p)
             .unwrap_or(self.tab_input.len());
 
-        let next_line = self
-            .tab_input
-            .get(next_line_start..next_line_end)
-            .unwrap_or("");
+        let next_line = slice_between_cursors(&self.tab_input, next_line_start, next_line_end);
         let mut accumulated_width = 0;
         let mut target_byte_offset = next_line.len();
         for (idx, c) in next_line.char_indices() {
@@ -143,15 +119,11 @@ impl Session {
     }
 
     pub fn get_tab_input_cursor_position(&self) -> (usize, usize) {
-        let text_before = self.tab_input.get(..self.tab_input_cursor).unwrap_or("");
+        let text_before = slice_up_to_cursor(&self.tab_input, self.tab_input_cursor);
         let line = text_before.matches('\n').count();
         let line_start = text_before.rfind('\n').map(|p| p + 1).unwrap_or(0);
 
-        let col = self
-            .tab_input
-            .get(line_start..self.tab_input_cursor)
-            .unwrap_or("")
-            .width();
+        let col = slice_between_cursors(&self.tab_input, line_start, self.tab_input_cursor).width();
         (line, col)
     }
 
@@ -167,10 +139,7 @@ impl Session {
 
     pub fn delete_char(&mut self) {
         if self.cursor_position > 0 {
-            let prev_char_boundary = self
-                .user_feedback
-                .get(..self.cursor_position)
-                .unwrap_or("")
+            let prev_char_boundary = slice_up_to_cursor(&self.user_feedback, self.cursor_position)
                 .char_indices()
                 .last()
                 .map(|(idx, _)| idx)
@@ -182,10 +151,7 @@ impl Session {
 
     pub fn move_cursor_left(&mut self) {
         if self.cursor_position > 0 {
-            self.cursor_position = self
-                .user_feedback
-                .get(..self.cursor_position)
-                .unwrap_or("")
+            self.cursor_position = slice_up_to_cursor(&self.user_feedback, self.cursor_position)
                 .char_indices()
                 .last()
                 .map(|(idx, _)| idx)
@@ -195,10 +161,7 @@ impl Session {
 
     pub fn move_cursor_right(&mut self) {
         if self.cursor_position < self.user_feedback.len() {
-            if let Some((_, c)) = self
-                .user_feedback
-                .get(self.cursor_position..)
-                .unwrap_or("")
+            if let Some((_, c)) = slice_from_cursor(&self.user_feedback, self.cursor_position)
                 .char_indices()
                 .next()
             {
@@ -217,10 +180,8 @@ impl Session {
             return (0, 0);
         }
 
-        let text_before = self
-            .user_feedback
-            .get(..self.cursor_position.min(self.user_feedback.len()))
-            .unwrap_or("");
+        let safe_cursor = self.cursor_position.min(self.user_feedback.len());
+        let text_before = slice_up_to_cursor(&self.user_feedback, safe_cursor);
         let mut row = 0;
         let mut col = 0;
 

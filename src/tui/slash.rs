@@ -3,6 +3,8 @@
 //! Provides discovery and completion for slash commands like `/update` and
 //! `/config-dangerous` (or `/config dangerous`).
 
+use super::cursor_utils::{slice_between_cursors, slice_from_cursor, slice_up_to_cursor};
+
 /// Maximum number of matches to show in the dropdown
 pub const MAX_MATCHES: usize = 10;
 
@@ -190,7 +192,7 @@ pub fn detect_slash_at_cursor(input: &str, cursor: usize) -> Option<SlashContext
 
     // Case 1: Cursor is within the first token (the command itself)
     if cursor_in_trimmed <= first_token_end {
-        let query = text.get(..cursor_in_trimmed).unwrap_or("");
+        let query = slice_up_to_cursor(text, cursor_in_trimmed);
         return Some(SlashContext::Command {
             start_byte: trimmed_start,
             end_byte: cursor,
@@ -203,15 +205,13 @@ pub fn detect_slash_at_cursor(input: &str, cursor: usize) -> Option<SlashContext
     for &(cmd, max_parts) in COMMANDS_WITH_DYNAMIC_ARGS {
         if first_token_lower == cmd && parts.len() <= max_parts {
             // Find where the second token starts (if any)
-            let after_first = text.get(first_token_end..).unwrap_or("");
+            let after_first = slice_from_cursor(text, first_token_end);
             let arg_text_start = after_first.len() - after_first.trim_start().len();
             let arg_start_in_text = first_token_end + arg_text_start;
 
             // The argument query is from arg_start_in_text to cursor_in_trimmed
             let arg_query = if cursor_in_trimmed > arg_start_in_text {
-                text.get(arg_start_in_text..cursor_in_trimmed)
-                    .unwrap_or("")
-                    .to_string()
+                slice_between_cursors(text, arg_start_in_text, cursor_in_trimmed).to_string()
             } else {
                 String::new()
             };

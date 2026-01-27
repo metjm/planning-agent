@@ -159,8 +159,23 @@ fn handle_tick_event(
     }
 }
 
-fn handle_resize_event(_tab_manager: &mut TabManager) {
-    // No-op: terminal resize is handled automatically by ratatui
+fn handle_resize_event(tab_manager: &mut TabManager) {
+    // On resize, reset scroll positions to prevent out-of-bounds rendering
+    // The actual dimensions will be queried fresh on next draw
+    let session = tab_manager.active_mut();
+
+    // Clamp scroll positions - they'll be properly recalculated on next render
+    // but this prevents crashes from stale large values
+    session.plan_summary_scroll = 0;
+    session.plan_modal_scroll = 0;
+    session.review_modal_scroll = 0;
+    session.error_scroll = 0;
+
+    // Reset run tab scrolls
+    for tab in &mut session.run_tabs {
+        tab.scroll_position = 0;
+        tab.summary_scroll = 0;
+    }
 }
 
 fn handle_paste_event(text: String, tab_manager: &mut TabManager) {

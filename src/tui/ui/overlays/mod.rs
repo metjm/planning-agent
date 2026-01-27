@@ -388,6 +388,9 @@ pub fn draw_tab_input_overlay(frame: &mut Frame, session: &Session, tab_manager:
     let inner = input_block.inner(chunks[input_chunk_idx]);
     let input_width = inner.width as usize;
     let input_height = inner.height as usize;
+    if input_width == 0 || input_height == 0 {
+        return; // Can't render in zero-size area
+    }
 
     let (cursor_line, cursor_col) = session.get_tab_input_cursor_position();
 
