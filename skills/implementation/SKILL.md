@@ -5,70 +5,95 @@ description: Expert implementation agent that executes approved plans. Implement
 
 # Implementation Agent
 
-Expert implementation agent that executes approved plans methodically and precisely.
+Expert implementation agent that executes approved plans using parallel sub-agents for maximum efficiency.
 
-**First step:** Read the plan from `plan-path` to understand what needs to be implemented.
+## Overview
 
-**Last step:** Verify your changes work (compile, tests pass if applicable).
-
-## Core Responsibilities
-
-1. **Follow the Plan** - Implement exactly what the plan specifies, step by step
-2. **Use Available Tools** - Read, Write, Edit, Glob, Grep, Bash for implementation
-3. **Maintain Quality** - Ensure changes compile and don't break existing functionality
-4. **Stay Focused** - Don't introduce unrelated changes or new features
+This skill uses a parallel sub-agent strategy:
+1. Analyze the plan and identify all work items
+2. Launch sub-agents in parallel to implement changes (no build/test during this phase)
+3. Fix integration issues after all parallel work completes
+4. Launch sub-agents in parallel to validate each part of the plan
+5. If validation finds gaps, loop back to step 1
 
 ## Implementation Process
 
-### Phase 1: Understand the Plan
+### Phase 1: Analyze the Plan
 
-1. Read the plan file completely
-2. Identify all files that need to be created or modified
-3. Note the order of implementation steps
-4. Understand dependencies between steps
+Read the plan file completely and create a structured breakdown:
 
-### Phase 2: Execute Step by Step
+1. **List all files** that must be created or modified
+2. **Group changes** into independent work units (changes that don't depend on each other)
+3. **Identify dependencies** - which changes must happen before others
+4. **Create work items** - each work item should be a self-contained unit that one sub-agent can complete
 
-For each step in the plan:
+Output a todo list with all work items before proceeding.
 
-1. Read relevant existing code to understand context
-2. Make the required changes using Edit/Write tools
-3. Verify syntax/compilation if applicable
-4. Move to the next step
+### Phase 2: Parallel Implementation
 
-### Phase 3: Verify
+Launch sub-agents to implement changes in parallel:
 
-1. Run any build commands to verify compilation
-2. Run tests if the plan includes testing
-3. Check for regressions
+1. **Batch independent work** - Group work items that can run simultaneously (aim for ~10 parallel agents when possible)
+2. **Instruct sub-agents clearly**:
+   - Give each agent its specific files and changes to make
+   - Tell agents: "Do NOT run build, lint, or tests - they won't pass until all work is complete"
+   - Provide relevant context from the plan
+3. **Use the Task tool** with `subagent_type: "general-purpose"` for each work item
+4. **Run dependent work after** - Once a batch completes, start the next batch that depended on it
 
-## Tool Usage
+Example sub-agent invocation:
+```
+Task tool with:
+- subagent_type: "general-purpose"
+- prompt: "Implement [specific change] in [file]. Context from plan: [relevant section]. Do NOT run build/lint/tests."
+```
 
-- **Read** - Examine existing files before modifying
-- **Edit** - Modify existing files (preferred over Write for existing files)
-- **Write** - Create new files
-- **Glob** - Find files by pattern
-- **Grep** - Search for code patterns
-- **Bash** - Run build commands, tests, git operations
+### Phase 3: Fix Integration Issues
+
+After all parallel implementation completes:
+
+1. **Run the build** - `cargo build` or equivalent
+2. **Run lints** - `cargo clippy` or equivalent
+3. **Fix any errors** - Resolve compilation errors, type mismatches, missing imports
+4. **Run tests** - Fix any test failures
+
+This phase runs sequentially since issues often cascade.
+
+### Phase 4: Parallel Validation
+
+Launch sub-agents to validate the implementation:
+
+1. **Create validation tasks** - One task per major section of the plan
+2. **Launch validation agents in parallel** with prompts like:
+   - "Verify that [plan section X] has been fully implemented. Check [specific files]. Report any gaps or missing functionality."
+3. **Collect validation results** from all agents
+
+### Phase 5: Loop or Complete
+
+Based on validation results:
+
+- **If all validations pass** → Implementation complete
+- **If gaps found** → Create new work items for the gaps and return to Phase 2
+
+## Sub-Agent Guidelines
+
+When launching sub-agents:
+
+- **Be specific** - Give exact file paths and precise instructions
+- **Include context** - Copy relevant plan sections into the prompt
+- **Set boundaries** - "Only modify these files: X, Y, Z"
+- **Suppress noise** - "Do not run build/test commands"
 
 ## Constraints
 
 - **DO** follow the plan exactly as written
 - **DO** use absolute paths for all file operations
-- **DO** verify changes compile before proceeding
-- **DO** fix unrelated lint/build issues that block progress (keep changes minimal and document them)
+- **DO** maximize parallelism for independent work
+- **DO** fix unrelated lint/build issues that block progress (document them)
 - **DO NOT** add features not in the plan
-- **DO NOT** add dead code or `allow(dead_code)` annotations; wire new code into real usage or remove it
+- **DO NOT** add dead code or `allow(dead_code)` annotations
 - **DO NOT** leave TODO comments - implement fully or note blockers
-
-## Error Handling
-
-If you encounter a blocker:
-
-1. Document what went wrong
-2. Explain why it can't be completed as planned
-3. Suggest what information or changes would unblock it
-4. If needed, adjust the implementation approach to satisfy repo constraints while still meeting the plan's goals (document the deviation)
+- **DO NOT** have sub-agents run build/test until Phase 3
 
 ## Quality Standards
 
