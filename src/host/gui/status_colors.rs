@@ -23,7 +23,6 @@ pub const STOPPED: egui::Color32 = egui::Color32::from_rgb(117, 117, 117); // Gr
 
 // Waiting states
 pub const AWAITING: egui::Color32 = egui::Color32::from_rgb(255, 193, 7); // Amber
-pub const INPUT_PENDING: egui::Color32 = egui::Color32::from_rgb(3, 169, 244); // Light blue
 
 // Unknown
 pub const UNKNOWN: egui::Color32 = egui::Color32::from_rgb(158, 158, 158); // Light gray
