@@ -323,7 +323,6 @@ impl HostApp {
                     pid: s.session.pid,
                     updated_ago: format_relative_time(&s.session.updated_at),
                     implementation_phase: s.session.implementation_phase.clone(),
-                    implementation_iteration: s.session.implementation_iteration,
                 })
                 .collect();
             let sessions_len = sessions.len();

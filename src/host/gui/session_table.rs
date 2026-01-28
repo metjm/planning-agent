@@ -43,8 +43,6 @@ pub struct DisplaySessionRow {
     pub updated_ago: String,
     /// Implementation phase if in implementation workflow
     pub implementation_phase: Option<String>,
-    /// Implementation iteration if in implementation workflow
-    pub implementation_iteration: Option<u32>,
 }
 
 #[derive(Clone, Copy, Default, Debug)]
