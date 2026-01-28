@@ -307,6 +307,12 @@ Include only if required by the user prompt, compliance requirements, or a produ
 - [ ] Failure modes have handling strategies when external dependencies are introduced
 - [ ] All blocking requirements are satisfied
 
+## Review Completeness Checklist
+
+- [ ] Reviewed the entire plan end-to-end
+- [ ] Verified every referenced external service, library/API, permission, and configuration
+- [ ] Documented evidence for each verification
+
 [If NEEDS REVISION: Specific operational gaps that must be addressed]
 </plan-feedback>
 

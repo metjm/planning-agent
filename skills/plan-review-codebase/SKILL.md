@@ -234,6 +234,8 @@ Check that new types and APIs match existing patterns:
 - Type naming conventions
 - API design patterns
 
+**Depth Requirement:** Do not stop after the first issue. Continue through the entire plan and codebase checks to surface as many consistency and correctness issues as possible in one pass.
+
 ## Key Questions
 
 1. "Is there existing code that does something similar?"
@@ -351,6 +353,12 @@ Write your review to the `feedback-output-path` file:
 - [ ] All referenced symbols and paths are validated
 - [ ] Non-trivial new algorithms are justified as state-of-the-art or have explicit tradeoff rationale
 - [ ] All blocking requirements are satisfied
+
+## Review Completeness Checklist
+
+- [ ] Reviewed the entire plan end-to-end
+- [ ] Verified every referenced file, library, API, and symbol
+- [ ] Validated all module placements and naming conventions
 
 [If NEEDS REVISION: Specific consistency issues to address]
 </plan-feedback>

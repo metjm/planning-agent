@@ -218,6 +218,8 @@ Identify components where failure would derail the entire plan:
 
 Document all findings in the feedback file.
 
+**Depth Requirement:** Do not stop after the first issue. Continue through the entire plan to identify as many risks and failure modes as possible in one pass.
+
 ## Key Questions
 
 1. "It's 6 months from now and this failed spectacularly. What happened?"
@@ -327,6 +329,12 @@ Write your review to the `feedback-output-path` file:
 - [ ] All referenced APIs/functions/types are validated
 - [ ] Non-trivial new algorithms are justified as state-of-the-art or have explicit tradeoff rationale
 - [ ] All blocking requirements are satisfied
+
+## Review Completeness Checklist
+
+- [ ] Reviewed the entire plan end-to-end
+- [ ] Verified every referenced file, library, API, and symbol
+- [ ] Documented evidence for each verification
 
 [If NEEDS REVISION: Specific changes required to pass adversarial review]
 </plan-feedback>

@@ -56,6 +56,8 @@ For each requirement in the plan:
 
 Write a structured review report to the output file.
 
+**Depth Requirement:** Do not stop after finding the first issue. Continue reviewing all plan requirements and all changed files to surface as many issues as possible in a single review.
+
 ## Tool Usage
 
 - **Read** - Examine plan and implementation files
@@ -110,6 +112,12 @@ APPROVED (or NEEDS REVISION)
 [If NEEDS REVISION: List blocking issues as QA-style requirements with acceptance criteria and verification steps.
 Avoid prescribing exact code changes or implementation details.]
 </implementation-feedback>
+
+## Review Completeness Checklist
+
+- [ ] All plan requirements reviewed
+- [ ] All changed files reviewed
+- [ ] All referenced libraries/APIs validated (or explicitly marked N/A)
 ```
 
 ## Verdict Guidelines
