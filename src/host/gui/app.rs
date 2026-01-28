@@ -372,14 +372,26 @@ impl HostApp {
             }
         }
 
-        // Compute awaiting/running counts using session_needs_interaction
-        // Note: session_needs_interaction checks both phase AND liveness, so stopped
-        // sessions in awaiting phases are correctly excluded from awaiting_count.
+        // Count live sessions (Running/Unresponsive liveness)
+        let live_session_count = session_rows
+            .iter()
+            .filter(|s| {
+                matches!(
+                    s.liveness,
+                    super::session_table::LivenessDisplay::Running
+                        | super::session_table::LivenessDisplay::Unresponsive
+                )
+            })
+            .count();
+
+        // Count sessions awaiting interaction (only from live sessions)
         let awaiting_count = session_rows
             .iter()
             .filter(|s| super::session_table::session_needs_interaction(&s.phase, s.liveness))
             .count();
-        let running_count = active_count.saturating_sub(awaiting_count);
+
+        // Running = live sessions minus those awaiting interaction
+        let running_count = live_session_count.saturating_sub(awaiting_count);
 
         self.display_data.sessions = session_rows;
         self.display_data.containers = container_rows;

@@ -86,41 +86,92 @@ pub fn render_session_table(
         )
     });
 
-    eframe::egui::ScrollArea::vertical().show(ui, |ui| {
-        // Live Sessions Section
+    // Constants for height calculation
+    const HEADER_HEIGHT: f32 = 24.0; // Header + separator height per section
+    const SECTION_SPACING: f32 = 16.0; // Spacing between sections
+
+    // Calculate available height and proportional allocation
+    let available_height = ui.available_height();
+    let live_count = live_sessions.len();
+    let disconnected_count = disconnected_sessions.len();
+
+    // Calculate overhead (headers, spacing)
+    let live_overhead = if live_count > 0 { HEADER_HEIGHT } else { 0.0 };
+    let disconnected_overhead = if disconnected_count > 0 {
+        HEADER_HEIGHT
+    } else {
+        0.0
+    };
+    let spacing_overhead = if live_count > 0 && disconnected_count > 0 {
+        SECTION_SPACING
+    } else {
+        0.0
+    };
+    let total_overhead = live_overhead + disconnected_overhead + spacing_overhead;
+    let content_height = (available_height - total_overhead).max(0.0);
+
+    // Proportional allocation based on session count
+    let (live_height, disconnected_height) = if live_count > 0 && disconnected_count > 0 {
+        let total = (live_count + disconnected_count) as f32;
+        let live_ratio = live_count as f32 / total;
+        (
+            content_height * live_ratio,
+            content_height * (1.0 - live_ratio),
+        )
+    } else if live_count > 0 {
+        (content_height, 0.0)
+    } else {
+        (0.0, content_height)
+    };
+
+    // Live Sessions Section
+    if !live_sessions.is_empty() {
+        ui.horizontal(|ui| {
+            ui.colored_label(eframe::egui::Color32::from_rgb(76, 175, 80), "●");
+            ui.strong(format!("Live Sessions ({})", live_sessions.len()));
+        });
+        ui.separator();
+
+        eframe::egui::ScrollArea::vertical()
+            .id_salt("live_sessions_scroll")
+            .max_height(live_height)
+            .auto_shrink([false, true])
+            .show(ui, |ui| {
+                let live_refs: Vec<_> = live_sessions.iter().collect();
+                if let Some(id) = render_container_grouped_rows(ui, &live_refs, selected_session_id)
+                {
+                    clicked_session = Some(id);
+                }
+            });
+    }
+
+    // Disconnected Sessions Section
+    if !disconnected_sessions.is_empty() {
         if !live_sessions.is_empty() {
-            ui.horizontal(|ui| {
-                ui.colored_label(eframe::egui::Color32::from_rgb(76, 175, 80), "●");
-                ui.strong(format!("Live Sessions ({})", live_sessions.len()));
-            });
-            ui.separator();
-
-            let live_refs: Vec<_> = live_sessions.iter().collect();
-            if let Some(id) = render_container_grouped_rows(ui, &live_refs, selected_session_id) {
-                clicked_session = Some(id);
-            }
+            ui.add_space(SECTION_SPACING);
         }
+        ui.horizontal(|ui| {
+            ui.colored_label(eframe::egui::Color32::from_rgb(117, 117, 117), "○");
+            ui.label(format!(
+                "Disconnected Sessions ({})",
+                disconnected_sessions.len()
+            ));
+        });
+        ui.separator();
 
-        // Disconnected Sessions Section
-        if !disconnected_sessions.is_empty() {
-            ui.add_space(16.0);
-            ui.horizontal(|ui| {
-                ui.colored_label(eframe::egui::Color32::from_rgb(117, 117, 117), "○");
-                ui.label(format!(
-                    "Disconnected Sessions ({})",
-                    disconnected_sessions.len()
-                ));
+        eframe::egui::ScrollArea::vertical()
+            .id_salt("disconnected_sessions_scroll")
+            .max_height(disconnected_height)
+            .auto_shrink([false, true])
+            .show(ui, |ui| {
+                let disconnected_refs: Vec<_> = disconnected_sessions.iter().collect();
+                if let Some(id) =
+                    render_container_grouped_rows(ui, &disconnected_refs, selected_session_id)
+                {
+                    clicked_session = Some(id);
+                }
             });
-            ui.separator();
-
-            let disconnected_refs: Vec<_> = disconnected_sessions.iter().collect();
-            if let Some(id) =
-                render_container_grouped_rows(ui, &disconnected_refs, selected_session_id)
-            {
-                clicked_session = Some(id);
-            }
-        }
-    });
+    }
 
     clicked_session
 }
