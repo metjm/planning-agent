@@ -224,6 +224,10 @@ pub struct AgentInstance {
     /// Optional prompt text appended to the system prompt for this instance
     #[serde(default)]
     pub prompt: Option<String>,
+    /// Optional skill to invoke for this instance
+    /// For review agents, this specifies which plan-review skill to use
+    #[serde(default)]
+    pub skill: Option<String>,
 }
 
 impl AgentRef {
@@ -248,6 +252,14 @@ impl AgentRef {
         match self {
             AgentRef::Simple(_) => None,
             AgentRef::Extended(inst) => inst.prompt.as_deref(),
+        }
+    }
+
+    /// Returns the optional skill name for this instance
+    pub fn skill(&self) -> Option<&str> {
+        match self {
+            AgentRef::Simple(_) => None,
+            AgentRef::Extended(inst) => inst.skill.as_deref(),
         }
     }
 }

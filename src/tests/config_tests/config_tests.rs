@@ -138,6 +138,7 @@ fn test_agent_ref_methods() {
         agent: "claude".to_string(),
         id: Some("claude-security".to_string()),
         prompt: Some("Focus on security".to_string()),
+        skill: None,
     });
     assert_eq!(extended_with_id.agent_name(), "claude");
     assert_eq!(extended_with_id.display_id(), "claude-security");
@@ -147,6 +148,7 @@ fn test_agent_ref_methods() {
         agent: "claude".to_string(),
         id: None,
         prompt: Some("Focus on security".to_string()),
+        skill: None,
     });
     assert_eq!(extended_without_id.agent_name(), "claude");
     assert_eq!(extended_without_id.display_id(), "claude"); // Falls back to agent name
@@ -750,4 +752,74 @@ workflow:
         .unwrap_err()
         .to_string()
         .contains("no distinct reviewing agent"));
+}
+
+#[test]
+fn test_agent_instance_with_skill_field() {
+    let yaml = r#"
+        agent: claude
+        id: adversarial
+        skill: plan-review-adversarial
+    "#;
+    let instance: AgentInstance = serde_yaml::from_str(yaml).unwrap();
+    assert_eq!(instance.agent, "claude");
+    assert_eq!(instance.id, Some("adversarial".to_string()));
+    assert_eq!(instance.skill, Some("plan-review-adversarial".to_string()));
+    assert!(instance.prompt.is_none());
+}
+
+#[test]
+fn test_agent_instance_with_skill_and_prompt() {
+    let yaml = r#"
+        agent: claude
+        id: reviewer
+        skill: plan-review-operational
+        prompt: "Additional focus on security"
+    "#;
+    let instance: AgentInstance = serde_yaml::from_str(yaml).unwrap();
+    assert_eq!(instance.skill, Some("plan-review-operational".to_string()));
+    assert_eq!(
+        instance.prompt,
+        Some("Additional focus on security".to_string())
+    );
+}
+
+#[test]
+fn test_agent_instance_without_skill_field() {
+    let yaml = r#"
+        agent: claude
+        id: default-reviewer
+        prompt: "Focus on completeness"
+    "#;
+    let instance: AgentInstance = serde_yaml::from_str(yaml).unwrap();
+    assert!(instance.skill.is_none());
+    assert!(instance.prompt.is_some());
+}
+
+#[test]
+fn test_agent_ref_skill_simple_returns_none() {
+    let agent_ref = AgentRef::Simple("claude".to_string());
+    assert!(agent_ref.skill().is_none());
+}
+
+#[test]
+fn test_agent_ref_skill_extended_with_skill() {
+    let agent_ref = AgentRef::Extended(AgentInstance {
+        agent: "claude".to_string(),
+        id: Some("adversarial".to_string()),
+        prompt: None,
+        skill: Some("plan-review-adversarial".to_string()),
+    });
+    assert_eq!(agent_ref.skill(), Some("plan-review-adversarial"));
+}
+
+#[test]
+fn test_agent_ref_skill_extended_without_skill() {
+    let agent_ref = AgentRef::Extended(AgentInstance {
+        agent: "claude".to_string(),
+        id: Some("default".to_string()),
+        prompt: Some("Some prompt".to_string()),
+        skill: None,
+    });
+    assert!(agent_ref.skill().is_none());
 }

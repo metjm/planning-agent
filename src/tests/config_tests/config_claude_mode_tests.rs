@@ -185,25 +185,43 @@ implementation:
 }
 
 #[test]
-fn test_claude_practices_reviewer_preserved() {
-    // Test that the full workflow.yaml transformation preserves claude-practices
+fn test_specialized_reviewers_preserved() {
+    // Test that the full workflow.yaml transformation preserves specialized skill-based reviewers
     let config = WorkflowConfig::claude_only_config();
 
-    // Find the claude-practices reviewer
-    let practices_reviewer = config.workflow.reviewing.agents.iter().find(|r| {
-        matches!(r, AgentRef::Extended(inst) if inst.id == Some("claude-practices".to_string()))
-    });
+    // Find the codebase reviewer (replaces claude-practices)
+    let codebase_reviewer =
+        config.workflow.reviewing.agents.iter().find(
+            |r| matches!(r, AgentRef::Extended(inst) if inst.id == Some("codebase".to_string())),
+        );
 
     assert!(
-        practices_reviewer.is_some(),
-        "claude-practices reviewer should be present"
+        codebase_reviewer.is_some(),
+        "codebase reviewer should be present"
     );
-    if let Some(AgentRef::Extended(inst)) = practices_reviewer {
-        assert!(inst
-            .prompt
-            .as_ref()
-            .unwrap()
-            .contains("repository practices"));
+    if let Some(AgentRef::Extended(inst)) = codebase_reviewer {
+        assert_eq!(
+            inst.skill.as_deref(),
+            Some("plan-review-codebase"),
+            "codebase reviewer should use plan-review-codebase skill"
+        );
+    }
+
+    // Find the adversarial reviewer
+    let adversarial_reviewer = config.workflow.reviewing.agents.iter().find(
+        |r| matches!(r, AgentRef::Extended(inst) if inst.id == Some("adversarial".to_string())),
+    );
+
+    assert!(
+        adversarial_reviewer.is_some(),
+        "adversarial reviewer should be present"
+    );
+    if let Some(AgentRef::Extended(inst)) = adversarial_reviewer {
+        assert_eq!(
+            inst.skill.as_deref(),
+            Some("plan-review-adversarial"),
+            "adversarial reviewer should use plan-review-adversarial skill"
+        );
     }
 }
 

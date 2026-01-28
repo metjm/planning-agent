@@ -12,7 +12,8 @@ use crate::domain::view::WorkflowView;
 use crate::domain::WorkflowCommand as DomainCommand;
 use crate::phases::review_parser::parse_review_feedback;
 use crate::phases::review_prompts::{
-    build_review_prompt_for_agent, build_review_recovery_prompt_for_agent, REVIEW_SYSTEM_PROMPT,
+    build_review_prompt_for_agent, build_review_recovery_prompt_for_agent, DEFAULT_REVIEW_SKILL,
+    REVIEW_SYSTEM_PROMPT,
 };
 use crate::phases::review_schema::SubmittedReview;
 use crate::phases::reviewing_conversation_key;
@@ -180,11 +181,12 @@ pub async fn run_multi_agent_review_with_context(
     // Build agents: (display_id, AgentType, conversation_id, resume_strategy, custom_prompt)
     #[allow(clippy::type_complexity)]
     let agents: Vec<(
-        String,
-        AgentType,
-        Option<String>,
-        ResumeStrategy,
-        Option<String>,
+        String,         // display_id
+        AgentType,      // agent
+        Option<String>, // conversation_id
+        ResumeStrategy, // resume_strategy
+        Option<String>, // custom_prompt
+        String,         // skill_name
     )> = agent_refs
         .iter()
         .zip(agent_contexts.into_iter())
@@ -194,12 +196,17 @@ pub async fn run_multi_agent_review_with_context(
                 let agent_config = config.get_agent(agent_name).ok_or_else(|| {
                     anyhow::anyhow!("Review agent '{}' not found in config", agent_name)
                 })?;
+                let skill_name = agent_ref
+                    .skill()
+                    .unwrap_or(DEFAULT_REVIEW_SKILL)
+                    .to_string();
                 Ok((
                     display_id,
                     AgentType::from_config(agent_name, agent_config, working_dir.to_path_buf())?,
                     conversation_id,
                     resume_strategy,
                     custom_prompt,
+                    skill_name,
                 ))
             },
         )
@@ -225,7 +232,7 @@ pub async fn run_multi_agent_review_with_context(
 
     let futures: Vec<_> = agents
         .into_iter()
-        .map(|(display_id, agent, conversation_id, resume_strategy, custom_prompt)| {
+        .map(|(display_id, agent, conversation_id, resume_strategy, custom_prompt, skill_name)| {
             let sender = session_sender.clone();
             let phase = format!("Reviewing #{}", iteration);
             let logger = session_logger.clone();
@@ -287,6 +294,7 @@ pub async fn run_multi_agent_review_with_context(
                     &working_dir,
                     &session_folder,
                     custom_prompt.as_deref(),
+                    Some(&skill_name),
                 );
 
                 sender.send_output(format!(
@@ -345,6 +353,7 @@ pub async fn run_multi_agent_review_with_context(
                             &feedback_path,
                             &parse_failure.error,
                             &initial_output,
+                            &skill_name,
                         );
 
                         // Execute retry attempt

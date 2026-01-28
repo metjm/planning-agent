@@ -37,12 +37,15 @@ fn test_claude_only_config() {
     assert_eq!(config.workflow.planning.agent, "claude");
 
     // Reviewing phase should use the claude_mode.reviewing override
-    // with claude, claude-practices, and claude-completeness reviewers
+    // with adversarial, operational, and codebase specialized reviewers
     assert_eq!(config.workflow.reviewing.agents.len(), 3);
-    assert_eq!(
-        config.workflow.reviewing.agents[0],
-        AgentRef::Simple("claude".to_string())
-    );
+    // All are extended with skill-based configuration
+    for r in &config.workflow.reviewing.agents {
+        assert!(
+            matches!(r, AgentRef::Extended(_)),
+            "All claude_mode reviewers should be Extended (skill-based)"
+        );
+    }
     // Verify extended reviewers have unique IDs
     let ids: Vec<_> = config
         .workflow
@@ -51,10 +54,7 @@ fn test_claude_only_config() {
         .iter()
         .map(|a| a.display_id())
         .collect();
-    assert_eq!(
-        ids,
-        vec!["claude", "claude-practices", "claude-completeness"]
-    );
+    assert_eq!(ids, vec!["adversarial", "operational", "codebase"]);
 
     // Implementation should be enabled with distinct reviewer
     assert!(config.implementation.enabled);

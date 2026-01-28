@@ -81,30 +81,31 @@ claude_mode:
     codex: claude
     gemini: claude
 
-  # Override the reviewing phase to use specialized Claude reviewers
-  # This replaces workflow.reviewing entirely when --claude is active
+  # Override the reviewing phase to use specialized reviewers
+  # Each reviewer uses a distinct skill with orthogonal focus
+  #
+  # Field meanings:
+  # - `skill:` specifies which skill to invoke (determines methodology)
+  # - `prompt:` (optional) provides additional review context if needed
   reviewing:
     agents:
-      - claude
+      # The Adversarial Reviewer - challenges assumptions and finds failure modes
+      # Runs first per research recommendation - if fundamental assumptions are wrong,
+      # other reviews are wasted effort
       - agent: claude
-        id: claude-practices
-        prompt: |
-          Focus your review on repository practices and code reuse:
-          - Does the plan follow existing patterns and conventions in the codebase?
-          - Are there existing utilities, helpers, or abstractions that should be reused?
-          - Does the plan introduce unnecessary code duplication?
-          - Are new abstractions justified, or should existing ones be extended?
-          - Does the proposed structure align with the project's module organization?
+        id: adversarial
+        skill: plan-review-adversarial
+
+      # The Operational Reviewer - validates production readiness
       - agent: claude
-        id: claude-completeness
-        prompt: |
-          Focus your review on completeness:
-          - Does the plan cover every single requirement from the task description?
-          - Are there any edge cases or scenarios that have been overlooked?
-          - Does the plan include necessary error handling and validation steps?
-          - Are all dependencies and integrations accounted for?
-          - Is there a clear path for testing and verification of the implemented plan?
-          - If any of these aspects are missing, reject the plan with detailed and specific feedback. Mention all missing elements and what you'd expect to see included.
+        id: operational
+        skill: plan-review-operational
+
+      # The Codebase Reviewer - ensures consistency with existing patterns
+      - agent: claude
+        id: codebase
+        skill: plan-review-codebase
+
     aggregation: any_rejects
     sequential: true
 
