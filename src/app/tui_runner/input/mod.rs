@@ -9,7 +9,7 @@ use approval_input::{
 
 use crate::app::cli::Cli;
 use crate::phases::implementation::{
-    run_implementation_interaction, IMPLEMENTATION_FOLLOWUP_PHASE,
+    build_merge_worktree_prompt, run_implementation_interaction, IMPLEMENTATION_FOLLOWUP_PHASE,
 };
 use crate::tui::file_index::FileIndex;
 use crate::tui::ui::util::{
@@ -29,8 +29,37 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, watch};
 
 use super::input_naming::handle_naming_tab_input;
+use super::slash_commands::{parse_slash_command, SlashCommand};
 use super::InitHandle;
 use crate::tui::ui::util::{compute_plan_modal_inner_size, parse_markdown_line};
+
+use crate::domain::types::WorktreeState;
+
+/// Validation result for /merge-worktree command.
+/// This is extracted as a separate type to enable unit testing.
+#[derive(Debug, PartialEq)]
+pub enum MergeWorktreeValidation {
+    /// Valid worktree, ready to merge
+    Valid(WorktreeState),
+    /// No active worktree in this session
+    NoWorktree,
+    /// Worktree directory was deleted externally
+    WorktreeDeleted,
+}
+
+/// Validates worktree state for /merge-worktree command.
+/// Extracted from handler to enable unit testing.
+pub fn validate_merge_worktree(worktree_info: Option<&WorktreeState>) -> MergeWorktreeValidation {
+    let Some(wt_state) = worktree_info else {
+        return MergeWorktreeValidation::NoWorktree;
+    };
+
+    if !wt_state.worktree_path().exists() {
+        return MergeWorktreeValidation::WorktreeDeleted;
+    }
+
+    MergeWorktreeValidation::Valid(wt_state.clone())
+}
 
 /// Compute the max scroll for the run-tab summary panel based on wrapped lines and terminal size.
 pub(crate) fn compute_run_tab_summary_max_scroll(summary_text: &str) -> usize {
@@ -572,6 +601,117 @@ async fn handle_implementation_chat_input(
                 return Ok(false);
             }
 
+            // Check if this is a /merge-worktree command
+            let input_trimmed = session.tab_input.trim().to_string();
+            if let Some((SlashCommand::MergeWorktree, _args)) = parse_slash_command(&input_trimmed)
+            {
+                // Clear input first
+                session.tab_input.clear();
+                session.tab_input_cursor = 0;
+                session.tab_input_scroll = 0;
+                session.last_key_was_backslash = false;
+                session.tab_mention_state.clear();
+                session.tab_slash_state.clear();
+
+                // Validate worktree state using the extracted helper function
+                let worktree_info = session
+                    .workflow_view
+                    .as_ref()
+                    .and_then(|v| v.worktree_info());
+
+                let wt_state = match validate_merge_worktree(worktree_info) {
+                    MergeWorktreeValidation::Valid(state) => state,
+                    MergeWorktreeValidation::NoWorktree => {
+                        session.add_output(
+                            "[merge-worktree] No active worktree in this session".to_string(),
+                        );
+                        return Ok(false);
+                    }
+                    MergeWorktreeValidation::WorktreeDeleted => {
+                        session.add_output(
+                            "[merge-worktree] Error: Worktree directory no longer exists"
+                                .to_string(),
+                        );
+                        return Ok(false);
+                    }
+                };
+
+                // Get required context
+                let Some(context) = session.context.clone() else {
+                    session.add_output(
+                        "[merge-worktree] Unavailable: missing session context".to_string(),
+                    );
+                    return Ok(false);
+                };
+                let Some(view) = session.workflow_view.clone() else {
+                    session.add_output(
+                        "[merge-worktree] Unavailable: missing workflow view".to_string(),
+                    );
+                    return Ok(false);
+                };
+                let Some(workflow_id) = view.workflow_id() else {
+                    session.add_output(
+                        "[merge-worktree] Unavailable: missing workflow ID".to_string(),
+                    );
+                    return Ok(false);
+                };
+
+                // Build merge prompt
+                let message = build_merge_worktree_prompt(&wt_state);
+
+                // Set up interaction state
+                let workflow_session_id = workflow_id.to_string();
+                let ui_session_id = session.id;
+                let run_id = session.current_run_id;
+                let (cancel_tx, cancel_rx) = watch::channel(false);
+
+                session.implementation_interaction.running = true;
+                session.implementation_interaction.cancel_tx = Some(cancel_tx);
+
+                // Add user-visible message to chat
+                session.add_chat_message(
+                    "user",
+                    IMPLEMENTATION_FOLLOWUP_PHASE,
+                    "/merge-worktree".to_string(),
+                );
+                session
+                    .add_output("[merge-worktree] Sending merge request to agent...".to_string());
+
+                // Prepare task parameters
+                let working_dir = context.effective_working_dir.clone();
+                let workflow_config = context.workflow_config.clone();
+                let session_sender =
+                    SessionEventSender::new(ui_session_id, run_id, output_tx.clone());
+
+                let session_logger = match SessionLogger::new(&workflow_session_id) {
+                    Ok(logger) => Arc::new(logger),
+                    Err(e) => {
+                        session.implementation_interaction.running = false;
+                        session.implementation_interaction.cancel_tx = None;
+                        session
+                            .add_output(format!("[merge-worktree] Failed to create logger: {}", e));
+                        return Ok(false);
+                    }
+                };
+
+                // Spawn the interaction task
+                tokio::spawn(async move {
+                    let _ = run_implementation_interaction(
+                        &view,
+                        &workflow_config,
+                        &working_dir,
+                        &message,
+                        session_sender,
+                        session_logger,
+                        cancel_rx,
+                        None,
+                    )
+                    .await;
+                });
+
+                return Ok(false);
+            }
+
             let has_content =
                 !session.tab_input.trim().is_empty() || session.has_tab_input_pastes();
             if !has_content {
@@ -880,3 +1020,7 @@ fn handle_none_mode_input(key: crossterm::event::KeyEvent, session: &mut Session
     }
     Ok(false)
 }
+
+#[cfg(test)]
+#[path = "tests/merge_worktree_tests.rs"]
+mod merge_worktree_tests;

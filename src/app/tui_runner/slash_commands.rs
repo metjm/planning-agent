@@ -25,6 +25,8 @@ pub enum SlashCommand {
     /// Select or show workflow configuration.
     /// None = show current, Some(name) = select workflow.
     Workflow(Option<String>),
+    /// Merge worktree changes to the original branch (ChatInput only).
+    MergeWorktree,
 }
 
 /// Parse a slash command from input text.
@@ -91,6 +93,7 @@ pub fn parse_slash_command(input: &str) -> Option<(SlashCommand, Vec<String>)> {
                 Some((SlashCommand::Workflow(Some(args.join(" "))), vec![]))
             }
         }
+        "/merge-worktree" => Some((SlashCommand::MergeWorktree, args)),
         _ => None,
     }
 }

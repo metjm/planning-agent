@@ -7,7 +7,7 @@ use crate::domain::types::{
 use crate::domain::view::WorkflowView;
 use crate::domain::WorkflowEvent;
 use crate::planning_paths::{set_home_for_test, TestHomeGuard};
-use crate::tui::scroll_state::ScrollState;
+use crate::tui::scroll::ScrollState;
 use std::path::PathBuf;
 use tempfile::tempdir;
 use uuid::Uuid;

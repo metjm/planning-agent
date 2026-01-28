@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::tui::scroll_state::ScrollState;
+use crate::tui::scroll::ScrollState;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TodoStatus {

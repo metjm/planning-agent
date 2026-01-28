@@ -6,7 +6,7 @@
 use crate::agents::{AgentContext, AgentType};
 use crate::config::WorkflowConfig;
 use crate::domain::actor::WorkflowMessage;
-use crate::domain::types::{AgentId, ConversationId, PhaseLabel, ResumeStrategy};
+use crate::domain::types::{AgentId, ConversationId, PhaseLabel, ResumeStrategy, WorktreeState};
 use crate::domain::view::WorkflowView;
 use crate::domain::WorkflowCommand as DomainCommand;
 use crate::phases::implementing_conversation_key;
@@ -385,6 +385,48 @@ Apply the requested changes using available tools."#,
         workspace = working_dir.display(),
         plan = plan_path,
         user_message = user_message,
+    )
+}
+
+/// Builds a prompt instructing the AI to merge worktree changes.
+///
+/// This is different from `git_worktree::generate_merge_instructions()` which generates
+/// user-facing documentation. This prompt instructs the AI to execute git commands.
+pub fn build_merge_worktree_prompt(wt_state: &WorktreeState) -> String {
+    let target_branch = wt_state.source_branch().unwrap_or("main");
+    let worktree_branch = wt_state.branch_name();
+    let original_dir = wt_state.original_dir();
+
+    format!(
+        r#"Merge the worktree branch into the target branch.
+
+######################### MERGE REQUEST #########################
+
+Current situation:
+- Worktree branch: {worktree_branch}
+- Target branch: {target_branch}
+- Original repository: {original_dir}
+
+Execute the following steps:
+1. Navigate to the original repository: cd {original_dir}
+2. Fetch latest changes: git fetch origin
+3. Checkout the target branch: git checkout {target_branch}
+4. Pull latest if needed: git pull origin {target_branch} (skip if no remote tracking)
+5. Merge the worktree branch: git merge {worktree_branch}
+6. If there are merge conflicts:
+   - Analyze each conflict carefully
+   - Resolve conflicts intelligently, preserving both the target branch's state and the worktree's changes where appropriate
+   - Stage resolved files: git add <resolved-files>
+   - Complete the merge: git commit
+7. Report the merge result to the user
+
+Important:
+- Do NOT delete the worktree or the branch - the user may want to keep them for reference
+- If the merge fails or conflicts cannot be auto-resolved, explain the situation clearly
+"#,
+        worktree_branch = worktree_branch,
+        target_branch = target_branch,
+        original_dir = original_dir.display(),
     )
 }
 

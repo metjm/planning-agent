@@ -4,7 +4,7 @@
 
 use super::super::dropdowns::draw_mention_dropdown;
 use super::super::util::{compute_wrapped_line_count, parse_markdown_line, wrap_text_at_width};
-use crate::tui::scroll_regions::{ScrollRegion, ScrollableRegions};
+use crate::tui::scroll::{ScrollRegion, ScrollableRegions};
 use crate::tui::{ApprovalContext, ApprovalMode, FeedbackTarget, Session};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},

@@ -1,4 +1,4 @@
-use crate::tui::scroll_regions::{ScrollRegion, ScrollableRegions};
+use crate::tui::scroll::{ScrollRegion, ScrollableRegions};
 use crate::tui::{FocusedPanel, Session};
 use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 

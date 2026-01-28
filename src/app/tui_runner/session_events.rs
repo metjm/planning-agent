@@ -9,6 +9,7 @@ use crate::tui::{Event, TabManager, ToolKind, ToolTimelineEntry};
 use crate::update;
 use anyhow::Result;
 use std::path::Path;
+use tracing::error;
 
 use super::restore_terminal;
 use super::snapshot_helper::create_and_save_snapshot;
@@ -505,6 +506,9 @@ async fn handle_update_install_finished(
                 Some("Update requires cargo. Please install Rust and try again.".to_string());
         }
         update::UpdateResult::InstallFailed(err, is_feature_error) => {
+            // Log the full error for debugging (UI only shows truncated version)
+            error!("Update install failed:\n{}", err);
+
             if is_feature_error && !update::BUILD_FEATURES.is_empty() {
                 tab_manager.update_error = Some(format!(
                     "Update failed: features '{}' may no longer exist.\n\

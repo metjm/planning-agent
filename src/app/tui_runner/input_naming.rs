@@ -340,6 +340,13 @@ pub(crate) async fn handle_naming_tab_input(
                                 }
                             }
                         }
+                        SlashCommand::MergeWorktree => {
+                            // MergeWorktree is only available in ChatInput mode (running session)
+                            tab_manager.command_error = Some(
+                                "/merge-worktree is only available in a running session"
+                                    .to_string(),
+                            );
+                        }
                     }
                     return Ok(false);
                 }
@@ -390,9 +397,16 @@ pub(crate) async fn handle_naming_tab_input(
                     let mut input =
                         NewWorkflowInput::new(feature_name.clone(), objective.clone(), max_iter);
 
-                    // Set up git worktree if enabled via --worktree
-                    let effective_working_dir = if !worktree_flag {
-                        // Worktree is disabled by default
+                    // Set up git worktree if enabled via --worktree or workflow config
+                    // CLI flag takes priority; workflow config provides a per-project default
+                    let config_worktree_enabled =
+                        crate::app::tui_runner::workflow_loading::load_workflow_from_selection(&wd)
+                            .worktree
+                            .enabled;
+                    let worktree_enabled = worktree_flag || config_worktree_enabled;
+
+                    let effective_working_dir = if !worktree_enabled {
+                        // Worktree is disabled
                         wd.clone()
                     } else {
                         // Get session directory for worktree

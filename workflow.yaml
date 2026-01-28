@@ -249,6 +249,11 @@ implementation:
     agent: claude
     # max_turns uses agent default
 
+# Git worktree configuration
+# When enabled, creates an isolated branch for each planning session
+worktree:
+  enabled: false  # Set to true to auto-create worktrees
+
 # Optional: Post-implementation verification workflow
 # Uncomment to enable verification after implementation
 #verification:

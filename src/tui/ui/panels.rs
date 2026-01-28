@@ -9,7 +9,7 @@ use super::objective::{
 use super::stats::draw_stats;
 use super::theme::Theme;
 use super::util::compute_wrapped_line_count;
-use crate::tui::scroll_regions::{ScrollRegion, ScrollableRegions};
+use crate::tui::scroll::{ScrollRegion, ScrollableRegions};
 use crate::tui::{FocusedPanel, Session, SummaryState};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},

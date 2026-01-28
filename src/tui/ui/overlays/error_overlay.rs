@@ -1,7 +1,7 @@
 //! Error overlay rendering.
 
 use super::super::util::compute_wrapped_line_count_text;
-use crate::tui::scroll_regions::{ScrollRegion, ScrollableRegions};
+use crate::tui::scroll::{ScrollRegion, ScrollableRegions};
 use crate::tui::Session;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},

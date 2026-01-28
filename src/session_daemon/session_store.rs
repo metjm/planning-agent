@@ -14,7 +14,7 @@ use crate::app::AccountUsage;
 use crate::domain::types::Phase;
 use crate::domain::view::WorkflowView;
 use crate::planning_paths;
-use crate::tui::scroll_state::ScrollState;
+use crate::tui::scroll::ScrollState;
 use crate::tui::session::model::{
     ApprovalContext, ApprovalMode, FeedbackTarget, FocusedPanel, InputMode, PasteBlock,
     ReviewRound, RunTab, SessionStatus, TodoItem,

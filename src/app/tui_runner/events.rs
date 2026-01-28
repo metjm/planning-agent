@@ -1,4 +1,4 @@
-use crate::tui::scroll_regions::ScrollableRegions;
+use crate::tui::scroll::ScrollableRegions;
 use crate::tui::{ApprovalMode, Event, FocusedPanel, SessionStatus, TabManager};
 use anyhow::Result;
 use std::path::Path;
@@ -173,8 +173,8 @@ fn handle_resize_event(tab_manager: &mut TabManager) {
 
     // Reset run tab scrolls
     for tab in &mut session.run_tabs {
-        tab.chat_scroll = crate::tui::scroll_state::ScrollState::new();
-        tab.summary_scroll = crate::tui::scroll_state::ScrollState::new();
+        tab.chat_scroll = crate::tui::scroll::ScrollState::new();
+        tab.summary_scroll = crate::tui::scroll::ScrollState::new();
     }
 }
 

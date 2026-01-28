@@ -306,3 +306,15 @@ fn test_parse_workflow_with_name() {
         ))
     );
 }
+
+#[test]
+fn test_parse_merge_worktree() {
+    assert_eq!(
+        parse_slash_command("/merge-worktree"),
+        Some((SlashCommand::MergeWorktree, vec![]))
+    );
+    assert_eq!(
+        parse_slash_command("  /merge-worktree  "),
+        Some((SlashCommand::MergeWorktree, vec![]))
+    );
+}

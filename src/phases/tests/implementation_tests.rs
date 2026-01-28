@@ -92,3 +92,47 @@ fn test_build_implementation_followup_prompt() {
     assert!(prompt.contains("Fix the bug"));
     assert!(prompt.contains("/tmp/workspace"));
 }
+
+#[test]
+fn test_build_merge_worktree_prompt_basic() {
+    use crate::domain::types::WorktreeState;
+    use std::path::PathBuf;
+
+    let wt = WorktreeState::new(
+        PathBuf::from("/tmp/worktree"),
+        "planning-agent/feature-abc123".to_string(),
+        Some("main".to_string()),
+        PathBuf::from("/home/user/project"),
+    );
+
+    let prompt = build_merge_worktree_prompt(&wt);
+
+    // Check branch names are included
+    assert!(prompt.contains("planning-agent/feature-abc123"));
+    assert!(prompt.contains("main"));
+
+    // Check original directory is included
+    assert!(prompt.contains("/home/user/project"));
+
+    // Check merge command is included
+    assert!(prompt.contains("git merge planning-agent/feature-abc123"));
+}
+
+#[test]
+fn test_build_merge_worktree_prompt_no_source_branch() {
+    use crate::domain::types::WorktreeState;
+    use std::path::PathBuf;
+
+    let wt = WorktreeState::new(
+        PathBuf::from("/tmp/worktree"),
+        "feature-branch".to_string(),
+        None, // No source branch - should default to "main"
+        PathBuf::from("/project"),
+    );
+
+    let prompt = build_merge_worktree_prompt(&wt);
+
+    // Should use "main" as fallback
+    assert!(prompt.contains("Target branch: main"));
+    assert!(prompt.contains("git checkout main"));
+}

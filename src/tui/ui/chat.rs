@@ -1,7 +1,7 @@
 use super::theme::Theme;
 use super::util::{compute_wrapped_line_count, parse_markdown_line, wrap_text_at_width};
 use super::SPINNER_CHARS;
-use crate::tui::scroll_regions::{ScrollRegion, ScrollableRegions};
+use crate::tui::scroll::{ScrollRegion, ScrollableRegions};
 use crate::tui::session::ReviewerStatus;
 use crate::tui::{
     FocusedPanel, RunTab, RunTabEntry, Session, SummaryState, ToolResultSummary, ToolTimelineEntry,

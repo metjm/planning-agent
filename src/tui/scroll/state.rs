@@ -92,5 +92,5 @@ impl ScrollState {
 }
 
 #[cfg(test)]
-#[path = "tests/scroll_state_tests.rs"]
+#[path = "tests/state_tests.rs"]
 mod tests;

@@ -17,7 +17,7 @@ use super::dropdowns::{draw_mention_dropdown, draw_slash_dropdown};
 use super::theme::Theme;
 use super::util::{compute_wrapped_line_count, parse_markdown_line, wrap_text_at_width};
 use crate::domain::types::{ImplementationPhase, Phase, UiMode};
-use crate::tui::scroll_regions::{ScrollRegion, ScrollableRegions};
+use crate::tui::scroll::{ScrollRegion, ScrollableRegions};
 use crate::tui::session::modals::review_modal::compute_tab_viewport;
 use crate::tui::{ApprovalMode, FocusedPanel, Session, TabManager};
 use crate::update::UpdateStatus;

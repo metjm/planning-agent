@@ -30,6 +30,9 @@ pub struct WorkflowConfig {
     /// Gemini-mode configuration for gemini-only workflow transformation.
     #[serde(default)]
     pub gemini_mode: GeminiModeConfig,
+    /// Git worktree configuration for isolated branch work.
+    #[serde(default)]
+    pub worktree: WorktreeConfig,
 }
 
 /// Configuration for the JSON-mode implementation workflow.
@@ -74,6 +77,15 @@ impl Default for ImplementationConfig {
             reviewing: None,
         }
     }
+}
+
+/// Configuration for git worktree feature.
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct WorktreeConfig {
+    /// Whether to create a git worktree for the session.
+    /// When enabled, creates an isolated branch for planning work.
+    #[serde(default)]
+    pub enabled: bool,
 }
 
 impl ImplementationConfig {
@@ -412,3 +424,7 @@ mod config_tests;
 #[cfg(test)]
 #[path = "tests/config_tests/config_inline_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "tests/config_tests/worktree_config_tests.rs"]
+mod worktree_config_tests;

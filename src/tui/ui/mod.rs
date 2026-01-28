@@ -12,7 +12,7 @@ pub mod util;
 #[path = "tests/overlays_tests.rs"]
 mod overlays_tests;
 
-use crate::tui::scroll_regions::ScrollableRegions;
+use crate::tui::scroll::ScrollableRegions;
 use crate::tui::{ApprovalMode, InputMode, Session, SessionStatus, TabManager};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},

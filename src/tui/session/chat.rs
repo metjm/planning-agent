@@ -1,6 +1,6 @@
 use super::model::{ChatMessage, RunTab, RunTabEntry, SummaryState, ToolTimelineEntry};
 use super::Session;
-use crate::tui::scroll_state::ScrollState;
+use crate::tui::scroll::ScrollState;
 
 /// Normalize a phase name by stripping trailing " Summary" suffix.
 /// This is a defensive measure to ensure summary agent output is routed

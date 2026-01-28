@@ -19,7 +19,7 @@ use crate::phases::implementing_conversation_key;
 use crate::tui::cursor_utils::{slice_from_cursor, slice_up_to_cursor};
 use crate::tui::event::{TokenUsage, WorkflowCommand};
 use crate::tui::mention::MentionState;
-use crate::tui::scroll_state::ScrollState;
+use crate::tui::scroll::ScrollState;
 use crate::tui::slash::SlashState;
 use anyhow::Result;
 pub use context::SessionContext;
