@@ -267,17 +267,21 @@ Write your review to the `feedback-output-path` file:
 
 ---
 
-## Critical Issues
+## Blocking Requirements (QA)
 
-[List blocking operational concerns]
+1. **Issue**: [Description of the operational gap]
+   **Requirement**: [What must be true in the revised plan]
+   **Acceptance Criteria**:
+   - [Observable artifact or plan content]
+   - [Edge case or failure scenario covered]
+   **Verification Steps**:
+   - [How to confirm (permissions check, config inspection, test)]
+   - [Expected outcome]
+   **Notes**: [Why this matters / on-call impact]
 
 ---
 
-## Recommendations
-
-### Must Fix (Blocking)
-- [ ] [Missing permission verification]
-- [ ] [Missing observability]
+## Recommendations (Non-blocking)
 
 ### Should Fix (Important)
 - [ ] [Partial failure handling]
@@ -290,6 +294,7 @@ Write your review to the `feedback-output-path` file:
 - [ ] Permissions explicitly stated with verification method
 - [ ] Observability plan includes metrics, logs, and alerts
 - [ ] Failure modes have handling strategies
+- [ ] All blocking requirements are satisfied
 
 [If NEEDS REVISION: Specific operational gaps that must be addressed]
 </plan-feedback>
@@ -323,3 +328,5 @@ Use sub-agents to verify infrastructure constraints in parallel.
 - DO NOT implement anything - review only
 - DO NOT modify the original plan
 - ALWAYS write the feedback to the `feedback-output-path` file
+- For blocking items, use QA-style requirements with acceptance criteria and verification steps
+- Do not prescribe code-level fixes or implementation details

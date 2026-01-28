@@ -250,16 +250,21 @@ Write your review to the `feedback-output-path` file:
 
 ---
 
-## Critical Issues
+## Blocking Requirements (QA)
 
-[List issues that MUST be addressed - unverified critical assumptions, unmitigated SPOFs]
+1. **Issue**: [Description of the high-risk assumption or SPOF]
+   **Requirement**: [What must be true in the revised plan]
+   **Acceptance Criteria**:
+   - [Observable artifact or plan content]
+   - [Edge case or negative case covered]
+   **Verification Steps**:
+   - [How to confirm (codebase check, doc check, test, or spike)]
+   - [Expected outcome]
+   **Notes**: [Why this matters / risk if not addressed]
 
 ---
 
-## Recommendations
-
-### Must Fix (Blocking)
-- [ ] [Action to address critical assumption or SPOF]
+## Recommendations (Non-blocking)
 
 ### Should Fix (Important)
 - [ ] [Action to reduce risk]
@@ -273,6 +278,7 @@ Write your review to the `feedback-output-path` file:
 - [ ] No unverified HIGH RISK assumptions remain
 - [ ] Single points of failure have mitigations
 - [ ] Plan acknowledges failure scenarios, not just success
+- [ ] All blocking requirements are satisfied
 
 [If NEEDS REVISION: Specific changes required to pass adversarial review]
 </plan-feedback>
@@ -317,3 +323,5 @@ Use sub-agents to verify assumptions in parallel. You can use up to 20 at a time
 - ALWAYS write the feedback to the `feedback-output-path` file
 - BE SPECIFIC - cite exact assumptions and failure scenarios
 - BE CONSTRUCTIVE - explain HOW to address issues, not just what's wrong
+- For blocking items, use QA-style requirements with acceptance criteria and verification steps
+- Do not prescribe code-level fixes or implementation details

@@ -18,7 +18,7 @@ Expert reviewer that compares implementations against approved plans to verify c
 1. **Verify Completeness** - Check that all plan requirements were implemented
 2. **Verify Correctness** - Ensure implementation matches plan specifications
 3. **Check Quality** - Look for bugs, regressions, or code quality issues
-4. **Produce Clear Verdict** - APPROVED or NEEDS REVISION with actionable feedback
+4. **Produce Clear Verdict** - APPROVED or NEEDS REVISION with QA-style requirements for blocking issues
 
 ## Review Process
 
@@ -78,20 +78,30 @@ Write your review to `review-output-path` with this structure:
 
 1. [Description] - Location: `/path/to/file` in `function_name()`
 
-### Issues Found
+### Blocking Issues (Requirements)
 
 1. **Issue**: [Description]
    **Location**: `/path/to/file` in `function_name()` or `TypeName`
-   **Expected**: [What plan specified]
-   **Actual**: [What was implemented]
+   **Requirement**: [What must be true after revision]
+   **Acceptance Criteria**:
+   - [Observable behavior or artifact]
+   - [Edge case or negative case]
+   **Verification Steps**:
+   - [Command or manual check]
+   - [Expected outcome]
+   **Notes**: [Why this matters / risk if not fixed]
+
+### Non-blocking Issues (Suggestions)
+
+1. [Suggestion] - Location: `/path/to/file` in `function_name()` or `TypeName`
 
 ## Verdict
 
 APPROVED (or NEEDS REVISION)
 
 <implementation-feedback>
-[If NEEDS REVISION: Detailed, actionable feedback for the next implementation attempt.
-Be specific about what needs to change and where.]
+[If NEEDS REVISION: List blocking issues as QA-style requirements with acceptance criteria and verification steps.
+Avoid prescribing exact code changes or implementation details.]
 </implementation-feedback>
 ```
 
@@ -118,8 +128,9 @@ Use when:
 
 - **DO** verify every requirement in the plan
 - **DO** use absolute paths in all references
-- **DO** provide actionable feedback if rejecting
+- **DO** express blocking issues as QA-style requirements with acceptance criteria and verification steps
 - **DO NOT** implement fixes yourself - only review
+- **DO NOT** provide code-level fixes or step-by-step implementation instructions
 - **DO NOT** be overly pedantic about style
 - **DO NOT** reject for minor issues that don't affect functionality
 

@@ -268,17 +268,21 @@ Write your review to the `feedback-output-path` file:
 
 ---
 
-## Critical Issues
+## Blocking Requirements (QA)
 
-[List consistency issues that must be addressed]
+1. **Issue**: [Description of the consistency/duplication problem]
+   **Requirement**: [What must be true in the revised plan]
+   **Acceptance Criteria**:
+   - [Observable artifact or plan content]
+   - [Edge case or exception covered]
+   **Verification Steps**:
+   - [How to confirm (codebase search, example reference)]
+   - [Expected outcome]
+   **Notes**: [Why this matters / risk if not addressed]
 
 ---
 
-## Recommendations
-
-### Must Fix (Blocking)
-- [ ] [Reuse existing utility X instead of creating new]
-- [ ] [Follow pattern from Y instead of new pattern]
+## Recommendations (Non-blocking)
 
 ### Should Fix (Important)
 - [ ] [Move file to conventional location]
@@ -292,6 +296,7 @@ Write your review to the `feedback-output-path` file:
 - [ ] Existing utilities reused where appropriate
 - [ ] Module organization matches conventions
 - [ ] No unnecessary duplication introduced
+- [ ] All blocking requirements are satisfied
 
 [If NEEDS REVISION: Specific consistency issues to address]
 </plan-feedback>
@@ -335,3 +340,5 @@ Use sub-agents to search for patterns in parallel. You can use up to 20 at a tim
 - DO NOT modify the original plan
 - ALWAYS write the feedback to the `feedback-output-path` file
 - ALWAYS search the codebase before making consistency judgments
+- For blocking items, use QA-style requirements with acceptance criteria and verification steps
+- Do not prescribe code-level fixes or implementation details
