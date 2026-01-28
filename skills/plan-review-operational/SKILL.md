@@ -197,6 +197,8 @@ Verify:
 - Quotas on cloud resources
 - What happens when limits are hit?
 
+**Depth Requirement:** Do not stop after the first issue. Continue through the entire plan and operational checks to surface as many issues as possible in one pass.
+
 ## Key Questions
 
 1. "What permissions does this require and how do we verify they exist?"
