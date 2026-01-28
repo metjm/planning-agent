@@ -116,11 +116,11 @@ async fn send_error_status_if_failure(
         }
     }; // view borrow is definitely dropped here
 
-    if let Some((phase, iteration)) = update_info {
+    if let Some((_phase, iteration)) = update_info {
         let _ = tracker
             .update(
                 workflow_session_id,
-                format!("{:?}", phase),
+                "Planning".to_string(), // Planning workflow phase is always "Planning"
                 iteration,
                 "Error".to_string(),
                 None,
@@ -371,9 +371,9 @@ pub async fn run_workflow_with_config(
             feature_name_for_daemon,
             working_dir.clone(),
             session_dir.clone(),
-            format!("{:?}", initial_phase),
+            view.ui_mode().as_str().to_string(), // "Planning" (from UiMode)
             initial_iteration,
-            format!("{:?}", initial_phase),
+            initial_phase.status_label().to_string(), // "Planning" (from Phase::status_label())
         )
         .await
     {
@@ -445,9 +445,9 @@ pub async fn run_workflow_with_config(
                         let _ = tracker
                             .update(
                                 &workflow_session_id_str,
-                                format!("{:?}", updated_phase),
+                                updated_view.ui_mode().as_str().to_string(), // "Planning" (from UiMode)
                                 updated_iteration,
-                                format!("{:?}", updated_phase),
+                                updated_phase.status_label().to_string(), // Status from Phase::status_label()
                                 None, // No implementation state during planning
                             )
                             .await;
@@ -529,9 +529,9 @@ pub async fn run_workflow_with_config(
                         let _ = tracker
                             .update(
                                 &workflow_session_id_str,
-                                format!("{:?}", updated_phase),
+                                updated_view.ui_mode().as_str().to_string(), // "Planning" (from UiMode)
                                 updated_iteration,
-                                format!("{:?}", updated_phase),
+                                updated_phase.status_label().to_string(), // Status from Phase::status_label()
                                 None, // No implementation state during planning
                             )
                             .await;
@@ -617,9 +617,9 @@ pub async fn run_workflow_with_config(
                         let _ = tracker
                             .update(
                                 &workflow_session_id_str,
-                                format!("{:?}", updated_phase),
+                                updated_view.ui_mode().as_str().to_string(), // "Planning" (from UiMode)
                                 updated_iteration,
-                                format!("{:?}", updated_phase),
+                                updated_phase.status_label().to_string(), // Status from Phase::status_label()
                                 None, // No implementation state during planning
                             )
                             .await;

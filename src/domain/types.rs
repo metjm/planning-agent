@@ -283,6 +283,19 @@ pub enum Phase {
     Complete,
 }
 
+impl Phase {
+    /// Returns the status label for this phase (for host UI status column).
+    pub fn status_label(&self) -> &'static str {
+        match self {
+            Phase::Planning => "Planning",
+            Phase::Reviewing => "Reviewing",
+            Phase::Revising => "Revising",
+            Phase::AwaitingPlanningDecision => "AwaitingPlanningDecision",
+            Phase::Complete => "Complete",
+        }
+    }
+}
+
 /// Implementation phase state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
@@ -302,6 +315,17 @@ impl ImplementationPhase {
             ImplementationPhase::ImplementationReview => "Reviewing Implementation",
             ImplementationPhase::AwaitingDecision => "Awaiting Decision",
             ImplementationPhase::Complete => "Implementation Complete",
+        }
+    }
+
+    /// Returns the status label for this phase (for host UI status column).
+    /// Uses enum-style names to match existing get_status_display() patterns.
+    pub fn status_label(&self) -> &'static str {
+        match self {
+            ImplementationPhase::Implementing => "Implementing",
+            ImplementationPhase::ImplementationReview => "ImplementationReview",
+            ImplementationPhase::AwaitingDecision => "AwaitingDecision",
+            ImplementationPhase::Complete => "Complete",
         }
     }
 }
@@ -660,4 +684,14 @@ pub enum UiMode {
     Planning,
     /// Implementation workflow is active (implementing, implementation review phases)
     Implementation,
+}
+
+impl UiMode {
+    /// Returns the display string for this UI mode.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            UiMode::Planning => "Planning",
+            UiMode::Implementation => "Implementation",
+        }
+    }
 }

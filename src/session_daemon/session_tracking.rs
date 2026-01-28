@@ -25,7 +25,8 @@ pub struct ImplementationStateUpdate {
 /// strings, not part of the `ImplementationPhase` enum.
 pub struct TerminalStateUpdate {
     pub workflow_session_id: String,
-    pub terminal_phase: String,
+    pub phase: String,           // "Implementation" for implementation workflow
+    pub terminal_status: String, // "Failed", "Cancelled", or "Complete"
     pub iteration: u32,
     pub max_iterations: u32,
 }
@@ -290,12 +291,12 @@ impl SessionTracker {
 
         if let Some(info) = sessions.get_mut(&update.workflow_session_id) {
             info.record.update_state(
-                update.terminal_phase.clone(),
+                update.phase.clone(), // Phase: "Implementation"
                 1,
-                update.terminal_phase.clone(),
+                update.terminal_status.clone(), // Status: "Failed", "Cancelled", etc.
             );
             info.record.update_implementation_state(
-                Some(update.terminal_phase),
+                Some(update.terminal_status), // Use terminal_status for impl phase
                 Some(update.iteration),
                 Some(update.max_iterations),
             );

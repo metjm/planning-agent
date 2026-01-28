@@ -32,13 +32,9 @@ pub const UNKNOWN: egui::Color32 = egui::Color32::from_rgb(158, 158, 158); // Li
 pub const STALE: egui::Color32 = egui::Color32::from_rgb(255, 183, 77);
 
 /// Get the color and display text for a workflow status.
-/// Uses both `phase` (workflow phase), `status` (session status), and optionally
-/// `impl_phase` (implementation phase) for context.
-pub fn get_status_display(
-    phase: &str,
-    status: &str,
-    impl_phase: Option<&str>,
-) -> (egui::Color32, &'static str) {
+/// Uses `impl_phase` when present (implementation workflow),
+/// otherwise uses `status` (planning workflow).
+pub fn get_status_display(status: &str, impl_phase: Option<&str>) -> (egui::Color32, &'static str) {
     // Check implementation phase first if present
     if let Some(ip) = impl_phase {
         let ip_lower = ip.to_lowercase();
@@ -47,53 +43,39 @@ pub fn get_status_display(
             "implementationreview" | "implementation_review" => {
                 return (IMPL_REVIEW, "Impl Review")
             }
-            "awaitingdecision" | "awaiting_decision" => return (AWAITING, "Impl Decision"),
-            "complete" => return (COMPLETE, "Impl Complete"),
-            "failed" => return (ERROR, "Impl Failed"),
-            "cancelled" => return (STOPPED, "Impl Cancelled"),
-            _ => {} // Fall through to planning phase handling
+            "awaitingdecision" | "awaiting_decision" => return (AWAITING, "Awaiting Decision"),
+            "complete" => return (COMPLETE, "Complete"),
+            "failed" => return (ERROR, "Failed"),
+            "cancelled" => return (STOPPED, "Cancelled"),
+            _ => {}
         }
     }
 
-    let phase_lower = phase.to_lowercase();
+    // Use status directly (now distinct from phase)
     let status_lower = status.to_lowercase();
-
-    match (phase_lower.as_str(), status_lower.as_str()) {
-        // Planning workflow phases
-        (_, "planning") | ("planning", _) => (PLANNING, "Planning"),
-        ("reviewing", _) => (REVIEWING, "Reviewing"),
-        ("revising", _) => (REVISING, "Revising"),
-
-        // Implementation workflow phases
-        ("implementing", _) | (_, "implementing") => (IMPLEMENTING, "Implementing"),
-        ("implementationreview", _) | ("implementation_review", _) => (IMPL_REVIEW, "Impl Review"),
-
-        // Waiting states
-        (_, "awaitingapproval") | (_, "awaiting_approval") => (AWAITING, "Awaiting"),
-        (_, "inputpending") | (_, "input_pending") => (INPUT_PENDING, "Input Pending"),
-        (_, "generatingsummary") | (_, "generating_summary") => (PLANNING, "Summarizing"),
-
-        // Terminal states (check status first, as phase may still show old value)
-        (_, "complete") | ("complete", _) => (COMPLETE, "Complete"),
-        (_, "error") => (ERROR, "Error"),
-        (_, "stopped") => (STOPPED, "Stopped"),
-
+    match status_lower.as_str() {
+        // Planning workflow statuses
+        "planning" => (PLANNING, "Planning"),
+        "reviewing" => (REVIEWING, "Reviewing"),
+        "revising" => (REVISING, "Revising"),
+        "awaitingplanningdecision" | "awaiting_planning_decision" => {
+            (AWAITING, "Awaiting Decision")
+        }
+        "complete" => (COMPLETE, "Complete"),
+        // Terminal states
+        "error" => (ERROR, "Error"),
+        "stopped" => (STOPPED, "Stopped"),
         // Fallback
         _ => (UNKNOWN, "Unknown"),
     }
 }
 
 /// Get color for a workflow phase.
+/// After the phase/status separation, phase is only "Planning" or "Implementation".
 pub fn get_phase_color(phase: &str) -> egui::Color32 {
     match phase.to_lowercase().as_str() {
         "planning" => PLANNING,
-        "reviewing" => REVIEWING,
-        "revising" => REVISING,
-        "implementing" => IMPLEMENTING,
-        "implementationreview" | "implementation_review" => IMPL_REVIEW,
-        "complete" => COMPLETE,
-        "awaitingplanningdecision" | "awaiting_planning_decision" => AWAITING,
-        "awaitingdecision" | "awaiting_decision" => AWAITING,
+        "implementation" => IMPLEMENTING,
         _ => UNKNOWN,
     }
 }

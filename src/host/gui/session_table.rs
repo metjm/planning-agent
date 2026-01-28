@@ -386,12 +386,7 @@ fn render_session_rows_clickable(
                         ui.label(session.iteration.to_string());
                     });
                     row.col(|ui| {
-                        render_status(
-                            ui,
-                            &session.phase,
-                            &session.status,
-                            session.implementation_phase.as_deref(),
-                        );
+                        render_status(ui, &session.status, session.implementation_phase.as_deref());
                     });
                     row.col(|ui| {
                         ui.label(session.pid.to_string());
@@ -420,7 +415,7 @@ pub fn liveness_color(liveness: LivenessDisplay) -> eframe::egui::Color32 {
     }
 }
 
-fn render_status(ui: &mut eframe::egui::Ui, phase: &str, status: &str, impl_phase: Option<&str>) {
-    let (color, text) = super::status_colors::get_status_display(phase, status, impl_phase);
+fn render_status(ui: &mut eframe::egui::Ui, status: &str, impl_phase: Option<&str>) {
+    let (color, text) = super::status_colors::get_status_display(status, impl_phase);
     ui.colored_label(color, text);
 }

@@ -36,14 +36,15 @@ use tokio::sync::{mpsc, oneshot};
 async fn send_terminal_tracker_update(
     tracker: &SessionTracker,
     workflow_session_id: &str,
-    terminal_phase_str: &str,
+    terminal_status_str: &str, // Renamed from terminal_phase_str for clarity
     iteration: u32,
     max_iterations: u32,
 ) {
     let _ = tracker
         .update_terminal_state(TerminalStateUpdate {
             workflow_session_id: workflow_session_id.to_string(),
-            terminal_phase: terminal_phase_str.to_string(),
+            phase: "Implementation".to_string(), // Phase is always "Implementation"
+            terminal_status: terminal_status_str.to_string(),
             iteration,
             max_iterations,
         })
@@ -192,9 +193,9 @@ pub async fn run_implementation_workflow(
     let _ = tracker
         .update(
             &workflow_session_id,
-            "Complete".to_string(),
-            1,
             "Implementation".to_string(),
+            1,
+            ImplementationPhase::Implementing.status_label().to_string(),
             Some(ImplementationStateUpdate {
                 phase: ImplementationPhase::Implementing,
                 iteration: local_iteration,
@@ -229,9 +230,11 @@ pub async fn run_implementation_workflow(
             let _ = tracker
                 .update(
                     &workflow_session_id,
-                    "Complete".to_string(),
+                    "Implementation".to_string(),
                     1,
-                    "AwaitingDecision".to_string(),
+                    ImplementationPhase::AwaitingDecision
+                        .status_label()
+                        .to_string(),
                     Some(ImplementationStateUpdate {
                         phase: ImplementationPhase::AwaitingDecision,
                         iteration: local_iteration,
@@ -316,9 +319,9 @@ pub async fn run_implementation_workflow(
         let _ = tracker
             .update(
                 &workflow_session_id,
-                "Complete".to_string(),
-                1,
                 "Implementation".to_string(),
+                1,
+                ImplementationPhase::Implementing.status_label().to_string(),
                 Some(ImplementationStateUpdate {
                     phase: ImplementationPhase::Implementing,
                     iteration: local_iteration,
@@ -409,9 +412,11 @@ pub async fn run_implementation_workflow(
         let _ = tracker
             .update(
                 &workflow_session_id,
-                "Complete".to_string(),
-                1,
                 "Implementation".to_string(),
+                1,
+                ImplementationPhase::ImplementationReview
+                    .status_label()
+                    .to_string(),
                 Some(ImplementationStateUpdate {
                     phase: ImplementationPhase::ImplementationReview,
                     iteration: local_iteration,
@@ -463,9 +468,9 @@ pub async fn run_implementation_workflow(
                 let _ = tracker
                     .update(
                         &workflow_session_id,
-                        "Complete".to_string(),
+                        "Implementation".to_string(),
                         1,
-                        "Complete".to_string(),
+                        ImplementationPhase::Complete.status_label().to_string(),
                         Some(ImplementationStateUpdate {
                             phase: ImplementationPhase::Complete,
                             iteration: local_iteration,
@@ -504,9 +509,11 @@ pub async fn run_implementation_workflow(
                         let _ = tracker
                             .update(
                                 &workflow_session_id,
-                                "Complete".to_string(),
+                                "Implementation".to_string(),
                                 1,
-                                "AwaitingDecision".to_string(),
+                                ImplementationPhase::AwaitingDecision
+                                    .status_label()
+                                    .to_string(),
                                 Some(ImplementationStateUpdate {
                                     phase: ImplementationPhase::AwaitingDecision,
                                     iteration: local_iteration,
@@ -567,9 +574,11 @@ pub async fn run_implementation_workflow(
                     let _ = tracker
                         .update(
                             &workflow_session_id,
-                            "Complete".to_string(),
+                            "Implementation".to_string(),
                             1,
-                            "AwaitingDecision".to_string(),
+                            ImplementationPhase::AwaitingDecision
+                                .status_label()
+                                .to_string(),
                             Some(ImplementationStateUpdate {
                                 phase: ImplementationPhase::AwaitingDecision,
                                 iteration: local_iteration,
@@ -627,9 +636,9 @@ pub async fn run_implementation_workflow(
                 let _ = tracker
                     .update(
                         &workflow_session_id,
-                        "Complete".to_string(),
-                        1,
                         "Implementation".to_string(),
+                        1,
+                        ImplementationPhase::Implementing.status_label().to_string(),
                         Some(ImplementationStateUpdate {
                             phase: ImplementationPhase::Implementing,
                             iteration: local_iteration,
