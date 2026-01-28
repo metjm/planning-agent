@@ -87,22 +87,17 @@ pub fn check_and_notify(
 /// Send a notification for a session based on the notification reason.
 /// `is_cancelled` is used to adjust urgency for cancellation (user-initiated) vs failure (unexpected).
 fn send_notification(reason: NotificationReason, session: &DisplaySessionRow, is_cancelled: bool) {
-    let (summary, body, urgency, timeout) = match reason {
+    let summary = get_notification_summary(reason, session);
+
+    let (body, timeout, _is_critical) = match reason {
         NotificationReason::NeedsInteraction => {
-            let summary = get_notification_summary(reason, session);
             let body = format!(
                 "{} on {} needs your attention",
                 session.feature_name, session.container_name
             );
-            (
-                summary,
-                body,
-                notify_rust::Urgency::Normal,
-                notify_rust::Timeout::Milliseconds(5000),
-            )
+            (body, notify_rust::Timeout::Milliseconds(5000), false)
         }
         NotificationReason::Failed => {
-            let summary = get_notification_summary(reason, session);
             let body = format!(
                 "{} on {} has {}",
                 session.feature_name,
@@ -113,29 +108,30 @@ fn send_notification(reason: NotificationReason, session: &DisplaySessionRow, is
                     "failed"
                 }
             );
-            // Use Normal urgency for cancellations (user-initiated),
-            // Critical for unexpected failures
-            let urgency = if is_cancelled {
-                notify_rust::Urgency::Normal
-            } else {
-                notify_rust::Urgency::Critical
-            };
             let timeout = if is_cancelled {
                 notify_rust::Timeout::Milliseconds(5000)
             } else {
                 notify_rust::Timeout::Never
             };
-            (summary, body, urgency, timeout)
+            (body, timeout, !is_cancelled)
         }
     };
 
-    if let Err(e) = notify_rust::Notification::new()
-        .summary(&summary)
-        .body(&body)
-        .urgency(urgency)
-        .timeout(timeout)
-        .show()
+    let mut notification = notify_rust::Notification::new();
+    notification.summary(&summary).body(&body).timeout(timeout);
+
+    // Urgency is only available on Linux (freedesktop notification spec)
+    #[cfg(target_os = "linux")]
     {
+        let urgency = if _is_critical {
+            notify_rust::Urgency::Critical
+        } else {
+            notify_rust::Urgency::Normal
+        };
+        notification.urgency(urgency);
+    }
+
+    if let Err(e) = notification.show() {
         eprintln!("[host] Warning: Could not send notification: {}", e);
     }
 }
