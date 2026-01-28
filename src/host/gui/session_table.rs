@@ -125,14 +125,28 @@ pub fn render_session_table(
     let total_overhead = live_overhead + disconnected_overhead + spacing_overhead;
     let content_height = (available_height - total_overhead).max(0.0);
 
-    // Proportional allocation based on session count
+    // Minimum heights when both sections are present
+    const MIN_LIVE_HEIGHT: f32 = 150.0;
+    const MIN_DISCONNECTED_HEIGHT: f32 = 80.0;
+    const LIVE_REMAINDER_RATIO: f32 = 0.6;
+
+    // Height allocation: prioritize live sessions
     let (live_height, disconnected_height) = if live_count > 0 && disconnected_count > 0 {
-        let total = (live_count + disconnected_count) as f32;
-        let live_ratio = live_count as f32 / total;
-        (
-            content_height * live_ratio,
-            content_height * (1.0 - live_ratio),
-        )
+        let guaranteed = MIN_LIVE_HEIGHT + MIN_DISCONNECTED_HEIGHT;
+        if content_height <= guaranteed {
+            // Constrained space: use fixed ratio favoring live
+            (
+                content_height * LIVE_REMAINDER_RATIO,
+                content_height * (1.0 - LIVE_REMAINDER_RATIO),
+            )
+        } else {
+            // Sufficient space: guarantee minimums, split remainder
+            let remainder = content_height - guaranteed;
+            (
+                MIN_LIVE_HEIGHT + remainder * LIVE_REMAINDER_RATIO,
+                MIN_DISCONNECTED_HEIGHT + remainder * (1.0 - LIVE_REMAINDER_RATIO),
+            )
+        }
     } else if live_count > 0 {
         (content_height, 0.0)
     } else {
