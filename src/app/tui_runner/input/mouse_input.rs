@@ -37,7 +37,6 @@ pub fn handle_mouse_scroll(
 fn scroll_region_up(region: ScrollRegion, session: &mut Session) {
     match region {
         ScrollRegion::OutputPanel => {
-            session.output_follow_mode = false;
             session.scroll_up();
         }
         ScrollRegion::TodosPanel => session.todo_scroll_up(),

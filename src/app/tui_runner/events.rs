@@ -173,8 +173,8 @@ fn handle_resize_event(tab_manager: &mut TabManager) {
 
     // Reset run tab scrolls
     for tab in &mut session.run_tabs {
-        tab.scroll_position = 0;
-        tab.summary_scroll = 0;
+        tab.chat_scroll = crate::tui::scroll_state::ScrollState::new();
+        tab.summary_scroll = crate::tui::scroll_state::ScrollState::new();
     }
 }
 

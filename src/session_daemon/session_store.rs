@@ -14,6 +14,7 @@ use crate::app::AccountUsage;
 use crate::domain::types::Phase;
 use crate::domain::view::WorkflowView;
 use crate::planning_paths;
+use crate::tui::scroll_state::ScrollState;
 use crate::tui::session::model::{
     ApprovalContext, ApprovalMode, FeedbackTarget, FocusedPanel, InputMode, PasteBlock,
     ReviewRound, RunTab, SessionStatus, TodoItem,
@@ -80,11 +81,11 @@ pub struct SessionUiState {
 
     // Output state
     pub output_lines: Vec<String>,
-    pub scroll_position: usize,
-    pub output_follow_mode: bool,
+    #[serde(default)]
+    pub output_scroll: ScrollState,
     pub streaming_lines: Vec<String>,
-    pub streaming_scroll_position: usize,
-    pub streaming_follow_mode: bool,
+    #[serde(default)]
+    pub streaming_scroll: ScrollState,
     pub focused_panel: FocusedPanel,
 
     // Cost and metrics
@@ -129,11 +130,9 @@ pub struct SessionUiState {
     // Run tabs and todos
     pub run_tabs: Vec<RunTab>,
     pub active_run_tab: usize,
-    pub chat_follow_mode: bool,
     pub todos: HashMap<String, Vec<TodoItem>>,
-    pub todo_scroll_position: usize,
     #[serde(default)]
-    pub todo_follow_mode: bool,
+    pub todo_scroll: ScrollState,
 
     // Account usage
     pub account_usage: AccountUsage,
@@ -162,9 +161,7 @@ pub struct SessionUiState {
     #[serde(default)]
     pub review_history_spinner_frame: u8,
     #[serde(default)]
-    pub review_history_scroll: usize,
-    #[serde(default)]
-    pub review_history_follow_mode: bool,
+    pub review_history_scroll: ScrollState,
 }
 
 /// Information about a session snapshot for listing purposes.
@@ -567,11 +564,9 @@ impl SessionUiState {
                 format!("[recovery] Phase: {:?}, Iteration: {}", phase, iteration),
                 "[recovery] UI state reset to defaults. Workflow state preserved.".to_string(),
             ],
-            scroll_position: 0,
-            output_follow_mode: true,
+            output_scroll: ScrollState::new(),
             streaming_lines: Vec::new(),
-            streaming_scroll_position: 0,
-            streaming_follow_mode: true,
+            streaming_scroll: ScrollState::new(),
             focused_panel: FocusedPanel::Output,
             total_cost: 0.0,
             bytes_received: 0,
@@ -606,10 +601,8 @@ impl SessionUiState {
             error_scroll: 0,
             run_tabs: Vec::new(),
             active_run_tab: 0,
-            chat_follow_mode: true,
             todos: HashMap::new(),
-            todo_scroll_position: 0,
-            todo_follow_mode: true,
+            todo_scroll: ScrollState::new(),
             account_usage: AccountUsage::default(),
             spinner_frame: 0,
             current_run_id: 0,
@@ -620,8 +613,7 @@ impl SessionUiState {
             review_modal_tab: 0,
             review_history: Vec::new(),
             review_history_spinner_frame: 0,
-            review_history_scroll: 0,
-            review_history_follow_mode: true,
+            review_history_scroll: ScrollState::new(),
         }
     }
 }

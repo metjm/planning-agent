@@ -7,6 +7,7 @@ use crate::domain::types::{
 use crate::domain::view::WorkflowView;
 use crate::domain::WorkflowEvent;
 use crate::planning_paths::{set_home_for_test, TestHomeGuard};
+use crate::tui::scroll_state::ScrollState;
 use std::path::PathBuf;
 use tempfile::tempdir;
 use uuid::Uuid;
@@ -45,11 +46,9 @@ fn create_test_ui_state() -> SessionUiState {
         name: "Test Session".to_string(),
         status: SessionStatus::Planning,
         output_lines: vec!["line1".to_string(), "line2".to_string()],
-        scroll_position: 0,
-        output_follow_mode: true,
+        output_scroll: ScrollState::new(),
         streaming_lines: Vec::new(),
-        streaming_scroll_position: 0,
-        streaming_follow_mode: true,
+        streaming_scroll: ScrollState::new(),
         focused_panel: FocusedPanel::Output,
         total_cost: 0.0,
         bytes_received: 100,
@@ -84,10 +83,8 @@ fn create_test_ui_state() -> SessionUiState {
         error_scroll: 0,
         run_tabs: Vec::new(),
         active_run_tab: 0,
-        chat_follow_mode: true,
         todos: HashMap::new(),
-        todo_scroll_position: 0,
-        todo_follow_mode: true,
+        todo_scroll: ScrollState::new(),
         account_usage: AccountUsage::default(),
         spinner_frame: 0,
         current_run_id: 1,
@@ -98,8 +95,7 @@ fn create_test_ui_state() -> SessionUiState {
         review_modal_tab: 0,
         review_history: Vec::new(),
         review_history_spinner_frame: 0,
-        review_history_scroll: 0,
-        review_history_follow_mode: true,
+        review_history_scroll: ScrollState::new(),
     }
 }
 

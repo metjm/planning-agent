@@ -19,6 +19,7 @@ use crate::phases::implementing_conversation_key;
 use crate::tui::cursor_utils::{slice_from_cursor, slice_up_to_cursor};
 use crate::tui::event::{TokenUsage, WorkflowCommand};
 use crate::tui::mention::MentionState;
+use crate::tui::scroll_state::ScrollState;
 use crate::tui::slash::SlashState;
 use anyhow::Result;
 pub use context::SessionContext;
@@ -93,11 +94,9 @@ pub struct Session {
     pub status: SessionStatus,
 
     pub output_lines: Vec<String>,
-    pub scroll_position: usize,
-    pub output_follow_mode: bool,
+    pub output_scroll: ScrollState,
     pub streaming_lines: Vec<String>,
-    pub streaming_scroll_position: usize,
-    pub streaming_follow_mode: bool,
+    pub streaming_scroll: ScrollState,
     pub focused_panel: FocusedPanel,
 
     /// Event-sourced workflow view for UI state.
@@ -168,21 +167,15 @@ pub struct Session {
 
     pub run_tabs: Vec<RunTab>,
     pub active_run_tab: usize,
-    pub chat_follow_mode: bool,
 
     /// Review history: rounds and their reviewer statuses
     pub review_history: Vec<ReviewRound>,
     /// Spinner frame for review history panel
     pub review_history_spinner_frame: u8,
-    /// Scroll position for review history panel
-    pub review_history_scroll: usize,
-    /// Follow mode for review history panel (auto-scroll to bottom)
-    pub review_history_follow_mode: bool,
+    pub review_history_scroll: ScrollState,
 
     pub todos: HashMap<String, Vec<TodoItem>>,
-    pub todo_scroll_position: usize,
-    /// Follow mode for todos panel (auto-scroll to bottom)
-    pub todo_follow_mode: bool,
+    pub todo_scroll: ScrollState,
 
     /// @-mention state for tab input field
     pub tab_mention_state: MentionState,
@@ -239,11 +232,9 @@ impl Session {
             status: SessionStatus::InputPending,
 
             output_lines: Vec::new(),
-            scroll_position: 0,
-            output_follow_mode: true,
+            output_scroll: ScrollState::new(),
             streaming_lines: Vec::new(),
-            streaming_scroll_position: 0,
-            streaming_follow_mode: true,
+            streaming_scroll: ScrollState::new(),
             focused_panel: FocusedPanel::default(),
 
             workflow_view: None,
@@ -304,16 +295,13 @@ impl Session {
 
             run_tabs: Vec::new(),
             active_run_tab: 0,
-            chat_follow_mode: true,
 
             review_history: Vec::new(),
             review_history_spinner_frame: 0,
-            review_history_scroll: 0,
-            review_history_follow_mode: true,
+            review_history_scroll: ScrollState::new(),
 
             todos: HashMap::new(),
-            todo_scroll_position: 0,
-            todo_follow_mode: true,
+            todo_scroll: ScrollState::new(),
 
             tab_mention_state: MentionState::new(),
             feedback_mention_state: MentionState::new(),
@@ -426,29 +414,25 @@ impl Session {
             self.output_lines.drain(0..drain_count);
         }
 
-        self.output_follow_mode = true;
-        self.scroll_position = self.output_lines.len().saturating_sub(1);
+        self.output_scroll
+            .scroll_to_bottom(self.output_lines.len().saturating_sub(1));
     }
 
     pub fn scroll_up(&mut self) {
-        self.output_follow_mode = false;
-        self.scroll_position = self.scroll_position.saturating_sub(1);
+        self.output_scroll.scroll_up();
     }
 
     pub fn scroll_down(&mut self, max_scroll: usize) {
-        if self.scroll_position < max_scroll {
-            self.scroll_position = self.scroll_position.saturating_add(1);
-        }
+        self.output_scroll.scroll_down(max_scroll);
     }
 
     pub fn scroll_to_top(&mut self) {
-        self.output_follow_mode = false;
-        self.scroll_position = 0;
+        self.output_scroll.scroll_to_top();
     }
 
     pub fn scroll_to_bottom(&mut self) {
-        self.output_follow_mode = true;
-        self.scroll_position = self.output_lines.len().saturating_sub(1);
+        self.output_scroll
+            .scroll_to_bottom(self.output_lines.len().saturating_sub(1));
     }
 
     pub fn add_streaming(&mut self, line: String) {
@@ -461,8 +445,8 @@ impl Session {
             self.streaming_lines.drain(0..drain_count);
         }
 
-        self.streaming_follow_mode = true;
-        self.streaming_scroll_position = self.streaming_lines.len().saturating_sub(1);
+        self.streaming_scroll
+            .scroll_to_bottom(self.streaming_lines.len().saturating_sub(1));
     }
 
     /// Toggle focus between panels, considering visibility of Todos panel.
@@ -598,34 +582,28 @@ impl Session {
 
     pub fn update_todos(&mut self, agent_name: String, todos: Vec<TodoItem>) {
         self.todos.insert(agent_name, todos);
-        self.todo_follow_mode = true;
+        self.todo_scroll.follow = true;
     }
 
     pub fn clear_todos(&mut self) {
         self.todos.clear();
-        self.todo_scroll_position = 0;
-        self.todo_follow_mode = true;
+        self.todo_scroll = ScrollState::new();
     }
 
     pub fn todo_scroll_up(&mut self) {
-        self.todo_follow_mode = false;
-        self.todo_scroll_position = self.todo_scroll_position.saturating_sub(1);
+        self.todo_scroll.scroll_up();
     }
 
     pub fn todo_scroll_down(&mut self, max_scroll: usize) {
-        if self.todo_scroll_position < max_scroll {
-            self.todo_scroll_position += 1;
-        }
+        self.todo_scroll.scroll_down(max_scroll);
     }
 
     pub fn todo_scroll_to_top(&mut self) {
-        self.todo_follow_mode = false;
-        self.todo_scroll_position = 0;
+        self.todo_scroll.scroll_to_top();
     }
 
     pub fn todo_scroll_to_bottom(&mut self, max_scroll: usize) {
-        self.todo_follow_mode = true;
-        self.todo_scroll_position = max_scroll;
+        self.todo_scroll.scroll_to_bottom(max_scroll);
     }
 
     pub fn get_todos_display(&self) -> Vec<String> {

@@ -15,26 +15,26 @@ fn test_scroll_up_disables_follow_mode() {
     let mut session = Session::new(0);
     session.add_output("line1".to_string());
     session.add_output("line2".to_string());
-    assert!(session.output_follow_mode);
+    assert!(session.output_scroll.follow);
 
     session.scroll_up();
-    assert!(!session.output_follow_mode);
+    assert!(!session.output_scroll.follow);
 }
 
 #[test]
 fn test_scroll_to_bottom_enables_follow_mode() {
     let mut session = Session::new(0);
-    session.output_follow_mode = false;
+    session.output_scroll.follow = false;
     session.scroll_to_bottom();
-    assert!(session.output_follow_mode);
+    assert!(session.output_scroll.follow);
 }
 
 #[test]
 fn test_add_output_enables_follow_mode() {
     let mut session = Session::new(0);
-    session.output_follow_mode = false;
+    session.output_scroll.follow = false;
     session.add_output("new line".to_string());
-    assert!(session.output_follow_mode);
+    assert!(session.output_scroll.follow);
 }
 
 #[test]
@@ -299,27 +299,27 @@ fn test_feedback_delete_char_utf8() {
 #[test]
 fn test_add_output_syncs_scroll() {
     let mut session = Session::new(0);
-    session.output_follow_mode = false;
-    session.scroll_position = 0;
+    session.output_scroll.follow = false;
+    session.output_scroll.position = 0;
 
     session.add_output("line1".to_string());
-    assert!(session.output_follow_mode);
-    assert_eq!(session.scroll_position, 0);
+    assert!(session.output_scroll.follow);
+    assert_eq!(session.output_scroll.position, 0);
 
     session.add_output("line2".to_string());
-    assert_eq!(session.scroll_position, 1);
+    assert_eq!(session.output_scroll.position, 1);
 }
 
 #[test]
 fn test_scroll_to_bottom_syncs_position() {
     let mut session = Session::new(0);
     session.output_lines = vec!["a".to_string(), "b".to_string(), "c".to_string()];
-    session.scroll_position = 0;
-    session.output_follow_mode = false;
+    session.output_scroll.position = 0;
+    session.output_scroll.follow = false;
 
     session.scroll_to_bottom();
-    assert!(session.output_follow_mode);
-    assert_eq!(session.scroll_position, 2);
+    assert!(session.output_scroll.follow);
+    assert_eq!(session.output_scroll.position, 2);
 }
 
 #[test]
@@ -953,45 +953,45 @@ fn test_reset_focus_if_todos_invisible() {
 #[test]
 fn test_todo_scroll_up() {
     let mut session = Session::new(0);
-    session.todo_scroll_position = 5;
+    session.todo_scroll.position = 5;
 
     session.todo_scroll_up();
-    assert_eq!(session.todo_scroll_position, 4);
+    assert_eq!(session.todo_scroll.position, 4);
 
-    session.todo_scroll_position = 0;
+    session.todo_scroll.position = 0;
     session.todo_scroll_up();
-    assert_eq!(session.todo_scroll_position, 0); // Should not go negative
+    assert_eq!(session.todo_scroll.position, 0); // Should not go negative
 }
 
 #[test]
 fn test_todo_scroll_down() {
     let mut session = Session::new(0);
-    session.todo_scroll_position = 0;
+    session.todo_scroll.position = 0;
 
     session.todo_scroll_down(10);
-    assert_eq!(session.todo_scroll_position, 1);
+    assert_eq!(session.todo_scroll.position, 1);
 
-    session.todo_scroll_position = 10;
+    session.todo_scroll.position = 10;
     session.todo_scroll_down(10);
-    assert_eq!(session.todo_scroll_position, 10); // Should not exceed max
+    assert_eq!(session.todo_scroll.position, 10); // Should not exceed max
 }
 
 #[test]
 fn test_todo_scroll_to_top() {
     let mut session = Session::new(0);
-    session.todo_scroll_position = 5;
+    session.todo_scroll.position = 5;
 
     session.todo_scroll_to_top();
-    assert_eq!(session.todo_scroll_position, 0);
+    assert_eq!(session.todo_scroll.position, 0);
 }
 
 #[test]
 fn test_todo_scroll_to_bottom() {
     let mut session = Session::new(0);
-    session.todo_scroll_position = 0;
+    session.todo_scroll.position = 0;
 
     session.todo_scroll_to_bottom(15);
-    assert_eq!(session.todo_scroll_position, 15);
+    assert_eq!(session.todo_scroll.position, 15);
 }
 
 #[test]
@@ -1004,12 +1004,12 @@ fn test_clear_todos_resets_scroll() {
             active_form: "Task 1".to_string(),
         }],
     );
-    session.todo_scroll_position = 5;
+    session.todo_scroll.position = 5;
 
     session.clear_todos();
 
     assert!(session.todos.is_empty());
-    assert_eq!(session.todo_scroll_position, 0);
+    assert_eq!(session.todo_scroll.position, 0);
 }
 
 #[test]

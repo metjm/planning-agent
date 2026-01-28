@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::tui::scroll_state::ScrollState;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TodoStatus {
     Pending,
@@ -92,15 +94,13 @@ pub enum SummaryState {
 pub struct RunTab {
     pub phase: String,
     pub entries: Vec<RunTabEntry>,
-    pub scroll_position: usize,
+    pub chat_scroll: ScrollState,
 
     pub summary_text: String,
-    pub summary_scroll: usize,
+    pub summary_scroll: ScrollState,
     pub summary_state: SummaryState,
     #[serde(default)]
     pub summary_spinner_frame: u8,
-    #[serde(default)]
-    pub summary_follow_mode: bool,
 }
 
 impl RunTab {
@@ -108,12 +108,11 @@ impl RunTab {
         Self {
             phase,
             entries: Vec::new(),
-            scroll_position: 0,
+            chat_scroll: ScrollState::new(),
             summary_text: String::new(),
-            summary_scroll: 0,
+            summary_scroll: ScrollState::new(),
             summary_state: SummaryState::None,
             summary_spinner_frame: 0,
-            summary_follow_mode: true,
         }
     }
 }

@@ -288,7 +288,6 @@ fn handle_workflow_restart(
     session.clear_todos();
     session.run_tabs.clear();
     session.active_run_tab = 0;
-    session.chat_follow_mode = true;
     session.status = SessionStatus::Planning;
 
     // Get working directories and config from session context or load from selection

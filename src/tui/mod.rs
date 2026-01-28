@@ -3,6 +3,7 @@ mod event;
 pub mod file_index;
 pub mod mention;
 pub mod scroll_regions;
+pub mod scroll_state;
 pub mod session;
 pub mod session_browser;
 mod session_event_sender;

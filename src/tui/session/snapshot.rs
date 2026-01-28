@@ -19,11 +19,9 @@ impl Session {
             name: self.name.clone(),
             status: self.status,
             output_lines: self.output_lines.clone(),
-            scroll_position: self.scroll_position,
-            output_follow_mode: self.output_follow_mode,
+            output_scroll: self.output_scroll.clone(),
             streaming_lines: self.streaming_lines.clone(),
-            streaming_scroll_position: self.streaming_scroll_position,
-            streaming_follow_mode: self.streaming_follow_mode,
+            streaming_scroll: self.streaming_scroll.clone(),
             focused_panel: self.focused_panel,
             total_cost: self.total_cost,
             bytes_received: self.bytes_received,
@@ -58,10 +56,8 @@ impl Session {
             error_scroll: self.error_scroll,
             run_tabs: self.run_tabs.clone(),
             active_run_tab: self.active_run_tab,
-            chat_follow_mode: self.chat_follow_mode,
             todos: self.todos.clone(),
-            todo_scroll_position: self.todo_scroll_position,
-            todo_follow_mode: self.todo_follow_mode,
+            todo_scroll: self.todo_scroll.clone(),
             account_usage: self.account_usage.clone(),
             spinner_frame: self.spinner_frame,
             current_run_id: self.current_run_id,
@@ -72,8 +68,7 @@ impl Session {
             review_modal_tab: self.review_modal_tab,
             review_history: self.review_history.clone(),
             review_history_spinner_frame: self.review_history_spinner_frame,
-            review_history_scroll: self.review_history_scroll,
-            review_history_follow_mode: self.review_history_follow_mode,
+            review_history_scroll: self.review_history_scroll.clone(),
         }
     }
 
@@ -85,11 +80,9 @@ impl Session {
             name: ui_state.name,
             status: ui_state.status,
             output_lines: ui_state.output_lines,
-            scroll_position: ui_state.scroll_position,
-            output_follow_mode: ui_state.output_follow_mode,
+            output_scroll: ui_state.output_scroll,
             streaming_lines: ui_state.streaming_lines,
-            streaming_scroll_position: ui_state.streaming_scroll_position,
-            streaming_follow_mode: ui_state.streaming_follow_mode,
+            streaming_scroll: ui_state.streaming_scroll,
             focused_panel: ui_state.focused_panel,
             workflow_view,
             start_time: Instant::now(), // Reset to now
@@ -140,10 +133,8 @@ impl Session {
             spinner_frame: ui_state.spinner_frame,
             run_tabs: ui_state.run_tabs,
             active_run_tab: ui_state.active_run_tab,
-            chat_follow_mode: ui_state.chat_follow_mode,
             todos: ui_state.todos,
-            todo_scroll_position: ui_state.todo_scroll_position,
-            todo_follow_mode: ui_state.todo_follow_mode,
+            todo_scroll: ui_state.todo_scroll,
             tab_mention_state: MentionState::new(), // Runtime-only, reset on resume
             feedback_mention_state: MentionState::new(), // Runtime-only, reset on resume
             tab_slash_state: SlashState::new(),     // Runtime-only, reset on resume
@@ -161,7 +152,6 @@ impl Session {
             review_history: ui_state.review_history,
             review_history_spinner_frame: ui_state.review_history_spinner_frame,
             review_history_scroll: ui_state.review_history_scroll,
-            review_history_follow_mode: ui_state.review_history_follow_mode,
 
             context: None, // Context is set by resume/new-session flows, not serialized
 

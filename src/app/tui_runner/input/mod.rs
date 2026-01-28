@@ -826,9 +826,8 @@ fn handle_none_mode_input(key: crossterm::event::KeyEvent, session: &mut Session
             FocusedPanel::Output => session.scroll_to_top(),
             FocusedPanel::Todos => session.todo_scroll_to_top(),
             FocusedPanel::Chat => {
-                session.chat_follow_mode = false;
                 if let Some(tab) = session.run_tabs.get_mut(session.active_run_tab) {
-                    tab.scroll_position = 0;
+                    tab.chat_scroll.scroll_to_top();
                 }
             }
             FocusedPanel::ChatInput => {}
@@ -841,7 +840,10 @@ fn handle_none_mode_input(key: crossterm::event::KeyEvent, session: &mut Session
                     let max_scroll = compute_todo_panel_max_scroll(session);
                     session.todo_scroll_to_bottom(max_scroll);
                 }
-                FocusedPanel::Chat => session.chat_scroll_to_bottom(),
+                FocusedPanel::Chat => {
+                    let max_scroll = compute_chat_content_max_scroll(session);
+                    session.chat_scroll_to_bottom(max_scroll);
+                }
                 FocusedPanel::ChatInput => {}
                 FocusedPanel::Summary => {
                     let max_scroll = session

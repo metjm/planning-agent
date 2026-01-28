@@ -107,7 +107,7 @@ fn draw_output_panel(
 ) {
     let theme = Theme::for_session(session);
     let is_focused = session.focused_panel == FocusedPanel::Output;
-    let title = if session.output_follow_mode {
+    let title = if session.output_scroll.follow {
         if is_focused {
             " Output [*] "
         } else {
@@ -176,11 +176,7 @@ fn draw_output_panel(
     // Register scrollable region with computed max_scroll
     regions.register(ScrollRegion::OutputPanel, inner_area, max_scroll);
 
-    let scroll_pos = if session.output_follow_mode {
-        max_scroll
-    } else {
-        session.scroll_position.min(max_scroll)
-    };
+    let scroll_pos = session.output_scroll.effective_position(max_scroll);
 
     let paragraph = Paragraph::new(lines)
         .block(output_block)
@@ -212,12 +208,12 @@ fn draw_todos(frame: &mut Frame, session: &Session, area: Rect, regions: &mut Sc
     };
 
     let title = if is_focused {
-        if session.todo_follow_mode {
+        if session.todo_scroll.follow {
             " Todos [*] "
         } else {
             " Todos [SCROLLED *] "
         }
-    } else if !session.todo_follow_mode {
+    } else if !session.todo_scroll.follow {
         " Todos [SCROLLED] "
     } else {
         " Todos "
@@ -298,11 +294,7 @@ fn draw_todos(frame: &mut Frame, session: &Session, area: Rect, regions: &mut Sc
     // Register scrollable region with computed max_scroll
     regions.register(ScrollRegion::TodosPanel, inner_area, max_scroll);
 
-    let scroll_pos = if session.todo_follow_mode {
-        max_scroll
-    } else {
-        session.todo_scroll_position.min(max_scroll)
-    };
+    let scroll_pos = session.todo_scroll.effective_position(max_scroll);
 
     let paragraph = Paragraph::new(lines)
         .block(todos_block)
@@ -328,7 +320,7 @@ fn draw_todos(frame: &mut Frame, session: &Session, area: Rect, regions: &mut Sc
 pub fn draw_streaming(frame: &mut Frame, session: &Session, area: Rect) {
     let theme = Theme::for_session(session);
     let is_focused = session.focused_panel == FocusedPanel::Chat;
-    let title = if session.streaming_follow_mode {
+    let title = if session.streaming_scroll.follow {
         if is_focused {
             " Agent Output [*] "
         } else {
@@ -383,11 +375,7 @@ pub fn draw_streaming(frame: &mut Frame, session: &Session, area: Rect) {
     let wrapped_line_count = paragraph_for_count.line_count(inner_width);
 
     let max_scroll = wrapped_line_count.saturating_sub(visible_height);
-    let scroll_offset = if session.streaming_follow_mode {
-        max_scroll as u16
-    } else {
-        (session.streaming_scroll_position.min(max_scroll)) as u16
-    };
+    let scroll_offset = session.streaming_scroll.effective_position(max_scroll) as u16;
 
     let paragraph = Paragraph::new(lines)
         .block(streaming_block)

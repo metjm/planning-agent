@@ -31,7 +31,7 @@ pub(super) fn draw_chat_content(
     };
 
     let title = if let Some(tab) = active_tab {
-        if session.chat_follow_mode {
+        if tab.chat_scroll.follow {
             if is_focused {
                 format!(" {} [*] ", tab.phase)
             } else {
@@ -168,12 +168,9 @@ pub(super) fn draw_chat_content(
     // Register scrollable region with computed max_scroll
     regions.register(ScrollRegion::ChatContent, inner_area, max_scroll);
 
-    let scroll_offset = if session.chat_follow_mode {
-        max_scroll as u16
-    } else {
-        let tab_scroll = active_tab.map(|t| t.scroll_position).unwrap_or(0);
-        (tab_scroll.min(max_scroll)) as u16
-    };
+    let scroll_offset = active_tab
+        .map(|t| t.chat_scroll.effective_position(max_scroll))
+        .unwrap_or(0) as u16;
 
     let paragraph = Paragraph::new(lines)
         .block(chat_block)
@@ -398,13 +395,7 @@ pub(super) fn draw_summary_panel(
     regions.register(ScrollRegion::SummaryPanel, inner_area, max_scroll);
 
     let scroll_pos = active_tab
-        .map(|t| {
-            if t.summary_follow_mode {
-                max_scroll
-            } else {
-                t.summary_scroll.min(max_scroll)
-            }
-        })
+        .map(|t| t.summary_scroll.effective_position(max_scroll))
         .unwrap_or(0);
 
     let paragraph = Paragraph::new(lines)
@@ -642,11 +633,7 @@ pub(super) fn draw_reviewer_history_panel(
     // Register scrollable region with computed max_scroll
     regions.register(ScrollRegion::ReviewHistory, inner_area, max_scroll);
 
-    let scroll_position = if session.review_history_follow_mode {
-        max_scroll
-    } else {
-        session.review_history_scroll.min(max_scroll)
-    };
+    let scroll_position = session.review_history_scroll.effective_position(max_scroll);
 
     let paragraph = Paragraph::new(lines.clone())
         .block(panel_block)

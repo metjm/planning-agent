@@ -1,5 +1,6 @@
 use super::model::{ChatMessage, RunTab, RunTabEntry, SummaryState, ToolTimelineEntry};
 use super::Session;
+use crate::tui::scroll_state::ScrollState;
 
 /// Normalize a phase name by stripping trailing " Summary" suffix.
 /// This is a defensive measure to ensure summary agent output is routed
@@ -70,49 +71,43 @@ impl Session {
 
     pub fn chat_scroll_up(&mut self) {
         if let Some(tab) = self.run_tabs.get_mut(self.active_run_tab) {
-            tab.scroll_position = tab.scroll_position.saturating_sub(1);
-            self.chat_follow_mode = false;
+            tab.chat_scroll.scroll_up();
         }
     }
 
     pub fn chat_scroll_down(&mut self, max_scroll: usize) {
         if let Some(tab) = self.run_tabs.get_mut(self.active_run_tab) {
-            if tab.scroll_position < max_scroll {
-                tab.scroll_position = tab.scroll_position.saturating_add(1);
-            }
+            tab.chat_scroll.scroll_down(max_scroll);
         }
     }
 
-    pub fn chat_scroll_to_bottom(&mut self) {
-        self.chat_follow_mode = true;
+    pub fn chat_scroll_to_bottom(&mut self, max_scroll: usize) {
+        if let Some(tab) = self.run_tabs.get_mut(self.active_run_tab) {
+            tab.chat_scroll.scroll_to_bottom(max_scroll);
+        }
     }
 
     pub fn summary_scroll_up(&mut self) {
         if let Some(tab) = self.run_tabs.get_mut(self.active_run_tab) {
-            tab.summary_scroll = tab.summary_scroll.saturating_sub(1);
-            tab.summary_follow_mode = false;
+            tab.summary_scroll.scroll_up();
         }
     }
 
     pub fn summary_scroll_down(&mut self, max_scroll: usize) {
         if let Some(tab) = self.run_tabs.get_mut(self.active_run_tab) {
-            if tab.summary_scroll < max_scroll {
-                tab.summary_scroll = tab.summary_scroll.saturating_add(1);
-            }
+            tab.summary_scroll.scroll_down(max_scroll);
         }
     }
 
     pub fn summary_scroll_to_top(&mut self) {
         if let Some(tab) = self.run_tabs.get_mut(self.active_run_tab) {
-            tab.summary_scroll = 0;
-            tab.summary_follow_mode = false;
+            tab.summary_scroll.scroll_to_top();
         }
     }
 
     pub fn summary_scroll_to_bottom(&mut self, max_scroll: usize) {
         if let Some(tab) = self.run_tabs.get_mut(self.active_run_tab) {
-            tab.summary_scroll = max_scroll;
-            tab.summary_follow_mode = true;
+            tab.summary_scroll.scroll_to_bottom(max_scroll);
         }
     }
 
@@ -128,8 +123,7 @@ impl Session {
         if let Some(tab) = self.run_tabs.iter_mut().find(|t| t.phase == phase) {
             tab.summary_text = summary;
             tab.summary_state = SummaryState::Ready;
-            tab.summary_scroll = 0;
-            tab.summary_follow_mode = true;
+            tab.summary_scroll = ScrollState::new();
         }
     }
 
