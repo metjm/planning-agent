@@ -8,6 +8,29 @@ use super::session_table::{
     session_has_failed, session_needs_interaction, session_was_cancelled, DisplaySessionRow,
 };
 use std::collections::HashSet;
+use std::sync::Once;
+
+/// Ensure macOS notification application is set (once per process).
+static MACOS_APP_INIT: Once = Once::new();
+
+/// Initialize notification system for the current platform.
+/// On macOS, this sets the application name so notifications appear correctly.
+fn ensure_notifications_initialized() {
+    MACOS_APP_INIT.call_once(|| {
+        #[cfg(target_os = "macos")]
+        {
+            // On macOS, we need to set the application that "owns" the notifications.
+            // Using Terminal as the sender since we're a CLI tool without a bundle.
+            // This prevents the "where is use_default?" dialog.
+            if let Err(e) = notify_rust::set_application("com.apple.Terminal") {
+                eprintln!(
+                    "[host] Warning: Failed to set notification application: {}",
+                    e
+                );
+            }
+        }
+    });
+}
 
 /// Reason a notification was sent for a session.
 /// Used for deduplication - a session can transition between states
@@ -87,6 +110,8 @@ pub fn check_and_notify(
 /// Send a notification for a session based on the notification reason.
 /// `is_cancelled` is used to adjust urgency for cancellation (user-initiated) vs failure (unexpected).
 fn send_notification(reason: NotificationReason, session: &DisplaySessionRow, is_cancelled: bool) {
+    ensure_notifications_initialized();
+
     let summary = get_notification_summary(reason, session);
 
     let (body, timeout, _is_critical) = match reason {
