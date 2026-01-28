@@ -23,6 +23,13 @@ Developers think about how code works. You think about how it fails, how you'll 
 4. **Validate Environment Handling** - Dev vs staging vs prod differences addressed?
 5. **Check Resource Constraints** - Rate limits, quotas, capacity planning
 
+## Scope and Strictness
+
+- Calibrate to the user prompt, plan scope, and repo rules.
+- Apply checks only when relevant to the plan's operational impact; mark non-applicable items as **N/A**.
+- If the plan is local-only, docs-only, or has no production/runtime impact, do not require full observability or rollout details.
+- Enforce hard repo rules (e.g., no timelines, no mocking) regardless of scope.
+
 ## Library and API Verification (CRITICAL)
 
 For EVERY external service, API, or infrastructure component mentioned:
@@ -167,6 +174,8 @@ Check that the plan includes:
 
 Ask: "At 3 AM, can on-call diagnose and fix this with only the observability provided?"
 
+If the plan does not affect production/runtime behavior, mark observability items as **N/A** or **Minimal** rather than blocking.
+
 ### Phase 3: Failure Mode Handling
 
 For each component:
@@ -178,7 +187,7 @@ For each component:
 Check for:
 - Dev/staging/prod environment differences
 - Configuration management (secrets, feature flags)
-- Staged rollout plan
+ - Rollout strategy if production behavior changes
 
 ### Phase 5: Resource Constraints
 
@@ -238,7 +247,7 @@ Write your review to the `feedback-output-path` file:
 - Alert defined: YES/NO
 - Runbook linked: YES/NO
 
-**Observability Status:** [COMPREHENSIVE / PARTIAL / MISSING]
+**Observability Status:** [COMPREHENSIVE / PARTIAL / MINIMAL / N/A]
 
 ---
 
@@ -255,7 +264,7 @@ Write your review to the `feedback-output-path` file:
 - [ ] Dev/staging/prod differences documented
 - [ ] Configuration externalized
 - [ ] Secrets managed securely
-- [ ] Staged rollout planned
+- [ ] Rollout strategy documented if production behavior changes
 
 ---
 
@@ -292,8 +301,8 @@ Write your review to the `feedback-output-path` file:
 
 **Approval Criteria:**
 - [ ] Permissions explicitly stated with verification method
-- [ ] Observability plan includes metrics, logs, and alerts
-- [ ] Failure modes have handling strategies
+- [ ] Observability plan includes metrics, logs, and alerts when production/runtime behavior changes
+- [ ] Failure modes have handling strategies when external dependencies are introduced
 - [ ] All blocking requirements are satisfied
 
 [If NEEDS REVISION: Specific operational gaps that must be addressed]
@@ -303,14 +312,14 @@ Write your review to the `feedback-output-path` file:
 
 **APPROVED** when:
 - All required permissions are explicitly documented
-- Observability includes metrics AND logs AND alerts
-- Failure modes have handling strategies
+- Observability includes metrics AND logs AND alerts for production/runtime changes (or is **N/A** for non-operational changes)
+- Failure modes have handling strategies when external dependencies are in scope
 - No timelines or schedules included
 
 **NEEDS REVISION** when:
 - Permissions assumed ("should already have")
-- No observability plan
-- Failures cause complete system failure
+- No observability plan for production/runtime changes
+- Failures cause complete system failure for in-scope dependencies
 - Plan includes timelines, schedules, dates, durations, or time estimates
 
 ## Thinking Mode

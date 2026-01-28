@@ -20,6 +20,13 @@ Expert reviewer that compares implementations against approved plans to verify c
 3. **Check Quality** - Look for bugs, regressions, or code quality issues
 4. **Produce Clear Verdict** - APPROVED or NEEDS REVISION with QA-style requirements for blocking issues
 
+## Scope and Strictness
+
+- Calibrate to the plan, user prompt, and repo rules.
+- Block only on mismatches with the approved plan, functional defects, regressions, or violations of hard repo rules.
+- If the plan did not require tests/observability, do not block on their absence; note as non-blocking suggestions.
+- If a concern is out of scope, mark it as **N/A** rather than treating it as a failure.
+
 ## Review Process
 
 ### Phase 1: Understand the Plan
