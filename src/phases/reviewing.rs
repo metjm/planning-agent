@@ -12,8 +12,8 @@ use crate::domain::view::WorkflowView;
 use crate::domain::WorkflowCommand as DomainCommand;
 use crate::phases::review_parser::parse_review_feedback;
 use crate::phases::review_prompts::{
-    build_review_prompt_for_agent, build_review_recovery_prompt_for_agent, DEFAULT_REVIEW_SKILL,
-    REVIEW_SYSTEM_PROMPT,
+    build_review_follow_up_prompt_for_agent, build_review_prompt_for_agent,
+    build_review_recovery_prompt_for_agent, DEFAULT_REVIEW_SKILL, REVIEW_SYSTEM_PROMPT,
 };
 use crate::phases::review_schema::SubmittedReview;
 use crate::phases::reviewing_conversation_key;
@@ -61,6 +61,8 @@ struct ReviewAttemptResult {
     output: String,
     started_at: String,
     ended_at: String,
+    /// Captured conversation ID from the agent (for resume support)
+    conversation_id: Option<String>,
 }
 
 /// Result from the full review execution (possibly including retry)
@@ -132,11 +134,17 @@ pub async fn run_multi_agent_review_with_context(
     // Check if tags are required from config
     let require_tags = config.workflow.reviewing.require_plan_feedback_tags;
 
-    // Build agent contexts: (display_id, conversation_id, resume_strategy, custom_prompt)
-    // Reviewing always uses Stateless - each review should be independent
-    // with a fresh perspective on the plan, not influenced by prior sessions.
-    let mut agent_contexts: Vec<(String, Option<String>, ResumeStrategy, Option<String>)> =
-        Vec::new();
+    // Build agent contexts: (display_id, conversation_id, resume_strategy, custom_prompt, is_follow_up)
+    // Reviewing uses ConversationResume to enable reviewers to maintain context across revisions.
+    // When resuming, the reviewer gets a follow-up prompt asking them to re-evaluate the revised plan.
+    #[allow(clippy::type_complexity)]
+    let mut agent_contexts: Vec<(
+        String,
+        Option<String>,
+        ResumeStrategy,
+        Option<String>,
+        bool,
+    )> = Vec::new();
     for agent_ref in agent_refs {
         let display_id = agent_ref.display_id().to_string();
         let custom_prompt = agent_ref.custom_prompt().map(|s| s.to_string());
@@ -145,7 +153,7 @@ pub async fn run_multi_agent_review_with_context(
         let conversation_id_name = reviewing_conversation_key(&display_id);
         let agent_id = AgentId::from(conversation_id_name.as_str());
 
-        // Look up existing conversation state from view, default to Stateless with no conversation
+        // Look up existing conversation state from view, default to ConversationResume with no conversation
         let (conv_id, resume_strategy) = view
             .agent_conversations()
             .get(&agent_id)
@@ -155,13 +163,17 @@ pub async fn run_multi_agent_review_with_context(
                     state.resume_strategy(),
                 )
             })
-            .unwrap_or((None, ResumeStrategy::Stateless));
+            .unwrap_or((None, ResumeStrategy::ConversationResume));
+
+        // Track whether this is a follow-up review (we have an existing conversation to resume)
+        let is_follow_up = conv_id.is_some();
 
         agent_contexts.push((
             display_id.clone(),
             conv_id.clone(),
             resume_strategy,
             custom_prompt,
+            is_follow_up,
         ));
 
         // Dispatch RecordInvocation command to CQRS actor
@@ -178,7 +190,7 @@ pub async fn run_multi_agent_review_with_context(
         .await;
     }
 
-    // Build agents: (display_id, AgentType, conversation_id, resume_strategy, custom_prompt)
+    // Build agents: (display_id, AgentType, conversation_id, resume_strategy, custom_prompt, skill_name, is_follow_up)
     #[allow(clippy::type_complexity)]
     let agents: Vec<(
         String,         // display_id
@@ -187,11 +199,15 @@ pub async fn run_multi_agent_review_with_context(
         ResumeStrategy, // resume_strategy
         Option<String>, // custom_prompt
         String,         // skill_name
+        bool,           // is_follow_up
     )> = agent_refs
         .iter()
         .zip(agent_contexts.into_iter())
         .map(
-            |(agent_ref, (display_id, conversation_id, resume_strategy, custom_prompt))| {
+            |(
+                agent_ref,
+                (display_id, conversation_id, resume_strategy, custom_prompt, is_follow_up),
+            )| {
                 let agent_name = agent_ref.agent_name();
                 let agent_config = config.get_agent(agent_name).ok_or_else(|| {
                     anyhow::anyhow!("Review agent '{}' not found in config", agent_name)
@@ -207,6 +223,7 @@ pub async fn run_multi_agent_review_with_context(
                     resume_strategy,
                     custom_prompt,
                     skill_name,
+                    is_follow_up,
                 ))
             },
         )
@@ -232,7 +249,7 @@ pub async fn run_multi_agent_review_with_context(
 
     let futures: Vec<_> = agents
         .into_iter()
-        .map(|(display_id, agent, conversation_id, resume_strategy, custom_prompt, skill_name)| {
+        .map(|(display_id, agent, conversation_id, resume_strategy, custom_prompt, skill_name, is_follow_up)| {
             let sender = session_sender.clone();
             let phase = format!("Reviewing #{}", iteration);
             let logger = session_logger.clone();
@@ -252,7 +269,11 @@ pub async fn run_multi_agent_review_with_context(
                 // Signal reviewer started
                 sender.send_reviewer_started(ReviewKind::Plan, iter, display_id.clone());
 
-                sender.send_output(format!("[review:{}] Starting file-based review...", display_id));
+                if is_follow_up {
+                    sender.send_output(format!("[review:{}] Resuming review conversation (follow-up after revision)...", display_id));
+                } else {
+                    sender.send_output(format!("[review:{}] Starting file-based review...", display_id));
+                }
 
                 // Generate stable feedback file path for this agent
                 let feedback_path = match generate_feedback_file_path(&session_id, &display_id, iter) {
@@ -266,6 +287,7 @@ pub async fn run_multi_agent_review_with_context(
                                 e
                             )),
                             duration_ms,
+                            None, // No conversation_id to capture
                         );
                     }
                 };
@@ -282,20 +304,33 @@ pub async fn run_multi_agent_review_with_context(
                                 e
                             )),
                             duration_ms,
+                            None, // No conversation_id to capture
                         );
                     }
                 };
 
-                // Build the review prompt with custom focus if present
-                let review_prompt = build_review_prompt_for_agent(
-                    &objective,
-                    &plan_path_abs,
-                    &feedback_path,
-                    &working_dir,
-                    &session_folder,
-                    custom_prompt.as_deref(),
-                    Some(&skill_name),
-                );
+                // Build the appropriate review prompt based on whether this is a follow-up
+                let review_prompt = if is_follow_up {
+                    build_review_follow_up_prompt_for_agent(
+                        &objective,
+                        &plan_path_abs,
+                        &feedback_path,
+                        &working_dir,
+                        &session_folder,
+                        custom_prompt.as_deref(),
+                        Some(&skill_name),
+                    )
+                } else {
+                    build_review_prompt_for_agent(
+                        &objective,
+                        &plan_path_abs,
+                        &feedback_path,
+                        &working_dir,
+                        &session_folder,
+                        custom_prompt.as_deref(),
+                        Some(&skill_name),
+                    )
+                };
 
                 sender.send_output(format!(
                     "[review:{}] Plan: {}, Feedback: {}",
@@ -317,18 +352,28 @@ pub async fn run_multi_agent_review_with_context(
                 )
                 .await;
 
+                // Track captured conversation_id for persistence (use first successful capture)
+                let mut captured_conversation_id: Option<String> = None;
+
                 let (initial_output, attempt1_timestamp) = match attempt1_result {
-                    Ok(result) => (result.output, AttemptTimestamp {
-                        attempt: 1,
-                        started_at: result.started_at,
-                        ended_at: result.ended_at,
-                    }),
+                    Ok(result) => {
+                        // Capture conversation_id from first attempt
+                        if result.conversation_id.is_some() {
+                            captured_conversation_id = result.conversation_id.clone();
+                        }
+                        (result.output, AttemptTimestamp {
+                            attempt: 1,
+                            started_at: result.started_at,
+                            ended_at: result.ended_at,
+                        })
+                    },
                     Err(e) => {
                         let duration_ms = review_started_at.elapsed().as_millis() as u64;
                         return (
                             display_id,
                             ReviewExecutionResult::ExecutionError(e.to_string()),
                             duration_ms,
+                            None, // No conversation_id captured
                         );
                     }
                 };
@@ -338,7 +383,7 @@ pub async fn run_multi_agent_review_with_context(
                     Ok(review) => {
                         sender.send_output(format!("[review:{}] Review complete", display_id));
                         let duration_ms = review_started_at.elapsed().as_millis() as u64;
-                        (display_id, ReviewExecutionResult::Success(review), duration_ms)
+                        (display_id, ReviewExecutionResult::Success(review), duration_ms, captured_conversation_id)
                     }
                     Err(parse_failure) => {
                         // Initial attempt failed - try recovery
@@ -356,11 +401,11 @@ pub async fn run_multi_agent_review_with_context(
                             &skill_name,
                         );
 
-                        // Execute retry attempt
+                        // Execute retry attempt (use existing conversation for recovery)
                         let attempt2_result = execute_review_attempt(
                             &agent,
                             &recovery_prompt,
-                            &conversation_id,
+                            &captured_conversation_id.clone().or(conversation_id.clone()),
                             &resume_strategy,
                             &sender,
                             &format!("{} (recovery)", phase),
@@ -370,14 +415,20 @@ pub async fn run_multi_agent_review_with_context(
                         .await;
 
                         let (retry_output, attempt2_timestamp) = match attempt2_result {
-                            Ok(result) => (
-                                Some(result.output.clone()),
-                                Some(AttemptTimestamp {
-                                    attempt: 2,
-                                    started_at: result.started_at,
-                                    ended_at: result.ended_at,
-                                }),
-                            ),
+                            Ok(result) => {
+                                // Update captured_conversation_id if we got a new one
+                                if captured_conversation_id.is_none() && result.conversation_id.is_some() {
+                                    captured_conversation_id = result.conversation_id.clone();
+                                }
+                                (
+                                    Some(result.output.clone()),
+                                    Some(AttemptTimestamp {
+                                        attempt: 2,
+                                        started_at: result.started_at,
+                                        ended_at: result.ended_at,
+                                    }),
+                                )
+                            },
                             Err(e) => {
                                 sender.send_output(format!(
                                     "[review:{}] Recovery attempt failed: {}",
@@ -395,7 +446,7 @@ pub async fn run_multi_agent_review_with_context(
                                     display_id
                                 ));
                                 let duration_ms = review_started_at.elapsed().as_millis() as u64;
-                                (display_id, ReviewExecutionResult::Success(review), duration_ms)
+                                (display_id, ReviewExecutionResult::Success(review), duration_ms, captured_conversation_id)
                             }
                             Err(final_failure) => {
                                 // Both attempts failed - prepare for bundle creation
@@ -422,6 +473,7 @@ pub async fn run_multi_agent_review_with_context(
                                         feedback_file_path: feedback_path,
                                     },
                                     duration_ms,
+                                    captured_conversation_id,
                                 )
                             }
                         }
@@ -439,7 +491,31 @@ pub async fn run_multi_agent_review_with_context(
     let mut reviews = Vec::new();
     let mut failures = Vec::new();
 
-    for (agent_name, result, duration_ms) in results {
+    for (agent_name, result, duration_ms, captured_conversation_id) in results {
+        // Persist captured conversation_id for future resume if we have one
+        if let Some(ref conv_id) = captured_conversation_id {
+            let conversation_id_name = reviewing_conversation_key(&agent_name);
+            let agent_id = AgentId::from(conversation_id_name.as_str());
+
+            dispatch_reviewing_command(
+                &actor_ref,
+                &session_logger,
+                DomainCommand::RecordAgentConversation {
+                    agent_id,
+                    resume_strategy: DomainResumeStrategy::ConversationResume,
+                    conversation_id: Some(ConversationId::from(conv_id.clone())),
+                },
+            )
+            .await;
+
+            // Conversation IDs are ASCII identifiers, safe to slice at char boundary
+            let id_preview = conv_id.get(..8).unwrap_or(conv_id);
+            session_sender.send_output(format!(
+                "[review:{}] Captured conversation ID for resume: {}...",
+                agent_name, id_preview
+            ));
+        }
+
         match result {
             ReviewExecutionResult::Success(review) => {
                 let needs_revision = review.needs_revision();
@@ -637,6 +713,7 @@ async fn execute_review_attempt(
         output: result.output,
         started_at,
         ended_at,
+        conversation_id: result.conversation_id,
     })
 }
 

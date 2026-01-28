@@ -17,6 +17,10 @@ agents:
       - "Glob"
       - "Grep"
       - "Bash"
+    # Enable session persistence for reviewer resume across revision cycles
+    session_persistence:
+      enabled: true
+      strategy: conversation_resume
 
   codex:
     command: "codex"
@@ -26,6 +30,10 @@ agents:
       - "--dangerously-bypass-approvals-and-sandbox"
       - "--skip-git-repo-check"
     allowed_tools: []
+    # Enable session persistence for reviewer resume across revision cycles
+    session_persistence:
+      enabled: true
+      strategy: conversation_resume
 
   gemini:
     command: "gemini"
@@ -33,6 +41,10 @@ agents:
       - "--output-format"
       - "json"
     allowed_tools: []
+    # Enable session persistence for reviewer resume across revision cycles
+    session_persistence:
+      enabled: true
+      strategy: conversation_resume
 
 # Claude-mode configuration (activated with --claude flag)
 # Defines Claude-specific agents, substitution rules, and phase overrides
@@ -75,6 +87,10 @@ claude_mode:
         - "Glob"
         - "Grep"
         - "Bash"
+      # Enable session persistence for reviewer resume across revision cycles
+      session_persistence:
+        enabled: true
+        strategy: conversation_resume
 
   # Agent name substitutions when --claude is active
   substitutions:
@@ -122,6 +138,9 @@ codex_mode:
         - "--dangerously-bypass-approvals-and-sandbox"
         - "--skip-git-repo-check"
       allowed_tools: []
+      session_persistence:
+        enabled: true
+        strategy: conversation_resume
 
     codex-reviewer:
       command: "codex"
@@ -131,6 +150,9 @@ codex_mode:
         - "--dangerously-bypass-approvals-and-sandbox"
         - "--skip-git-repo-check"
       allowed_tools: []
+      session_persistence:
+        enabled: true
+        strategy: conversation_resume
 
   # Agent name substitutions when codex-only mode is active
   substitutions:
@@ -163,6 +185,9 @@ gemini_mode:
         - "--output-format"
         - "json"
       allowed_tools: []
+      session_persistence:
+        enabled: true
+        strategy: conversation_resume
 
     gemini-reviewer:
       command: "gemini"
@@ -170,6 +195,9 @@ gemini_mode:
         - "--output-format"
         - "json"
       allowed_tools: []
+      session_persistence:
+        enabled: true
+        strategy: conversation_resume
 
   # Agent name substitutions when gemini-only mode is active
   substitutions:

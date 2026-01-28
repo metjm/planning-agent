@@ -69,6 +69,73 @@ Run the "{skill}" skill to perform the review."#,
     )
 }
 
+/// Build a follow-up review prompt for when the planner has addressed previous feedback.
+///
+/// This prompt is used when resuming a reviewer conversation after the planner has revised
+/// the plan. It instructs the reviewer to:
+/// 1. Re-evaluate the plan from scratch with a fresh perspective
+/// 2. Verify whether previous feedback was properly addressed
+/// 3. Use the same skill for consistency
+///
+/// # Arguments
+///
+/// * `objective` - The plan goal/objective
+/// * `plan_path_abs` - Absolute path to the plan file
+/// * `feedback_path_abs` - Absolute path to write feedback
+/// * `working_dir` - The workspace directory
+/// * `session_folder_abs` - The session folder path
+/// * `custom_focus` - Optional additional review context
+/// * `skill_name` - The skill to invoke (should match the original review)
+pub fn build_review_follow_up_prompt_for_agent(
+    objective: &str,
+    plan_path_abs: &Path,
+    feedback_path_abs: &Path,
+    working_dir: &Path,
+    session_folder_abs: &Path,
+    custom_focus: Option<&str>,
+    skill_name: Option<&str>,
+) -> String {
+    let skill = skill_name.unwrap_or(DEFAULT_REVIEW_SKILL);
+
+    let focus_section = match custom_focus {
+        Some(focus) => format!(
+            "\n########################## REVIEW FOCUS ##########################\n{}\n##################################################################\n",
+            focus
+        ),
+        None => String::new(),
+    };
+
+    format!(
+        r#"The planner has addressed your previous feedback and revised the plan.
+
+####################### IMPORTANT INSTRUCTIONS #######################
+1. Re-evaluate the plan FROM SCRATCH with a fresh perspective
+2. Do NOT simply check if your previous feedback was addressed
+3. Look for NEW issues that may have been introduced or overlooked
+4. Your previous conversation context is available for reference only
+######################################################################
+
+########################### PLAN GOAL ###########################
+{objective}
+#################################################################
+
+Paths:
+- Workspace: {workspace}
+- Plan file: {plan}
+- Feedback output: {feedback}
+- Session folder: {session}
+{focus_section}
+IMPORTANT: You MUST run the "{skill}" skill again to perform this review. Do not skip invoking the skill."#,
+        objective = objective,
+        workspace = working_dir.display(),
+        plan = plan_path_abs.display(),
+        feedback = feedback_path_abs.display(),
+        session = session_folder_abs.display(),
+        focus_section = focus_section,
+        skill = skill,
+    )
+}
+
 /// Build a recovery prompt for when the initial review attempt fails to produce valid feedback.
 /// This is used when the skill ran but didn't produce a parseable feedback file.
 ///
