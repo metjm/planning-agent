@@ -167,7 +167,9 @@ pub fn draw_workflow_browser_overlay(frame: &mut Frame, tab_manager: &TabManager
 
         // Scrollbar if needed
         if entries.len() > visible_height {
-            let mut scrollbar_state = ScrollbarState::new(entries.len()).position(scroll_offset);
+            let mut scrollbar_state = ScrollbarState::new(entries.len())
+                .viewport_content_length(visible_height)
+                .position(scroll_offset);
             frame.render_stateful_widget(
                 Scrollbar::new(ScrollbarOrientation::VerticalRight)
                     .begin_symbol(Some("↑"))

@@ -326,7 +326,9 @@ pub fn draw_session_browser_overlay(frame: &mut Frame, tab_manager: &TabManager)
 
         // Scrollbar if needed (based on total items including headers)
         if all_items.len() > visible_height {
-            let mut scrollbar_state = ScrollbarState::new(all_items.len()).position(scroll_offset);
+            let mut scrollbar_state = ScrollbarState::new(all_items.len())
+                .viewport_content_length(visible_height)
+                .position(scroll_offset);
             frame.render_stateful_widget(
                 Scrollbar::new(ScrollbarOrientation::VerticalRight)
                     .begin_symbol(Some("↑"))

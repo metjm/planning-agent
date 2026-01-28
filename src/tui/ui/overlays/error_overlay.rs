@@ -77,7 +77,9 @@ pub fn draw_error_overlay(frame: &mut Frame, session: &Session, regions: &mut Sc
 
         // Show scrollbar if content exceeds visible area
         if total_content_lines > visible_height {
-            let mut scrollbar_state = ScrollbarState::new(total_content_lines).position(scroll_pos);
+            let mut scrollbar_state = ScrollbarState::new(total_content_lines)
+                .viewport_content_length(visible_height)
+                .position(scroll_pos);
             frame.render_stateful_widget(
                 Scrollbar::new(ScrollbarOrientation::VerticalRight)
                     .begin_symbol(Some("↑"))

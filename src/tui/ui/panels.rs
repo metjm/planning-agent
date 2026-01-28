@@ -189,7 +189,9 @@ fn draw_output_panel(
     frame.render_widget(paragraph, area);
 
     if total_lines > visible_height {
-        let mut scrollbar_state = ScrollbarState::new(total_lines).position(scroll_pos);
+        let mut scrollbar_state = ScrollbarState::new(total_lines)
+            .viewport_content_length(visible_height)
+            .position(scroll_pos);
         frame.render_stateful_widget(
             Scrollbar::new(ScrollbarOrientation::VerticalRight)
                 .begin_symbol(Some("↑"))
@@ -310,7 +312,9 @@ fn draw_todos(frame: &mut Frame, session: &Session, area: Rect, regions: &mut Sc
 
     // Render scrollbar when content exceeds visible height
     if total_lines > visible_height {
-        let mut scrollbar_state = ScrollbarState::new(total_lines).position(scroll_pos);
+        let mut scrollbar_state = ScrollbarState::new(total_lines)
+            .viewport_content_length(visible_height)
+            .position(scroll_pos);
         frame.render_stateful_widget(
             Scrollbar::new(ScrollbarOrientation::VerticalRight)
                 .begin_symbol(Some("↑"))
@@ -392,8 +396,9 @@ pub fn draw_streaming(frame: &mut Frame, session: &Session, area: Rect) {
     frame.render_widget(paragraph, area);
 
     if wrapped_line_count > visible_height {
-        let mut scrollbar_state =
-            ScrollbarState::new(wrapped_line_count).position(scroll_offset as usize);
+        let mut scrollbar_state = ScrollbarState::new(wrapped_line_count)
+            .viewport_content_length(visible_height)
+            .position(scroll_offset as usize);
         frame.render_stateful_widget(
             Scrollbar::new(ScrollbarOrientation::VerticalRight)
                 .begin_symbol(Some("↑"))

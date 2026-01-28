@@ -182,8 +182,9 @@ pub(super) fn draw_chat_content(
     frame.render_widget(paragraph, area);
 
     if wrapped_line_count > visible_height {
-        let mut scrollbar_state =
-            ScrollbarState::new(wrapped_line_count).position(scroll_offset as usize);
+        let mut scrollbar_state = ScrollbarState::new(wrapped_line_count)
+            .viewport_content_length(visible_height)
+            .position(scroll_offset as usize);
         frame.render_stateful_widget(
             Scrollbar::new(ScrollbarOrientation::VerticalRight)
                 .begin_symbol(Some("↑"))
@@ -413,7 +414,9 @@ pub(super) fn draw_summary_panel(
     frame.render_widget(paragraph, area);
 
     if total_lines > visible_height {
-        let mut scrollbar_state = ScrollbarState::new(total_lines).position(scroll_pos);
+        let mut scrollbar_state = ScrollbarState::new(total_lines)
+            .viewport_content_length(visible_height)
+            .position(scroll_pos);
         frame.render_stateful_widget(
             Scrollbar::new(ScrollbarOrientation::VerticalRight)
                 .begin_symbol(Some("↑"))
@@ -536,6 +539,7 @@ pub(super) fn draw_reviewer_history_panel(
 
     let inner_area = panel_block.inner(area);
     let visible_height = inner_area.height as usize;
+    let inner_width = inner_area.width;
 
     let mut lines: Vec<Line> = Vec::new();
 
@@ -631,9 +635,9 @@ pub(super) fn draw_reviewer_history_panel(
         }
     }
 
-    // Calculate max scroll position
-    let content_height = lines.len();
-    let max_scroll = content_height.saturating_sub(visible_height);
+    // Calculate max scroll position using wrapped line count for accurate scrolling
+    let total_lines = compute_wrapped_line_count(&lines, inner_width);
+    let max_scroll = total_lines.saturating_sub(visible_height);
 
     // Register scrollable region with computed max_scroll
     regions.register(ScrollRegion::ReviewHistory, inner_area, max_scroll);
@@ -651,8 +655,10 @@ pub(super) fn draw_reviewer_history_panel(
     frame.render_widget(paragraph, area);
 
     // Scrollbar if content exceeds visible height
-    if content_height > visible_height {
-        let mut scrollbar_state = ScrollbarState::new(content_height).position(scroll_position);
+    if total_lines > visible_height {
+        let mut scrollbar_state = ScrollbarState::new(total_lines)
+            .viewport_content_length(visible_height)
+            .position(scroll_position);
         frame.render_stateful_widget(
             Scrollbar::new(ScrollbarOrientation::VerticalRight)
                 .begin_symbol(Some("↑"))

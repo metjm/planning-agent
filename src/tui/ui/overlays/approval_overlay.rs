@@ -143,7 +143,9 @@ fn draw_choice_popup(
     frame.render_widget(summary, chunks[1]);
 
     if total_lines > visible_height {
-        let mut scrollbar_state = ScrollbarState::new(total_lines).position(scroll_pos);
+        let mut scrollbar_state = ScrollbarState::new(total_lines)
+            .viewport_content_length(visible_height)
+            .position(scroll_pos);
         frame.render_stateful_widget(
             Scrollbar::new(ScrollbarOrientation::VerticalRight)
                 .begin_symbol(Some("↑"))
