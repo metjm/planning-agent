@@ -5,6 +5,7 @@
 pub mod app;
 mod file_client;
 mod helpers;
+mod notifications;
 pub mod session_detail;
 mod session_selection;
 mod session_table;

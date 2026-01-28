@@ -95,6 +95,40 @@ pub(crate) async fn dispatch_domain_command(
     }
 }
 
+/// Send error status to daemon tracker when a workflow failure has been recorded.
+/// This enables the host-gui to detect and notify on planning workflow failures.
+///
+/// Should be called BEFORE mark_stopped() when has_failure() returns true.
+async fn send_error_status_if_failure(
+    tracker: &SessionTracker,
+    view_rx: &tokio::sync::watch::Receiver<crate::domain::view::WorkflowView>,
+    workflow_session_id: &str,
+) {
+    // Extract all values from view in a block to ensure borrow is dropped before await
+    let update_info = {
+        let view = view_rx.borrow();
+        if view.has_failure() {
+            let phase = view.planning_phase().unwrap_or(Phase::Planning);
+            let iteration = view.iteration().unwrap_or_default().0;
+            Some((phase, iteration))
+        } else {
+            None
+        }
+    }; // view borrow is definitely dropped here
+
+    if let Some((phase, iteration)) = update_info {
+        let _ = tracker
+            .update(
+                workflow_session_id,
+                format!("{:?}", phase),
+                iteration,
+                "Error".to_string(),
+                None,
+            )
+            .await;
+    }
+}
+
 use crate::app::implementation::{run_implementation_workflow, ImplementationContext};
 use crate::app::workflow_decisions::{
     await_max_iterations_decision, IterativePhase, MaxIterationsDecision,
@@ -559,6 +593,13 @@ pub async fn run_workflow_with_config(
 
                 match result {
                     Ok(Some(workflow_result)) => {
+                        // Check for failure and send Error status before marking stopped
+                        send_error_status_if_failure(
+                            &tracker,
+                            &view_rx_for_loop,
+                            &workflow_session_id_str,
+                        )
+                        .await;
                         // Daemon tracking is best-effort - ignore errors if daemon not running
                         let _ = tracker.mark_stopped(&workflow_session_id_str).await;
                         return Ok(workflow_result);

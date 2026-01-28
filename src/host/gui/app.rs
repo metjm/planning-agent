@@ -40,8 +40,10 @@ pub struct HostApp {
     /// System tray icon (requires host-gui-tray feature)
     #[cfg(feature = "tray-icon")]
     tray: Option<HostTray>,
-    /// Sessions we've already notified about (for deduplication)
-    notified_sessions: HashSet<String>,
+    /// Sessions we've already notified about, keyed by (session_id, reason).
+    /// This allows re-notifying if a session transitions from one state to another
+    /// (e.g., from NeedsInteraction to Failed).
+    notified_sessions: HashSet<(String, NotificationReason)>,
     /// Event log buffer (bounded)
     log_entries: VecDeque<LogEntry>,
     /// Last time we fetched usage (None = never, triggers initial fetch)
@@ -99,6 +101,9 @@ enum LogLevel {
     Info,
     Warning,
 }
+
+// Import notification types from module
+use super::notifications::NotificationReason;
 
 impl HostApp {
     /// Create a new host application (with tray support).
@@ -443,52 +448,12 @@ impl HostApp {
         }
     }
 
-    /// Check for new sessions awaiting approval and send notifications.
+    /// Check for sessions requiring attention and send notifications.
     fn check_and_notify(&mut self) {
-        // Find sessions awaiting approval that we haven't notified about yet
-        let awaiting_approval: Vec<_> = self
-            .display_data
-            .sessions
-            .iter()
-            .filter(|s| {
-                let status_lower = s.status.to_lowercase();
-                (status_lower.contains("approval") || status_lower == "awaitingapproval")
-                    && !self.notified_sessions.contains(&s.session_id)
-            })
-            .collect();
-
-        for session in awaiting_approval {
-            // Mark as notified
-            self.notified_sessions.insert(session.session_id.clone());
-
-            // Send notification
-            if let Err(e) = notify_rust::Notification::new()
-                .summary("Planning Agent - Approval Required")
-                .body(&format!(
-                    "{} on {} is waiting for approval",
-                    session.feature_name, session.container_name
-                ))
-                .timeout(notify_rust::Timeout::Milliseconds(5000))
-                .show()
-            {
-                eprintln!("[host] Warning: Could not send notification: {}", e);
-            }
-        }
-
-        // Clean up notified_sessions for sessions that are no longer awaiting approval
-        let current_awaiting: HashSet<String> = self
-            .display_data
-            .sessions
-            .iter()
-            .filter(|s| {
-                let status_lower = s.status.to_lowercase();
-                status_lower.contains("approval") || status_lower == "awaitingapproval"
-            })
-            .map(|s| s.session_id.clone())
-            .collect();
-
-        self.notified_sessions
-            .retain(|id| current_awaiting.contains(id));
+        super::notifications::check_and_notify(
+            &self.display_data.sessions,
+            &mut self.notified_sessions,
+        );
     }
 
     /// Handle tray icon commands (requires host-gui-tray feature).

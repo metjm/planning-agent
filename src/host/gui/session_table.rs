@@ -29,6 +29,54 @@ pub fn session_needs_interaction(
     )
 }
 
+/// Check if a session has reached a terminal failure state based on its status
+/// and implementation phase.
+///
+/// Returns true for:
+/// - implementation_phase == "failed" (implementation workflow failure)
+/// - implementation_phase == "cancelled" (implementation workflow cancelled)
+/// - workflow_status == "error" (planning workflow failure)
+///
+/// Returns false for stopped sessions (matching `session_needs_interaction()` pattern).
+///
+/// This function is co-located with `session_needs_interaction()` because both
+/// interpret session state for host-gui decision logic.
+pub fn session_has_failed(
+    status: &str,
+    impl_phase: Option<&str>,
+    liveness: LivenessDisplay,
+) -> bool {
+    // Stopped sessions don't need notifications - match session_needs_interaction() pattern
+    if matches!(liveness, LivenessDisplay::Stopped) {
+        return false;
+    }
+
+    // Check implementation phase for terminal failure states
+    if let Some(ip) = impl_phase {
+        let ip_lower = ip.to_lowercase();
+        if ip_lower == "failed" || ip_lower == "cancelled" {
+            return true;
+        }
+    }
+
+    // Check workflow status for error state
+    let status_lower = status.to_lowercase();
+    status_lower == "error"
+}
+
+/// Check if a session was cancelled (user-initiated termination).
+/// Used to distinguish cancellation from unexpected failures for urgency level.
+///
+/// Returns false for stopped sessions for consistency with other detection functions.
+pub fn session_was_cancelled(impl_phase: Option<&str>, liveness: LivenessDisplay) -> bool {
+    if matches!(liveness, LivenessDisplay::Stopped) {
+        return false;
+    }
+    impl_phase
+        .map(|ip| ip.to_lowercase() == "cancelled")
+        .unwrap_or(false)
+}
+
 /// Display row for a session.
 #[derive(Clone)]
 pub struct DisplaySessionRow {
