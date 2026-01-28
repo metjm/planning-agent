@@ -336,3 +336,5 @@ Use sub-agents to verify assumptions in parallel. You can use up to 20 at a time
 - BE CONSTRUCTIVE - explain HOW to address issues, not just what's wrong
 - For blocking items, use QA-style requirements with acceptance criteria and verification steps
 - Do not prescribe code-level fixes or implementation details
+
+Final decision rule: If the plan were implemented exactly as written and shipped, would it achieve the user's goal and the repo's goal without unacceptable risk?

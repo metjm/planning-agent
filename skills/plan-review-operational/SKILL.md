@@ -339,3 +339,5 @@ Use sub-agents to verify infrastructure constraints in parallel.
 - ALWAYS write the feedback to the `feedback-output-path` file
 - For blocking items, use QA-style requirements with acceptance criteria and verification steps
 - Do not prescribe code-level fixes or implementation details
+
+Final decision rule: If the plan were implemented exactly as written and shipped, would it achieve the user's goal and the repo's goal without unacceptable risk?

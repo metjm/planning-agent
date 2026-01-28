@@ -353,3 +353,5 @@ Use sub-agents to search for patterns in parallel. You can use up to 20 at a tim
 - ALWAYS search the codebase before making consistency judgments
 - For blocking items, use QA-style requirements with acceptance criteria and verification steps
 - Do not prescribe code-level fixes or implementation details
+
+Final decision rule: If the plan were implemented exactly as written and shipped, would it achieve the user's goal and the repo's goal without unacceptable risk?
