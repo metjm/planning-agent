@@ -12,6 +12,9 @@ fn make_session(id: &str, status: &str) -> SessionInfo {
         started_at: chrono::Utc::now().to_rfc3339(),
         updated_at: chrono::Utc::now().to_rfc3339(),
         pid: 0,
+        implementation_phase: None,
+        implementation_iteration: None,
+        implementation_max_iterations: None,
     }
 }
 

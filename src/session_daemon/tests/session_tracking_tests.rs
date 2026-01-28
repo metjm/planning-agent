@@ -166,6 +166,7 @@ async fn test_tracker_update() {
             "Reviewing".to_string(),
             2,
             "Reviewing".to_string(),
+            None,
         )
         .await;
     assert!(result.is_ok(), "Update failed: {:?}", result.err());
@@ -313,6 +314,7 @@ async fn test_tracker_full_workflow_lifecycle() {
             "Reviewing".to_string(),
             1,
             "Reviewing".to_string(),
+            None,
         )
         .await
         .expect("Update to Reviewing failed");
@@ -331,6 +333,7 @@ async fn test_tracker_full_workflow_lifecycle() {
             "Revising".to_string(),
             2,
             "Revising".to_string(),
+            None,
         )
         .await
         .expect("Update to Revising failed");
@@ -350,6 +353,7 @@ async fn test_tracker_full_workflow_lifecycle() {
             "Complete".to_string(),
             2,
             "Complete".to_string(),
+            None,
         )
         .await
         .expect("Update to Complete failed");
@@ -471,6 +475,7 @@ async fn test_tracker_connection_stays_alive() {
             "Reviewing".to_string(),
             2,
             "Running".to_string(),
+            None,
         )
         .await;
     assert!(

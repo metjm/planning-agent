@@ -31,6 +31,15 @@ pub struct SessionInfo {
     /// from older daemon that doesn't send pid - will deserialize to 0.
     #[serde(default)]
     pub pid: u32,
+    /// Implementation phase (e.g., "Implementing", "ImplementationReview").
+    #[serde(default)]
+    pub implementation_phase: Option<String>,
+    /// Current implementation iteration.
+    #[serde(default)]
+    pub implementation_iteration: Option<u32>,
+    /// Maximum implementation iterations.
+    #[serde(default)]
+    pub implementation_max_iterations: Option<u32>,
 }
 
 impl SessionInfo {
@@ -46,6 +55,9 @@ impl SessionInfo {
             started_at: record.updated_at.clone(), // Use updated_at as proxy for started_at
             updated_at: record.updated_at.clone(),
             pid: record.pid,
+            implementation_phase: record.implementation_phase.clone(),
+            implementation_iteration: record.implementation_iteration,
+            implementation_max_iterations: record.implementation_max_iterations,
         }
     }
 }

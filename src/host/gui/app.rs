@@ -322,6 +322,8 @@ impl HostApp {
                     liveness: s.session.liveness.into(),
                     pid: s.session.pid,
                     updated_ago: format_relative_time(&s.session.updated_at),
+                    implementation_phase: s.session.implementation_phase.clone(),
+                    implementation_iteration: s.session.implementation_iteration,
                 })
                 .collect();
             let sessions_len = sessions.len();
@@ -387,7 +389,13 @@ impl HostApp {
         // Count sessions awaiting interaction (only from live sessions)
         let awaiting_count = session_rows
             .iter()
-            .filter(|s| super::session_table::session_needs_interaction(&s.phase, s.liveness))
+            .filter(|s| {
+                super::session_table::session_needs_interaction(
+                    &s.phase,
+                    s.implementation_phase.as_deref(),
+                    s.liveness,
+                )
+            })
             .count();
 
         // Running = live sessions minus those awaiting interaction

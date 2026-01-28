@@ -5,10 +5,23 @@ use egui_extras::{Column, TableBuilder};
 use std::collections::BTreeMap;
 
 /// Check if a session requires user interaction based on its phase and liveness.
-pub fn session_needs_interaction(phase: &str, liveness: LivenessDisplay) -> bool {
+pub fn session_needs_interaction(
+    phase: &str,
+    impl_phase: Option<&str>,
+    liveness: LivenessDisplay,
+) -> bool {
     if matches!(liveness, LivenessDisplay::Stopped) {
         return false;
     }
+
+    // Check implementation phase for decision state
+    if let Some(ip) = impl_phase {
+        let ip_lower = ip.to_lowercase();
+        if ip_lower == "awaitingdecision" || ip_lower == "awaiting_decision" {
+            return true;
+        }
+    }
+
     let phase_lower = phase.to_lowercase();
     matches!(
         phase_lower.as_str(),
@@ -28,6 +41,10 @@ pub struct DisplaySessionRow {
     pub liveness: LivenessDisplay,
     pub pid: u32,
     pub updated_ago: String,
+    /// Implementation phase if in implementation workflow
+    pub implementation_phase: Option<String>,
+    /// Implementation iteration if in implementation workflow
+    pub implementation_iteration: Option<u32>,
 }
 
 #[derive(Clone, Copy, Default, Debug)]
@@ -271,7 +288,13 @@ fn render_session_rows_clickable(
                     .is_some_and(|id| id == &session.session_id);
 
                 body.row(22.0, |mut row| {
-                    if is_selected || session_needs_interaction(&session.phase, session.liveness) {
+                    if is_selected
+                        || session_needs_interaction(
+                            &session.phase,
+                            session.implementation_phase.as_deref(),
+                            session.liveness,
+                        )
+                    {
                         row.set_selected(true);
                     }
 
@@ -303,7 +326,12 @@ fn render_session_rows_clickable(
                         ui.label(session.iteration.to_string());
                     });
                     row.col(|ui| {
-                        render_status(ui, &session.phase, &session.status);
+                        render_status(
+                            ui,
+                            &session.phase,
+                            &session.status,
+                            session.implementation_phase.as_deref(),
+                        );
                     });
                     row.col(|ui| {
                         ui.label(session.pid.to_string());
@@ -332,7 +360,7 @@ pub fn liveness_color(liveness: LivenessDisplay) -> eframe::egui::Color32 {
     }
 }
 
-fn render_status(ui: &mut eframe::egui::Ui, phase: &str, status: &str) {
-    let (color, text) = super::status_colors::get_status_display(phase, status);
+fn render_status(ui: &mut eframe::egui::Ui, phase: &str, status: &str, impl_phase: Option<&str>) {
+    let (color, text) = super::status_colors::get_status_display(phase, status, impl_phase);
     ui.colored_label(color, text);
 }

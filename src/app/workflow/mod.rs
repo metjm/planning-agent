@@ -414,6 +414,7 @@ pub async fn run_workflow_with_config(
                                 format!("{:?}", updated_phase),
                                 updated_iteration,
                                 format!("{:?}", updated_phase),
+                                None, // No implementation state during planning
                             )
                             .await;
                     }
@@ -497,6 +498,7 @@ pub async fn run_workflow_with_config(
                                 format!("{:?}", updated_phase),
                                 updated_iteration,
                                 format!("{:?}", updated_phase),
+                                None, // No implementation state during planning
                             )
                             .await;
                         if updated_phase == Phase::Complete {
@@ -577,6 +579,7 @@ pub async fn run_workflow_with_config(
                                 format!("{:?}", updated_phase),
                                 updated_iteration,
                                 format!("{:?}", updated_phase),
+                                None, // No implementation state during planning
                             )
                             .await;
                     }
@@ -754,6 +757,8 @@ pub async fn run_workflow_with_config(
                 approval_rx: &mut approval_rx,
                 control_rx: &mut control_rx,
                 actor_ref: phase_context.actor_ref.clone(),
+                tracker: tracker.clone(),
+                workflow_session_id: workflow_session_id_str.clone(),
             };
             let impl_result = run_implementation_workflow(
                 &final_view,

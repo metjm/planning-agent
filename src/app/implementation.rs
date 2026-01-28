@@ -19,6 +19,9 @@ use crate::phases::implementation::run_implementation_phase;
 use crate::phases::implementation_review::run_implementation_review_phase;
 use crate::phases::implementing_conversation_key;
 use crate::phases::verdict::VerificationVerdictResult;
+use crate::session_daemon::session_tracking::{
+    ImplementationStateUpdate, SessionTracker, TerminalStateUpdate,
+};
 use crate::session_daemon::{LogCategory, LogLevel, SessionLogger};
 use crate::tui::{SessionEventSender, UserApprovalResponse, WorkflowCommand};
 use anyhow::{Context, Result};
@@ -27,6 +30,26 @@ use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot};
 
+/// Sends terminal state to tracker. Terminal states ("Failed", "Cancelled") are
+/// protocol-only strings derived from ImplementationWorkflowResult, not part of
+/// the ImplementationPhase enum which covers in-progress phases only.
+async fn send_terminal_tracker_update(
+    tracker: &SessionTracker,
+    workflow_session_id: &str,
+    terminal_phase_str: &str,
+    iteration: u32,
+    max_iterations: u32,
+) {
+    let _ = tracker
+        .update_terminal_state(TerminalStateUpdate {
+            workflow_session_id: workflow_session_id.to_string(),
+            terminal_phase: terminal_phase_str.to_string(),
+            iteration,
+            max_iterations,
+        })
+        .await;
+}
+
 /// Context for the implementation workflow containing channels and resources.
 pub struct ImplementationContext<'a> {
     pub session_sender: SessionEventSender,
@@ -34,6 +57,10 @@ pub struct ImplementationContext<'a> {
     pub approval_rx: &'a mut mpsc::Receiver<UserApprovalResponse>,
     pub control_rx: &'a mut mpsc::Receiver<WorkflowCommand>,
     pub actor_ref: Option<ActorRef<WorkflowMessage>>,
+    /// Session tracker for updating daemon with implementation phase state.
+    pub tracker: Arc<SessionTracker>,
+    /// Workflow session ID for tracker updates.
+    pub workflow_session_id: String,
 }
 
 /// Result of the implementation workflow.
@@ -80,6 +107,8 @@ pub async fn run_implementation_workflow(
         approval_rx,
         control_rx,
         actor_ref,
+        tracker,
+        workflow_session_id,
     } = ctx;
 
     // Helper to dispatch implementation commands
@@ -159,6 +188,21 @@ pub async fn run_implementation_workflow(
 
     session_sender.send_phase_started("Implementing".to_string());
 
+    // Update tracker with initial Implementing phase at workflow start
+    let _ = tracker
+        .update(
+            &workflow_session_id,
+            "Complete".to_string(),
+            1,
+            "Implementation".to_string(),
+            Some(ImplementationStateUpdate {
+                phase: ImplementationPhase::Implementing,
+                iteration: local_iteration,
+                max_iterations: local_max_iterations,
+            }),
+        )
+        .await;
+
     // Use initial feedback if provided
     let mut current_feedback = initial_feedback.or_else(|| {
         view.implementation_state()
@@ -181,6 +225,21 @@ pub async fn run_implementation_workflow(
     loop {
         // Check if we need to resume from awaiting decision
         if local_phase == ImplementationPhase::AwaitingDecision {
+            // When resuming from AwaitingDecision, update tracker to restore implementation phase to host UI
+            let _ = tracker
+                .update(
+                    &workflow_session_id,
+                    "Complete".to_string(),
+                    1,
+                    "AwaitingDecision".to_string(),
+                    Some(ImplementationStateUpdate {
+                        phase: ImplementationPhase::AwaitingDecision,
+                        iteration: local_iteration,
+                        max_iterations: local_max_iterations,
+                    }),
+                )
+                .await;
+
             // Determine the reason for being in AwaitingDecision phase
             let decision_reason = view
                 .implementation_state()
@@ -217,10 +276,14 @@ pub async fn run_implementation_workflow(
                 decision,
                 &dispatch_impl_cmd,
                 &session_sender,
-                &mut local_iteration,
-                &mut local_max_iterations,
-                &mut local_phase,
-                &mut current_feedback,
+                &mut ImplementationLoopState {
+                    iteration: &mut local_iteration,
+                    max_iterations: &mut local_max_iterations,
+                    phase: &mut local_phase,
+                    feedback: &mut current_feedback,
+                },
+                &tracker,
+                &workflow_session_id,
             )
             .await?
             {
@@ -249,6 +312,21 @@ pub async fn run_implementation_workflow(
         })
         .await;
 
+        // Update tracker with Implementing phase
+        let _ = tracker
+            .update(
+                &workflow_session_id,
+                "Complete".to_string(),
+                1,
+                "Implementation".to_string(),
+                Some(ImplementationStateUpdate {
+                    phase: ImplementationPhase::Implementing,
+                    iteration: local_iteration,
+                    max_iterations: local_max_iterations,
+                }),
+            )
+            .await;
+
         // NOTE: Pre-round RecordAgentConversation{None} was removed to preserve
         // conversation IDs across rounds and session resume
 
@@ -273,6 +351,17 @@ pub async fn run_implementation_workflow(
                 reason: "Implementation cancelled by user".to_string(),
             })
             .await;
+
+            // Update tracker with Cancelled terminal state (protocol-only string)
+            send_terminal_tracker_update(
+                &tracker,
+                &workflow_session_id,
+                "Cancelled",
+                local_iteration,
+                local_max_iterations,
+            )
+            .await;
+
             return Ok(ImplementationWorkflowResult::Cancelled {
                 iterations_used: local_iteration,
             });
@@ -316,6 +405,21 @@ pub async fn run_implementation_workflow(
         })
         .await;
 
+        // Update tracker to show ImplementationReview phase
+        let _ = tracker
+            .update(
+                &workflow_session_id,
+                "Complete".to_string(),
+                1,
+                "Implementation".to_string(),
+                Some(ImplementationStateUpdate {
+                    phase: ImplementationPhase::ImplementationReview,
+                    iteration: local_iteration,
+                    max_iterations: local_max_iterations,
+                }),
+            )
+            .await;
+
         // === Review Phase ===
         session_sender.send_phase_started("Implementation Review".to_string());
         session_sender.send_output(format!(
@@ -355,6 +459,21 @@ pub async fn run_implementation_workflow(
                 // Dispatch ImplementationAccepted command
                 dispatch_impl_cmd(DomainCommand::ImplementationAccepted).await;
 
+                // Update tracker to show Implementation Complete
+                let _ = tracker
+                    .update(
+                        &workflow_session_id,
+                        "Complete".to_string(),
+                        1,
+                        "Complete".to_string(),
+                        Some(ImplementationStateUpdate {
+                            phase: ImplementationPhase::Complete,
+                            iteration: local_iteration,
+                            max_iterations: local_max_iterations,
+                        }),
+                    )
+                    .await;
+
                 session_sender.send_phase_started("Implementation Complete".to_string());
                 session_sender.send_output("[implementation] Implementation approved!".to_string());
                 // Emit success event to trigger the success modal in TUI
@@ -381,6 +500,21 @@ pub async fn run_implementation_workflow(
                         })
                         .await;
 
+                        // Update tracker to show AwaitingDecision phase (no changes detected)
+                        let _ = tracker
+                            .update(
+                                &workflow_session_id,
+                                "Complete".to_string(),
+                                1,
+                                "AwaitingDecision".to_string(),
+                                Some(ImplementationStateUpdate {
+                                    phase: ImplementationPhase::AwaitingDecision,
+                                    iteration: local_iteration,
+                                    max_iterations: local_max_iterations,
+                                }),
+                            )
+                            .await;
+
                         // Transition to awaiting decision state
                         local_phase = ImplementationPhase::AwaitingDecision;
 
@@ -405,10 +539,14 @@ pub async fn run_implementation_workflow(
                             decision,
                             &dispatch_impl_cmd,
                             &session_sender,
-                            &mut local_iteration,
-                            &mut local_max_iterations,
-                            &mut local_phase,
-                            &mut current_feedback,
+                            &mut ImplementationLoopState {
+                                iteration: &mut local_iteration,
+                                max_iterations: &mut local_max_iterations,
+                                phase: &mut local_phase,
+                                feedback: &mut current_feedback,
+                            },
+                            &tracker,
+                            &workflow_session_id,
                         )
                         .await?
                         {
@@ -424,6 +562,21 @@ pub async fn run_implementation_workflow(
                 if local_iteration >= local_max_iterations {
                     // Dispatch ImplementationMaxIterationsReached command
                     dispatch_impl_cmd(DomainCommand::ImplementationMaxIterationsReached).await;
+
+                    // Update tracker to show AwaitingDecision phase (max iterations reached)
+                    let _ = tracker
+                        .update(
+                            &workflow_session_id,
+                            "Complete".to_string(),
+                            1,
+                            "AwaitingDecision".to_string(),
+                            Some(ImplementationStateUpdate {
+                                phase: ImplementationPhase::AwaitingDecision,
+                                iteration: local_iteration,
+                                max_iterations: local_max_iterations,
+                            }),
+                        )
+                        .await;
 
                     // Transition to awaiting decision state
                     local_phase = ImplementationPhase::AwaitingDecision;
@@ -449,10 +602,14 @@ pub async fn run_implementation_workflow(
                         decision,
                         &dispatch_impl_cmd,
                         &session_sender,
-                        &mut local_iteration,
-                        &mut local_max_iterations,
-                        &mut local_phase,
-                        &mut current_feedback,
+                        &mut ImplementationLoopState {
+                            iteration: &mut local_iteration,
+                            max_iterations: &mut local_max_iterations,
+                            phase: &mut local_phase,
+                            feedback: &mut current_feedback,
+                        },
+                        &tracker,
+                        &workflow_session_id,
                     )
                     .await?
                     {
@@ -465,6 +622,22 @@ pub async fn run_implementation_workflow(
 
                 // Advance to next iteration
                 local_iteration += 1;
+
+                // Update tracker for next implementation round
+                let _ = tracker
+                    .update(
+                        &workflow_session_id,
+                        "Complete".to_string(),
+                        1,
+                        "Implementation".to_string(),
+                        Some(ImplementationStateUpdate {
+                            phase: ImplementationPhase::Implementing,
+                            iteration: local_iteration,
+                            max_iterations: local_max_iterations,
+                        }),
+                    )
+                    .await;
+
                 session_sender.send_phase_started("Implementing".to_string());
                 session_sender.send_output(format!(
                     "[implementation] Issues found, starting iteration {}...",
@@ -553,6 +726,14 @@ fn build_implementation_no_changes_summary(last_feedback: Option<&str>, iteratio
     summary
 }
 
+/// Mutable loop state for the implementation workflow.
+struct ImplementationLoopState<'a> {
+    iteration: &'a mut u32,
+    max_iterations: &'a mut u32,
+    phase: &'a mut ImplementationPhase,
+    feedback: &'a mut Option<String>,
+}
+
 /// Applies an implementation max iterations decision.
 /// Used by both the main max iterations check and the AwaitingDecision resume handler.
 ///
@@ -565,23 +746,33 @@ async fn apply_implementation_decision<F, Fut>(
     decision: MaxIterationsDecision,
     dispatch_impl_cmd: &F,
     session_sender: &SessionEventSender,
-    local_iteration: &mut u32,
-    local_max_iterations: &mut u32,
-    local_phase: &mut ImplementationPhase,
-    current_feedback: &mut Option<String>,
+    loop_state: &mut ImplementationLoopState<'_>,
+    tracker: &SessionTracker,
+    workflow_session_id: &str,
 ) -> Result<Option<ImplementationWorkflowResult>>
 where
     F: Fn(DomainCommand) -> Fut,
     Fut: std::future::Future<Output = ()>,
 {
-    let iteration = *local_iteration;
+    let iteration = *loop_state.iteration;
+    let max_iterations = *loop_state.max_iterations;
 
     match decision {
         MaxIterationsDecision::ProceedWithoutApproval => {
             // Dispatch ImplementationAccepted command (user override)
             dispatch_impl_cmd(DomainCommand::ImplementationAccepted).await;
 
-            *local_phase = ImplementationPhase::Complete;
+            // Update tracker with terminal state before returning
+            send_terminal_tracker_update(
+                tracker,
+                workflow_session_id,
+                "Complete",
+                iteration,
+                max_iterations,
+            )
+            .await;
+
+            *loop_state.phase = ImplementationPhase::Complete;
             session_sender
                 .send_output("[implementation] Proceeding without review approval".to_string());
             session_sender.send_implementation_success(iteration);
@@ -590,19 +781,19 @@ where
             }))
         }
         MaxIterationsDecision::Continue(additional) => {
-            *local_max_iterations += additional;
-            *local_phase = ImplementationPhase::Implementing;
+            *loop_state.max_iterations += additional;
+            *loop_state.phase = ImplementationPhase::Implementing;
             session_sender.send_output(format!(
                 "[implementation] Continuing (max iterations now {})",
-                *local_max_iterations
+                *loop_state.max_iterations
             ));
             Ok(None) // Continue the loop
         }
         MaxIterationsDecision::RestartWithFeedback(feedback) => {
-            *local_iteration = 1;
-            *local_phase = ImplementationPhase::Implementing;
+            *loop_state.iteration = 1;
+            *loop_state.phase = ImplementationPhase::Implementing;
             // NOTE: Conversation ID is PRESERVED (not cleared)
-            *current_feedback = Some(feedback);
+            *loop_state.feedback = Some(feedback);
             session_sender
                 .send_output("[implementation] Restarting with new feedback...".to_string());
             Ok(None) // Continue the loop from restart
@@ -613,16 +804,36 @@ where
             })
             .await;
 
-            *local_phase = ImplementationPhase::Complete;
+            // Update tracker with terminal state before returning
+            send_terminal_tracker_update(
+                tracker,
+                workflow_session_id,
+                "Failed",
+                iteration,
+                max_iterations,
+            )
+            .await;
+
+            *loop_state.phase = ImplementationPhase::Complete;
             Ok(Some(ImplementationWorkflowResult::Failed {
                 iterations_used: iteration,
-                last_feedback: current_feedback.clone(),
+                last_feedback: loop_state.feedback.clone(),
             }))
         }
         MaxIterationsDecision::Stopped => {
             dispatch_impl_cmd(DomainCommand::ImplementationCancelled {
                 reason: "User stopped implementation workflow".to_string(),
             })
+            .await;
+
+            // Update tracker with terminal state before returning
+            send_terminal_tracker_update(
+                tracker,
+                workflow_session_id,
+                "Cancelled",
+                iteration,
+                max_iterations,
+            )
             .await;
 
             Ok(Some(ImplementationWorkflowResult::Cancelled {

@@ -3,12 +3,32 @@
 //! This module provides a high-level interface for registering and updating
 //! sessions with the session daemon, including background heartbeat tasks.
 
+use crate::domain::types::ImplementationPhase;
 use crate::session_daemon::{LivenessState, RpcClient, SessionRecord, WorkflowEventEnvelope};
 use anyhow::Result;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
+
+/// Implementation state for tracker updates.
+/// Uses `ImplementationPhase` enum for type safety in workflow code.
+/// The phase is converted to a string at the protocol boundary.
+pub struct ImplementationStateUpdate {
+    pub phase: ImplementationPhase,
+    pub iteration: u32,
+    pub max_iterations: u32,
+}
+
+/// Terminal implementation state for tracker updates.
+/// Used for states like "Failed" and "Cancelled" that are protocol-only
+/// strings, not part of the `ImplementationPhase` enum.
+pub struct TerminalStateUpdate {
+    pub workflow_session_id: String,
+    pub terminal_phase: String,
+    pub iteration: u32,
+    pub max_iterations: u32,
+}
 
 /// Heartbeat interval in milliseconds.
 /// Changed from 5 seconds to 500ms for faster liveness detection.
@@ -229,6 +249,7 @@ impl SessionTracker {
         phase: String,
         iteration: u32,
         workflow_status: String,
+        implementation_state: Option<ImplementationStateUpdate>,
     ) -> Result<()> {
         if self.disabled {
             return Ok(());
@@ -238,6 +259,46 @@ impl SessionTracker {
 
         if let Some(info) = sessions.get_mut(workflow_session_id) {
             info.record.update_state(phase, iteration, workflow_status);
+            if let Some(impl_state) = implementation_state {
+                // Convert ImplementationPhase enum to string at the protocol boundary
+                info.record.update_implementation_state(
+                    Some(format!("{:?}", impl_state.phase)), // Debug format gives "Implementing", "ImplementationReview", etc.
+                    Some(impl_state.iteration),
+                    Some(impl_state.max_iterations),
+                );
+            } else {
+                // Clear implementation state when not in implementation workflow
+                info.record.update_implementation_state(None, None, None);
+            }
+
+            let client = self.client.lock().await;
+            client.update(info.record.clone()).await?;
+        }
+
+        Ok(())
+    }
+
+    /// Updates a session with a terminal implementation state.
+    /// Used for "Failed" and "Cancelled" which are protocol-only strings,
+    /// not part of the ImplementationPhase enum.
+    pub async fn update_terminal_state(&self, update: TerminalStateUpdate) -> Result<()> {
+        if self.disabled {
+            return Ok(());
+        }
+
+        let mut sessions = self.active_sessions.lock().await;
+
+        if let Some(info) = sessions.get_mut(&update.workflow_session_id) {
+            info.record.update_state(
+                update.terminal_phase.clone(),
+                1,
+                update.terminal_phase.clone(),
+            );
+            info.record.update_implementation_state(
+                Some(update.terminal_phase),
+                Some(update.iteration),
+                Some(update.max_iterations),
+            );
 
             let client = self.client.lock().await;
             client.update(info.record.clone()).await?;

@@ -18,6 +18,9 @@ fn create_test_session(id: &str, status: &str) -> SessionInfo {
         started_at: "2024-01-01T00:00:00Z".to_string(),
         updated_at: "2024-01-01T00:00:00Z".to_string(),
         pid: 0,
+        implementation_phase: None,
+        implementation_iteration: None,
+        implementation_max_iterations: None,
     }
 }
 

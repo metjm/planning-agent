@@ -32,8 +32,29 @@ pub const UNKNOWN: egui::Color32 = egui::Color32::from_rgb(158, 158, 158); // Li
 pub const STALE: egui::Color32 = egui::Color32::from_rgb(255, 183, 77);
 
 /// Get the color and display text for a workflow status.
-/// Uses both `phase` (workflow phase) and `status` (session status) for context.
-pub fn get_status_display(phase: &str, status: &str) -> (egui::Color32, &'static str) {
+/// Uses both `phase` (workflow phase), `status` (session status), and optionally
+/// `impl_phase` (implementation phase) for context.
+pub fn get_status_display(
+    phase: &str,
+    status: &str,
+    impl_phase: Option<&str>,
+) -> (egui::Color32, &'static str) {
+    // Check implementation phase first if present
+    if let Some(ip) = impl_phase {
+        let ip_lower = ip.to_lowercase();
+        match ip_lower.as_str() {
+            "implementing" => return (IMPLEMENTING, "Implementing"),
+            "implementationreview" | "implementation_review" => {
+                return (IMPL_REVIEW, "Impl Review")
+            }
+            "awaitingdecision" | "awaiting_decision" => return (AWAITING, "Impl Decision"),
+            "complete" => return (COMPLETE, "Impl Complete"),
+            "failed" => return (ERROR, "Impl Failed"),
+            "cancelled" => return (STOPPED, "Impl Cancelled"),
+            _ => {} // Fall through to planning phase handling
+        }
+    }
+
     let phase_lower = phase.to_lowercase();
     let status_lower = status.to_lowercase();
 

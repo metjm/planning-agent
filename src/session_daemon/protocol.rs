@@ -58,6 +58,16 @@ pub struct SessionRecord {
     pub last_heartbeat_at: String,
     /// PID of the owning process
     pub pid: u32,
+    /// Implementation phase when in implementation workflow (e.g., "Implementing", "ImplementationReview").
+    /// None when not in implementation workflow.
+    #[serde(default)]
+    pub implementation_phase: Option<String>,
+    /// Implementation iteration number (1-indexed). None when not in implementation workflow.
+    #[serde(default)]
+    pub implementation_iteration: Option<u32>,
+    /// Maximum implementation iterations. None when not in implementation workflow.
+    #[serde(default)]
+    pub implementation_max_iterations: Option<u32>,
 }
 
 impl SessionRecord {
@@ -86,6 +96,9 @@ impl SessionRecord {
             updated_at: now.clone(),
             last_heartbeat_at: now,
             pid,
+            implementation_phase: None,
+            implementation_iteration: None,
+            implementation_max_iterations: None,
         }
     }
 
@@ -100,6 +113,21 @@ impl SessionRecord {
         self.phase = phase;
         self.iteration = iteration;
         self.workflow_status = workflow_status;
+        self.updated_at = chrono::Utc::now().to_rfc3339();
+        self.last_heartbeat_at = self.updated_at.clone();
+        self.liveness = LivenessState::Running;
+    }
+
+    /// Updates the implementation phase state.
+    pub fn update_implementation_state(
+        &mut self,
+        impl_phase: Option<String>,
+        impl_iteration: Option<u32>,
+        impl_max_iterations: Option<u32>,
+    ) {
+        self.implementation_phase = impl_phase;
+        self.implementation_iteration = impl_iteration;
+        self.implementation_max_iterations = impl_max_iterations;
         self.updated_at = chrono::Utc::now().to_rfc3339();
         self.last_heartbeat_at = self.updated_at.clone();
         self.liveness = LivenessState::Running;
