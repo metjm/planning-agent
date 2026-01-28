@@ -28,6 +28,8 @@ Other reviewers ask "will it work?" You ask "does it belong here?"
 - Calibrate to the user prompt, plan scope, and repo rules.
 - Apply checks only when relevant to the plan's impact; mark non-applicable items as **N/A**.
 - If the plan does not introduce new code paths, do not require full code examples; require explicit config/doc diffs instead.
+- If the plan introduces code changes, require explicit file paths and symbol references for every change; missing details are blocking.
+- Be strict on **structure and correctness** for any code change: missing or incorrect symbol references are **blocking**.
 - Enforce hard repo rules (e.g., no timelines, no mocking) regardless of scope.
 
 ## Library and API Verification (CRITICAL)
@@ -40,6 +42,17 @@ For EVERY library or internal API mentioned in the plan:
 4. **Document findings** - Note what patterns were found
 
 **Always search the codebase to verify claims about existing patterns.**
+
+## Reference Validation (CRITICAL)
+
+For EVERY function, type, module, constant, or file path referenced in the plan:
+
+1. **Confirm existence** - Find it in the codebase OR confirm the plan defines it with exact signature and location.
+2. **Validate signatures** - Ensure parameter lists, return types, and names match usage.
+3. **Validate call sites** - Confirm proposed calls align with the real signatures and patterns.
+4. **Document evidence** - Record where each reference was verified.
+
+**REJECT** if any referenced symbol or path cannot be verified and the plan does not explicitly define it.
 
 ## Precision Requirements Verification (CRITICAL)
 
@@ -81,6 +94,20 @@ For each calculation or algorithm, verify:
 - [ ] Variables are defined with types
 - [ ] An example calculation with concrete numbers is provided
 - [ ] The approach matches how similar calculations are done elsewhere in the codebase
+
+### Algorithm Check
+
+**REJECT any plan that introduces a non-trivial new algorithm without evidence it is the best, state-of-the-art choice for the problem context.** If no new non-trivial algorithm is introduced, mark this as **N/A**.
+
+For each non-trivial algorithm, verify the plan includes:
+
+- [ ] A clear description or pseudocode (not just a name)
+- [ ] Complexity or performance expectations
+- [ ] Alternatives considered (including existing codebase options)
+- [ ] Evidence or citations supporting why this is state-of-the-art for the task
+- [ ] A rationale if the plan chooses a non-SOTA option (constraints, latency, compatibility)
+
+If you cannot verify state-of-the-art claims, require a verification task in the plan rather than accepting the claim.
 
 ### Library/API Example Check
 
@@ -173,6 +200,10 @@ Before evaluating the plan, search for similar patterns:
 
 Use Glob and Grep extensively.
 
+### Phase 1.5: Symbol Validation
+
+For every referenced function/type/module/path, verify existence and signature. Any mismatch is a blocking issue.
+
 ### Phase 2: Pattern Verification
 
 For each new component proposed in the plan:
@@ -227,6 +258,16 @@ Write your review to the `feedback-output-path` file:
 ## Summary
 
 [2-3 sentences on how well the plan fits the existing codebase]
+
+---
+
+## Reference Validation
+
+| Reference | Kind | Expected Signature/Path | Verified Location | Status |
+|-----------|------|--------------------------|-------------------|--------|
+| [Symbol/path] | Function/Type/Module/File | [Signature or path] | `path::to::item` | VERIFIED / MISSING / MISMATCH |
+
+**Reference Status:** [ALL VERIFIED / PARTIAL / MISSING]
 
 ---
 
@@ -307,6 +348,8 @@ Write your review to the `feedback-output-path` file:
 - [ ] Existing utilities reused where appropriate
 - [ ] Module organization matches conventions
 - [ ] No unnecessary duplication introduced
+- [ ] All referenced symbols and paths are validated
+- [ ] Non-trivial new algorithms are justified as state-of-the-art or have explicit tradeoff rationale
 - [ ] All blocking requirements are satisfied
 
 [If NEEDS REVISION: Specific consistency issues to address]
@@ -318,9 +361,13 @@ Write your review to the `feedback-output-path` file:
 - New code follows existing patterns
 - Existing utilities are reused where appropriate
 - Module organization matches conventions
+- All referenced symbols and paths are validated
+- Non-trivial new algorithms are justified as state-of-the-art or have explicit tradeoff rationale
 - No timelines or schedules included
 
 **NEEDS REVISION** when:
+- Any referenced symbol or path cannot be verified
+- Any non-trivial new algorithm lacks SOTA justification or tradeoff rationale
 - Reinvents existing utilities without justification
 - Introduces patterns inconsistent with codebase
 - Ignores established conventions
