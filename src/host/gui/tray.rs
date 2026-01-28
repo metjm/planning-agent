@@ -6,25 +6,164 @@
 
 #![cfg(feature = "tray-icon")]
 
-/// Simple 3x5 digit bitmaps for 0-9 (each row is a byte, bits represent pixels).
-/// Format: 3 pixels wide, 5 pixels tall.
-const DIGIT_BITMAPS: [[u8; 5]; 10] = [
-    [0b111, 0b101, 0b101, 0b101, 0b111], // 0
-    [0b010, 0b110, 0b010, 0b010, 0b111], // 1
-    [0b111, 0b001, 0b111, 0b100, 0b111], // 2
-    [0b111, 0b001, 0b111, 0b001, 0b111], // 3
-    [0b101, 0b101, 0b111, 0b001, 0b001], // 4
-    [0b111, 0b100, 0b111, 0b001, 0b111], // 5
-    [0b111, 0b100, 0b111, 0b101, 0b111], // 6
-    [0b111, 0b001, 0b001, 0b001, 0b001], // 7
-    [0b111, 0b101, 0b111, 0b101, 0b111], // 8
-    [0b111, 0b101, 0b111, 0b001, 0b111], // 9
+/// Icon dimensions: width accommodates two 7-pixel digits plus padding and separator
+/// Layout: [3px pad][7px digit][8px gap][7px digit][3px pad] = 28px
+const ICON_WIDTH: u32 = 28;
+const ICON_HEIGHT: u32 = 22;
+
+/// Digit dimensions for the 7x11 bitmaps
+const DIGIT_WIDTH: u32 = 7;
+const DIGIT_HEIGHT: u32 = 11;
+
+/// 7x11 pixel digit bitmaps for 0-9 (each row is a byte, 7 LSBs represent pixels).
+/// Format: 7 pixels wide, 11 pixels tall - approximately 2.3x larger than previous 3x5.
+const DIGIT_BITMAPS: [[u8; 11]; 10] = [
+    // 0: rounded rectangle with hollow center
+    [
+        0b0111110, //  #####
+        0b1111111, // #######
+        0b1100011, // ##   ##
+        0b1100011, // ##   ##
+        0b1100011, // ##   ##
+        0b1100011, // ##   ##
+        0b1100011, // ##   ##
+        0b1100011, // ##   ##
+        0b1100011, // ##   ##
+        0b1111111, // #######
+        0b0111110, //  #####
+    ],
+    // 1: vertical line with base
+    [
+        0b0011000, //   ##
+        0b0111000, //  ###
+        0b1111000, // ####
+        0b0011000, //   ##
+        0b0011000, //   ##
+        0b0011000, //   ##
+        0b0011000, //   ##
+        0b0011000, //   ##
+        0b0011000, //   ##
+        0b1111111, // #######
+        0b1111111, // #######
+    ],
+    // 2: curved top, diagonal, flat bottom
+    [
+        0b0111110, //  #####
+        0b1111111, // #######
+        0b1100011, // ##   ##
+        0b0000011, //      ##
+        0b0000110, //     ##
+        0b0011100, //   ###
+        0b0110000, //  ##
+        0b1100000, // ##
+        0b1100011, // ##   ##
+        0b1111111, // #######
+        0b1111111, // #######
+    ],
+    // 3: two curves stacked
+    [
+        0b0111110, //  #####
+        0b1111111, // #######
+        0b1100011, // ##   ##
+        0b0000011, //      ##
+        0b0011110, //   ####
+        0b0011110, //   ####
+        0b0000011, //      ##
+        0b0000011, //      ##
+        0b1100011, // ##   ##
+        0b1111111, // #######
+        0b0111110, //  #####
+    ],
+    // 4: L-shape with vertical
+    [
+        0b0000110, //     ##
+        0b0001110, //    ###
+        0b0011110, //   ####
+        0b0110110, //  ## ##
+        0b1100110, // ##  ##
+        0b1111111, // #######
+        0b1111111, // #######
+        0b0000110, //     ##
+        0b0000110, //     ##
+        0b0000110, //     ##
+        0b0000110, //     ##
+    ],
+    // 5: flat top, curve bottom
+    [
+        0b1111111, // #######
+        0b1111111, // #######
+        0b1100000, // ##
+        0b1100000, // ##
+        0b1111110, // ######
+        0b1111111, // #######
+        0b0000011, //      ##
+        0b0000011, //      ##
+        0b1100011, // ##   ##
+        0b1111111, // #######
+        0b0111110, //  #####
+    ],
+    // 6: curve with enclosed bottom
+    [
+        0b0111110, //  #####
+        0b1111111, // #######
+        0b1100000, // ##
+        0b1100000, // ##
+        0b1111110, // ######
+        0b1111111, // #######
+        0b1100011, // ##   ##
+        0b1100011, // ##   ##
+        0b1100011, // ##   ##
+        0b1111111, // #######
+        0b0111110, //  #####
+    ],
+    // 7: flat top, diagonal down
+    [
+        0b1111111, // #######
+        0b1111111, // #######
+        0b0000011, //      ##
+        0b0000110, //     ##
+        0b0001100, //    ##
+        0b0011000, //   ##
+        0b0011000, //   ##
+        0b0110000, //  ##
+        0b0110000, //  ##
+        0b0110000, //  ##
+        0b0110000, //  ##
+    ],
+    // 8: two stacked circles
+    [
+        0b0111110, //  #####
+        0b1111111, // #######
+        0b1100011, // ##   ##
+        0b1100011, // ##   ##
+        0b0111110, //  #####
+        0b0111110, //  #####
+        0b1100011, // ##   ##
+        0b1100011, // ##   ##
+        0b1100011, // ##   ##
+        0b1111111, // #######
+        0b0111110, //  #####
+    ],
+    // 9: enclosed top, curve bottom
+    [
+        0b0111110, //  #####
+        0b1111111, // #######
+        0b1100011, // ##   ##
+        0b1100011, // ##   ##
+        0b1100011, // ##   ##
+        0b1111111, // #######
+        0b0111111, //  ######
+        0b0000011, //      ##
+        0b0000011, //      ##
+        0b1111111, // #######
+        0b0111110, //  #####
+    ],
 ];
 
 /// Draw a single digit at the given position in the RGBA buffer.
 fn draw_digit(
     rgba: &mut [u8],
-    size: u32,
+    width: u32,
     digit: usize,
     x_offset: u32,
     y_offset: u32,
@@ -32,13 +171,16 @@ fn draw_digit(
 ) {
     let bitmap = &DIGIT_BITMAPS[digit.min(9)];
     for (row_idx, &row_bits) in bitmap.iter().enumerate() {
-        for col in 0..3u32 {
-            if (row_bits >> (2 - col)) & 1 == 1 {
+        for col in 0..DIGIT_WIDTH {
+            // Check bit from MSB side (bit 6 is leftmost pixel)
+            if (row_bits >> (DIGIT_WIDTH - 1 - col)) & 1 == 1 {
                 let x = x_offset + col;
                 let y = y_offset + row_idx as u32;
-                if x < size && y < size {
-                    let idx = ((y * size + x) * 4) as usize;
-                    rgba[idx..idx + 4].copy_from_slice(&color);
+                if x < width && y < ICON_HEIGHT {
+                    let idx = ((y * width + x) * 4) as usize;
+                    if idx + 3 < rgba.len() {
+                        rgba[idx..idx + 4].copy_from_slice(&color);
+                    }
                 }
             }
         }
@@ -145,33 +287,69 @@ impl HostTray {
     }
 }
 
-/// Create a 22x22 icon showing running/awaiting counts as numbers.
-/// Layout: Green number (running) on left, Red/Amber number (awaiting) on right.
+/// Check if a point is inside a rounded rectangle.
+fn is_in_rounded_rect(x: f32, y: f32, width: f32, height: f32, radius: f32) -> bool {
+    // Check corners
+    let in_left = x < radius;
+    let in_right = x >= width - radius;
+    let in_top = y < radius;
+    let in_bottom = y >= height - radius;
+
+    // If in a corner region, check distance from corner center
+    if in_left && in_top {
+        let dx = x - radius;
+        let dy = y - radius;
+        return dx * dx + dy * dy <= radius * radius;
+    }
+    if in_right && in_top {
+        let dx = x - (width - radius);
+        let dy = y - radius;
+        return dx * dx + dy * dy <= radius * radius;
+    }
+    if in_left && in_bottom {
+        let dx = x - radius;
+        let dy = y - (height - radius);
+        return dx * dx + dy * dy <= radius * radius;
+    }
+    if in_right && in_bottom {
+        let dx = x - (width - radius);
+        let dy = y - (height - radius);
+        return dx * dx + dy * dy <= radius * radius;
+    }
+
+    // Not in a corner, so it's in the rectangle
+    true
+}
+
+/// Create a status icon showing running/awaiting counts as numbers.
+/// Layout: Green number (running) on left, Amber number (awaiting) on right.
 /// Numbers clamped to single digit (9+ shown as "9").
 fn create_status_icon(running: usize, awaiting: usize) -> anyhow::Result<tray_icon::Icon> {
-    let size = 22u32;
-    let mut rgba = vec![0u8; (size * size * 4) as usize];
+    let mut rgba = vec![0u8; (ICON_WIDTH * ICON_HEIGHT * 4) as usize];
 
     // Colors
     let green = [76u8, 175, 80, 255];
     let amber = [255u8, 152, 0, 255];
     let gray = [117u8, 117, 117, 255];
+    let bg_dark = [40u8, 40, 40, 255];
 
-    // Draw circular background
-    for y in 0..size {
-        for x in 0..size {
-            let idx = ((y * size + x) * 4) as usize;
-            let cx = x as f32 - size as f32 / 2.0;
-            let cy = y as f32 - size as f32 / 2.0;
-            let dist = (cx * cx + cy * cy).sqrt();
-            let radius = size as f32 / 2.0 - 1.0;
+    // Draw rounded rectangle background
+    let corner_radius = 4.0f32;
+    for y in 0..ICON_HEIGHT {
+        for x in 0..ICON_WIDTH {
+            let idx = ((y * ICON_WIDTH + x) * 4) as usize;
 
-            if dist < radius {
-                // Dark background inside circle
-                rgba[idx] = 40;
-                rgba[idx + 1] = 40;
-                rgba[idx + 2] = 40;
-                rgba[idx + 3] = 255;
+            // Check if point is inside rounded rectangle
+            let in_rect = is_in_rounded_rect(
+                x as f32,
+                y as f32,
+                ICON_WIDTH as f32,
+                ICON_HEIGHT as f32,
+                corner_radius,
+            );
+
+            if in_rect {
+                rgba[idx..idx + 4].copy_from_slice(&bg_dark);
             }
         }
     }
@@ -180,13 +358,36 @@ fn create_status_icon(running: usize, awaiting: usize) -> anyhow::Result<tray_ic
     let running_digit = running.min(9);
     let awaiting_digit = awaiting.min(9);
 
-    // Draw running count (green) - left side, vertically centered
+    // Vertical centering: (22 - 11) / 2 = 5.5, round to 5
+    let y_offset = (ICON_HEIGHT - DIGIT_HEIGHT) / 2;
+
+    // Horizontal layout:
+    // Left digit at x=3 (3px padding from left edge)
+    // Right digit at x=18 (3px padding from right edge: 28-7-3=18)
+    let left_x = 3;
+    let right_x = ICON_WIDTH - DIGIT_WIDTH - 3;
+
+    // Draw running count (green or gray if zero) - left side
     let running_color = if running > 0 { green } else { gray };
-    draw_digit(&mut rgba, size, running_digit, 4, 8, running_color);
+    draw_digit(
+        &mut rgba,
+        ICON_WIDTH,
+        running_digit,
+        left_x,
+        y_offset,
+        running_color,
+    );
 
-    // Draw awaiting count (amber/red) - right side, vertically centered
+    // Draw awaiting count (amber or gray if zero) - right side
     let awaiting_color = if awaiting > 0 { amber } else { gray };
-    draw_digit(&mut rgba, size, awaiting_digit, 15, 8, awaiting_color);
+    draw_digit(
+        &mut rgba,
+        ICON_WIDTH,
+        awaiting_digit,
+        right_x,
+        y_offset,
+        awaiting_color,
+    );
 
-    Ok(tray_icon::Icon::from_rgba(rgba, size, size)?)
+    Ok(tray_icon::Icon::from_rgba(rgba, ICON_WIDTH, ICON_HEIGHT)?)
 }
